@@ -1,0 +1,14 @@
+# Copy to notify.conf (gitignored) to configure run notifications.
+# Sourced by run-task.sh / sync-pr.sh. All values optional.
+
+# Push each stage handoff to your phone via ntfy (https://ntfy.sh or self-hosted).
+# Pick a hard-to-guess topic, subscribe to it in the ntfy app, then set it here.
+# Empty (the default) disables phone push.
+HARNESS_NTFY_TOPIC=""
+
+# Self-hosted ntfy server (default is the public service).
+# HARNESS_NTFY_SERVER="https://ntfy.sh"
+
+# Local desktop notifications on every stage handoff (macOS `osascript`).
+# 1 = on (default), 0 = silence.
+# HARNESS_NOTIFY=1

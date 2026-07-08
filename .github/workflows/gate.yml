@@ -1,0 +1,17 @@
+name: gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    # Runs on Linux to prove the gate (and the shipped scripts) are portable
+    # off macOS, where the harness normally runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run gate (shellcheck + bash -n on every shipped script)
+        run: bash gate.sh

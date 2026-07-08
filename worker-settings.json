@@ -1,0 +1,52 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "NotebookEdit",
+      "TodoWrite",
+      "WebSearch",
+      "WebFetch",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(yarn:*)",
+      "Bash(node:*)",
+      "Bash(uv:*)",
+      "Bash(shot-scraper:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git restore:*)",
+      "Bash(git stash:*)",
+      "Bash(git mv:*)",
+      "Bash(git rm:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(jq:*)",
+      "Bash(wc:*)",
+      "Bash(diff:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(gh:*)"
+    ]
+  }
+}

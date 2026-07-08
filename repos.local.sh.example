@@ -1,0 +1,70 @@
+# Copy to repos.local.sh (gitignored) to PIN per-repo pipeline settings.
+#
+# repos.conf.sh sources this file if it sits next to it (inside HARNESS_DIR)
+# and calls repo_config_local() BEFORE auto-detection. Set any of the vars
+# below for the repos you dispatch to; anything you leave blank is auto-detected
+# from lockfiles + the remote's default branch.
+#
+# Two ways to add a repo:
+#   1. Let the tool do it:  setup-repo.sh <repo-path> --write
+#      It inspects the repo and inserts/updates a pinned arm inside the MANAGED
+#      block below (idempotently — re-running a repo updates its arm in place).
+#      Add --verify to prove INSTALL_CMD + GATE_CMD pass before it writes.
+#   2. By hand: add a case arm anywhere in repo_config_local(). Hand-written arms
+#      (like the examples at the bottom) are never touched by setup-repo.sh.
+#
+# Keys are the repo's directory name (basename). Worktrees are named
+# "<repo>-<ticket-lowercased>", so match both "<repo>" and "<repo>-*".
+#
+# Variables (all optional):
+#   BASE_BRANCH    base branch PRs target            (default: staging|main|master, detected)
+#   INSTALL_CMD    install deps in a fresh worktree  (default: from lockfile)
+#   GATE_CMD       the deterministic test gate       (default: from lockfile)
+#   MCP_CONFIG     path to an .mcp.json for the worker (default: none; skipped if missing)
+#   ENV_SUBDIRS    extra dirs besides "." to copy .env* into
+#   DEV_CMD        dev server command for preview.sh
+#   PREFLIGHT_CMD  env check run before the implementer (e.g. test DB up + migrated)
+#   DEMO_DEV_CMD   dev server command for demo recording (MUST pin the port)
+#   DEMO_PORT      port DEMO_DEV_CMD binds (storyboard origin + post-demo cleanup)
+
+repo_config_local() {
+  # $1 = absolute repo/worktree path, $2 = its basename
+  local name="$2"
+  case "$name" in
+
+    # setup-repo.sh --write manages the arms between the two markers below. Each
+    # arm is bounded by "# repo:<name>" / "# end:<name>"; re-running updates it in
+    # place. Do not hand-edit inside the block — add hand-written arms outside it.
+    # >>> setup-repo managed >>>
+    # <<< setup-repo managed <<<
+
+    # --- Hand-written examples (edit freely; setup-repo.sh never touches these) ---
+    myapp|myapp-*)
+      BASE_BRANCH=staging
+      INSTALL_CMD="npm ci"
+      GATE_CMD="npm run type-check && npm test"
+      MCP_CONFIG="$HOME/code/myapp/.mcp.json"
+      DEV_CMD="npm run dev"
+      # Demo must run on the app's normal dev port: backend CORS allowlists
+      # typically only cover the standard localhost origins.
+      DEMO_DEV_CMD="npm run dev -- --port 5173 --strictPort"
+      DEMO_PORT=5173
+      ;;
+    myapi|myapi-*)
+      BASE_BRANCH=main
+      INSTALL_CMD="npm ci"
+      GATE_CMD="npm run lint && npm test"          # spins a Postgres test DB
+      ENV_SUBDIRS="backend"
+      # Verify the test DB is up + migrated before burning an implementer pass.
+      # Copy examples/preflight-postgres.example.sh to HARNESS_DIR and adapt it.
+      PREFLIGHT_CMD="${HARNESS_DIR:-$HOME/.claude/harness}/preflight-postgres.sh"
+      DEV_CMD="npm run dev"
+      ;;
+    my-python-svc|my-python-svc-*)
+      BASE_BRANCH=main
+      INSTALL_CMD="uv sync"
+      GATE_CMD="uv run ruff check . && uv run pytest"
+      DEV_CMD="./dev.sh start"
+      ;;
+  esac
+}

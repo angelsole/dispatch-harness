@@ -1,0 +1,12 @@
+# Copy to demo.conf.sh (gitignored) to upload PR demo videos to object storage.
+# Sourced by run-task.sh's demo stage. Without it (or with empty values) the
+# demo is recorded but not uploaded, and the run is otherwise unaffected.
+#
+# Requires rclone configured with a remote pointing at any S3-compatible bucket
+# (Cloudflare R2, AWS S3, Backblaze B2, MinIO, ...). See `rclone config`.
+#
+#   R2_REMOTE  rclone "remote:bucket[/prefix]" the mp4 + gif are copied to.
+#   R2_PUBLIC  public base URL that serves that bucket (used in the PR embed).
+
+R2_REMOTE=""      # e.g. "r2:my-dispatch-demos"
+R2_PUBLIC=""      # e.g. "https://demos.example.com"

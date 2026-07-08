@@ -1,0 +1,12 @@
+# User/tenant config — ship *.example instead, never real values
+notify.conf
+demo.conf.sh
+repos.local.sh
+
+# Runtime state — never belongs in the repo
+auth/
+runs/
+.harness/
+
+# Backups
+*.bak*
