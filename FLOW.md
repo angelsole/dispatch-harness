@@ -1,6 +1,7 @@
 # Dispatch Harness — Flow
 
-Multi-model pipeline: Planner researches and writes the brief (API credits) ·
+Multi-model pipeline: Planner researches and writes the brief (your session —
+best results with Claude Fable 5; API credits or subscription) ·
 Opus implements (Claude subscription) · Codex reviews (ChatGPT subscription) ·
 deterministic gate + script glue (free).
 
@@ -10,7 +11,7 @@ deterministic gate + script glue (free).
 sequenceDiagram
     autonumber
     actor U as You
-    participant F as Planner<br/>API credits
+    participant F as Planner<br/>Fable 5 · your session
     participant S as run-task.sh<br/>script · free
     participant O as Opus<br/>implementer · Claude sub
     participant C as Codex<br/>reviewer · ChatGPT sub

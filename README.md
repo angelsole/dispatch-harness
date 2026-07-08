@@ -13,8 +13,16 @@ model can talk its way past.
 
 ```
 you → planner → [ implementer → gate → reviewer → gate ] → draft PR → you
-      (API)      (Claude sub)   (free) (ChatGPT sub)
+  (your session)  (Claude sub)  (free)  (ChatGPT sub)
 ```
+
+The planner isn't pinned by the harness: it is whatever Claude Code session
+invokes `/dispatch`, billed however that session is billed — API credits or a
+subscription. We've gotten the best results with **Claude Fable 5** as the
+planner (sharper briefs up front mean fewer `needs_input` stops and review
+fixes downstream); an Opus session on a Claude subscription also works, and
+then the whole pipeline runs on flat-rate plans. Only the implementer and
+reviewer are fixed by the pipeline.
 
 ---
 
@@ -37,10 +45,11 @@ expected values, and edited fixtures — and restores proper tests and fixes the
 code instead. A green gate only counts if the tests earning it weren't touched.
 
 **Subscription economics.** The expensive, low-volume work — research and the
-brief — runs on the metered API (the planner, i.e. you in an orchestrator
-session). The expensive, *high-volume* work — implementing and reviewing, which
-burn the most tokens — runs on flat-rate **subscriptions** (Claude and ChatGPT)
-that you already pay for. The glue between stages (worktrees, the gate, the PR)
+brief — runs in your orchestrator session, billed however that session is
+billed (in our experience Claude Fable 5 on API credits earns its price here;
+a subscription session works too). The expensive, *high-volume* work —
+implementing and reviewing, which burn the most tokens — runs on flat-rate
+**subscriptions** (Claude and ChatGPT) that you already pay for. The glue between stages (worktrees, the gate, the PR)
 is deterministic shell and costs nothing. You get frontier models on the
 token-heavy stages without metered token bills for them.
 
