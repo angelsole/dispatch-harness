@@ -62,13 +62,23 @@ else
   if [ "${HARNESS_SKIP_REVIEW:-0}" = "1" ]; then ARM="no_review"; else ARM="full"; fi
   echo "$ARM" > "$ARM_FILE"
 fi
-MODEL_FILE="$RUN_DIR/implementer-model"
-if [ -f "$MODEL_FILE" ]; then
-  IMPLEMENTER_MODEL=$(cat "$MODEL_FILE")
-else
-  IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-opus}"
-  echo "$IMPLEMENTER_MODEL" > "$MODEL_FILE"
-fi
+# Model/effort knobs follow the same pin-at-first-dispatch rule. Defaults are
+# explicit model IDs, never aliases: "opus" silently changed meaning the day
+# Opus 5 shipped, which is exactly the condition drift this file exists to stop.
+pin_knob() {  # $1 = file basename, $2 = var name, $3 = default
+  local f="$RUN_DIR/$1" v
+  if [ -f "$f" ]; then
+    v=$(cat "$f")
+  else
+    eval "v=\"\${$2:-$3}\""
+    echo "$v" > "$f"
+  fi
+  eval "$2=\"\$v\""
+}
+pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
+pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
+pin_knob reviewer-model     REVIEWER_MODEL     gpt-5.6-sol
+pin_knob reviewer-effort    REVIEWER_EFFORT    high
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
 
@@ -163,11 +173,12 @@ write_result() {
   metrics=$(collect_metrics)
   jq -n \
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
-    --arg arm "$ARM" --arg model "$IMPLEMENTER_MODEL" \
+    --arg arm "$ARM" --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
+    --arg rmodel "$REVIEWER_MODEL" --arg reffort "$REVIEWER_EFFORT" \
     --arg worktree "$WORKTREE" --arg branch "$BRANCH" --arg base "$BASE_BRANCH" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,arm:$arm,implementer_model:$model,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
+    '{ticket:$ticket,status:$status,arm:$arm,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
     > "$RUN_DIR/result.json"
 }
 
@@ -247,8 +258,8 @@ IMPLEMENTER_PROMPT="You are the implementer stage of an automated pipeline.
 Read .harness/brief.md first — it is your task contract — then follow this repo's CLAUDE.md conventions.
 Rules:
 - Implement the brief fully. You own the implementation design; plan as you see fit.
-- Delegate codebase exploration and research to subagents (Explore) — they run on a cheaper model; spend your own turns on design decisions and code.
-- Run the verify commands from the brief as you work; leave the tree passing.
+- Delegate to subagents (Explore — they run on a cheaper model) only for sizeable, genuinely independent exploration such as a wide multi-file investigation. Do not delegate what a few tool calls of your own would answer, and never use subagents to verify or double-check your own work.
+- Leave the tree passing the verify commands from the brief.
 - Never weaken, skip, or delete tests to make them pass; if a test seems wrong, say so in your notes instead.
 - Make small conventional commits (type(scope): description). Never mention AI, Claude, or agents in commits.
 - Never git add or commit anything under .harness/ — it is orchestration metadata, excluded from git. If git refuses a path as ignored, leave it alone; never use git add -f.
@@ -256,14 +267,14 @@ Rules:
 - Database/MCP tools: local environment only. Never switch environments or touch staging/production.
 - If you hit a decision the brief does not resolve and that materially changes the outcome, do NOT guess: write the specific question(s), each with the options you considered, to .harness/QUESTIONS.md and stop working. The orchestrator will get answers and resume you.
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
-- When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize."
+- When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body."
 
 # Worker sessions are resumable: we pin the session id so the user can step in
 # interactively at any time (attach.sh), and so a re-dispatch after needs_input
 # continues with the worker's context intact. After each run the id is refreshed
 # from the stream's result event, since --resume forks to a new session id.
 OPUS_SESSION_FILE="$RUN_DIR/opus-session"
-CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns 120)
+CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns 120)
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
 if [ -f "$OPUS_SESSION_FILE" ]; then
   OPUS_SESSION=$(cat "$OPUS_SESSION_FILE")
@@ -340,7 +351,8 @@ run_codex() {  # $1 = round label, $2 = prompt
   with_timeout "$CODEX_TIMEOUT" \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
     -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\"]" \
-    -c 'model_reasoning_effort="high"' \
+    -c "model=\"$REVIEWER_MODEL\"" \
+    -c "model_reasoning_effort=\"$REVIEWER_EFFORT\"" \
     "$2" </dev/null 2>&1 \
     | tee "$RUN_DIR/codex-$1.log" \
     | while IFS= read -r l; do

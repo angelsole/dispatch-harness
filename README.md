@@ -28,9 +28,10 @@ reviewer are fixed by the pipeline.
 
 ## Why it's built this way
 
-**Cross-vendor implement/review split.** The implementer (Anthropic's Opus,
-via a Claude subscription) writes and commits. The reviewer (OpenAI's Codex, via
-a ChatGPT subscription) reads the diff cold and fixes what it finds. Neither
+**Cross-vendor implement/review split.** The implementer (Anthropic's Opus —
+`claude-opus-5` by default, via a Claude subscription) writes and commits. The
+reviewer (OpenAI's Codex — `gpt-5.6-sol` by default, via a ChatGPT
+subscription) reads the diff cold and fixes what it finds. Neither
 sees the other's reasoning — only the committed result. A self-review by the
 same model tends to rationalize its own choices; a different model from a
 different lab does not.
@@ -132,7 +133,8 @@ Required:
 
 - **[`claude`](https://docs.claude.com/en/docs/claude-code) CLI** — runs the
   implementer (and, if you like, the planner) on a Claude subscription.
-- **`codex` CLI** — runs the reviewer on a ChatGPT subscription.
+- **`codex` CLI** (≥ 0.145) — runs the reviewer on a ChatGPT subscription.
+  Older versions reject the default reviewer model (`gpt-5.6-sol`).
 - **`gh`** (GitHub CLI, authenticated) — pushes branches and opens PRs.
 - **`jq`** — reads/writes run metadata.
 - **`git`**, **`bash`**, and standard Unix tools: `curl`, `perl`, `lsof`,
@@ -344,13 +346,16 @@ with a *different* implementer model — so you can measure what each stage buys
 
 | Env var | Effect | Default |
 | --- | --- | --- |
-| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. | `opus` |
+| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5` |
+| `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `xhigh` is Anthropic's recommended starting point for agentic coding on Opus 5; drop it where your own runs show quality holds. | `xhigh` |
+| `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. | `gpt-5.6-sol` |
+| `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
 | `HARNESS_SKIP_REVIEW` | `1` skips the Codex review stage **and** its fix rounds — the `no_review` arm. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review). | unset (`full` arm) |
 
-Both are **pinned at first dispatch**: the chosen arm and model are written into
-the run dir on the first invocation and reused verbatim on resume, so a
-re-dispatch whose environment differs can't silently switch a run to a different
-condition. With **neither** knob set, control flow is identical to before — this
+All are **pinned at first dispatch**: the chosen arm, models, and efforts are
+written into the run dir on the first invocation and reused verbatim on resume,
+so a re-dispatch whose environment differs can't silently switch a run to a
+different condition. With **neither** knob set, control flow is identical to before — this
 is instrumentation, not a redesign.
 
 ```bash
@@ -362,7 +367,8 @@ HARNESS_SKIP_REVIEW=1 IMPLEMENTER_MODEL=sonnet \
 ### Metrics schema (in `result.json`)
 
 Alongside the existing fields, each run now records `arm`
-(`full` | `no_review`), `implementer_model`, and a `metrics` object — populated
+(`full` | `no_review`), `implementer_model`, `implementer_effort`,
+`reviewer_model`, `reviewer_effort`, and a `metrics` object — populated
 on **every** exit path, partial on early failures (missing fields are
 `null`/empty):
 
