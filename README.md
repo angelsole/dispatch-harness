@@ -390,9 +390,11 @@ on **every** exit path, partial on early failures (missing fields are
 ~/.claude/harness/metrics.sh --csv    # same data as CSV for stats tools
 ```
 
-Columns: run, arm, model, status, gate rounds (e.g. `fail,pass`),
-implementer/reviewer commit counts, ± lines, and wall minutes. Runs predating
-the instrumentation (no `metrics` object) render with blanks, not errors.
+Columns: run, arm, implementer model and effort, reviewer model and effort,
+status, gate rounds (e.g. `fail,pass`), implementer/reviewer commit counts,
+± lines, and wall minutes — so an effort sweep or a reviewer-model ablation
+reads straight off the table. Runs predating a field (no `metrics` object, or
+written before the model/effort knobs) render with blanks, not errors.
 
 ### The public-benchmark experiment
 
