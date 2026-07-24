@@ -10,6 +10,8 @@
       "WebFetch",
       "Bash(npm:*)",
       "Bash(npx:*)",
+      "Bash(flutter:*)",
+      "Bash(dart:*)",
       "Bash(yarn:*)",
       "Bash(node:*)",
       "Bash(uv:*)",

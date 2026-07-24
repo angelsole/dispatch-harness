@@ -395,7 +395,7 @@ feed() {  # $1 = marker + model, $2 = line
 run_codex() {  # $1 = round label, $2 = prompt
   with_timeout "$CODEX_TIMEOUT" \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
-    -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\"]" \
+    -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\",\"/opt/homebrew/share/flutter/bin/cache\",\"$HOME/.pub-cache\",\"$HOME/.config/flutter\",\"$HOME/.dart-tool\"]" \
     -c "model=\"$CODEX_MODEL\"" \
     -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
     "$2" </dev/null 2>&1 \
