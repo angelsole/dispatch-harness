@@ -2,7 +2,8 @@
 
 Multi-model pipeline: Planner researches and writes the brief (your session —
 best results with Claude Fable 5; API credits or subscription) ·
-Opus implements (Claude subscription) · Codex reviews (ChatGPT subscription) ·
+Opus implements (Claude subscription) · Codex reviews (ChatGPT subscription —
+optional, skipped when the `codex` CLI is absent) ·
 deterministic gate + script glue (free).
 
 ## Main pipeline
@@ -14,7 +15,7 @@ sequenceDiagram
     participant F as Planner<br/>Fable 5 · your session
     participant S as run-task.sh<br/>script · free
     participant O as Opus<br/>implementer · Claude sub
-    participant C as Codex<br/>reviewer · ChatGPT sub
+    participant C as Codex · optional<br/>reviewer · ChatGPT sub
 
     U->>F: /dispatch PROJ-1234 or free-form idea
     F->>F: research repo (Explore subagents)
@@ -50,6 +51,14 @@ sequenceDiagram
     F->>S: gh pr ready + cleanup.sh
     S->>U: PR ready for team · worktree cleaned
 ```
+
+## Claude-only mode (no `codex` CLI)
+
+The review is the one optional stage. When `codex` is not installed the run
+pins the `no_review` arm and says so in a stage line, `result.json` records no
+reviewer model, and every Codex step above is skipped — the deterministic gate
+and everything after it are unchanged. Base-sync merge conflicts (PR mechanics,
+not quality review) are then resolved by a Claude worker instead of Codex.
 
 ## Monitoring (ambient — nothing to remember)
 
