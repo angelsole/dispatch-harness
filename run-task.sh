@@ -485,6 +485,9 @@ else
       stage "base sync — conflict resolution ($CONFLICT_AGENT)"
       resolve_conflicts base-sync "A merge of $BASE_REF into this branch is stopped on conflicts (git status shows them). Newer work already merged to $BASE_BRANCH collided with this branch's changes (this branch's contract: .harness/brief.md and .harness/implementer-notes.md). Resolve every conflict by combining BOTH sides' intent — drop neither side's changes. For modify/delete conflicts on files this branch deliberately deleted, keep them deleted. If package-lock.json conflicts, resolve package.json first, then regenerate with 'npm install --package-lock-only' FOLLOWED BY 'npm dedupe --package-lock-only' (regen alone can leave an inconsistent nested tree that breaks npm ci — bit us in production), and verify with a clean 'npm ci'. Then git add the resolved files, conclude the merge commit (git commit --no-verify, plain message like 'Merge latest $BASE_BRANCH', no AI attribution), and re-run the tests relevant to the conflicted files. If the two sides are fundamentally incompatible, run git merge --abort and write .harness/REJECTED.md explaining why." || true
       if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
+        # The Claude worker permission profile may refuse merge --abort. Keep
+        # rejection cleanup script-owned so the worktree never remains mid-merge.
+        git -C "$WORKTREE" merge --abort > /dev/null 2>&1 || true
         STATUS="rejected"; cp "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.md"
       elif git -C "$WORKTREE" ls-files -u | grep -q . || [ -f "$(git -C "$WORKTREE" rev-parse --git-path MERGE_HEAD)" ]; then
         git -C "$WORKTREE" merge --abort > /dev/null 2>&1 || true
