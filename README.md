@@ -180,7 +180,10 @@ setups — there is no separate install variant or flag:
 
 Everything else is identical: worktree, deterministic gate, `needs_input`
 escalation, PR, demo recording. Install `codex` later and the next dispatch
-gets the review stage back; runs already pinned to an arm keep it.
+gets the review stage back; runs already pinned to an arm keep it — a
+Claude-only run resumed on a machine that now has `codex` keeps its blank
+reviewer fields (its review is not retro-fitted) and uses codex only for the
+mechanical base-sync conflict step.
 
 ---
 
