@@ -2,7 +2,8 @@
 # Multi-model dispatch pipeline.
 #   Opus (Claude sub) implements in a git worktree
 #   -> deterministic test gate
-#   -> Codex (ChatGPT sub) reviews & fixes (max 2 rounds)
+#   -> Codex (ChatGPT sub) reviews & fixes (max 2 rounds; optional — skipped
+#      when the codex CLI is not installed)
 #   -> draft PR.
 #
 # Usage: run-task.sh <TICKET> <repo-path> <branch-name>
@@ -17,6 +18,15 @@ main() {
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo codex)}"
+# The Codex reviewer is optional: a Claude subscription alone runs the same
+# pipeline with the review stage skipped and base-sync conflicts resolved by a
+# Claude worker. Resolved once per invocation so no stage ever shells out to a
+# missing binary and logs a 127.
+if command -v "$CODEX_BIN" >/dev/null 2>&1; then CODEX_AVAILABLE=1; else CODEX_AVAILABLE=0; fi
+# Labels for the conflict-resolution stage line and the escalation text: they
+# name whichever CLI actually does the work.
+CONFLICT_AGENT="Codex, ChatGPT sub"; CONFLICT_MODEL="Codex"
+[ "$CODEX_AVAILABLE" = 1 ] || { CONFLICT_AGENT="Claude sub"; CONFLICT_MODEL="Claude"; }
 
 # Cap a long-running child. macOS ships no timeout(1), so fall back to a
 # perl alarm wrapper (SIGALRM survives exec and kills the child after N secs).
@@ -59,7 +69,9 @@ ARM_FILE="$RUN_DIR/arm"
 if [ -f "$ARM_FILE" ]; then
   ARM=$(cat "$ARM_FILE")
 else
-  if [ "${HARNESS_SKIP_REVIEW:-0}" = "1" ]; then ARM="no_review"; else ARM="full"; fi
+  # No codex CLI on this machine means no review stage — pin the same arm the
+  # ablation knob does, so status, metrics and result.json all agree.
+  if [ "${HARNESS_SKIP_REVIEW:-0}" = "1" ] || [ "$CODEX_AVAILABLE" = 0 ]; then ARM="no_review"; else ARM="full"; fi
   echo "$ARM" > "$ARM_FILE"
 fi
 # Model/effort knobs follow the same pin-at-first-dispatch rule. Defaults are
@@ -77,8 +89,14 @@ pin_knob() {  # $1 = file basename, $2 = var name, $3 = default
 }
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
 pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
-pin_knob reviewer-model     REVIEWER_MODEL     gpt-5.6-sol
-pin_knob reviewer-effort    REVIEWER_EFFORT    high
+if [ "$CODEX_AVAILABLE" = 1 ]; then
+  pin_knob reviewer-model   REVIEWER_MODEL     gpt-5.6-sol
+  pin_knob reviewer-effort  REVIEWER_EFFORT    high
+else
+  # Nothing reviewer-shaped can run: pin no knob and record blanks rather than
+  # a model that never saw the diff.
+  REVIEWER_MODEL=""; REVIEWER_EFFORT=""
+fi
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
 
@@ -361,13 +379,40 @@ run_codex() {  # $1 = round label, $2 = prompt
   return "${PIPESTATUS[0]}"
 }
 
+# Same job on a Claude subscription, for machines without the codex CLI: fresh
+# session (no --resume/--session-id), ANTHROPIC_API_KEY unset so the run bills
+# to the subscription, same worker permissions and the same CODEX_TIMEOUT cap.
+# Logs are named after the model that produced them, like opus.log/codex-N.log.
+run_claude_worker() {  # $1 = round label, $2 = prompt
+  (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
+      env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+      "$CLAUDE_BIN" -p "$2" --model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
+      --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
+      </dev/null 2>&1) \
+    | tee "$RUN_DIR/claude-$1.log" \
+    | while IFS= read -r l; do
+        [ -n "$l" ] && printf '%.100s\n' "$l" > "$RUN_DIR/activity"
+      done
+  return "${PIPESTATUS[0]}"
+}
+
+# Merge-conflict resolution is PR mechanics, not quality review, so it runs in
+# BOTH arms — on codex when it is installed (unchanged), on Claude otherwise.
+resolve_conflicts() {  # $1 = round label, $2 = prompt
+  if [ "$CODEX_AVAILABLE" = 1 ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
+}
+
 run_gate 1 || true
 
 # --- Codex review + fix rounds ----------------------------------------------
-# Skipped in the no_review ablation arm (HARNESS_SKIP_REVIEW=1): the deterministic
-# gate above still ran, so a failing gate still yields gate_failed downstream, and
-# the base-sync step below (PR mechanics, not quality review) still runs in both arms.
-if [ "$ARM" = "full" ]; then
+# Skipped when the codex CLI is absent (Claude-only mode — the review is skipped
+# honestly, never reassigned to a second Claude worker: no model grades its own
+# homework) and in the no_review ablation arm (HARNESS_SKIP_REVIEW=1). Either way
+# the deterministic gate above still ran, so a failing gate still yields
+# gate_failed downstream, and the base-sync step below still runs in both arms.
+if [ "$CODEX_AVAILABLE" = 0 ]; then
+  stage "review skipped — no codex CLI found (Claude-only mode)"
+elif [ "$ARM" = "full" ]; then
 REVIEW_PROMPT="You are the reviewer stage of an automated pipeline; another agent just implemented a task.
 Context (all inside .harness/): brief.md (the task contract), implementer-notes.md, gate-latest.log (test gate output — current status: $GATE_STATUS).
 implementer-notes.md is the implementer's own account of its work: treat it as claims to verify against the diff, not as facts.
@@ -400,7 +445,7 @@ if [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
     run_gate 3 || true
   fi
 fi
-fi   # end: ARM = full
+fi   # end: review stage
 
 # --- 6. Outcome ---------------------------------------------------------------
 [ -f "$WORKTREE/.harness/review-notes.md" ] && cp "$WORKTREE/.harness/review-notes.md" "$RUN_DIR/review-notes.md"
@@ -412,12 +457,13 @@ elif [ "$GATE_STATUS" != "pass" ]; then
 else
   STATUS="ready"
 
-  # --- 5c. Base freshness sync (script; Codex only on conflict) -----------------
+  # --- 5c. Base freshness sync (script; a model only on conflict) ---------------
   # Parallel runs merge PRs into base while this one is in flight; pushing a stale
   # branch ships a PR GitHub immediately marks as conflicting. Merge the latest
   # base BEFORE the PR: clean merge -> re-gate (a textually clean merge can still
-  # break semantically); conflict -> Codex resolves, then re-gate; unresolvable ->
-  # needs_input for the orchestrator.
+  # break semantically); conflict -> Codex (or a Claude worker when the codex CLI
+  # is absent) resolves, then re-gate; unresolvable -> needs_input for the
+  # orchestrator.
   git -C "$WORKTREE" fetch origin --quiet || true
   if ! git -C "$WORKTREE" merge-base --is-ancestor "$BASE_REF" HEAD 2>/dev/null; then
     stage "base sync — merge latest $BASE_BRANCH (script — no model)"
@@ -425,15 +471,15 @@ else
       run_gate base-sync || true
     else
       git -C "$WORKTREE" diff --name-only --diff-filter=U >> "$RUN_DIR/base-sync.log" 2>&1 || true
-      stage "base sync — conflict resolution (Codex, ChatGPT sub)"
-      run_codex base-sync "A merge of $BASE_REF into this branch is stopped on conflicts (git status shows them). Newer work already merged to $BASE_BRANCH collided with this branch's changes (this branch's contract: .harness/brief.md and .harness/implementer-notes.md). Resolve every conflict by combining BOTH sides' intent — drop neither side's changes. For modify/delete conflicts on files this branch deliberately deleted, keep them deleted. If package-lock.json conflicts, resolve package.json first, then regenerate with 'npm install --package-lock-only' FOLLOWED BY 'npm dedupe --package-lock-only' (regen alone can leave an inconsistent nested tree that breaks npm ci — bit us in production), and verify with a clean 'npm ci'. Then git add the resolved files, conclude the merge commit (git commit --no-verify, plain message like 'Merge latest $BASE_BRANCH', no AI attribution), and re-run the tests relevant to the conflicted files. If the two sides are fundamentally incompatible, run git merge --abort and write .harness/REJECTED.md explaining why." || true
+      stage "base sync — conflict resolution ($CONFLICT_AGENT)"
+      resolve_conflicts base-sync "A merge of $BASE_REF into this branch is stopped on conflicts (git status shows them). Newer work already merged to $BASE_BRANCH collided with this branch's changes (this branch's contract: .harness/brief.md and .harness/implementer-notes.md). Resolve every conflict by combining BOTH sides' intent — drop neither side's changes. For modify/delete conflicts on files this branch deliberately deleted, keep them deleted. If package-lock.json conflicts, resolve package.json first, then regenerate with 'npm install --package-lock-only' FOLLOWED BY 'npm dedupe --package-lock-only' (regen alone can leave an inconsistent nested tree that breaks npm ci — bit us in production), and verify with a clean 'npm ci'. Then git add the resolved files, conclude the merge commit (git commit --no-verify, plain message like 'Merge latest $BASE_BRANCH', no AI attribution), and re-run the tests relevant to the conflicted files. If the two sides are fundamentally incompatible, run git merge --abort and write .harness/REJECTED.md explaining why." || true
       if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
         STATUS="rejected"; cp "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.md"
       elif git -C "$WORKTREE" ls-files -u | grep -q . || [ -f "$(git -C "$WORKTREE" rev-parse --git-path MERGE_HEAD)" ]; then
         git -C "$WORKTREE" merge --abort > /dev/null 2>&1 || true
         { echo "# Base sync blocked — merge conflicts with $BASE_REF"
           echo
-          echo "The branch is ready but conflicts with newer $BASE_BRANCH and Codex could not"
+          echo "The branch is ready but conflicts with newer $BASE_BRANCH and $CONFLICT_MODEL could not"
           echo "complete the resolution. Merge log tail:"
           echo
           tail -20 "$RUN_DIR/base-sync.log"

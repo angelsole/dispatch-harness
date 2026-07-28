@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Post-PR base sync: re-merge the latest base into a run's already-pushed PR
 # branch when GitHub marks it CONFLICTING (base moved after the PR opened).
-# Same recipe as run-task.sh section 5c: script merge -> Codex on conflict
-# (package-lock regeneration rules included) -> re-gate -> push.
+# Same recipe as run-task.sh section 5c: script merge -> Codex on conflict, or a
+# Claude worker when the codex CLI is not installed (package-lock regeneration
+# rules included) -> re-gate -> push.
 #
 # Usage: sync-pr.sh <RUN-ID>
 # Reads ~/.claude/harness/runs/<RUN-ID>/result.json for worktree/branch/base;
@@ -13,6 +14,11 @@ main() {
 
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo codex)}"
+CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
+# The codex CLI is optional; without it a Claude worker resolves the conflicts.
+if command -v "$CODEX_BIN" >/dev/null 2>&1; then CODEX_AVAILABLE=1; else CODEX_AVAILABLE=0; fi
+CONFLICT_AGENT="Codex, ChatGPT sub"; CONFLICT_MODEL="Codex"
+[ "$CODEX_AVAILABLE" = 1 ] || { CONFLICT_AGENT="Claude sub"; CONFLICT_MODEL="Claude"; }
 
 # Cap a long-running child. macOS ships no timeout(1), so fall back to a
 # perl alarm wrapper (SIGALRM survives exec and kills the child after N secs).
@@ -77,7 +83,7 @@ if git -C "$WORKTREE" merge-base --is-ancestor "$BASE_REF" HEAD 2>/dev/null; the
   exit 0
 fi
 
-# Context for Codex + env files + deps (worktree may be freshly recreated).
+# Context for the conflict resolver + env files + deps (worktree may be freshly recreated).
 mkdir -p "$WORKTREE/.harness"
 [ -f "$RUN_DIR/brief.md" ] && cp "$RUN_DIR/brief.md" "$WORKTREE/.harness/brief.md"
 [ -f "$RUN_DIR/review-notes.md" ] && cp "$RUN_DIR/review-notes.md" "$WORKTREE/.harness/review-notes.md"
@@ -118,18 +124,40 @@ run_codex() {  # $1 = label, $2 = prompt
   return "${PIPESTATUS[0]}"
 }
 
-# --- 2. Merge latest base; Codex only on conflict ------------------------------
+# Claude fallback, mirroring run-task.sh: fresh session, ANTHROPIC_API_KEY unset
+# (subscription billing), worker permissions, same timeout cap. Model/effort come
+# from the run's pinned implementer knobs, with run-task.sh's own defaults.
+IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-$(cat "$RUN_DIR/implementer-model" 2>/dev/null || echo claude-opus-5)}"
+IMPLEMENTER_EFFORT="${IMPLEMENTER_EFFORT:-$(cat "$RUN_DIR/implementer-effort" 2>/dev/null || echo xhigh)}"
+run_claude_worker() {  # $1 = label, $2 = prompt
+  (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
+      env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+      "$CLAUDE_BIN" -p "$2" --model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
+      --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
+      </dev/null 2>&1) \
+    | tee "$RUN_DIR/claude-$1.log" \
+    | while IFS= read -r l; do
+        [ -n "$l" ] && printf '%.100s\n' "$l" > "$RUN_DIR/activity"
+      done
+  return "${PIPESTATUS[0]}"
+}
+
+resolve_conflicts() {  # $1 = label, $2 = prompt
+  if [ "$CODEX_AVAILABLE" = 1 ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
+}
+
+# --- 2. Merge latest base; a model only on conflict ----------------------------
 rm -f "$WORKTREE/.harness/REJECTED.md"
 stage "base sync — merge latest $BASE_BRANCH (script — no model)"
 if git -C "$WORKTREE" merge --no-edit "$BASE_REF" > "$RUN_DIR/post-sync.log" 2>&1; then
   run_gate post-sync || true
 else
   git -C "$WORKTREE" diff --name-only --diff-filter=U >> "$RUN_DIR/post-sync.log" 2>&1 || true
-  stage "base sync — conflict resolution (Codex, ChatGPT sub)"
-  run_codex post-sync "A merge of $BASE_REF into this branch is stopped on conflicts (git status shows them). Newer work already merged to $BASE_BRANCH collided with this branch's changes (this branch's contract: .harness/brief.md). Resolve every conflict by combining BOTH sides' intent — drop neither side's changes. For modify/delete conflicts on files this branch deliberately deleted, keep them deleted. If package-lock.json conflicts, resolve package.json first, then regenerate with 'npm install --package-lock-only' FOLLOWED BY 'npm dedupe --package-lock-only' (regen alone can leave an inconsistent nested tree that breaks npm ci — bit us in production), and verify with a clean 'npm ci'. Then git add the resolved files, conclude the merge commit (git commit --no-verify, plain message like 'Merge latest $BASE_BRANCH', no AI attribution), and re-run the tests relevant to the conflicted files. If the two sides are fundamentally incompatible, run git merge --abort and write .harness/REJECTED.md explaining why." || true
+  stage "base sync — conflict resolution ($CONFLICT_AGENT)"
+  resolve_conflicts post-sync "A merge of $BASE_REF into this branch is stopped on conflicts (git status shows them). Newer work already merged to $BASE_BRANCH collided with this branch's changes (this branch's contract: .harness/brief.md). Resolve every conflict by combining BOTH sides' intent — drop neither side's changes. For modify/delete conflicts on files this branch deliberately deleted, keep them deleted. If package-lock.json conflicts, resolve package.json first, then regenerate with 'npm install --package-lock-only' FOLLOWED BY 'npm dedupe --package-lock-only' (regen alone can leave an inconsistent nested tree that breaks npm ci — bit us in production), and verify with a clean 'npm ci'. Then git add the resolved files, conclude the merge commit (git commit --no-verify, plain message like 'Merge latest $BASE_BRANCH', no AI attribution), and re-run the tests relevant to the conflicted files. If the two sides are fundamentally incompatible, run git merge --abort and write .harness/REJECTED.md explaining why." || true
   if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
     cp "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.md"
-    fail "Codex rejected the merge — see $RUN_DIR/REJECTED.md"
+    fail "$CONFLICT_MODEL rejected the merge — see $RUN_DIR/REJECTED.md"
   fi
   if git -C "$WORKTREE" ls-files -u | grep -q . || [ -f "$(git -C "$WORKTREE" rev-parse --git-path MERGE_HEAD)" ]; then
     git -C "$WORKTREE" merge --abort > /dev/null 2>&1 || true
