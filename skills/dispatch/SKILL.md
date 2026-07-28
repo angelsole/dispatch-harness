@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Dispatch work through the multi-model harness — the orchestrator (you) researches and writes a task brief, then Opus (Claude subscription) implements in a git worktree, a deterministic test gate runs, Codex (ChatGPT subscription) reviews and fixes, and a draft PR opens. Takes either an existing ticket ID or a free-form description of what to build (optionally creating a ticket in your issue tracker). Use when the user says /dispatch <ticket-or-description>, "dispatch this", or asks to run the planner/implementer/reviewer pipeline.
+description: Dispatch work through the multi-model harness — the orchestrator (you) researches and writes a task brief, then Opus (Claude subscription) implements in a git worktree, a deterministic test gate runs, Codex (ChatGPT subscription) optionally reviews and fixes when the codex CLI is installed, and a draft PR opens. Takes either an existing ticket ID or a free-form description of what to build (optionally creating a ticket in your issue tracker). Use when the user says /dispatch <ticket-or-description>, "dispatch this", or asks to run the planner/implementer/reviewer pipeline.
 ---
 
 # Dispatch pipeline
@@ -90,7 +90,8 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 - **ready** — verify against the brief before promoting: read
   `.harness/implementer-notes.md` and `.harness/review-notes.md` in the
   worktree (the reviewer's notes list what it refactored and what it flagged
-  but left alone — surface flagged suggestions to the user), then `git diff
+  but left alone — surface flagged suggestions to the user; absent when the
+  review stage was skipped), then `git diff
   --stat origin/<base>...HEAD`, then only the files whose changes look risky or
   load-bearing. Attribute work per model: `opus_head` in result.json marks the
   boundary — commits up to it are Opus's, commits after it are Codex's fixes
@@ -118,12 +119,20 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   with full context, it does not start over. If the user prefers to answer the
   worker directly (zero orchestrator cost), point them to
   `~/.claude/harness/attach.sh <RUN-ID>`.
-- **rejected** — read `REJECTED.md` in the run dir. Codex found a fundamental
-  flaw. Decide: revise the brief and re-dispatch, or surface to the user.
+- **rejected** — read `REJECTED.md` in the run dir. The reviewer (or the
+  conflict resolver) found a fundamental flaw. Decide: revise the brief and
+  re-dispatch, or surface to the user.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
-  read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`,
-  `install.log`, `push.log`). Diagnose, then either fix the environment issue and
-  re-dispatch, or escalate to the user with a one-paragraph diagnosis.
+  read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
+  or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the
+  environment issue and re-dispatch, or escalate to the user with a one-paragraph
+  diagnosis.
+
+The Codex review stage is optional: on a machine without the `codex` CLI the run
+pins `arm: no_review` with empty `reviewer_model`/`reviewer_effort` and a
+`review skipped` stage line (conflict resolution falls back to a Claude worker,
+logged to `claude-*.log`). When you see that arm, nothing reviewed the diff —
+scrutinize it yourself before promoting, and say so in your verdict.
 
 ## Post-PR conflicts
 
@@ -131,8 +140,9 @@ If GitHub later marks a run's PR **CONFLICTING** (base moved after the PR
 opened — common with parallel runs and package.json/package-lock.json), do NOT
 resolve it by hand: run `~/.claude/harness/sync-pr.sh <RUN-ID>` in the
 background. It recreates the worktree from origin if it was cleaned up, merges
-the latest base (Codex resolves conflicts, including the lockfile-regeneration
-recipe), re-runs the gate, and pushes only on green. Same triage as a run
+the latest base (Codex — or a Claude worker where the `codex` CLI is not
+installed — resolves conflicts, including the lockfile-regeneration recipe),
+re-runs the gate, and pushes only on green. Same triage as a run
 afterwards: `REJECTED.md` / unresolved conflicts land in the run dir.
 
 ## Invariants

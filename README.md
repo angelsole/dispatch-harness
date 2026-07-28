@@ -34,7 +34,8 @@ reviewer (OpenAI's Codex — `gpt-5.6-sol` by default, via a ChatGPT
 subscription) reads the diff cold and fixes what it finds. Neither
 sees the other's reasoning — only the committed result. A self-review by the
 same model tends to rationalize its own choices; a different model from a
-different lab does not.
+different lab does not. The reviewer is the one optional stage: without the
+`codex` CLI the same pipeline runs in [Claude-only mode](#claude-only-mode).
 
 **A deterministic gate between the models.** Between implement and review runs a
 plain test gate — your repo's own `lint`/`type-check`/`test` commands, no model
@@ -83,7 +84,7 @@ sequenceDiagram
     participant F as Planner<br/>API
     participant S as run-task.sh<br/>script · free
     participant O as Implementer<br/>Opus · Claude sub
-    participant C as Reviewer<br/>Codex · ChatGPT sub
+    participant C as Reviewer · optional<br/>Codex · ChatGPT sub
 
     U->>F: /dispatch PROJ-1234 or free-form idea
     F->>F: research repo (Explore subagents)
@@ -133,13 +134,17 @@ Required:
 
 - **[`claude`](https://docs.claude.com/en/docs/claude-code) CLI** — runs the
   implementer (and, if you like, the planner) on a Claude subscription.
-- **`codex` CLI** (≥ 0.145) — runs the reviewer on a ChatGPT subscription.
-  Older versions reject the default reviewer model (`gpt-5.6-sol`).
 - **`gh`** (GitHub CLI, authenticated) — pushes branches and opens PRs.
 - **`jq`** — reads/writes run metadata.
 - **`git`**, **`bash`**, and standard Unix tools: `curl`, `perl`, `lsof`,
   `uuidgen`. macOS ships all of these; on Linux install `uuid-runtime` (for
   `uuidgen`) and `lsof` if missing.
+
+Optional, strongly recommended — it is the whole cross-vendor review stage:
+
+- **`codex` CLI** (≥ 0.145) — runs the reviewer on a ChatGPT subscription.
+  Older versions reject the default reviewer model (`gpt-5.6-sol`). Without it
+  the harness runs in [Claude-only mode](#claude-only-mode).
 
 Optional (only for the auto-recorded PR demo videos on frontend runs):
 
@@ -156,6 +161,29 @@ desktop notifications — it is guarded, so on Linux notifications are simply
 skipped (phone push via [ntfy](https://ntfy.sh) still works). CI
 ([`.github/workflows/gate.yml`](.github/workflows/gate.yml)) runs the gate on
 Linux to keep the shipped scripts portable.
+
+### Claude-only mode
+
+Every run detects the `codex` CLI at startup, so one codebase serves both
+setups — there is no separate install variant or flag:
+
+- **codex present** — nothing changes: full arm, review and fix rounds, Codex
+  resolves base-sync conflicts.
+- **codex absent** — the run pins the `no_review` arm, emits a
+  `review skipped — no codex CLI found (Claude-only mode)` stage line (visible
+  in the statusline, timeline and notifications), and leaves `reviewer_model` /
+  `reviewer_effort` empty in `result.json` rather than claiming a review that
+  never ran. The review is skipped, not reassigned to a second Claude worker —
+  no model grades its own homework. Base-sync conflict resolution (PR
+  mechanics, not quality review) falls back to a Claude worker on your
+  subscription — same prompt, fresh session, logged to `claude-<label>.log`.
+
+Everything else is identical: worktree, deterministic gate, `needs_input`
+escalation, PR, demo recording. Install `codex` later and the next dispatch
+gets the review stage back; runs already pinned to an arm keep it — a
+Claude-only run resumed on a machine that now has `codex` keeps its blank
+reviewer fields (its review is not retro-fitted) and uses codex only for the
+mechanical base-sync conflict step.
 
 ---
 
@@ -348,9 +376,9 @@ with a *different* implementer model — so you can measure what each stage buys
 | --- | --- | --- |
 | `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `xhigh` is Anthropic's recommended starting point for agentic coding on Opus 5; drop it where your own runs show quality holds. | `xhigh` |
-| `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. | `gpt-5.6-sol` |
+| `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
-| `HARNESS_SKIP_REVIEW` | `1` skips the Codex review stage **and** its fix rounds — the `no_review` arm. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review). | unset (`full` arm) |
+| `HARNESS_SKIP_REVIEW` | `1` skips the Codex review stage **and** its fix rounds — the `no_review` arm. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review — on codex when it is installed, otherwise on a Claude worker). A machine with no `codex` CLI pins the same arm automatically, with the reviewer fields left empty: see [Claude-only mode](#claude-only-mode). | unset (`full` arm) |
 
 All are **pinned at first dispatch**: the chosen arm, models, and efforts are
 written into the run dir on the first invocation and reused verbatim on resume,
@@ -368,9 +396,10 @@ HARNESS_SKIP_REVIEW=1 IMPLEMENTER_MODEL=sonnet \
 
 Alongside the existing fields, each run now records `arm`
 (`full` | `no_review`), `implementer_model`, `implementer_effort`,
-`reviewer_model`, `reviewer_effort`, and a `metrics` object — populated
-on **every** exit path, partial on early failures (missing fields are
-`null`/empty):
+`reviewer_model`, `reviewer_effort` (both empty when no `codex` CLI was
+available — see [Claude-only mode](#claude-only-mode)), and a `metrics`
+object — populated on **every** exit path, partial on early failures (missing
+fields are `null`/empty):
 
 | Field | Meaning |
 | --- | --- |
