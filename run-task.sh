@@ -89,13 +89,24 @@ pin_knob() {  # $1 = file basename, $2 = var name, $3 = default
 }
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
 pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
-if [ "$CODEX_AVAILABLE" = 1 ]; then
-  pin_knob reviewer-model   REVIEWER_MODEL     gpt-5.6-sol
-  pin_knob reviewer-effort  REVIEWER_EFFORT    high
-else
-  # Nothing reviewer-shaped can run: pin no knob and record blanks rather than
-  # a model that never saw the diff.
-  REVIEWER_MODEL=""; REVIEWER_EFFORT=""
+# A first dispatch without codex pins blank reviewer knobs. If codex is
+# installed before a later resume, the run remains honestly review-less instead
+# of silently acquiring reviewer metadata for a stage its pinned arm skips.
+if [ "$CODEX_AVAILABLE" = 0 ]; then
+  [ -f "$RUN_DIR/reviewer-model" ] || : > "$RUN_DIR/reviewer-model"
+  [ -f "$RUN_DIR/reviewer-effort" ] || : > "$RUN_DIR/reviewer-effort"
+fi
+pin_knob reviewer-model REVIEWER_MODEL gpt-5.6-sol
+pin_knob reviewer-effort REVIEWER_EFFORT high
+
+# A Claude-only run resumed after codex is installed may still need Codex for
+# base-sync conflicts. Use the normal defaults for that mechanical step while
+# keeping the run's reviewer fields blank.
+CODEX_MODEL="${REVIEWER_MODEL:-gpt-5.6-sol}"
+CODEX_EFFORT="${REVIEWER_EFFORT:-high}"
+if [ "$CODEX_AVAILABLE" = 0 ]; then
+  REVIEWER_MODEL=""
+  REVIEWER_EFFORT=""
 fi
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
@@ -369,8 +380,8 @@ run_codex() {  # $1 = round label, $2 = prompt
   with_timeout "$CODEX_TIMEOUT" \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
     -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\"]" \
-    -c "model=\"$REVIEWER_MODEL\"" \
-    -c "model_reasoning_effort=\"$REVIEWER_EFFORT\"" \
+    -c "model=\"$CODEX_MODEL\"" \
+    -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
     "$2" </dev/null 2>&1 \
     | tee "$RUN_DIR/codex-$1.log" \
     | while IFS= read -r l; do
