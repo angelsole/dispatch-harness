@@ -466,6 +466,14 @@ Boundary: refactor freely within the code this branch introduces or touches; do 
 - If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: do not fix it — write your findings to .harness/REJECTED.md and stop.
 - If everything is genuinely sound, say so in review-notes.md and change nothing."
 
+# A rejection from a previous dispatch must not outlive the revision it judged:
+# the outcome check below keys off this file's existence, so a re-review that
+# approves would still be read as rejected (bit us on OLYX-1497 — approval
+# round left round 1's file in place and the run skipped its PR).
+if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
+  mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
+fi
+
 stage "review — Codex (ChatGPT sub)"
 run_codex 1 "$REVIEW_PROMPT" || true
 
