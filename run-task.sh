@@ -214,6 +214,12 @@ write_result() {
 # Live stage tracking: status (current), timeline (history), macOS notification
 # on every model handoff, plus ntfy.sh push to the phone when notify.conf sets
 # a topic. Disable local notifications with HARNESS_NOTIFY=0.
+#
+# CONTRACT: the stage TEXT below is parsed by prefix to decide which model owns
+# the stage — see the actor mapping in statusline.sh (also used by
+# status.sh --watch). Renaming a literal here silently degrades every
+# statusline; add or update the mapping in the same commit.
+# tests/statusline.test.sh asserts every literal maps to a known actor.
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
 stage() {
   echo "$(date +%s) $1" > "$RUN_DIR/status"
@@ -376,6 +382,16 @@ GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-di
 # from stdin..." (bit us in production). </dev/null fixes the cause;
 # with_timeout is the backstop cap (timeout(1), or a perl-alarm fallback).
 CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
+
+# Live feed for the second half of the pipeline. The implementer's stream-json
+# events are appended to feed.log below as "HH:MM:SS <emoji> …"; without this the
+# feed went dark the moment the implementer stopped, even though the reviewer
+# still had two rounds to run. Same timestamp prefix, a ◆ marker plus the model
+# name so `tail -f feed.log` reads as one transcript of the whole run.
+feed() {  # $1 = marker + model, $2 = line
+  printf '%s %s %.100s\n' "$(date '+%H:%M:%S')" "$1" "$2" >> "$RUN_DIR/feed.log"
+}
+
 run_codex() {  # $1 = round label, $2 = prompt
   with_timeout "$CODEX_TIMEOUT" \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
@@ -385,7 +401,9 @@ run_codex() {  # $1 = round label, $2 = prompt
     "$2" </dev/null 2>&1 \
     | tee "$RUN_DIR/codex-$1.log" \
     | while IFS= read -r l; do
-        [ -n "$l" ] && printf '%.100s\n' "$l" > "$RUN_DIR/activity"
+        [ -n "$l" ] || continue
+        printf '%.100s\n' "$l" > "$RUN_DIR/activity"
+        feed '◆ codex' "$l"
       done
   return "${PIPESTATUS[0]}"
 }
@@ -402,7 +420,9 @@ run_claude_worker() {  # $1 = round label, $2 = prompt
       </dev/null 2>&1) \
     | tee "$RUN_DIR/claude-$1.log" \
     | while IFS= read -r l; do
-        [ -n "$l" ] && printf '%.100s\n' "$l" > "$RUN_DIR/activity"
+        [ -n "$l" ] || continue
+        printf '%.100s\n' "$l" > "$RUN_DIR/activity"
+        feed '◆ claude' "$l"
       done
   return "${PIPESTATUS[0]}"
 }
