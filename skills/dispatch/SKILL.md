@@ -71,8 +71,8 @@ session shows a line per active run — run id, which model, current tool/file,
 wire it, point them at `~/.claude/harness/status.sh --watch`, the same picture
 as a live dashboard in any terminal. Either way each stage handoff fires a
 macOS notification. For a deeper look there is
-`~/.claude/harness/runs/<RUN-ID>/feed.log` (live tool-by-tool transcript of the
-whole pipeline — the implementer's calls, then the reviewer's `◆ codex` lines),
+`~/.claude/harness/runs/<RUN-ID>/feed.log` (live transcript across both model
+stages — the implementer's calls, then the reviewer's `◆ codex` lines),
 `status.sh [RUN-ID]` (table / timeline), and `attach.sh <RUN-ID>` (step into the
 worker session). Do not poll yourself; you'll be notified when it exits.
 Multiple tickets may run in parallel (separate worktrees).

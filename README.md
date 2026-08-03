@@ -382,7 +382,7 @@ and `status.sh --watch` gives you the same picture on demand.
   (ntfy) on every stage handoff. Silence the desktop ones with `HARNESS_NOTIFY=0`.
 - **`status.sh`** — one-shot table of all runs; `status.sh <RUN-ID>` prints a
   run's full timeline and result.
-- **`feed.log`** — a live, tool-by-tool transcript of the *whole* pipeline
+- **`feed.log`** — a live transcript across both model stages
   (`tail -f ~/.claude/harness/runs/<RUN-ID>/feed.log`): the implementer's tool
   calls and thinking, then the reviewer's output prefixed `◆ codex`.
 - **`attach.sh <RUN-ID>`** — step into the worker's session interactively, with

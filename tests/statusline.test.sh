@@ -25,6 +25,8 @@ grep_ok()  { if printf '%s' "$1" | grep -qF -- "$2"; then ok "$3"; else bad "$3 
 grep_not() { if printf '%s' "$1" | grep -qF -- "$2"; then bad "$3"; else ok "$3"; fi; }
 lines()    { printf '%s' "$1" | grep -c '' | tr -d ' '; }
 
+if [ -x "$SL" ]; then ok "install: statusline.sh is executable"; else bad "install: statusline.sh is executable"; fi
+
 # A run dir exactly as run-task.sh writes it.
 mkrun() {  # $1 harness dir, $2 name, $3 status age, $4 started age, $5 stage, [$6 activity]
   local d="$1/runs/$2"
@@ -195,6 +197,11 @@ grep_ok "$WATCHED" "PROJ-1"            "watch: lists the run"
 grep_ok "$WATCHED" "Opus"              "watch: actor column"
 grep_ok "$WATCHED" "⏺ Edit src/app.ts" "watch: activity column"
 grep_ok "$WATCHED" "ACTIVITY"          "watch: column headers"
+if HARNESS_WATCH_INTERVAL=fast HARNESS_DIR="$H1" bash "$ST" --watch >/dev/null 2>&1; then
+  bad "watch: invalid refresh interval should exit non-zero"
+else
+  ok "watch: invalid refresh interval exits non-zero"
+fi
 
 # --- install.sh: statusline wiring -------------------------------------------
 echo "== install.sh: statusline wiring =="
@@ -203,17 +210,29 @@ inst() {  # $1 = harness dir, $2 = settings file, rest = install.sh args
   HOME="$ROOT/home" HARNESS_DIR="$h" CLAUDE_SKILLS_DIR="$h/skills" \
     CLAUDE_SETTINGS_FILE="$s" bash "$SRC/install.sh" "$@" </dev/null 2>&1
 }
+inst_tty() {  # $1 = harness dir, $2 = settings file; explicit consent in a PTY
+  local h="$1" s="$2" cmd
+  if script -q /dev/null true </dev/null >/dev/null 2>&1; then
+    HOME="$ROOT/home" HARNESS_DIR="$h" CLAUDE_SKILLS_DIR="$h/skills" \
+      CLAUDE_SETTINGS_FILE="$s" script -q /dev/null \
+      bash "$SRC/install.sh" --statusline </dev/null 2>&1
+  else
+    printf -v cmd 'bash %q --statusline' "$SRC/install.sh"
+    HOME="$ROOT/home" HARNESS_DIR="$h" CLAUDE_SKILLS_DIR="$h/skills" \
+      CLAUDE_SETTINGS_FILE="$s" script -qec "$cmd" /dev/null </dev/null 2>&1
+  fi
+}
 backups() { find "$ROOT" -maxdepth 1 -name "$(basename "$1").bak-*" | grep -c '' | tr -d ' '; }
 
 SA="$ROOT/settingsA.json"; printf '{"model":"opus"}\n' > "$SA"
-OUT="$(inst "$ROOT/instA" "$SA" --statusline)"
+OUT="$(inst_tty "$ROOT/instA" "$SA")"
 check "consent: statusLine written"  "$(jq -r '.statusLine.command' "$SA")" "$ROOT/instA/statusline.sh"
 check "consent: type is command"     "$(jq -r '.statusLine.type' "$SA")"    "command"
 check "consent: other keys survive"  "$(jq -r '.model' "$SA")"              "opus"
 check "consent: one timestamped backup" "$(backups "$SA")" "1"
 check "consent: backup holds the original" \
   "$(cat "$ROOT"/settingsA.json.bak-*)" '{"model":"opus"}'
-if [ -e "$ROOT/instA/statusline.sh" ]; then ok "install: statusline.sh installed"; else bad "install: statusline.sh installed"; fi
+if [ -x "$ROOT/instA/statusline.sh" ]; then ok "install: statusline.sh installed executable"; else bad "install: statusline.sh installed executable"; fi
 
 SB="$ROOT/settingsB.json"; printf '{"statusLine":{"type":"command","command":"/my/own"}}\n' > "$SB"
 BEFORE="$(cat "$SB")"
@@ -224,7 +243,7 @@ grep_ok "$OUT" "already defines a statusLine" "existing: says so"
 grep_ok "$OUT" "--runs-only"                  "existing: prints the compose one-liner"
 
 SC="$ROOT/settingsC.json"; printf '{}\n' > "$SC"
-OUT="$(inst "$ROOT/instC" "$SC")"
+OUT="$(inst "$ROOT/instC" "$SC" --statusline)"
 check   "non-interactive: settings.json untouched" "$(cat "$SC")" "{}"
 check   "non-interactive: no backup written"       "$(backups "$SC")" "0"
 grep_ok "$OUT" "not a terminal"  "non-interactive: explains why"

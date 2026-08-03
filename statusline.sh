@@ -24,6 +24,7 @@ set -u
 
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 HARNESS_STALE_SECS="${HARNESS_STALE_SECS:-21600}"   # 6h — older status = dead run
+HARNESS_GIT_TIMEOUT_SECS=2                            # statusline git calls stay prompt-safe
 
 if [ -n "${NO_COLOR:-}" ]; then
   C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''
@@ -84,7 +85,8 @@ harness_first_line() {  # $1 = file -> its first line, empty when absent
 harness_diffstat() {  # $1 = worktree, $2 = base ref -> "+N-M" or nothing
   local out=''
   [ -n "$1" ] && [ -n "$2" ] && [ -d "$1" ] || return 0
-  out=$(harness_timeout 2 git -C "$1" --no-optional-locks diff --shortstat "$2" 2>/dev/null) || return 0
+  out=$(harness_timeout "$HARNESS_GIT_TIMEOUT_SECS" \
+    git -C "$1" --no-optional-locks diff --shortstat "$2" 2>/dev/null) || return 0
   [ -n "$out" ] || return 0
   printf '%s' "$out" | awk '{
     for (i = 1; i <= NF; i++) {
@@ -108,7 +110,7 @@ harness_run_lines() {
     read -r ts stagetext < "$dir/status" || true
     case "$ts" in ''|*[!0-9]*) continue ;; esac
     case "$stagetext" in done:*|'') continue ;; esac
-    [ $((now - ts)) -lt "$HARNESS_STALE_SECS" ] || continue
+    [ "$((now - ts))" -le "$HARNESS_STALE_SECS" ] || continue
 
     started=$(harness_first_line "$dir/started")
     case "$started" in ''|*[!0-9]*) started="$ts" ;; esac
@@ -144,7 +146,8 @@ harness_header() {
     model=$(printf '%s' "$json" | jq -r '.model.display_name // empty' 2>/dev/null || true)
   fi
   [ -n "$dir" ] || dir="$PWD"
-  branch=$(harness_timeout 2 git -C "$dir" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=''
+  branch=$(harness_timeout "$HARNESS_GIT_TIMEOUT_SECS" \
+    git -C "$dir" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=''
 
   line="${C_CYAN}$(basename "$dir")${C_RESET}"
   [ -n "$branch" ] && line="$line ${C_DIM}·${C_RESET} ${C_MAGENTA}${branch}${C_RESET}"

@@ -14,7 +14,7 @@
 # Usage:
 #   ./install.sh                  symlink scripts back to this checkout (git pull to update)
 #   ./install.sh --copy           install detached copies instead
-#   ./install.sh --statusline     wire the statusline without prompting (consent)
+#   ./install.sh --statusline     wire without prompting when run in a terminal
 #   ./install.sh --no-statusline  never touch settings.json, just print how
 #
 # Env overrides:
@@ -90,11 +90,14 @@ wire_statusline() {
       return 0
     fi
   fi
+  # Even an affirmative flag must not let automation rewrite a user's Claude
+  # settings. The flag is explicit consent only when the installer itself is
+  # attached to a terminal; otherwise the manual path is the safe contract.
+  if [ ! -t 0 ]; then
+    statusline_manual "stdin is not a terminal — settings.json untouched."
+    return 0
+  fi
   if [ "$STATUSLINE" = ask ]; then
-    if [ ! -t 0 ]; then
-      statusline_manual "stdin is not a terminal — settings.json untouched."
-      return 0
-    fi
     printf 'Wire the harness statusline into %s? [y/N] ' "$SETTINGS"
     read -r reply || reply=''
     case "$reply" in

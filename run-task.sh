@@ -387,7 +387,7 @@ CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
 # events are appended to feed.log below as "HH:MM:SS <emoji> …"; without this the
 # feed went dark the moment the implementer stopped, even though the reviewer
 # still had two rounds to run. Same timestamp prefix, a ◆ marker plus the model
-# name so `tail -f feed.log` reads as one transcript of the whole run.
+# name so `tail -f feed.log` stays live across both model stages.
 feed() {  # $1 = marker + model, $2 = line
   printf '%s %s %.100s\n' "$(date '+%H:%M:%S')" "$1" "$2" >> "$RUN_DIR/feed.log"
 }

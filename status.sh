@@ -16,10 +16,10 @@ fmt() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
 # One frame of the dashboard. $1 = max rows to print (newest-first, the rest are
 # summarised) so a machine with hundreds of runs still fits on one screen.
 watch_render() {
-  local max="$1" now name dir ts stagetext started act inst shown=0 total=0
+  local max="$1" interval="$2" now name dir ts stagetext started act inst shown=0 total=0
   now=$(date +%s)
   printf '%sdispatch%s %s%s · every %ss · ctrl-c to quit%s\n\n' \
-    "$C_BOLD" "$C_RESET" "$C_DIM" "$(date '+%H:%M:%S')" "${HARNESS_WATCH_INTERVAL:-2}" "$C_RESET"
+    "$C_BOLD" "$C_RESET" "$C_DIM" "$(date '+%H:%M:%S')" "$interval" "$C_RESET"
   if [ ! -d "$RUNS" ]; then printf 'no runs yet\n'; return 0; fi
   printf '%s%-24s %-11s %-34s %-30s %-9s %s%s\n' \
     "$C_DIM" "RUN" "ACTOR" "STAGE" "ACTIVITY" "IN STAGE" "TOTAL" "$C_RESET"
@@ -53,6 +53,10 @@ watch_render() {
 
 watch_loop() {
   local interval="${HARNESS_WATCH_INTERVAL:-2}" rows max frame
+  if ! [[ "$interval" =~ ^[0-9]+([.][0-9]+)?$ ]] || [[ "$interval" =~ ^0+([.]0+)?$ ]]; then
+    echo "status.sh: HARNESS_WATCH_INTERVAL must be a positive number" >&2
+    return 2
+  fi
   trap 'printf "\033[?25h"' EXIT
   trap 'exit 0' INT TERM
   printf '\033[?25l'
@@ -60,7 +64,7 @@ watch_loop() {
     rows=$(tput lines 2>/dev/null || true)
     case "$rows" in ''|*[!0-9]*) rows=24 ;; esac
     max=$((rows - 5)); [ "$max" -lt 1 ] && max=1
-    frame=$(watch_render "$max")
+    frame=$(watch_render "$max" "$interval")
     # Home + erase-below redraws over the previous frame instead of scrolling a
     # new copy onto the screen, which is what makes a `while; do status.sh` loop
     # unreadable.
@@ -79,7 +83,7 @@ if [ "${1:-}" = "--watch" ]; then
     harness_actor() { HARNESS_ACTOR='-'; HARNESS_ACTOR_COLOR=''; }
   }
   watch_loop
-  exit 0
+  exit $?
 fi
 
 [ -d "$RUNS" ] || { echo "no runs yet"; exit 0; }
