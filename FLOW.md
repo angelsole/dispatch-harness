@@ -65,10 +65,15 @@ not quality review) are then resolved by a Claude worker instead of Codex.
 ```mermaid
 flowchart LR
     R[("per-run files<br/>status · activity · feed.log")]
-    R --> SL["Statusline in every Claude session<br/>run · model · current file · ±lines · sub usage"]
+    R --> SL["statusline.sh in every Claude session<br/>run · model · current file · ±lines · elapsed"]
+    R --> W["status.sh --watch<br/>live dashboard, no wiring needed"]
     R --> N["macOS notification<br/>per stage handoff"]
-    R --> Z["zoom in: status.sh · attach.sh · preview.sh"]
+    R --> Z["zoom in: status.sh id · attach.sh · preview.sh"]
 ```
+
+`statusline.sh` ships with the harness; `install.sh` offers to wire it into
+`~/.claude/settings.json`, or append `statusline.sh --runs-only` to a statusline
+you already have. `status.sh --watch` is the zero-config equivalent.
 
 To print: paste a block into https://mermaid.live → Export PNG/SVG,
 or open this file in VS Code (Markdown Preview Mermaid Support).
