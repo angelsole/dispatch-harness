@@ -64,12 +64,15 @@ Run in the background (never foreground — it takes many minutes):
 ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
 ```
 
-Tell the user it's running. Monitoring is ambient — they don't need any command:
-the statusline at the bottom of every Claude session shows a second line per
-active run (run id, which model, current tool/file, +lines/-lines, elapsed;
-refreshes every 5s), a red ⏸ segment means needs_input, and each stage handoff
-fires a macOS notification. For a deeper look there is
-`~/.claude/harness/runs/<RUN-ID>/feed.log` (live tool-by-tool transcript),
+Tell the user it's running, and how to watch it. If they wired the statusline
+(`statusline.sh`, offered by `install.sh`), monitoring is ambient: every Claude
+session shows a line per active run — run id, which model, current tool/file,
++lines/-lines, elapsed — and a red ⏸ line means needs_input. If they did not
+wire it, point them at `~/.claude/harness/status.sh --watch`, the same picture
+as a live dashboard in any terminal. Either way each stage handoff fires a
+macOS notification. For a deeper look there is
+`~/.claude/harness/runs/<RUN-ID>/feed.log` (live tool-by-tool transcript of the
+whole pipeline — the implementer's calls, then the reviewer's `◆ codex` lines),
 `status.sh [RUN-ID]` (table / timeline), and `attach.sh <RUN-ID>` (step into the
 worker session). Do not poll yourself; you'll be notified when it exits.
 Multiple tickets may run in parallel (separate worktrees).

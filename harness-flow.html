@@ -235,12 +235,13 @@
 </div>
 
 <h2>Monitoring — ambient, nothing to remember</h2>
-<p>The statusline at the bottom of every Claude session on this machine shows all active runs, refreshed every 5 seconds:</p>
-<div class="statusbar">📁 workspace <span class="dim">│</span> 🤖 Planner <span class="dim">│</span> ⏳ <span class="s1">5h 34% · 7d 61%</span><br>⚙ PROJ-1334 <span class="s2">Opus</span> ⏺ Edit src/components/DataTable.tsx <span class="s1">+214/−38</span> 9m <span class="dim">│</span> <span class="s3">⏸ PROJ-1420 needs input (3m)</span></div>
+<p>Wire <code>statusline.sh</code> once — <code>install.sh</code> offers to — and the statusline at the bottom of every Claude session on this machine shows all active runs:</p>
+<div class="statusbar">workspace <span class="dim">·</span> main <span class="dim">·</span> Opus 5<br>⏵ PROJ-1334 <span class="s2">Opus</span> ⏺ Edit src/components/DataTable.tsx <span class="s1">+214-38</span> 9m<br><span class="s3">⏸ PROJ-1420 needs input (3m)</span></div>
+<p>Skipped the wiring? <code>status.sh --watch</code> is the same picture as a live dashboard in any terminal.</p>
 <div class="mon">
   <div><b style="color:var(--fable)">Notifications</b><p>macOS banner on every stage handoff — implementing → gate → review → done. <code>HARNESS_NOTIFY=0</code> silences.</p></div>
   <div><b style="color:var(--opus)">Step inside</b><p><code>attach.sh &lt;id&gt;</code> resumes the worker session interactively, full context. <code>preview.sh &lt;id&gt;</code> runs the app from the worktree.</p></div>
-  <div><b style="color:var(--script)">Zoom in</b><p><code>status.sh</code> — table of runs · <code>status.sh &lt;id&gt;</code> — timeline · <code>tail -f feed.log</code> — live tool-by-tool transcript.</p></div>
+  <div><b style="color:var(--script)">Zoom in</b><p><code>status.sh</code> — table of runs · <code>status.sh --watch</code> — live dashboard · <code>status.sh &lt;id&gt;</code> — timeline · <code>tail -f feed.log</code> — tool-by-tool transcript of the whole pipeline.</p></div>
 </div>
 <p class="trail">Paper trail per run — <code>runs/&lt;id&gt;/</code>: brief.md · QUESTIONS.md · review-notes.md · feed.log · gate-*.log · result.json · opus-head</p>
 </div>

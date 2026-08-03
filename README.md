@@ -146,6 +146,12 @@ Optional, strongly recommended — it is the whole cross-vendor review stage:
   Older versions reject the default reviewer model (`gpt-5.6-sol`). Without it
   the harness runs in [Claude-only mode](#claude-only-mode).
 
+Optional (only for `station.sh`, the parked orchestrator session you drive from
+your phone):
+
+- **`tmux`** — `station.sh` runs the session inside it. Nothing else in the
+  harness needs tmux.
+
 Optional (only for the auto-recorded PR demo videos on frontend runs):
 
 - **[`shot-scraper`](https://shot-scraper.datasette.io/)** — records the
@@ -195,7 +201,9 @@ cd dispatch-harness
 
 # Symlinks scripts into ~/.claude/harness and the skill into
 # ~/.claude/skills/dispatch/. Re-runnable; never clobbers your local config.
+# It also offers to wire the live statusline into ~/.claude/settings.json.
 ./install.sh          # or ./install.sh --copy for detached copies
+                      # --statusline / --no-statusline to decide up front
 
 # Pin a repo onto the pipeline (optional — anything unset is auto-detected).
 # setup-repo.sh inspects the repo and writes a complete, pinned entry for you:
@@ -341,18 +349,42 @@ Deny lists are cheap insurance; add to them liberally.
 
 ## Monitoring
 
-Monitoring is ambient — there's nothing you have to run. Each run writes plain
-files under `~/.claude/harness/runs/<RUN-ID>/`, and the tooling reads them:
+Each run writes plain files under `~/.claude/harness/runs/<RUN-ID>/`, and the
+tooling reads them. Wire the statusline once and monitoring is ambient; skip it
+and `status.sh --watch` gives you the same picture on demand.
 
-- **Statusline** — a line per active run in every Claude session on the machine
-  (run id, current model, current tool/file, `±lines`, elapsed; refreshes every
-  few seconds). A `⏸` segment means `needs_input`.
+- **Statusline** (`statusline.sh`) — a line per active run in every Claude
+  session on the machine: run id, which model has it, the tool/file it is
+  touching right now, `±lines` against the base, elapsed minutes. A red `⏸`
+  line means `needs_input`. Finished runs, and runs whose status hasn't moved
+  in 6h, drop off by themselves.
+
+  `install.sh` offers to wire it into `~/.claude/settings.json` for you (only
+  with your consent, and it backs the file up first). By hand:
+
+  ```jsonc
+  "statusLine": {"type": "command", "command": "~/.claude/harness/statusline.sh"}
+  ```
+
+  Already have a statusline command? Keep it and append the run lines:
+
+  ```bash
+  <your command>; ~/.claude/harness/statusline.sh --runs-only
+  ```
+
+  `--runs-only` emits nothing but run lines and reads no stdin — the session
+  JSON can only be consumed once, so your own script keeps it.
+
+- **`status.sh --watch`** — the zero-config alternative: a live dashboard in any
+  terminal (run, actor, stage, current activity, time in stage, total),
+  redrawn in place every 2s (`HARNESS_WATCH_INTERVAL` to retune).
 - **Notifications** — a desktop banner (macOS `osascript`) and/or a phone push
   (ntfy) on every stage handoff. Silence the desktop ones with `HARNESS_NOTIFY=0`.
 - **`status.sh`** — one-shot table of all runs; `status.sh <RUN-ID>` prints a
   run's full timeline and result.
-- **`feed.log`** — a live, tool-by-tool transcript of the worker
-  (`tail -f ~/.claude/harness/runs/<RUN-ID>/feed.log`).
+- **`feed.log`** — a live, tool-by-tool transcript of the *whole* pipeline
+  (`tail -f ~/.claude/harness/runs/<RUN-ID>/feed.log`): the implementer's tool
+  calls and thinking, then the reviewer's output prefixed `◆ codex`.
 - **`attach.sh <RUN-ID>`** — step into the worker's session interactively, with
   full context (it warns before forking a still-running worker).
 - **`preview.sh <RUN-ID>`** — run the dev server inside the worktree to see the
@@ -483,7 +515,8 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `setup-ai-settings.json` | Read-only tool sandbox for `setup-repo.sh --ai` |
 | `brief-template.md` | The contract the planner fills in per task |
 | `skills/dispatch/SKILL.md` | The planner protocol (a Claude Code skill) |
-| `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Monitoring & lifecycle helpers |
+| `statusline.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose) |
+| `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Monitoring (`status.sh --watch` is the live dashboard) & lifecycle helpers |
 | `metrics.sh` | Tabulate per-run metrics from `result.json` (table / `--csv`) |
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script) |
