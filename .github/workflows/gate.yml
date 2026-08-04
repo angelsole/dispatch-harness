@@ -13,5 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Run gate (shellcheck + bash -n on every shipped script)
+      # Everything else the suites need (jq, git, script(1)) is preinstalled on
+      # ubuntu-latest.
+      - name: Run gate (lint + tests/*.test.sh)
         run: bash gate.sh
