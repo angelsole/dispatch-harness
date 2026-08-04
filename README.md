@@ -156,9 +156,14 @@ Optional (only for the auto-recorded PR demo videos on frontend runs):
 
 - **[`shot-scraper`](https://shot-scraper.datasette.io/)** — records the
   storyboard.
+- **`python3`** — runs the interactive login capture when `shot-scraper` was
+  installed outside uv's default tool directory.
 - **[`rclone`](https://rclone.org/)** — uploads the video to object storage
   (any S3-compatible bucket: Cloudflare R2, AWS S3, Backblaze B2, MinIO).
 - **`ffmpeg`** — transcodes the recording and builds the preview GIF.
+
+Optional (only for the copyable Postgres preflight example): **`docker`**,
+**`nc`**, and **`npx`**.
 
 Portability notes: the scripts target **bash 3.2** (the macOS default). macOS
 ships no `timeout(1)`, so the harness uses a `perl -e 'alarm ...'` wrapper as a
@@ -519,8 +524,9 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Monitoring (`status.sh --watch` is the live dashboard) & lifecycle helpers |
 | `metrics.sh` | Tabulate per-run metrics from `result.json` (table / `--csv`) |
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
-| `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script) |
+| `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |
@@ -530,12 +536,25 @@ code**, against your repositories. Be clear-eyed about what that means.
 ## Development
 
 This repo's own test gate is [`gate.sh`](gate.sh): it runs `bash -n` and
-`shellcheck -x -S warning` over every shipped shell script. Run it before
-committing:
+`shellcheck -x -S warning` over every shipped shell script, then executes every
+suite in `tests/*.test.sh` and reports each one's pass/fail counts. Run it
+before committing:
 
 ```bash
 bash gate.sh
 ```
+
+The suites are self-contained bash — no framework, no network, no writes
+outside a temp sandbox — so any one of them also runs standalone:
+
+```bash
+bash tests/docs.test.sh
+```
+
+`tests/docs.test.sh` is the docs-as-tests suite: it asserts that the
+Prerequisites above name every binary the scripts actually need, that
+`install.sh`'s file list matches the repo, and that no script named in this
+README or in `SKILL.md` has stopped existing.
 
 CI runs the same gate on Linux for every push and pull request.
 

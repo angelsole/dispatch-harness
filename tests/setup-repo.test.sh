@@ -178,7 +178,21 @@ else
   ok "ai: source treats model output as literal text"
 fi
 
-OUT="$(HARNESS_DIR="$ROOT/hai-missing" CLAUDE_BIN="$ROOT/no-claude" bash "$SETUP" "$NPM" --ai 2>/dev/null)"
+# An unusable CLAUDE_BIN makes setup-repo.sh fall back to a PATH lookup, so this
+# case only exercises the no-claude path when PATH has no claude either —
+# otherwise it fires a real model call (slow, and not a test of anything).
+path_without_claude() {
+  local out='' d
+  local IFS=:
+  for d in $PATH; do
+    [ -n "$d" ] && [ ! -x "$d/claude" ] && out="$out${out:+:}$d"
+  done
+  printf '%s' "$out"
+}
+NO_CLAUDE_PATH="$(path_without_claude)"
+
+OUT="$(HARNESS_DIR="$ROOT/hai-missing" CLAUDE_BIN="$ROOT/no-claude" PATH="$NO_CLAUDE_PATH" \
+       bash "$SETUP" "$NPM" --ai 2>/dev/null)"
 grep_ok "$OUT" "GATE_CMD='npm run lint && npm test'" "ai: missing claude falls back to deterministic output"
 BAD_FAKE="$ROOT/bad-claude"
 cat > "$BAD_FAKE" <<'SH'
