@@ -16,13 +16,20 @@ else
   status=1
 fi
 
-# git ls-files emits sorted paths, so suites run in filename order. Only a
-# failing suite prints its transcript; a green one is worth exactly one line.
-for t in $(git ls-files 'tests/*.test.sh'); do
+# Bash expands the glob in filename order and includes new suites before their
+# first commit. Only a failing suite prints its transcript; a green one is worth
+# exactly one line.
+for t in tests/*.test.sh; do
+  [ -e "$t" ] || continue
   started=$SECONDS
   if out=$(bash "$t" 2>&1); then verdict=ok; else verdict=FAIL; status=1; fi
+  counts=$(printf '%s\n' "$out" | awk '
+    /^  ok /   { passed++ }
+    /^  FAIL / { failed++ }
+    END { printf "%d passed, %d failed", passed, failed }
+  ')
   printf 'gate: %-24s %-4s %3ds  %s\n' "$t" "$verdict" "$((SECONDS - started))" \
-    "$(printf '%s\n' "$out" | grep -E '[0-9]+ passed, [0-9]+ failed' | tail -1)"
+    "$counts"
   [ "$verdict" = ok ] || printf '%s\n' "$out"
 done
 
