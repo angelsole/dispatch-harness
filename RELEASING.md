@@ -55,7 +55,8 @@ state must not appear anywhere in history.
 ## 3. Gate + prerequisites
 
 ```bash
-bash gate.sh          # shellcheck -x + bash -n on every shipped script
+bash gate.sh          # shellcheck -x + bash -n on every shipped script,
+                      # then every suite in tests/*.test.sh
 ```
 
 Confirm the CI workflow ([`.github/workflows/gate.yml`](.github/workflows/gate.yml))
