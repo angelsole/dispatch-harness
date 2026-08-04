@@ -49,9 +49,9 @@ uses() { grep -qwF -- "$1" "$BLOB"; }
 # catches a *new* guarded dependency landing with no README line.
 PREREQ_BINS='claude gh jq git bash curl perl lsof uuidgen'
 
-# Optional features and this repo's own dev tooling: not needed to run the
-# pipeline, but README must still say they exist.
-DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg shellcheck'
+# Optional features, example tooling, and this repo's own dev tooling: not
+# needed to run the pipeline, but README must still say they exist.
+DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npx shellcheck'
 
 # Guarded at every call site and degrade silently when absent — README owes
 # them nothing.
@@ -153,6 +153,7 @@ claim README      "$README"    'statusline.sh'
 claim README      "$README"    '--runs-only'
 claim README      "$README"    'status.sh --watch'
 claim SKILL.md    "$SKILL"     'statusline.sh'
+claim SKILL.md    "$SKILL"     '--runs-only'
 claim SKILL.md    "$SKILL"     'status.sh --watch'
 claim README      "$README"    'tests/*.test.sh'
 claim RELEASING.md "$RELEASING" 'tests/*.test.sh'

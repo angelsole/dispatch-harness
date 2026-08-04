@@ -156,9 +156,14 @@ Optional (only for the auto-recorded PR demo videos on frontend runs):
 
 - **[`shot-scraper`](https://shot-scraper.datasette.io/)** — records the
   storyboard.
+- **`python3`** — runs the interactive login capture when `shot-scraper` was
+  installed outside uv's default tool directory.
 - **[`rclone`](https://rclone.org/)** — uploads the video to object storage
   (any S3-compatible bucket: Cloudflare R2, AWS S3, Backblaze B2, MinIO).
 - **`ffmpeg`** — transcodes the recording and builds the preview GIF.
+
+Optional (only for the copyable Postgres preflight example): **`docker`**,
+**`nc`**, and **`npx`**.
 
 Portability notes: the scripts target **bash 3.2** (the macOS default). macOS
 ships no `timeout(1)`, so the harness uses a `perl -e 'alarm ...'` wrapper as a

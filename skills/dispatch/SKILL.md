@@ -65,7 +65,8 @@ Run in the background (never foreground — it takes many minutes):
 ```
 
 Tell the user it's running, and how to watch it. If they wired the statusline
-(`statusline.sh`, offered by `install.sh`), monitoring is ambient: every Claude
+(`statusline.sh`, or `statusline.sh --runs-only` when composed with another
+statusline, as offered by `install.sh`), monitoring is ambient: every Claude
 session shows a line per active run — run id, which model, current tool/file,
 +lines/-lines, elapsed — and a red ⏸ line means needs_input. If they did not
 wire it, point them at `~/.claude/harness/status.sh --watch`, the same picture
