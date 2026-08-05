@@ -446,49 +446,69 @@ the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
 
 ### The Wall
 
-`wall.sh` is the same picture for a room instead of a terminal: a read-only
-web page for an office TV showing what every agent is doing right now — one
-CRT-style panel per live run with its stage, the model that owns it, its diff
-size and a scrolling tail of `feed.log`, a klaxon-red panel when a run needs
-your input, and a rail of recently finished runs with their PR links. It reads
-the same run dirs as everything above and never dispatches anything.
+`wall.sh` is the same picture for a room instead of a terminal: a read-only web
+page for an office TV showing what every agent is doing right now. It reads the
+same run dirs as everything above and never dispatches anything.
 
-The wall is organised as a **crew manifest**: one lane per person, holding all
-of their parallel dispatches, so the room can see at a glance who has work in
-flight and whose run is blocked. Automated dispatchers (`bot`) get a lane of
-their own, marked as the ship's synthetic rather than listed as crew.
+The wall is a **city**. Each project is a tower; each run is a lit car climbing
+it; the floor the car has reached is the run's pipeline stage — street level is
+setup, then implement, gate, review, demo, and the roof is the PR. The car
+carries the neon of whichever model owns that stage, so a glance across the room
+reads as *which repos are busy, how far along, and who is driving*:
+
+| On the wall | What it means |
+| --- | --- |
+| A tower | One project. It exists only while it has current or recent runs — a repo nobody is working in is simply not in the skyline. Its silhouette is stable, so the room learns the city as a place. |
+| A lit car | One run, at the floor of its current stage, in its actor's neon. |
+| A rooftop beacon | A run reached `done: ready` and its PR is open. |
+| A searchlight + red tower | A run wrote `QUESTIONS.md` and is waiting on a human. It is the loudest thing on the screen, and it pins the brief plate until you answer it. |
+| A red flare, dead windows | A rejected or failed run, parked at the floor it stopped on. |
+| Warm windows fading out | Recently finished work, dimming as it ages. |
+| A small hovering vehicle | Who dispatched that run, in their own stable tint. `bot` flies the milk-white synthetic drone. |
+| `UNCHARTED` | Runs whose worktree cannot be read — honest about the gap rather than filed under a repo they may not belong to. |
+
+Towers cannot carry type you can read from four metres, so two surfaces do:
+a Blade Runner **brief plate** cycling the live runs in big letters (ticket,
+project, stage, actor, the blocking question), and a **comms ticker** along the
+bottom carrying the tail of every live `feed.log`.
 
 ```bash
 wall.sh                             # ~/.claude/harness/runs on http://0.0.0.0:4711
 wall.sh --port 8080 --host 100.x.y.z
 wall.sh --runs wall/fixtures/runs   # staged demo data, no live runs needed
-wall.sh --crew angel,reinier,emre   # keep their lanes up even when idle
 ```
 
 Then point a browser on the TV at `http://<this-machine>:4711/` and put it in
-fullscreen (Chrome: `--kiosk --app=http://<host>:4711/`). Lanes share the screen
-width and the type scales to how many crew and runs are on it: one run gets a
-full control panel, a stack of parallel runs compresses to fit, anything beyond
-four per lane moves to the overflow ticker, and an empty queue gets an idle
-screen. It is a single dependency-free `node` (≥ 20) server plus one static
-page — no build step, no npm, and no request that leaves the machine, so it is
-happy on a tailnet-only screen. There is no auth: keep it off the public
-internet. `wall/fixtures/seed.js` regenerates the staged fixture runs.
+fullscreen (Chrome: `--kiosk --app=http://<host>:4711/`). With nothing running
+you get the city at dusk and no text at all — the wall reports work, it does not
+report people. It is a single dependency-free `node` (≥ 20) server plus one
+static page, drawn entirely in CSS and inline SVG — no build step, no npm, no
+image assets, and no request that leaves the machine, so it is happy on a
+tailnet-only screen. `prefers-reduced-motion` stops the rain, the traffic and
+the searchlight's travel and leaves the same city standing still. There is no
+auth: keep it off the public internet. `wall/fixtures/seed.js` regenerates the
+staged fixture runs.
 
-**Who owns a run.** `run-task.sh` pins `HARNESS_OWNER` into the run dir on the
-first dispatch (and into `result.json`), the same way it pins the arm and the
-model knobs — a resume from someone else's session never re-attributes a run.
-Export it wherever you dispatch from:
+**Which tower a run stands in.** `run-task.sh` builds each worktree as
+`<repo-dir>-<ticket>` beside the repo and records that absolute path in the run
+dir (and in `result.json`); the wall reverses the construction to recover the
+repo name. Nothing new is pinned for the wall's sake, and a run whose worktree
+is unreadable goes to `UNCHARTED` rather than being guessed at.
+
+**Who dispatched a run.** `run-task.sh` pins `HARNESS_OWNER` into the run dir on
+the first dispatch (and into `result.json`), the same way it pins the arm and
+the model knobs — a resume from someone else's session never re-attributes a
+run. Export it wherever you dispatch from:
 
 ```bash
 export HARNESS_OWNER=angel        # e.g. in the station session's shell
 ```
 
-Runs dispatched without it are unowned and collect in an `UNREGISTERED` lane —
-honest about the gap rather than silently assigning them to someone. `--crew`
-(or `WALL_CREW`) declares the expected roster: those lanes stay on the wall
-while their queue is empty, and anyone who dispatches from outside the roster
-still gets a lane.
+That name only ever becomes a vehicle tint. There are no lanes, no per-person
+counts and no idle states anywhere on the wall: an empty slot beside a
+colleague's three lit floors is social pressure, not information. `--crew` (or
+`WALL_CREW`) is still accepted so existing launch scripts keep working, but a
+declared roster no longer puts anything on screen.
 
 ---
 
