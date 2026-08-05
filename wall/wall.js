@@ -172,14 +172,22 @@
 
   function makeTower() {
     const root = el('section', 'tower');
-    root.append(el('div', 'tower__pool'), el('div', 'tower__sweep'), el('div', 'tower__spot'));
+    // The searchlight is two halves of one beam: the sweep out of the roof, and
+    // the patch it paints on the overcast above.
+    root.append(el('div', 'tower__pool'), el('div', 'tower__sweep'),
+                el('div', 'tower__ceiling'), el('div', 'tower__spot'));
     const crown = el('div', 'tower__crown');
-    crown.append(el('div', 'tower__beacon'));
+    crown.append(el('div', 'tower__halo'), el('div', 'tower__beacon'));
     const mass = el('div', 'tower__mass');
     const windows = el('i', 'tower__windows');
+    // The shipping cascade goes over the facade and under the ladder: the light
+    // climbs the windows, never the shafts. Its child is the travelling glow;
+    // the wrapper holds the storey mask still while that glow moves behind it.
+    const cascade = el('i', 'tower__cascade');
+    cascade.append(el('i'));
     const slabs = el('i', 'tower__floors');
     const shafts = el('div', 'tower__shafts');
-    mass.append(windows, slabs, shafts);
+    mass.append(windows, cascade, slabs, shafts);
     const sign = el('div', 'tower__sign');
     // The wet-tarmac reflection reuses the window-grid styling wholesale (same
     // class, same per-shape storey variables) and restyles itself via the
@@ -197,8 +205,11 @@
     T.root.dataset.crown = String(tower.crown);
     T.root.dataset.known = tower.known ? '1' : '0';
     T.root.dataset.alarm = tower.alarm ? '1' : '0';
-    // The rooftop beacon belongs to a run that has just shipped, and it flares
-    // and dies with that run's completion moment — hence the shared --age.
+    // The rooftop beacon and the shipping ceremony both belong to a run that
+    // has just shipped, and both flare and die with that run's completion
+    // moment — hence the one shared --age, written once when the tower gains a
+    // shipped run so a late-joining browser lands mid-beat instead of replaying
+    // it, and never rewritten, which is what keeps it to once per run.
     const shipped = tower.runIds.find((id) => (byId.get(id) || {}).state === 'ready') || '';
     T.root.dataset.ready = shipped ? '1' : '0';
     if (shipped !== T.ready) {
@@ -356,6 +367,7 @@
 
   function commsLines() {
     const items = [];
+    const at = now();
     for (const run of runs) {
       const who = { id: run.id, owner: run.owner, tint: crewTint(run) };
       if (isLive(run)) {
@@ -364,7 +376,16 @@
       } else if (skyline.has(run.id)) {
         const verdict = run.state === 'ready' ? 'SHIPPED' : 'STOPPED';
         const detail = run.prUrl || run.reason || run.outcome || run.stage;
-        items.push({ ...who, text: verdict + ' — ' + detail, src: run.state });
+        // The ticker's half of the shipping ceremony: for as long as the tower
+        // is celebrating, this run's line is what shipped, in the brightest
+        // type the tube has. The line already opens with the ticket id, so the
+        // title is what the sentence adds. Aged off the same clock as the
+        // tower's beat, which is why a browser joining late gets the settled
+        // line rather than a celebration nobody is having any more.
+        const shipping = run.state === 'ready' && at - (run.since || at) < CEREMONY_S;
+        items.push(shipping
+          ? { ...who, text: 'SHIPPED · ' + (run.title || detail), src: 'shipped' }
+          : { ...who, text: verdict + ' — ' + detail, src: run.state });
       }
     }
     return items;

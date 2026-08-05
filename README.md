@@ -461,6 +461,7 @@ room reads as *which repos are busy, how far along, and who is driving*:
 | A tower | One project. It stands only while it has live work — a repo nobody is working in right now is simply not in the skyline. Its silhouette is stable, so the room learns the city as a place. |
 | A lit car | One run, at the floor of its current stage, in its actor's neon. |
 | A rooftop beacon flare | A run reached `done: ready` and its PR is open. |
+| A tower lighting up floor by floor | The same run, celebrating: six seconds of light climbing the facade, the rooftop lamp thrown wide and the ticker printing what shipped, before the run leaves the skyline the normal way. Once per run — a browser opening halfway through joins the beat in progress rather than replaying it. |
 | A searchlight + red tower | A run wrote `QUESTIONS.md` and is waiting on a human. It is the loudest thing on the screen, and it pins the brief plate until you answer it. |
 | A red flare, then dark | A rejected or failed run, burning out at the floor it stopped on. |
 | A beam out of the cloud | The run the brief plate is currently featuring — its building lights up and the rest of the city steps back, so the plate and the skyline are never two separate stories. |

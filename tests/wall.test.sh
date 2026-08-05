@@ -167,6 +167,66 @@ grep_ok "$PAGE_SRC" "run.state === 'alarm' ? 'alarm' : run.actorKey" \
 check "plate: the ticket type is untouched by the chrome pass" \
   "$(printf '%s\n' "$CSS_SRC" | sed -n '/^\.brief__id {/,/^}/p' | grep -c 'font-size: 2.5rem')" "1"
 
+# --- the shipping ceremony ------------------------------------------------------
+# A run reaching `done: ready` gets a short beat before the normal completion
+# exit: light climbing the facade, the rooftop lamp thrown wide, one bright line
+# on the ticker. It is one animation family on one duration, fast-forwarded by
+# --age exactly like the exit it precedes, and every part has to end on nothing
+# or a browser opening tomorrow finds a tower still celebrating.
+echo "== wall: the shipping ceremony =="
+grep_ok "$PAGE_SRC" 'tower__cascade' "ceremony: light climbs the facade floor by floor"
+grep_ok "$CSS_SRC" '.tower[data-ready="1"] .tower__cascade' \
+  "ceremony: only a tower with a shipped run plays it"
+grep_ok "$CSS_SRC" '.tower[data-ready="1"] .tower__halo' \
+  "ceremony: and the rooftop lamp throws wider"
+grep_ok "$PAGE_SRC" "'SHIPPED · '" "ceremony: the ticker prints the shipped line"
+grep_ok "$CSS_SRC" '.comms__line[data-src="shipped"]' "ceremony: in the brightest type it has"
+CEREMONY_CSS="$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *--ceremony: \([0-9.]*\)s;.*/\1/p' | head -1)"
+CEREMONY_JS="$(sed -n 's/^  const CEREMONY_S = \([0-9.]*\);.*/\1/p' "$SRC/wall/wall.js")"
+check "ceremony: the page and the stylesheet agree on the beat" "$CEREMONY_JS" "$CEREMONY_CSS"
+if [ -n "$CEREMONY_CSS" ] && awk "BEGIN { exit !($CEREMONY_CSS > 0 && $CEREMONY_CSS <= 6) }"; then
+  ok "ceremony: the whole beat is six seconds or less"
+else
+  bad "ceremony: the whole beat is six seconds or less (got [$CEREMONY_CSS])"
+fi
+check "ceremony: every part of it runs on that one duration" \
+  "$(printf '%s\n' "$CSS_SRC" | grep -cE 'animation: ship-[a-z]+ var\(--ceremony\)')" "3"
+check "ceremony: and is fast-forwarded by --age, like the exit it precedes" \
+  "$(printf '%s\n' "$CSS_SRC" | grep -A1 -E 'animation: ship-[a-z]+ var\(--ceremony\)' \
+     | grep -cF 'animation-delay: calc(var(--age, 0) * -1s)')" "3"
+for beat in ship-lit ship-halo; do
+  check "ceremony: $beat leaves nothing behind" \
+    "$(printf '%s\n' "$CSS_SRC" | awk -v k="@keyframes $beat" 'index($0, k) == 1, /^}/' \
+       | grep -c '100% { opacity: 0')" "1"
+done
+
+# --- traffic and the searchlight -------------------------------------------------
+echo "== wall: ground traffic, and a beam that lands =="
+grep_ok "$PAGE_SRC" 'street__car' "traffic: something crosses at street level"
+grep_ok "$CSS_SRC" '.street { display: none; }' "traffic: and reduced motion parks it"
+# Every animation duration declared for a selector matching $1, whichever of the
+# two spellings the rule uses.
+durations() {
+  printf '%s\n' "$CSS_SRC" | awk -v want="$1" '
+    /^[.@]/ { sel = $0 }
+    sel ~ want && /animation(-duration)?:/ {
+      if (match($0, /[0-9.]+s/)) print substr($0, RSTART, RLENGTH - 1)
+    }
+  '
+}
+AIR_SLOWEST="$(durations 'traffic__ship' | sort -n | tail -1)"
+GROUND_RAREST="$(durations 'street__car' | sort -n | head -1)"
+if [ -n "$AIR_SLOWEST" ] && [ -n "$GROUND_RAREST" ] \
+   && awk "BEGIN { exit !($GROUND_RAREST > $AIR_SLOWEST) }"; then
+  ok "traffic: a ground pass is rarer than anything in the air (${GROUND_RAREST}s vs ${AIR_SLOWEST}s)"
+else
+  bad "traffic: a ground pass is rarer than anything in the air (ground [$GROUND_RAREST] air [$AIR_SLOWEST])"
+fi
+grep_ok "$PAGE_SRC" 'tower__ceiling' "alarm: the beam paints a patch on the cloud ceiling"
+check "alarm: and the patch runs on the sweep's own timing, not its own" \
+  "$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *animation: ceiling \(.*\);$/\1/p')" \
+  "$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *animation: sweep \(.*\);$/\1/p')"
+
 
 # The palette is night, not sunset. These are the exact sunset stops and the
 # pink/purple neon the city shipped with in #8 — none of them may come back.

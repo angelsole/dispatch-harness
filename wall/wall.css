@@ -60,6 +60,7 @@
   --climb: 1500ms;                              /* a car changing floors */
   --spot-in: 800ms;                             /* the searchbeam finding it */
   --completion: 0s;     /* set from the snapshot before any tower is rendered */
+  --ceremony: 6s;       /* the shipping beat, inside the completion moment */
 }
 
 * { box-sizing: border-box; }
@@ -220,6 +221,45 @@ body {
 }
 .traffic__ship--e::after { animation-duration: 3.9s; }
 
+/* Street level: once in a long while something drives past the front of the
+   city. Deliberately rarer than anything in the air — it is punctuation, and a
+   wall with constant ground movement is a screensaver. Above the haze, or the
+   dark slab over the tarmac swallows it. */
+.street {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 12;
+  height: 9vh;
+  overflow: hidden;
+  pointer-events: none;
+}
+.street__car {
+  --lum: 0.8;
+  position: absolute;
+  bottom: 5.2vh;
+  left: -14%;
+  width: 4.2rem;
+  height: 0.16rem;
+  border-radius: 0.16rem;
+  mix-blend-mode: screen;
+  background: linear-gradient(90deg, transparent, rgba(255, 214, 168, 0.16) 34%, #fff5e2);
+  box-shadow: 0 0 0.8rem rgba(255, 206, 150, 0.75), 0 0.5rem 1.4rem rgba(255, 180, 120, 0.26);
+  opacity: 0;
+  animation: streak 143s linear infinite;
+}
+.street__car--b {
+  --lum: 0.5;
+  bottom: 6.4vh;
+  width: 5.6rem;
+  background: linear-gradient(90deg, #cfe8ff, rgba(150, 200, 255, 0.14) 62%, transparent);
+  box-shadow: 0 0 0.8rem rgba(150, 200, 255, 0.55), 0 0.4rem 1.2rem rgba(120, 180, 255, 0.2);
+  animation-duration: 197s;
+  animation-delay: -84s;
+  animation-direction: reverse;
+}
+
 /* --- top chrome ------------------------------------------------------------ */
 
 .hud {
@@ -326,6 +366,11 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
 @keyframes idle-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.08; } }
 
 .tower {
+  /* Storey pitch and bay width, a fact about the building rather than about one
+     of its layers: the facade grid, its reflection and the shipping cascade all
+     have to agree on where a floor is. */
+  --row: 0.44rem;
+  --col: 0.3rem;
   position: relative;
   height: 50%;
   flex: 0 1 auto;
@@ -438,8 +483,6 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
    opaque masonry bands painted over every other row, which leaves a grid of
    small rectangles in amber, dirty white and cyan. */
 .tower__windows {
-  --row: 0.44rem;
-  --col: 0.3rem;
   position: absolute;
   inset: 0;
   background:
@@ -467,10 +510,10 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
 }
 /* Storey height and bay width shift with the silhouette, so two towers of the
    same shape family still read as two different buildings. */
-.tower[data-shape="1"] .tower__windows { --row: 0.36rem; --col: 0.24rem; }
-.tower[data-shape="2"] .tower__windows { --row: 0.5rem; --col: 0.34rem; }
-.tower[data-shape="3"] .tower__windows { --row: 0.4rem; --col: 0.42rem; }
-.tower[data-shape="4"] .tower__windows { --row: 0.56rem; --col: 0.26rem; }
+.tower[data-shape="1"] { --row: 0.36rem; --col: 0.24rem; }
+.tower[data-shape="2"] { --row: 0.5rem; --col: 0.34rem; }
+.tower[data-shape="3"] { --row: 0.4rem; --col: 0.42rem; }
+.tower[data-shape="4"] { --row: 0.56rem; --col: 0.26rem; }
 
 /* The shaft region: the part of the mass every silhouette above keeps solid,
    so a car on the top floor is never clipped away by a setback or a taper.
@@ -597,6 +640,30 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
 .tower[data-alarm="1"] .tower__sweep {
   opacity: 1;
   animation: sweep 4.4s var(--ease-io) infinite alternate;
+}
+/* A beam has to land on something. The ceiling over this city is low, so the
+   sweep paints a soft patch on the overcast just above the roof it comes out
+   of. Same duration, same curve, same alternate as the sweep itself — this is
+   the other end of one beam, not a second animation that happens to rhyme. The
+   throw is asymmetric because the sweep is: tan(-34°) against tan(38°). */
+.tower__ceiling {
+  --reach: 9vh;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 1.5vh);
+  width: 44vh;
+  height: 18vh;
+  margin-left: -22vh;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: radial-gradient(50% 50% at 50% 50%,
+    rgba(255, 96, 104, 0.3), rgba(255, 60, 80, 0.11) 46%, transparent 74%);
+  opacity: 0;
+  transform: translate3d(0, 0, 0);
+}
+.tower[data-alarm="1"] .tower__ceiling {
+  opacity: 1;
+  animation: ceiling 4.4s var(--ease-io) infinite alternate;
 }
 .tower__mass::after {
   content: "";
@@ -791,6 +858,76 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   background: color-mix(in srgb, var(--failed) 16%, transparent);
 }
 
+/* --- the shipping ceremony --------------------------------------------------
+   `done: ready` is the only good news this wall carries, so the building marks
+   it before it goes dark: light climbing the facade floor by floor, the rooftop
+   lamp throwing wider than its usual flare, and one bright line on the ticker
+   (wall.js writes that half). It runs inside the completion moment, not instead
+   of it — --age fast-forwards the beat exactly like everything else here, so a
+   browser opening halfway through joins it in progress rather than replaying
+   it, and every keyframe below settles on nothing, which leaves the standard
+   lights-out exit to finish on its own. */
+
+.tower__cascade {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0;
+  /* The storey grid, held still in the building while the light travels behind
+     it. That is what makes the climb read as floors coming on one after another
+     rather than as a wipe up the wall — and it is the facade's own pitch, off
+     the same variable, so the lit rows are the windows. */
+  -webkit-mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) calc(var(--row) * 2));
+  mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) calc(var(--row) * 2));
+}
+.tower__cascade i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -100%;
+  height: 100%;
+  /* A bright leading edge with a long draining trail under it: the floors the
+     light has already reached stay lit for a moment and then let go. */
+  background: linear-gradient(0deg,
+    transparent 0%,
+    color-mix(in srgb, var(--done) 34%, transparent) 58%,
+    rgba(232, 255, 244, 0.9) 94%,
+    rgba(232, 255, 244, 0) 100%);
+}
+.tower[data-ready="1"] .tower__cascade {
+  animation: ship-lit var(--ceremony) var(--ease-io) forwards;
+  animation-delay: calc(var(--age, 0) * -1s);
+}
+.tower[data-ready="1"] .tower__cascade i {
+  animation: ship-climb var(--ceremony) var(--ease) forwards;
+  animation-delay: calc(var(--age, 0) * -1s);
+}
+
+/* The halo the rooftop lamp makes in the wet air when a PR actually opens: the
+   same beacon, thrown much wider, for as long as the beat lasts. */
+.tower__halo {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 9rem;
+  height: 9rem;
+  margin: -4.5rem 0 0 -4.5rem;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: radial-gradient(50% 50% at 50% 50%,
+    color-mix(in srgb, var(--done) 60%, transparent),
+    color-mix(in srgb, var(--done) 18%, transparent) 40%,
+    transparent 72%);
+  opacity: 0;
+  transform: scale(0.3);
+}
+.tower[data-ready="1"] .tower__halo {
+  animation: ship-halo var(--ceremony) var(--ease) forwards;
+  animation-delay: calc(var(--age, 0) * -1s);
+}
+
 /* --- the brief plate: big type, one run at a time --------------------------- */
 
 .brief {
@@ -976,6 +1113,14 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
 .comms__line[data-src="claude"] .comms__body { color: color-mix(in srgb, var(--opus) 62%, var(--phosphor-dim)); }
 .comms__line[data-src="ready"] .comms__body { color: var(--done); }
 .comms__line[data-src="failed"] .comms__body { color: var(--failed); }
+/* The shipping ceremony's line: while the tower is celebrating, the ticker says
+   what shipped in the brightest type this tube has. When the beat is over
+   wall.js drops it back to the ordinary completion line above. */
+.comms__line[data-src="shipped"] .comms__id { color: var(--done); }
+.comms__line[data-src="shipped"] .comms__body {
+  color: #e6fff2;
+  text-shadow: 0 0 0.7rem var(--done), 0 0 1.8rem color-mix(in srgb, var(--done) 55%, transparent);
+}
 /* A line the tube has not drawn before arrives with the flicker and decay of a
    phosphor being written for the first time. */
 .comms__line[data-new="1"] { animation: glyph-decay 1.5s var(--ease-io); }
@@ -1094,9 +1239,35 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   62% { opacity: 0.6; transform: scale(1); }
   100% { opacity: 0; transform: scale(0.75); }
 }
+/* The shipping beat. Each of the three ends on nothing, which is what lets the
+   --age fast-forward double as the cleanup: a browser that opens a minute after
+   a run shipped runs these to their last frame instantly and sees no party. */
+@keyframes ship-lit {
+  0% { opacity: 0; }
+  6%, 58% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ship-climb {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0, -205%, 0); }
+}
+@keyframes ship-halo {
+  0% { opacity: 0; transform: scale(0.3); }
+  7% { opacity: 1; transform: scale(1); }
+  32% { opacity: 0.66; transform: scale(0.84); }
+  60% { opacity: 0.88; transform: scale(1.12); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
 @keyframes sweep {
   from { transform: rotate(-34deg); }
   to { transform: rotate(38deg); }
+}
+/* The patch the sweep paints overhead. Two keyframes and no more, so it stays
+   in lockstep with the rotation that throws it; the stretch is the beam getting
+   longer as it leans. */
+@keyframes ceiling {
+  from { transform: translate3d(calc(var(--reach) * -0.86), 0, 0) scale(0.94); }
+  to { transform: translate3d(var(--reach), 0, 0) scale(1.1); }
 }
 @keyframes tower-klaxon {
   0%, 100% { opacity: 0.28; }
@@ -1110,6 +1281,14 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   0%, 54% { opacity: 0; transform: translate3d(0, 0, 0) scale(var(--z)); }
   60%, 96% { opacity: var(--lum); }
   100% { opacity: 0; transform: translate3d(120vw, 0, 0) scale(var(--z)); }
+}
+/* Nothing for almost the whole cycle, then one fast pass: the crossing is 3% of
+   a very long loop, which is what makes a ground vehicle an event rather than
+   traffic. */
+@keyframes streak {
+  0%, 96.4% { opacity: 0; transform: translate3d(0, 0, 0); }
+  96.9%, 98.9% { opacity: var(--lum); }
+  99.4%, 100% { opacity: 0; transform: translate3d(128vw, 0, 0); }
 }
 @keyframes flicker {
   0%, 92%, 100% { opacity: 0; }
@@ -1211,8 +1390,13 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .boot, .rain, .traffic { display: none; }
+  .street { display: none; }
   .tower[data-alarm="1"] .tower__mass::after { opacity: 0.8; }
   .tower[data-alarm="1"] .tower__sweep { transform: rotate(-12deg); }
+  /* The beam is parked, so the patch it paints is parked where it lands. */
+  .tower[data-alarm="1"] .tower__ceiling { transform: translate3d(calc(var(--reach) * -0.27), 0, 0); }
   .tower[data-ready="1"] .tower__beacon { opacity: 1; }
   .comms__marquee { animation: none; }
+  /* The weather never drifts here — wall.js leaves --haze and --dawn unwritten,
+     so the fallbacks above are the same night this wall has always shown. */
 }
