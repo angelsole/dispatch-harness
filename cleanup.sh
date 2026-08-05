@@ -10,11 +10,15 @@ RUN="$HARNESS_DIR/runs/$1"
 # machine's wall. Promoting the run should free that disk too — best-effort,
 # and before the early exit below, so it happens even when there is no worktree
 # left to remove.
-# shellcheck source=mirror.sh
-. "$HARNESS_DIR/mirror.sh"
-if mirror_enabled; then
-  mirror_remove "$1"
-  echo "cleared mirrored copy at ${HARNESS_MIRROR%/}/$1 (best-effort)"
+# Loading is conditional so cleanup remains unchanged on old installs and when
+# mirroring is not configured.
+if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
+  # shellcheck source=mirror.sh
+  . "$HARNESS_DIR/mirror.sh"
+  if mirror_safe_id "$1"; then
+    mirror_remove "$1"
+    echo "cleared mirrored copy at ${HARNESS_MIRROR%/}/$1 (best-effort)"
+  fi
 fi
 
 WT=$(cat "$RUN/worktree" 2>/dev/null || jq -r '.worktree // empty' "$RUN/result.json" 2>/dev/null)

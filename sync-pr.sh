@@ -52,9 +52,11 @@ BASE_REF="origin/$BASE_BRANCH"
 # wall on another machine should follow it too (HARNESS_MIRROR). Identical
 # contract to run-task.sh: best-effort, one last pass on exit, no loop left
 # behind — including the fail() path below, which exits 1.
-# shellcheck source=mirror.sh
-. "$HARNESS_DIR/mirror.sh"
-mirror_start "$RUN_DIR" "$TICKET"
+if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
+  # shellcheck source=mirror.sh
+  . "$HARNESS_DIR/mirror.sh"
+  mirror_start "$RUN_DIR" "$TICKET"
+fi
 
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
 stage() {
