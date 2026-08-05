@@ -10,6 +10,7 @@
   "owner": "reinier",
   "gate": "not_run",
   "branch": "feat/retire-legacy-pdf",
+  "worktree": "/Users/angel/Projects/olyxbase-olyx-1642",
   "metrics": {
     "wall_seconds": 4020,
     "gate_rounds": [],

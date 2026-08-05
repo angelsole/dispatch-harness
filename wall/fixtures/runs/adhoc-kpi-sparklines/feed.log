@@ -1,0 +1,4 @@
+14:35:48 ⏺ Write src/kpi/Sparkline.tsx
+14:41:28 ⏺ Bash npm run gate
+14:44:08 🏁 success
+14:50:18 ⏺ Bash shot-scraper video .harness/demo.yml

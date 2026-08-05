@@ -10,6 +10,7 @@
   "owner": "bot",
   "gate": "pass",
   "branch": "chore/dedupe-money-helpers",
+  "worktree": "/Users/angel/Projects/olyx-agents-bot-2287",
   "metrics": {
     "wall_seconds": 2800,
     "gate_rounds": [

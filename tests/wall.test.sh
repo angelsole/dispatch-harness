@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Smoke test for the wall: wall.sh's flags, the static page, the JSON snapshot
-# endpoint, crew-lane grouping, live SSE updates, and tolerance of half-written
-# run dirs. Also pins run-task.sh's owner contract, which the lanes depend on.
+# endpoint, the project towers runs are grouped into, the stage -> floor ladder
+# a run climbs, live SSE updates, and tolerance of half-written run dirs. Also
+# pins the two run-task.sh contracts the city is derived from: the `worktree`
+# path (which names the tower) and the `owner` pin (which tints the vehicle).
 #
 # Hermetic: fixtures are seeded into a temp root (the committed
 # wall/fixtures/runs is only ever read), every server binds --port 0 so the OS
@@ -66,6 +68,21 @@ if [ -z "$OFFSITE" ]; then
 else
   bad "assets: off-origin URLs in the page: $OFFSITE"
 fi
+# No image assets either: the city is CSS and inline SVG, so the page renders on
+# a screen that can reach nothing but this server.
+if printf '%s' "$PAGE_SRC" | grep -qiE '\.(png|jpe?g|gif|webp|woff2?)\b'; then
+  bad "assets: the page references a binary asset"
+else
+  ok "assets: the city is drawn, not loaded"
+fi
+
+# The crew manifest is gone, and must not creep back: the wall organises around
+# the work. Attribution survives only as a tinted vehicle beside a run, so none
+# of the lane vocabulary — nor any per-person furniture — may exist in the page.
+echo "== wall: no crew-lane furniture survives =="
+for banned in STANDBY UNREGISTERED 'DISPATCH CREW' lane__ '.lane' laneEls; do
+  grep_not "$PAGE_SRC" "$banned" "ui: no [$banned] anywhere in the page"
+done
 
 # --- serve the fixtures -------------------------------------------------------
 # Start a wall on an OS-assigned port. Sets PORT_OUT (empty if it never came
@@ -98,15 +115,17 @@ PAGE="$(get "$PORT" /)"
 grep_ok "$PAGE" "THE WALL"    "page: renders the wall document"
 grep_ok "$PAGE" "wall.css"    "page: links its stylesheet"
 grep_ok "$PAGE" "wall.js"     "page: links its script"
-grep_ok "$PAGE" "NO ACTIVE DISPATCH" "page: ships the idle state"
+grep_ok "$PAGE" 'id="city"'   "page: ships the skyline the towers are built into"
+grep_ok "$PAGE" 'class="sky"' "page: ships the dusk an idle wall is left with"
 check "page: css is served"   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.css")" "200"
 check "page: js is served"    "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.js")"  "200"
 check "page: unknown path 404s" "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/etc/passwd")" "404"
 
 API="$(get "$PORT" /api/runs)"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
-check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "9"
-for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1673 OLYX-1598 BOT-2291 BOT-2287; do
+check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "11"
+for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1673 OLYX-1598 \
+          BOT-2291 BOT-2287 adhoc-kpi-sparklines LEGACY-0042; do
   grep_ok "$API" "\"$id\"" "api: lists $id"
 done
 
@@ -123,6 +142,27 @@ check "actor: review -> Codex"       "$(state_of OLYX-1655 actor)"    "Codex"
 check "actor: review key"            "$(state_of OLYX-1655 actorKey)" "codex"
 check "actor: waiting -> needs input" "$(state_of OLYX-1642 actor)"   "needs input"
 check "actor: done -> done"          "$(state_of OLYX-1598 actor)"    "done"
+
+# --- the stage -> floor ladder --------------------------------------------------
+# How high a run's car has climbed IS its pipeline stage: setup at street level,
+# the PR on the roof. This is the wall's second axis and the only one you can
+# read from across the room, so every rung is pinned.
+echo "== wall: stage -> floor ladder =="
+check "floors: the ladder is published to the page" \
+  "$(printf '%s' "$API" | jq -r '.floors | join(",")')" "SETUP,IMPLEMENT,GATE,REVIEW,DEMO,PUSH"
+check "floor: base sync is street level"   "$(state_of BOT-2291 floor)" "0"
+check "floor: implementing is one up"      "$(state_of OLYX-1631 floor)" "1"
+check "floor: the gate is two up"          "$(state_of OLYX-1660 floor)" "2"
+check "floor: review is three up"          "$(state_of OLYX-1655 floor)" "3"
+check "floor: demo is four up"             "$(state_of adhoc-kpi-sparklines floor)" "4"
+check "floor: the PR is the roof"          "$(state_of OLYX-1673 floor)" "5"
+check "floor: a blocked run holds the floor it stopped on" \
+  "$(state_of OLYX-1642 floor)" "1"
+check "floor: a shipped run reaches the roof" "$(state_of OLYX-1598 floor)" "5"
+check "floor: a rejection parks at review, not on the roof" \
+  "$(state_of BOT-2287 floor)" "3"
+check "floor: the name travels with the number" \
+  "$(state_of OLYX-1655 floorName)" "REVIEW"
 
 echo "== wall: run detail =="
 check "detail: title comes from brief.md" \
@@ -147,47 +187,94 @@ grep_ok "$(state_of BOT-2287 reason)"  "opposite directions" "detail: the reject
 echo "== wall: ordering =="
 ORDER="$(printf '%s' "$API" | jq -r '.runs[].id' | tr '\n' ' ')"
 check "order: alarm first, then live oldest-first, then finished" \
-  "$ORDER" "OLYX-1642 OLYX-1655 OLYX-1648 OLYX-1660 OLYX-1631 BOT-2291 OLYX-1673 OLYX-1598 BOT-2287 "
+  "$ORDER" "OLYX-1642 LEGACY-0042 OLYX-1655 OLYX-1648 OLYX-1660 adhoc-kpi-sparklines OLYX-1631 BOT-2291 OLYX-1673 OLYX-1598 BOT-2287 "
 
-# --- crew lanes ---------------------------------------------------------------
-# Runs belong to whoever dispatched them: the wall groups them into one lane per
-# crew member, and a declared roster keeps an idle member's lane on screen.
-echo "== wall: crew lanes =="
-lane_of() { printf '%s' "$API" | jq -r --arg o "$1" '.lanes[] | select(.owner==$o) | .'"$2"; }
-check "owner: read from the run's owner file" "$(state_of OLYX-1631 owner)" "angel"
+# --- project towers -------------------------------------------------------------
+# The wall is organised around the work: one tower per project, that project's
+# runs climbing it. The project comes out of the run's worktree path, which is
+# the only repo identity a run dir carries.
+echo "== wall: project towers =="
+tower_of() { printf '%s' "$API" | jq -r --arg p "$1" '.towers[] | select(.project==$p) | .'"$2"; }
+check "project: derived from the run dir's worktree pin" \
+  "$(state_of OLYX-1631 project)" "olyxbase"
+check "project: the label is the repo in lights" \
+  "$(state_of OLYX-1631 projectLabel)" "OLYXBASE"
+check "project: a worktree only in result.json still names the tower" \
+  "$(state_of OLYX-1598 project)" "olyxbase"
+check "project: an adhoc ticket suffix comes off the same way" \
+  "$(state_of adhoc-kpi-sparklines project)" "olyx-dashboard"
+check "project: an unreadable worktree yields no project, never a guess" \
+  "$(state_of LEGACY-0042 project)" ""
+check "project: and stands in the honest fallback tower" \
+  "$(state_of LEGACY-0042 projectLabel)" "UNCHARTED"
+
+check "towers: one per project present on the wall" \
+  "$(printf '%s' "$API" | jq '.towers | length')" "5"
+check "towers: alphabetical, fallback last — a skyline must not reshuffle" \
+  "$(printf '%s' "$API" | jq -r '[.towers[].project] | join(",")')" \
+  "olyx-agents,olyx-dashboard,olyxbase,valoryx-graphql-api,"
+check "towers: a project's runs climb its own tower" \
+  "$(tower_of olyxbase 'runIds | join(",")')" "OLYX-1642,OLYX-1660,OLYX-1631,OLYX-1598"
+check "towers: live counts what is climbing right now" "$(tower_of olyxbase live)" "3"
+check "towers: total counts the finished runs too"     "$(tower_of olyxbase total)" "4"
+check "towers: a blocked run raises its tower's alarm" "$(tower_of olyxbase alarm)" "1"
+check "towers: a quiet tower raises none"              "$(tower_of olyx-agents alarm)" "0"
+check "towers: the fallback tower is labelled honestly" \
+  "$(printf '%s' "$API" | jq -r '.towers[] | select(.project=="") | .label')" "UNCHARTED"
+check "towers: and is marked as a fallback, not a repo" \
+  "$(printf '%s' "$API" | jq -r '.towers[] | select(.project=="") | .known')" "false"
+check "towers: silhouettes stay inside the shapes the page can draw" \
+  "$(printf '%s' "$API" | jq '[.towers[] | select(.shape >= 0 and .shape < 5 and .crown >= 0 and .crown < 4)] | length')" "5"
+# A project a person has never dispatched to is simply absent: no empty tower,
+# no standby, nothing that reads as an accusation.
+check "towers: a project with nothing on the wall has no tower" \
+  "$(printf '%s' "$API" | jq '[.towers[] | select(.project=="never-dispatched")] | length')" "0"
+
+echo "== wall: crew is ambient, never furniture =="
+check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
 check "owner: the synthetic's runs are its own" "$(state_of BOT-2291 owner)" "bot"
-check "lanes: one per crew member with runs" "$(printf '%s' "$API" | jq '.lanes | length')" "4"
-check "lanes: parallel dispatches stack in their owner's lane" \
-  "$(lane_of angel 'runIds | join(",")')" "OLYX-1655,OLYX-1660,OLYX-1631"
-check "lanes: active counts only live runs"  "$(lane_of emre active)" "1"
-check "lanes: total counts finished runs too" "$(lane_of emre total)" "2"
-check "lanes: a blocked run raises its lane's alarm" "$(lane_of reinier alarm)" "1"
-check "lanes: humans are crew"                "$(lane_of angel kind)" "human"
-check "lanes: bot is the ship's synthetic"    "$(lane_of bot kind)" "synthetic"
-check "lanes: the label is the crew name"     "$(lane_of reinier label)" "REINIER"
-check "lanes: unsorted roster puts crew alphabetically" \
-  "$(printf '%s' "$API" | jq -r '[.lanes[].owner] | join(",")')" "angel,bot,emre,reinier"
+check "owner: humans fly the crew spinner"      "$(state_of OLYX-1631 ownerKind)" "human"
+check "owner: bot flies the synthetic's drone"  "$(state_of BOT-2291 ownerKind)" "synthetic"
+check "owner: an unowned run is not mis-assigned" "$(state_of LEGACY-0042 ownerKind)" "unowned"
+check "crew: the snapshot carries no per-person aggregate at all" \
+  "$(printf '%s' "$API" | jq -r '[paths | map(tostring) | join(".")] | map(select(test("lane"))) | length')" "0"
 
-# A declared roster fixes lane order and keeps a member on the wall while their
-# queue is empty — an absent lane would read as "gone", not "idle".
+# --crew survives so an existing launch script keeps working, but a roster no
+# longer conjures anything up: an idle name is not a tower, and never was one of
+# these projects.
 serve "$RUNS" "$ROOT/crew.log" --crew angel,reinier,emre,ripley; ROSTER="$PORT_OUT"
 if [ -n "$ROSTER" ]; then
   ROSTER_API="$(get "$ROSTER" /api/runs)"
-  check "roster: --crew fixes lane order, strangers follow" \
-    "$(printf '%s' "$ROSTER_API" | jq -r '[.lanes[].owner] | join(",")')" \
-    "angel,reinier,emre,ripley,bot"
-  check "roster: an idle crew member keeps an empty lane" \
-    "$(printf '%s' "$ROSTER_API" | jq -r '.lanes[] | select(.owner=="ripley") | .active')" "0"
-  check "roster: the declared crew is echoed to the page" \
+  check "roster: --crew is still accepted and echoed" \
     "$(printf '%s' "$ROSTER_API" | jq -r '.crew | join(",")')" "angel,reinier,emre,ripley"
+  check "roster: a declared roster creates no empty-state UI" \
+    "$(printf '%s' "$ROSTER_API" | jq -r '[.towers[].project] | join(",")')" \
+    "$(printf '%s' "$API" | jq -r '[.towers[].project] | join(",")')"
+  check "roster: a crew member with nothing running adds nothing" \
+    "$(printf '%s' "$ROSTER_API" | jq '[.towers[] | select(.label=="RIPLEY")] | length')" "0"
+  # A project keeps its building whoever else is on the wall, so the room can
+  # learn the skyline as a place rather than re-reading it every morning.
+  check "roster: a project's silhouette is stable across processes" \
+    "$(printf '%s' "$ROSTER_API" | jq -r '[.towers[] | "\(.project):\(.shape).\(.crown)"] | join(",")')" \
+    "$(printf '%s' "$API" | jq -r '[.towers[] | "\(.project):\(.shape).\(.crown)"] | join(",")')"
 else
   bad "roster: server starts with --crew"
 fi
 
-# --- the owner contract with the pipeline --------------------------------------
-# The lanes are only as good as run-task.sh's pin. Exercise the real function
+# --- the pipeline contracts the city is derived from ----------------------------
+# A tower is named by reversing run-task.sh's worktree construction, so that
+# construction is part of the wall's contract just like the owner pin.
+echo "== run-task.sh: the worktree path the towers reverse =="
+grep_ok "$(cat "$SRC/run-task.sh")" 'WORKTREE="$(dirname "$REPO")/$(basename "$REPO")-$TICKET_LC"' \
+  "project: run-task.sh still builds <repo>-<ticket> beside the repo"
+grep_ok "$(cat "$SRC/run-task.sh")" 'echo "$WORKTREE" > "$RUN_DIR/worktree"' \
+  "project: the run dir still records its worktree"
+grep_ok "$(cat "$SRC/run-task.sh")" 'worktree:$worktree' \
+  "project: result.json still carries the worktree the fallback reads"
+
+# The vehicles are only as good as run-task.sh's pin. Exercise the real function
 # out of the real file rather than restating its rules here.
-echo "== run-task.sh: the owner pin the lanes depend on =="
+echo "== run-task.sh: the owner pin the vehicles depend on =="
 PIN_SRC="$(awk '/^pin_knob\(\)/,/^\}/' "$SRC/run-task.sh")"
 if printf '%s' "$PIN_SRC" | grep -q 'pin_knob()'; then
   ok "owner: pin_knob extracted from run-task.sh"
@@ -272,10 +359,12 @@ check "partial: a run with no owner is unowned, not mis-assigned" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="BARE-1") | .owner')" ""
 check "owner: an empty pin wins over stale result metadata" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="PINNED-EMPTY") | .owner')" ""
-check "lanes: unowned runs get their own lane, labelled honestly" \
-  "$(printf '%s' "$API" | jq -r '.lanes[] | select(.owner=="") | .label')" "UNREGISTERED"
-check "lanes: the unowned lane sorts last" \
-  "$(printf '%s' "$API" | jq -r '.lanes[-1].owner')" ""
+check "partial: a run with no worktree gets no project, not a guess" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="BARE-1") | .project')" ""
+check "partial: those runs still stand somewhere — the fallback tower" \
+  "$(printf '%s' "$API" | jq -r '[.towers[] | select(.project=="") | .runIds[]] | index("BARE-1") != null')" "true"
+check "towers: the fallback tower sorts last, whatever else is on the wall" \
+  "$(printf '%s' "$API" | jq -r '.towers[-1].project')" ""
 check "state: a non-done sync failure remains a live panel" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="SYNC-FAIL") | .state')" "active"
 check "actor: a sync failure keeps its failure attribution" \
@@ -358,15 +447,21 @@ echo "== wall: the committed fixtures =="
 serve "$SRC/wall/fixtures/runs" "$ROOT/fixtures.log"; FIX="$PORT_OUT"
 if [ -n "$FIX" ]; then
   FIXAPI="$(get "$FIX" /api/runs)"
-  check "fixtures: nine staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "9"
+  check "fixtures: eleven staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "11"
   check "fixtures: one alarm" \
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="alarm")] | length')" "1"
   check "fixtures: one ready, one failed" \
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "2"
-  check "fixtures: four crew lanes, every run owned" \
-    "$(printf '%s' "$FIXAPI" | jq '[.lanes[] | select(.owner != "")] | length')" "4"
-  check "fixtures: one crew member runs three in parallel" \
-    "$(printf '%s' "$FIXAPI" | jq '[.lanes[] | select(.active == 3)] | length')" "1"
+  check "fixtures: four repos plus the fallback tower" \
+    "$(printf '%s' "$FIXAPI" | jq '.towers | length')" "5"
+  check "fixtures: exactly one of those towers is the fallback" \
+    "$(printf '%s' "$FIXAPI" | jq '[.towers[] | select(.known == false)] | length')" "1"
+  check "fixtures: one project has three runs climbing at once" \
+    "$(printf '%s' "$FIXAPI" | jq '[.towers[] | select(.live == 3)] | length')" "1"
+  check "fixtures: every floor of the ladder is lit somewhere" \
+    "$(printf '%s' "$FIXAPI" | jq '[.runs[].floor] | unique | length')" "6"
+  check "fixtures: the synthetic dispatches some of them" \
+    "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.ownerKind=="synthetic")] | length')" "2"
 else
   bad "fixtures: server starts against wall/fixtures/runs"
 fi
