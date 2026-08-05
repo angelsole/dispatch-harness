@@ -36,13 +36,39 @@ yourself. Find: the root cause / insertion point, the conventions that apply, an
 what "done" verifiably means. Do not design the implementation in detail — that is
 the implementer's job.
 
+**Document attachments.** When the ticket or the user supplies the real spec as
+an office document (docx, xlsx, pptx, pdf, odt, …), convert each one to markdown
+before you write the brief — no downstream stage can read those formats:
+
+```bash
+mkdir -p ~/.claude/harness/runs/<RUN-ID>/specs
+npx -y @firecrawl/anydoc <file> -o ~/.claude/harness/runs/<RUN-ID>/specs/<name>.md
+```
+
+[anydoc](https://github.com/firecrawl/anydoc) covers 14 formats, detects them
+from content, and needs nothing installed (Node 20+). Fetch the attachments
+themselves with whatever tools your session has (issue-tracker MCP, a download
+link, a local path). Then mine the converted markdown while writing the brief:
+the dispatch mounts everything under the run dir's `specs/` at `.harness/specs/`
+inside the worktree, so the implementer and the reviewer read the same source
+you did. Revising a spec is just re-converting it and re-dispatching: the mount
+is replaced wholesale from the run dir, so the old version does not survive. To
+withdraw specs from a run already in flight, empty that `specs/` directory
+rather than deleting it — a run dir with no `specs/` at all mounts nothing and
+unmounts nothing.
+
 ## 3. Brief
 
 Write the brief to `~/.claude/harness/runs/<RUN-ID>/brief.md` following
-`~/.claude/harness/brief-template.md`. All sections are mandatory except the
-Demo storyboard, which you keep (adapted to the feature's routes/dev command)
-only for user-facing frontend changes — the pipeline then records a video of
-the feature and embeds it in the PR automatically. The first
+`~/.claude/harness/brief-template.md`. All sections are mandatory except two
+delete-if-unused ones: **Attached specs**, which you keep only when you
+converted document attachments above (one line per file in `.harness/specs/`
+saying what the implementer should take from it), and the **Demo storyboard**,
+which you keep (adapted to the feature's routes/dev command) only for
+user-facing frontend changes — the pipeline then records a video of the feature
+and embeds it in the PR automatically. A brief still has to stand on its own:
+the specs are the detail behind it, never a substitute for stating the task.
+The first
 `# heading` becomes the PR title. Branch names follow the repo's convention
 (`<type>/<TICKET>-<slug>` when a ticket exists, `<type>/<slug>` for ad-hoc work;
 base per repo — usually `staging`).
