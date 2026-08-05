@@ -51,8 +51,11 @@ themselves with whatever tools your session has (issue-tracker MCP, a download
 link, a local path). Then mine the converted markdown while writing the brief:
 the dispatch mounts everything under the run dir's `specs/` at `.harness/specs/`
 inside the worktree, so the implementer and the reviewer read the same source
-you did. Revising a spec is just re-converting it and re-dispatching — the mount
-mirrors the run dir, so the old version does not survive.
+you did. Revising a spec is just re-converting it and re-dispatching: the mount
+is replaced wholesale from the run dir, so the old version does not survive. To
+withdraw specs from a run already in flight, empty that `specs/` directory
+rather than deleting it — a run dir with no `specs/` at all mounts nothing and
+unmounts nothing.
 
 ## 3. Brief
 

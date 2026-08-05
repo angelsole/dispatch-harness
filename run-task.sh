@@ -267,12 +267,14 @@ done
 # --- 2. Context mount: brief travels inside the worktree, git-excluded -------
 # Specs are the brief's source documents: office files (docx/xlsx/pdf/…) the
 # planner converted to markdown into the run dir, so the workers can read the
-# spec the brief was written from. The mount is a mirror of $RUN_DIR/specs, not
-# a merge into it — a revised spec set that dropped or renamed a file must not
-# leave the stale one behind for a resumed worker to mine (same class of bug as
-# a stale REJECTED.md outliving the revision it judged). A run dir with no
-# specs/ therefore mounts nothing and removes nothing that was ever mounted:
-# the pipeline behaves exactly as it did before this existed.
+# spec the brief was written from. When the run dir has them, the mount is
+# replaced wholesale rather than merged into — a revised spec set that dropped
+# or renamed a file must not leave the stale one behind for a resumed worker to
+# mine (same class of bug as a stale REJECTED.md outliving the revision it
+# judged). When it has none the whole helper is a no-op, mounting nothing and
+# unmounting nothing, so a run that never had specs behaves exactly as it did
+# before this existed. Withdrawing specs mid-run is therefore done by emptying
+# $RUN_DIR/specs, not by deleting it.
 mount_specs() {  # $1 = run dir, $2 = worktree
   [ -d "$1/specs" ] || return 0
   rm -rf "${2:?}/.harness/specs" || return 1

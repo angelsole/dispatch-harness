@@ -134,9 +134,10 @@ install) and leaves it in the run dir. Everything under the run dir's `specs/`
 is mounted at `.harness/specs/` in the worktree before the implementer starts,
 and both workers are told to read it as part of the task contract — so the
 detail the brief distils stays consultable instead of being paraphrased away.
-The mount mirrors the run dir, so re-converting a revised spec and
-re-dispatching replaces the old one rather than piling up next to it. The
-pipeline never runs `anydoc` itself; conversion is planner-side only.
+Re-dispatching replaces the mounted set wholesale with whatever the run dir
+holds by then, so a revised spec never piles up next to the version it
+supersedes. The pipeline never runs `anydoc` itself; conversion is planner-side
+only.
 
 ---
 
