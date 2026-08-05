@@ -450,27 +450,35 @@ the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
 page for an office TV showing what every agent is doing right now. It reads the
 same run dirs as everything above and never dispatches anything.
 
-The wall is a **city**. Each project is a tower; each run is a lit car climbing
-it; the floor the car has reached is the run's pipeline stage — street level is
-setup, then implement, gate, review, demo, and the roof is the PR. The car
-carries the neon of whichever model owns that stage, so a glance across the room
-reads as *which repos are busy, how far along, and who is driving*:
+The wall is a **city at night**. Each project is a tower; each run is a lit car
+climbing it; the floor the car has reached is the run's pipeline stage — street
+level is setup, then implement, gate, review, demo, and the roof is the PR. The
+car carries the neon of whichever model owns that stage, so a glance across the
+room reads as *which repos are busy, how far along, and who is driving*:
 
 | On the wall | What it means |
 | --- | --- |
-| A tower | One project. It exists only while it has current or recent runs — a repo nobody is working in is simply not in the skyline. Its silhouette is stable, so the room learns the city as a place. |
+| A tower | One project. It stands only while it has live work — a repo nobody is working in right now is simply not in the skyline. Its silhouette is stable, so the room learns the city as a place. |
 | A lit car | One run, at the floor of its current stage, in its actor's neon. |
-| A rooftop beacon | A run reached `done: ready` and its PR is open. |
+| A rooftop beacon flare | A run reached `done: ready` and its PR is open. |
 | A searchlight + red tower | A run wrote `QUESTIONS.md` and is waiting on a human. It is the loudest thing on the screen, and it pins the brief plate until you answer it. |
-| A red flare, dead windows | A rejected or failed run, parked at the floor it stopped on. |
-| Warm windows fading out | Recently finished work, dimming as it ages. |
-| A small hovering vehicle | Who dispatched that run, in their own stable tint. `bot` flies the milk-white synthetic drone. |
+| A red flare, then dark | A rejected or failed run, burning out at the floor it stopped on. |
+| A beam out of the cloud | The run the brief plate is currently featuring — its building lights up and the rest of the city steps back, so the plate and the skyline are never two separate stories. |
+| A tinted light on the car | Who dispatched that run, in their own stable tint; the name itself is on the plate and in the ticker. `bot` gets the milk-white synthetic tint. |
 | `UNCHARTED` | Runs whose worktree cannot be read — honest about the gap rather than filed under a repo they may not belong to. |
+
+**The skyline is live.** A finished run gets one short completion moment — the
+rooftop flare, or the burnout — and is then gone, and a tower with nothing left
+standing in it goes with it. The city grows and shrinks with the work, which is
+the only thing worth putting on a wall; yesterday's green ticks are in
+`status.sh` and in the PR list, where you can act on them. `/api/runs` still
+carries the finished runs (it is the honest snapshot of the run dirs) — the
+skyline is the part that is live only.
 
 Towers cannot carry type you can read from four metres, so two surfaces do:
 a Blade Runner **brief plate** cycling the live runs in big letters (ticket,
-project, stage, actor, the blocking question), and a **comms ticker** along the
-bottom carrying the tail of every live `feed.log`.
+project, stage, actor, dispatcher, the blocking question), and a green-phosphor
+**comms ticker** along the bottom carrying the tail of every live `feed.log`.
 
 ```bash
 wall.sh                             # ~/.claude/harness/runs on http://0.0.0.0:4711
@@ -480,14 +488,16 @@ wall.sh --runs wall/fixtures/runs   # staged demo data, no live runs needed
 
 Then point a browser on the TV at `http://<this-machine>:4711/` and put it in
 fullscreen (Chrome: `--kiosk --app=http://<host>:4711/`). With nothing running
-you get the city at dusk and no text at all — the wall reports work, it does not
-report people. It is a single dependency-free `node` (≥ 20) server plus one
-static page, drawn entirely in CSS and inline SVG — no build step, no npm, no
-image assets, and no request that leaves the machine, so it is happy on a
-tailnet-only screen. `prefers-reduced-motion` stops the rain, the traffic and
-the searchlight's travel and leaves the same city standing still. There is no
-auth: keep it off the public internet. `wall/fixtures/seed.js` regenerates the
-staged fixture runs.
+you get the empty city in the rain and no text at all — the wall reports work,
+it does not report people. It is a single dependency-free `node` (≥ 20) server
+plus one static page, drawn entirely in CSS, inline SVG and one small canvas
+(the rain) — no build step, no npm, no image assets, and no request that leaves
+the machine, so it is happy on a tailnet-only screen. Everything that moves
+moves by `transform` or `opacity` on one of two easing curves, and
+`prefers-reduced-motion` stops the rain, the traffic and the searchlight's
+travel and leaves the same city standing still. There is no auth: keep it off
+the public internet. `wall/fixtures/seed.js` regenerates the staged fixture
+runs.
 
 **Which tower a run stands in.** `run-task.sh` builds each worktree as
 `<repo-dir>-<ticket>` beside the repo and records that absolute path in the run
@@ -504,9 +514,10 @@ run. Export it wherever you dispatch from:
 export HARNESS_OWNER=angel        # e.g. in the station session's shell
 ```
 
-That name only ever becomes a vehicle tint. There are no lanes, no per-person
-counts and no idle states anywhere on the wall: an empty slot beside a
-colleague's three lit floors is social pressure, not information. `--crew` (or
+That name only ever becomes the tint of the light under a run's car, plus the
+name on that run's brief plate and ticker line. There are no lanes, no
+per-person counts and no idle states anywhere on the wall: an empty slot beside
+a colleague's three lit floors is social pressure, not information. `--crew` (or
 `WALL_CREW`) is still accepted so existing launch scripts keep working, but a
 declared roster no longer puts anything on screen.
 
