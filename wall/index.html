@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>THE WALL — dispatch harness</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23050709'/><rect x='6' y='2' width='4' height='12' fill='%23ffb648'/><rect x='2' y='6' width='3' height='8' fill='%235dff9b'/><rect x='11' y='8' width='3' height='6' fill='%2356c8ff'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23010305'/><rect x='6' y='2' width='4' height='12' fill='%23e0a23c'/><rect x='2' y='6' width='3' height='8' fill='%233fd984'/><rect x='11' y='8' width='3' height='6' fill='%234c9dff'/></svg>">
 <link rel="stylesheet" href="wall.css">
 </head>
 <body>
@@ -65,68 +65,73 @@
       <circle cx="12" cy="17.5" r="1.2" fill="currentColor"/>
     </symbol>
 
-    <!-- Crew vehicles: who dispatched a run, hovering beside its car. Ambient
-         attribution — a shape and a tint, never a name in type. The synthetic
-         flies an unmanned drone: honest about what it is, not a disguise. -->
-    <symbol id="g-spinner" viewBox="0 0 32 16">
-      <path d="M3 10.5 7 6h13l7 3.5-2 3.5H5Z" fill="currentColor" opacity="0.85"/>
-      <path d="M8.5 6.6 11 3.4h7l2.4 3.2Z" fill="currentColor" opacity="0.45"/>
-      <path d="M1 9.5h4M27 9.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-    </symbol>
-    <symbol id="g-drone" viewBox="0 0 32 16">
-      <path d="M11 11h10l3-3.5-3-3.5H11L8 7.5Z" fill="currentColor" opacity="0.85"/>
-      <path d="M2 4.5h7M23 4.5h7M2 11h7M23 11h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-      <circle cx="16" cy="7.5" r="1.6" fill="#05070a"/>
-    </symbol>
-    <symbol id="g-unregistered" viewBox="0 0 32 16">
-      <path d="M3 10.5 7 6h13l7 3.5-2 3.5H5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 2.5"/>
-    </symbol>
   </defs>
 </svg>
 
-<!-- Moebius dusk: one vast gradient, a low sun, thin-line clouds, and a
-     decorative back-city so an idle wall is a place rather than a blank. None
-     of this is data — the project towers stand in front of it. -->
+<!-- Night, not dusk: a near-black blue-green sky, a low cloud ceiling lit from
+     underneath by the city, a hazy back-city with a scatter of distant windows,
+     and wet street below it. Moebius survives in the thin-line cloud and
+     skyline art. None of this is data — the project towers stand in front. -->
 <svg class="sky" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
   <defs>
-    <linearGradient id="dusk" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0a0620"/>
-      <stop offset="30%" stop-color="#231041"/>
-      <stop offset="55%" stop-color="#5b2450"/>
-      <stop offset="74%" stop-color="#a3454a"/>
-      <stop offset="88%" stop-color="#d9803f"/>
-      <stop offset="100%" stop-color="#f3bd6c"/>
+    <linearGradient id="night" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#010204"/>
+      <stop offset="38%" stop-color="#02060c"/>
+      <stop offset="66%" stop-color="#041017"/>
+      <stop offset="86%" stop-color="#061d23"/>
+      <stop offset="100%" stop-color="#0a2b29"/>
     </linearGradient>
+    <!-- the glow the city throws back up at its own cloud ceiling -->
+    <radialGradient id="cityglow" cx="50%" cy="100%" r="78%">
+      <stop offset="0%" stop-color="#2a6f66" stop-opacity="0.5"/>
+      <stop offset="48%" stop-color="#12333c" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
     <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#2a1436" stop-opacity="0.95"/>
-      <stop offset="100%" stop-color="#150a20" stop-opacity="0.98"/>
+      <stop offset="0%" stop-color="#08151c" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#02070b" stop-opacity="0.98"/>
     </linearGradient>
     <linearGradient id="near" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#120a1c"/>
-      <stop offset="100%" stop-color="#06040c"/>
+      <stop offset="0%" stop-color="#04090e"/>
+      <stop offset="100%" stop-color="#010305"/>
+    </linearGradient>
+    <!-- distant windows: cold amber and cyan, too small to read as anything
+         but depth -->
+    <pattern id="farlights" width="15" height="19" patternUnits="userSpaceOnUse">
+      <rect x="3" y="4" width="2" height="2" fill="#ffc98a" opacity="0.45"/>
+      <rect x="10" y="12" width="2" height="2" fill="#a8dcf0" opacity="0.3"/>
+    </pattern>
+    <linearGradient id="wet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#79cfc4" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#79cfc4" stop-opacity="0"/>
     </linearGradient>
   </defs>
 
-  <rect width="1600" height="900" fill="url(#dusk)"/>
-  <circle class="sky__sun" cx="1180" cy="742" r="196" fill="#ffd9a0" opacity="0.5"/>
-  <g stroke="#1a0c22" stroke-width="9" opacity="0.5">
-    <path d="M1000 660h360M990 700h380M1010 740h350M1040 782h290"/>
-  </g>
+  <rect width="1600" height="900" fill="url(#night)"/>
+  <rect width="1600" height="900" fill="url(#cityglow)"/>
 
-  <!-- thin-line clouds -->
-  <g fill="none" stroke="#f6cd94" stroke-width="1.5" opacity="0.3">
+  <!-- thin-line clouds: a ceiling, low and heavy -->
+  <g fill="none" stroke="#8fb6b2" stroke-width="1.4" opacity="0.16">
     <path d="M0 190c250-52 500-52 750 0s520 52 850 0"/>
     <path d="M0 232c250-52 500-52 750 0s520 52 850 0"/>
     <path d="M-40 300c300-46 600-38 900 8s450 46 760 6"/>
     <path d="M-40 336c300-46 600-38 900 8s450 46 760 6"/>
     <path d="M120 420c260-34 520-26 780 6s380 26 700-4"/>
+    <path d="M-60 468c280-28 560-20 840 8s400 22 720-6"/>
+  </g>
+  <!-- the same ceiling from below, catching the city -->
+  <g fill="none" stroke="#d6b184" stroke-width="2.6" opacity="0.07">
+    <path d="M-40 306c300-46 600-38 900 8s450 46 760 6"/>
+    <path d="M120 426c260-34 520-26 780 6s380 26 700-4"/>
+    <path d="M-60 474c280-28 560-20 840 8s400 22 720-6"/>
   </g>
 
-  <!-- far skyline: flat, hazy, never lit -->
-  <g fill="url(#far)" opacity="0.75">
-    <path d="M0 900V656h72v-52h44v52h58v-96h40v96h74v-64h96v64h58v-118h36v118h84v-40h70v40h60v-86h48v86h78v-52h64v52h72v-108h34v108h96v-70h58v70h74v-44h52v44h80v-92h40v92h92v900Z"/>
+  <!-- far skyline: flat, hazy, pinpricked with windows -->
+  <g fill="url(#far)" opacity="0.85">
+    <path id="farline" d="M0 900V656h72v-52h44v52h58v-96h40v96h74v-64h96v64h58v-118h36v118h84v-40h70v40h60v-86h48v86h78v-52h64v52h72v-108h34v108h96v-70h58v70h74v-44h52v44h80v-92h40v92h92v900Z"/>
   </g>
-  <g fill="none" stroke="#f0a86e" stroke-width="1" opacity="0.18">
+  <use href="#farline" fill="url(#farlights)" opacity="0.32"/>
+  <g fill="none" stroke="#5f9c9c" stroke-width="1" opacity="0.12">
     <path d="M0 700h1600M0 760h1600"/>
   </g>
 
@@ -134,11 +139,31 @@
   <g fill="url(#near)">
     <path d="M0 900V784h130v-44h86v44h150v-70h72v70h180v-36h120v36h210v-58h90v58h180v-40h124v40h258v116Z"/>
   </g>
+
+  <!-- wet street: what the back-city leaves smeared on the tarmac -->
+  <g fill="url(#wet)" opacity="0.7">
+    <rect x="96" y="846" width="14" height="54"/>
+    <rect x="288" y="852" width="9" height="48"/>
+    <rect x="470" y="842" width="18" height="58"/>
+    <rect x="742" y="850" width="11" height="50"/>
+    <rect x="905" y="844" width="15" height="56"/>
+    <rect x="1188" y="852" width="10" height="48"/>
+    <rect x="1372" y="846" width="16" height="54"/>
+  </g>
 </svg>
 
-<div class="rain" aria-hidden="true"></div>
-<div class="haze" aria-hidden="true"></div>
-<div class="traffic" aria-hidden="true"><i class="traffic__ship"></i><i class="traffic__ship traffic__ship--b"></i></div>
+<!-- Weather, drawn rather than tiled: each streak is its own drop, and the
+     layer screens over the city so rain crossing a lit window or the carousel
+     spotlight lights up on its own. -->
+<canvas class="rain" id="rain" aria-hidden="true"></canvas>
+<div class="haze" aria-hidden="true"><i></i><i></i></div>
+<div class="traffic" aria-hidden="true">
+  <i class="traffic__ship"></i>
+  <i class="traffic__ship traffic__ship--b"></i>
+  <i class="traffic__ship traffic__ship--c"></i>
+  <i class="traffic__ship traffic__ship--d"></i>
+  <i class="traffic__ship traffic__ship--e"></i>
+</div>
 
 <header class="hud">
   <span class="hud__mark">◤</span>
@@ -160,6 +185,7 @@
     <div class="brief__top">
       <span class="brief__project" id="briefProject"></span>
       <span class="brief__floor" id="briefFloor"></span>
+      <span class="brief__owner" id="briefOwner"></span>
     </div>
     <div class="brief__id" id="briefId"></div>
     <div class="brief__title" id="briefTitle"></div>
@@ -173,7 +199,9 @@
   </div>
 </section>
 
-<!-- Legibility layer 2: the comms ticker, the tail of every live feed.log. -->
+<!-- Legibility layer 2: the comms ticker, the tail of every live feed.log, read
+     off a green phosphor terminal — new lines arrive with the decay of a CRT
+     drawing them for the first time. -->
 <footer class="comms" id="comms" hidden>
   <span class="comms__label">COMMS</span>
   <div class="comms__window"><div class="comms__marquee" id="commsText"></div></div>

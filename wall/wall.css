@@ -1,43 +1,66 @@
-/* THE WALL — a city under a Moebius dusk. One tower per project, one lit car
-   per run climbing it, crew as small vehicles hovering alongside.
+/* THE WALL — a city at night, in the rain. One tower per project, one lit car
+   per run climbing it, and nothing on the skyline that is not happening now.
 
    Everything is vw-relative so the same page reads correctly on a 1280x720
    preview and on a 4K panel across the room. Legibility beats decoration: the
    phosphor effects live on their own overlay layers and never tint text, and
    the two type surfaces (the brief plate and the comms ticker) sit above the
-   skyline rather than inside it. */
+   skyline rather than inside it.
+
+   Motion rules, everywhere: transform and opacity only — nothing animates a
+   property that costs a layout — and every transition uses one of the two house
+   curves below, so a car climbing, a spotlight arriving and a plate changing
+   all move like they belong to the same machine. */
 
 :root {
-  --bg: #05070a;
-  --panel: rgba(8, 12, 18, 0.82);
-  --ink: #c6f7d9;
-  --ink-strong: #eafff2;
-  --dim: #5c7a6c;
-  --rule: rgba(120, 255, 190, 0.16);
+  /* --- the night ---------------------------------------------------------- */
+  --bg: #010306;
+  --panel: rgba(4, 9, 12, 0.86);
+  --ink: #a9d9c6;
+  --ink-strong: #e4fff3;
+  --dim: #4e7168;
+  --rule: rgba(80, 220, 160, 0.16);
 
-  /* Neon signature per actor — which model owns the stage. Unchanged from the
-     crew-manifest wall: the room already reads these colours. */
-  --opus: #56c8ff;
-  --codex: #5dff9b;
-  --gate: #ffb648;
-  --pr: #ff5ec9;
-  --demo: #b78bff;
-  --setup: #4fe3d1;
-  --sync: #4fe3d1;
-  --skipped: #7d8b97;
+  /* The Matrix current: the terminal green the comms ticker and the data
+     readouts are written in. Restraint — it is a tone, not a theme. */
+  --phosphor: #4ff08f;
+  --phosphor-dim: #2c9a61;
+
+  /* Neon signature per actor — which model owns the stage. The same language
+     the room already reads, recalibrated to sit in a much darker city: no
+     pink, no purple, nothing that glows brighter than an alarm. */
+  --opus: #4c9dff;
+  --codex: #3fd984;
+  --gate: #e0a23c;
+  --pr: #e6dfc8;
+  --demo: #7fc9d8;
+  --setup: #3f8f9c;
+  --sync: #3f8f9c;
+  --skipped: #6b7a80;
   --alarm: #ff2f45;
-  --done: #5dff9b;
-  --failed: #ff6a5b;
-  --unknown: #8b98a4;
+  --done: #3fd984;
+  --failed: #ff5a46;
+  --unknown: #7a878f;
 
-  /* City stock: the masonry the neon is set against. */
-  --stone: #0a0713;
-  --stone-lit: #150e20;
-  --window: rgba(255, 198, 128, 0.16);
-  --edge: rgba(246, 201, 141, 0.5);
+  /* City stock: wet-dark masonry, and the three colours its windows are lit
+     with — pale amber, dirty white, cold cyan. */
+  --stone: #05080d;
+  --stone-lit: #0a1017;
+  --win-a: rgba(255, 198, 128, 0.34);
+  --win-b: rgba(222, 234, 238, 0.24);
+  --win-c: rgba(122, 214, 236, 0.2);
+  --edge: rgba(150, 195, 200, 0.3);
 
   --accent: var(--codex);
   --ground: 9vh;         /* how far above the bottom edge the towers stand */
+
+  /* --- motion ------------------------------------------------------------- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);    /* things that arrive */
+  --ease-io: cubic-bezier(0.45, 0, 0.25, 1);    /* things that travel */
+  --climb: 1500ms;                              /* a car changing floors */
+  --spot-in: 800ms;                             /* the searchbeam finding it */
+  --completion: 20s;    /* one completion moment; set from the snapshot, and
+                           mirrors COMPLETION_S in server.js */
 }
 
 * { box-sizing: border-box; }
@@ -65,68 +88,133 @@ body {
 
 .sprite { position: absolute; width: 0; height: 0; }
 
-/* --- sky ------------------------------------------------------------------- */
+/* --- sky, weather, traffic -------------------------------------------------- */
 
 .sky {
   position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
-  filter: saturate(0.95) contrast(1.04);
+  filter: saturate(0.9) contrast(1.06);
 }
-.sky__sun { animation: sun-breathe 22s ease-in-out infinite; }
 
-/* Sparse rain, the one moving thing in an empty city. Two sheets at different
-   speeds so it reads as depth rather than as a texture. */
+/* Rain is a canvas: CSS gradients tile into a texture, and this has to read as
+   weather from four metres — individual angled streaks at their own depths.
+   `screen` is what makes it Blade Runner: a streak over the dark sky is almost
+   nothing, and the same streak crossing a lit window or the carousel spotlight
+   catches that light and flares. wall.js draws it and skips it entirely under
+   reduced motion. */
 .rain {
   position: fixed;
-  inset: -20% 0 0;
+  inset: 0;
+  z-index: 10;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
-  opacity: 0.4;
-  background:
-    repeating-linear-gradient(101deg, transparent 0 22px, rgba(214, 226, 255, 0.5) 22px 23px, transparent 23px 74px),
-    repeating-linear-gradient(99deg, transparent 0 41px, rgba(214, 226, 255, 0.28) 41px 42px, transparent 42px 133px);
-  background-size: 100% 40vh, 100% 62vh;
-  animation: rain-near 0.85s linear infinite, rain-far 1.7s linear infinite;
-  mask-image: linear-gradient(180deg, #000 55%, transparent 96%);
+  mix-blend-mode: screen;
 }
 
-/* Ground haze: the street glow the towers rise out of. */
+/* Street-level haze: the drifting wet air the towers stand in. Two slabs at
+   different speeds, moved by transform only. */
 .haze {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 34vh;
+  z-index: 11;
+  height: 38vh;
+  overflow: hidden;
   pointer-events: none;
   background:
-    linear-gradient(0deg, rgba(255, 150, 70, 0.16), transparent 62%),
-    linear-gradient(0deg, rgba(4, 2, 8, 0.9), transparent 70%);
+    linear-gradient(0deg, rgba(90, 170, 170, 0.09), transparent 58%),
+    linear-gradient(0deg, rgba(1, 4, 8, 0.92), transparent 72%);
+}
+.haze i {
+  position: absolute;
+  left: -30%;
+  bottom: -6vh;
+  width: 70%;
+  height: 26vh;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(126, 196, 196, 0.12), transparent 70%);
+  animation: drift 47s linear infinite;
+}
+.haze i:nth-child(2) {
+  bottom: 2vh;
+  width: 52%;
+  height: 18vh;
+  opacity: 0.7;
+  animation-duration: 71s;
+  animation-delay: -22s;
 }
 
-/* An occasional spinner crossing the sky, far off. */
-.traffic { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+/* Traffic: the city's own life, far off and at varied depths. Occasional, never
+   parked — nothing hovers on this wall. */
+.traffic { position: fixed; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
 .traffic__ship {
+  --y: 24%;
+  --z: 1;
+  --lum: 0.85;
   position: absolute;
-  top: 27%;
-  left: -6%;
+  top: var(--y);
+  left: -10%;
   width: 1.1rem;
-  height: 0.16rem;
-  border-radius: 0.16rem;
-  background: #ffd9a0;
-  box-shadow: 0 0 0.7rem #ffb765, -1.1rem 0 0 -0.03rem rgba(255, 120, 90, 0.6);
+  height: 0.14rem;
+  border-radius: 0.14rem;
+  background: #d6e9ff;
+  box-shadow:
+    0 0 0.7rem rgba(170, 216, 255, 0.75),
+    -1.3rem 0 0 -0.04rem rgba(255, 140, 100, 0.3);
   opacity: 0;
-  animation: cross 27s linear infinite;
+  animation: cross 38s linear infinite;
+}
+/* A blinking nav light, each on its own cadence — what makes a moving dot read
+   as an aircraft rather than as a dust speck on the panel. */
+.traffic__ship::after {
+  content: "";
+  position: absolute;
+  right: -0.3rem;
+  top: -0.06rem;
+  width: 0.22rem;
+  height: 0.22rem;
+  border-radius: 50%;
+  background: #ff6a5b;
+  box-shadow: 0 0 0.5rem #ff6a5b;
+  animation: blink 2.1s steps(2, end) infinite;
 }
 .traffic__ship--b {
-  top: 41%;
-  width: 0.7rem;
-  animation-duration: 41s;
-  animation-delay: 15s;
+  --y: 38%;
+  --z: 0.6;
+  --lum: 0.55;
+  animation-duration: 61s;
+  animation-delay: -18s;
   animation-direction: reverse;
-  background: #9fd8ff;
-  box-shadow: 0 0 0.6rem #6cc4ff;
 }
+.traffic__ship--b::after { background: #7fd6ff; box-shadow: 0 0 0.5rem #7fd6ff; animation-duration: 3.3s; }
+.traffic__ship--c {
+  --y: 16%;
+  --z: 0.45;
+  --lum: 0.4;
+  animation-duration: 83s;
+  animation-delay: -47s;
+}
+.traffic__ship--c::after { animation-duration: 1.4s; }
+.traffic__ship--d {
+  --y: 51%;
+  --z: 0.8;
+  --lum: 0.6;
+  animation-duration: 53s;
+  animation-delay: -31s;
+  animation-direction: reverse;
+}
+.traffic__ship--d::after { background: #ffd07a; box-shadow: 0 0 0.5rem #ffd07a; animation-duration: 2.7s; }
+.traffic__ship--e {
+  --y: 30%;
+  --z: 0.35;
+  --lum: 0.34;
+  animation-duration: 97s;
+  animation-delay: -9s;
+}
+.traffic__ship--e::after { animation-duration: 3.9s; }
 
 /* --- top chrome ------------------------------------------------------------ */
 
@@ -140,7 +228,7 @@ body {
   align-items: baseline;
   gap: 0.7rem;
   padding: 0.4rem 1rem;
-  background: linear-gradient(180deg, rgba(3, 5, 9, 0.86), transparent);
+  background: linear-gradient(180deg, rgba(1, 4, 7, 0.9), transparent);
 }
 .hud__mark { color: var(--gate); font-size: 1.2rem; line-height: 1; }
 .hud__name {
@@ -148,7 +236,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.32em;
   color: var(--ink-strong);
-  text-shadow: 0 0 1rem rgba(93, 255, 155, 0.5);
+  text-shadow: 0 0 1rem rgba(79, 240, 143, 0.42);
 }
 /* The gap that pins clock, link and counts to the right edge lives here, so an
    idle wall — which hides the counts — does not drag them back to the middle. */
@@ -156,14 +244,13 @@ body {
 /* Nothing is running: the chrome recedes and the city has the screen. */
 body[data-quiet="1"] .hud { opacity: 0.42; }
 
+/* Data readouts: green CRT, the same tube the comms ticker is written on. */
 .hud__counts { display: flex; gap: 0.9rem; font-size: 0.8rem; }
 .hud__count { display: flex; align-items: baseline; gap: 0.3rem; letter-spacing: 0.18em; }
-.hud__count b { font-size: 1.15rem; color: var(--ink-strong); }
-.hud__count[data-kind="alarm"] b { color: var(--alarm); }
+.hud__count b { font-size: 1.15rem; color: var(--phosphor); text-shadow: 0 0 0.7rem rgba(79, 240, 143, 0.45); }
+.hud__count[data-kind="alarm"] b { color: var(--alarm); text-shadow: 0 0 0.7rem rgba(255, 47, 69, 0.5); }
 .hud__count[data-kind="alarm"][data-hot="1"] { animation: klaxon-text 1s steps(2, end) infinite; }
-.hud__count[data-kind="active"] b { color: var(--opus); }
-.hud__count[data-kind="ready"] b { color: var(--done); }
-.hud__count[data-kind="failed"] b { color: var(--failed); }
+.hud__count[data-kind="active"] b { color: var(--opus); text-shadow: 0 0 0.7rem rgba(76, 157, 255, 0.45); }
 
 .hud__clock { font-size: 1.3rem; color: var(--ink-strong); letter-spacing: 0.08em; }
 .hud__link {
@@ -173,7 +260,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   border: 1px solid currentColor;
   color: var(--dim);
 }
-.hud__link[data-state="live"] { color: var(--codex); animation: pulse-soft 2.4s ease-in-out infinite; }
+.hud__link[data-state="live"] { color: var(--phosphor); animation: pulse-soft 2.4s ease-in-out infinite; }
 .hud__link[data-state="lost"] { color: var(--alarm); animation: klaxon-text 0.8s steps(2, end) infinite; }
 .hud__link[data-state="live"]::before { content: "▮ "; }
 .hud__link[data-state="lost"]::before { content: "▯ "; }
@@ -194,7 +281,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   gap: 1.4vw;
   padding: 0 3vw;
 }
-/* No runs, no towers: what is left is the dark city under the dusk, which is
+/* No live runs, no towers: what is left is the dark city in the rain, which is
    the whole point. Nothing renders an empty state. */
 .city[data-empty="1"] { display: none; }
 
@@ -206,6 +293,21 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  transition: opacity var(--spot-in) var(--ease);
+}
+
+/* Wet tarmac: every tower stands in a little of its own light. It brightens
+   when the carousel is on this building and turns red under an alarm. */
+.tower__pool {
+  position: absolute;
+  left: -34%;
+  right: -34%;
+  bottom: -1.4rem;
+  height: 3.4rem;
+  pointer-events: none;
+  background: radial-gradient(58% 100% at 50% 0%, rgba(140, 196, 206, 0.16), transparent 72%);
+  opacity: 0.75;
+  transition: opacity var(--spot-in) var(--ease);
 }
 
 /* Roof furniture: a mast, a water tank, a sign rig. Two hash slices pick the
@@ -219,7 +321,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 }
 .tower[data-crown="1"] .tower__crown::before {
   left: 22%; bottom: 0; width: 22%; height: 1.1rem;
-  border-top: 1px solid rgba(246, 201, 141, 0.25);
+  border-top: 1px solid var(--edge);
 }
 .tower[data-crown="1"] .tower__crown::after {
   left: 68%; bottom: 0; width: 0.12rem; height: 2.2rem;
@@ -236,8 +338,8 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   left: 8%; bottom: 0; width: 84%; height: 0.5rem;
 }
 
-/* The rooftop light. Dark until this project has something on the roof: a run
-   that reached `done: ready` with its PR open. */
+/* The rooftop light. Dark until a run on this tower reaches `done: ready` —
+   then it flares once, holds, and goes out with the run. */
 .tower__beacon {
   position: absolute;
   left: 50%;
@@ -250,7 +352,10 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   box-shadow: 0 0 1.4rem 0.3rem var(--done);
   opacity: 0;
 }
-.tower[data-ready="1"] .tower__beacon { opacity: 1; animation: beacon 2.6s ease-in-out infinite; }
+.tower[data-ready="1"] .tower__beacon {
+  animation: beacon-flare var(--completion) var(--ease) forwards;
+  animation-delay: calc(var(--age, 0) * -1s);
+}
 
 .tower__mass {
   position: relative;
@@ -258,7 +363,16 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   min-height: 0;
   width: 100%;
   background: linear-gradient(180deg, var(--stone-lit), var(--stone) 42%);
-  border-top: 1px solid rgba(246, 201, 141, 0.22);
+  border-top: 1px solid var(--edge);
+}
+/* Rain-wet facade: one cold sheen down the weather side. */
+.tower__mass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(101deg,
+    rgba(126, 196, 206, 0.09), transparent 34%, transparent 76%, rgba(96, 166, 186, 0.06));
 }
 .tower[data-shape="0"] .tower__mass { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
 .tower[data-shape="1"] .tower__mass {                                     /* ziggurat */
@@ -275,8 +389,9 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   clip-path: polygon(14% 0, 86% 0, 100% 100%, 0 100%);
 }
 
-/* Ambient windows: a lit stripe layer with opaque masonry bands painted over
-   every other row, which leaves a grid of small warm rectangles. */
+/* Ambient windows: three lit stripe layers in three different colours with
+   opaque masonry bands painted over every other row, which leaves a grid of
+   small rectangles in amber, dirty white and cyan. */
 .tower__windows {
   --row: 0.44rem;
   --col: 0.3rem;
@@ -284,8 +399,17 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   inset: 0;
   background:
     repeating-linear-gradient(0deg, transparent 0 var(--row), var(--stone) var(--row) calc(var(--row) * 2)),
-    repeating-linear-gradient(90deg, var(--window) 0 var(--col), var(--stone) var(--col) calc(var(--col) * 2.2));
-  opacity: 0.85;
+    repeating-linear-gradient(90deg,
+      var(--win-a) 0 var(--col), transparent var(--col) calc(var(--col) * 3.2)),
+    repeating-linear-gradient(90deg,
+      transparent 0 calc(var(--col) * 1.4), var(--win-b) calc(var(--col) * 1.4) calc(var(--col) * 2.3),
+      transparent calc(var(--col) * 2.3) calc(var(--col) * 5.1)),
+    repeating-linear-gradient(90deg,
+      transparent 0 calc(var(--col) * 2.6), var(--win-c) calc(var(--col) * 2.6) calc(var(--col) * 3.4),
+      transparent calc(var(--col) * 3.4) calc(var(--col) * 7.3)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.9;
+  transition: filter var(--spot-in) var(--ease);
 }
 /* Storey height and bay width shift with the silhouette, so two towers of the
    same shape family still read as two different buildings. */
@@ -310,7 +434,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 .tower__floors {
   background: repeating-linear-gradient(
     to top,
-    rgba(246, 201, 141, 0.28) 0 1px,
+    rgba(150, 195, 200, 0.26) 0 1px,
     transparent 1px calc(100% / var(--floors, 6)));
 }
 
@@ -324,12 +448,52 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   font-size: 0.72rem;
   letter-spacing: 0.2em;
   text-align: center;
-  color: rgba(246, 201, 141, 0.72);
-  text-shadow: 0 0 0.7rem rgba(255, 160, 80, 0.45);
+  color: rgba(150, 205, 190, 0.68);
+  text-shadow: 0 0 0.7rem rgba(60, 200, 160, 0.3);
   white-space: nowrap;
   overflow: visible;
+  transition: color var(--spot-in) var(--ease), text-shadow var(--spot-in) var(--ease);
 }
-.tower[data-known="0"] .tower__base { color: rgba(160, 172, 186, 0.6); letter-spacing: 0.18em; }
+.tower[data-known="0"] .tower__base { color: rgba(150, 165, 178, 0.55); letter-spacing: 0.18em; }
+
+/* The carousel spotlight, tower half: a beam out of the low cloud onto the
+   building the brief plate is talking about. The plate says OLYXBASE; this is
+   what makes the room look at the right silhouette without reading a word. */
+.tower__spot {
+  position: absolute;
+  left: 50%;
+  bottom: 10%;
+  width: 210%;
+  min-width: 12rem;
+  height: 96vh;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: linear-gradient(0deg,
+    rgba(222, 248, 255, 0.62),
+    rgba(190, 232, 255, 0.24) 22%,
+    rgba(168, 218, 255, 0.08) 52%,
+    rgba(150, 205, 255, 0.02) 76%,
+    transparent 92%);
+  clip-path: polygon(28% 100%, 72% 100%, 57% 0, 43% 0);
+  /* A beam has no edges — the clip gives it its shape, this gives it its air. */
+  mask-image: linear-gradient(90deg, transparent, #000 26%, #000 74%, transparent);
+  opacity: 0;
+  transform: translateX(-50%) scaleY(0.88);
+  transform-origin: 50% 100%;
+  transition: opacity var(--spot-in) var(--ease), transform var(--spot-in) var(--ease);
+}
+.tower[data-spot="1"] .tower__spot { opacity: 1; transform: translateX(-50%) scaleY(1); }
+.tower[data-spot="1"] .tower__pool { opacity: 1; }
+/* The beam lands: the building the plate is talking about is the one with its
+   windows lit and its name in white. */
+.tower[data-spot="1"] .tower__windows { filter: brightness(1.9) saturate(0.85); }
+.tower[data-spot="1"] .tower__base {
+  color: var(--ink-strong);
+  text-shadow: 0 0 1.1rem rgba(214, 244, 255, 0.85);
+}
+/* ...and the rest of the city steps back for it. An alarm never steps back:
+   a tower asking for a human outranks the carousel. */
+.city[data-spot="1"] .tower:not([data-spot="1"]):not([data-alarm="1"]) { opacity: 0.6; }
 
 /* The klaxon searchlight. A run needs a human, and this is the wall's loudest
    sentence: a beam sweeping out of that tower's roof plus a red wash on the
@@ -371,6 +535,10 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   animation: sweep 4.4s ease-in-out infinite alternate;
 }
 .tower[data-alarm="1"] .tower__mass { animation: tower-klaxon 1.1s ease-in-out infinite; }
+.tower[data-alarm="1"] .tower__pool {
+  background: radial-gradient(58% 100% at 50% 0%, rgba(255, 47, 69, 0.24), transparent 72%);
+  opacity: 1;
+}
 .tower[data-alarm="1"] .tower__base {
   color: #fff;
   background: var(--alarm);
@@ -382,27 +550,35 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 
 .shaft {
   --pos: 8%;              /* the car's height, i.e. its pipeline stage */
+  --lvl: 0.08;            /* the same number as a factor, for the lit column */
   --crew: #e8cfa6;
-  --fade: 1;
+  --age: 0;
   position: relative;
   flex: 1 1 0;
   min-width: 0;
-  opacity: var(--fade);
 }
 
-/* The column of the building this run occupies, lit up to the car. */
+/* The column of the building this run occupies, lit up to the car. The clip
+   scales to the car's height and the stripes inside counter-scale, so the lit
+   storeys keep their real pitch and the column grows by transform — a height
+   animation here would relayout the tower on every stage change. */
 .shaft__col {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: var(--pos);
-  background: linear-gradient(0deg,
-    color-mix(in srgb, var(--accent) 26%, transparent),
-    color-mix(in srgb, var(--accent) 6%, transparent));
-  /* Anchored at street level, not at the car: the lit storeys must stay put
-     while the car climbs past them. */
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.8;
+  transform: scaleY(var(--lvl));
+  transform-origin: 50% 100%;
+  transition: transform var(--climb) var(--ease-io), opacity var(--spot-in) var(--ease);
+}
+.shaft__lit {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
   mask-image: repeating-linear-gradient(0deg, #000 0 0.44rem, transparent 0.44rem 0.88rem);
+  transform: scaleY(calc(1 / var(--lvl)));
+  transform-origin: 50% 100%;
+  transition: transform var(--climb) var(--ease-io);
 }
 
 .shaft__rail {
@@ -412,20 +588,44 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   bottom: 0;
   width: 0.1rem;
   margin-left: -0.05rem;
-  background: linear-gradient(0deg, color-mix(in srgb, var(--accent) 45%, transparent), rgba(255, 255, 255, 0.05));
+  background: linear-gradient(0deg, color-mix(in srgb, var(--accent) 40%, transparent), rgba(255, 255, 255, 0.04));
+}
+
+/* Everything that rides with the car — the car, its crew light, the spotlight
+   bloom — lives in one full-height layer that translates. A stage change is
+   the car climbing, and it is a single composited transform. */
+.shaft__lift {
+  position: absolute;
+  inset: 0;
+  transform: translate3d(0, calc(var(--pos) * -1), 0);
+  transition: transform var(--climb) var(--ease-io);
 }
 
 .shaft__car {
   position: absolute;
   left: 50%;
-  bottom: var(--pos);
+  bottom: 0;
   width: 0.85rem;
   height: 0.55rem;
-  margin: 0 0 -0.28rem -0.43rem;
+  margin-bottom: -0.28rem;
   background: var(--accent);
   box-shadow: 0 0 0.6rem var(--accent), 0 0 2rem color-mix(in srgb, var(--accent) 75%, transparent);
-  /* The one transition on the page: a stage change is the car climbing. */
-  transition: bottom 1.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(-50%);
+  transition: transform var(--spot-in) var(--ease), box-shadow var(--spot-in) var(--ease);
+}
+/* Who dispatched this run: a tinted lamp under the car itself. Ambient
+   attribution — nothing hovers beside the building, and the name is carried in
+   type by the brief plate and the ticker. */
+.shaft__car::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1.6rem;
+  height: 0.55rem;
+  margin: -0.06rem 0 0 -0.8rem;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 40%, color-mix(in srgb, var(--crew) 72%, transparent), transparent 72%);
 }
 /* The floor the car is standing on, lit right across the shaft. This is the
    line that carries "which stage" to the far side of the room; the car itself
@@ -443,25 +643,31 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   box-shadow: 0 0 0.7rem var(--accent);
 }
 
-/* Crew, ambient only: a spinner hovering beside the car in that dispatcher's
-   tint. No name, no count, no lane — you learn "the milk-white drone is the
-   bot" the same way you learn a skyline. */
-.shaft__ship {
+/* The carousel spotlight, car half: the bloom the beam makes where it lands.
+   It rides in the lift, so it is on the car at whatever floor the car is on. */
+.shaft__halo {
   position: absolute;
   left: 50%;
-  bottom: var(--pos);
-  width: 1.2rem;
-  height: 0.6rem;
-  margin: 0 0 -0.05rem 0.25rem;
-  color: var(--crew);
-  filter: drop-shadow(0 0 0.35rem color-mix(in srgb, var(--crew) 55%, transparent));
-  animation: hover 4.2s ease-in-out infinite;
-  transition: bottom 1.4s cubic-bezier(0.4, 0, 0.2, 1);
+  bottom: 0;
+  width: 6rem;
+  height: 6rem;
+  margin: 0 0 -3rem -3rem;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: radial-gradient(50% 50% at 50% 50%,
+    rgba(226, 248, 255, 0.5),
+    color-mix(in srgb, var(--accent) 26%, transparent) 38%,
+    transparent 70%);
+  opacity: 0;
+  transform: scale(0.65);
+  transition: opacity var(--spot-in) var(--ease), transform var(--spot-in) var(--ease);
 }
-/* Traffic fans out to both sides of the shaft rather than piling up on one,
-   which keeps a six-run tower legible and stops the outermost vehicle from
-   flying into the silhouette's edge. */
-.shaft:nth-child(even) .shaft__ship { margin-left: -1.45rem; }
+.shaft[data-spot="1"] .shaft__halo { opacity: 1; transform: scale(1); }
+.shaft[data-spot="1"] .shaft__col { opacity: 1; }
+.shaft[data-spot="1"] .shaft__car {
+  transform: translateX(-50%) scale(1.3);
+  box-shadow: 0 0 0.9rem #fff, 0 0 2.6rem var(--accent);
+}
 
 .shaft[data-actor="opus"] { --accent: var(--opus); }
 .shaft[data-actor="codex"] { --accent: var(--codex); }
@@ -481,26 +687,31 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 .shaft[data-state="alarm"] .shaft__car {
   width: 1.1rem;
   height: 0.7rem;
-  margin: 0 0 -0.35rem -0.55rem;
-  animation: car-klaxon 0.9s steps(2, end) infinite;
+  margin-bottom: -0.35rem;
+  animation: car-klaxon 0.9s ease-in-out infinite;
 }
 
-/* Shipped: the run's windows stay warm above the car and the roof takes over. */
+/* --- the completion moment -------------------------------------------------- */
+/* A finished run gets one moment and then leaves the skyline: shipped is a
+   rooftop flare and lights-out, a burnout is a red flare and dark. `--age`
+   fast-forwards the animation, so a browser opening halfway through a
+   completion joins the city where it already is instead of replaying it, and
+   the server stops sending the run when the moment is over. */
+
+.shaft[data-state="ready"],
+.shaft[data-state="failed"] {
+  animation: lights-out var(--completion) linear forwards;
+  animation-delay: calc(var(--age) * -1s);
+}
 .shaft[data-state="ready"] { --accent: var(--done); }
-.shaft[data-state="ready"] .shaft__col {
-  background: linear-gradient(0deg, rgba(255, 196, 120, 0.34), rgba(255, 176, 96, 0.1));
-}
-.shaft[data-state="ready"] .shaft__rail { opacity: 0.35; }
-
-/* Burnout: the flare where it stopped, and dead windows below it. */
 .shaft[data-state="failed"] { --accent: var(--failed); }
-.shaft[data-state="failed"] .shaft__col {
-  background: linear-gradient(0deg, rgba(10, 4, 6, 0.85), rgba(255, 90, 70, 0.16));
-}
-.shaft[data-state="failed"] .shaft__rail { opacity: 0.3; }
+.shaft[data-state="ready"] .shaft__car,
 .shaft[data-state="failed"] .shaft__car {
-  box-shadow: 0 0 0.6rem var(--failed), 0 0 2.4rem var(--failed);
-  animation: flare 3.4s ease-in-out infinite;
+  animation: flare-out var(--completion) var(--ease) forwards;
+  animation-delay: calc(var(--age) * -1s);
+}
+.shaft[data-state="failed"] .shaft__lit {
+  background: color-mix(in srgb, var(--failed) 16%, transparent);
 }
 
 /* --- the brief plate: big type, one run at a time --------------------------- */
@@ -517,19 +728,30 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-left: 0.3rem solid var(--accent);
-  box-shadow: 0 0 2.4rem rgba(0, 0, 0, 0.75), 0 0 1.6rem color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: 0 0 2.4rem rgba(0, 0, 0, 0.8), 0 0 1.6rem color-mix(in srgb, var(--accent) 14%, transparent);
   backdrop-filter: blur(3px);
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 1.1rem), calc(100% - 1.1rem) 100%, 0 100%);
   --accent: var(--opus);   /* replaced inline with the run's actor neon */
+  --crew: #e8cfa6;
 }
 .brief[data-state="alarm"] { animation: plate-klaxon 1.1s ease-in-out infinite; }
+/* The carousel moving on is a move, not a cut: the contents are re-lit rather
+   than swapped, on the same curve as the spotlight arriving on the building
+   the plate names. It lives on the contents, not on the chrome, so an alarm
+   plate keeps its klaxon while it changes. */
+.brief[data-swap="1"] .brief__glyph,
+.brief[data-swap="1"] .brief__body { animation: plate-in 520ms var(--ease); }
 
 .brief__glyph { width: 3.4rem; height: 3.4rem; flex: none; color: var(--accent); align-self: center; }
 .brief__body { min-width: 0; }
 .brief__top { display: flex; align-items: baseline; gap: 0.8rem; font-size: 0.72rem; letter-spacing: 0.24em; }
-.brief__project { color: rgba(246, 201, 141, 0.9); }
+.brief__project { color: rgba(190, 226, 216, 0.9); }
 .brief__floor { color: var(--dim); }
 .brief__floor::before { content: "▲ "; }
+/* Who dispatched it, in their own tint — the same light that is on the car. */
+.brief__owner { margin-left: auto; color: var(--crew); white-space: nowrap; }
+.brief__owner::before { content: "⌁ "; opacity: 0.7; }
+.brief__owner:empty { display: none; }
 
 .brief__id {
   font-size: 2.5rem;
@@ -570,7 +792,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   text-shadow: 0 0 0.6em currentColor;
 }
 .brief__stageText { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brief__timer { margin-left: auto; color: var(--ink-strong); white-space: nowrap; }
+.brief__timer { margin-left: auto; color: var(--phosphor); white-space: nowrap; }
 .brief__note {
   margin-top: 0.35rem;
   font-size: 0.8rem;
@@ -585,10 +807,16 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 }
 /* Which of the live runs is on the plate, and how many are waiting behind it. */
 .brief__dots { display: flex; gap: 0.28rem; margin-top: 0.45rem; }
-.brief__dot { width: 0.42rem; height: 0.16rem; background: var(--dim); opacity: 0.5; }
+.brief__dot {
+  width: 0.42rem;
+  height: 0.16rem;
+  background: var(--dim);
+  opacity: 0.5;
+  transition: opacity var(--spot-in) var(--ease), background-color var(--spot-in) var(--ease);
+}
 .brief__dot[data-on="1"] { background: var(--accent); opacity: 1; box-shadow: 0 0 0.5rem var(--accent); }
 
-/* --- comms ticker ----------------------------------------------------------- */
+/* --- comms ticker: green phosphor ------------------------------------------- */
 
 .comms {
   position: fixed;
@@ -601,22 +829,30 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   gap: 0.8rem;
   height: 1.9rem;
   padding: 0 0.9rem;
-  background: linear-gradient(0deg, rgba(3, 5, 9, 0.94), rgba(3, 5, 9, 0.62));
+  background: linear-gradient(0deg, rgba(1, 7, 5, 0.95), rgba(1, 9, 7, 0.6));
   border-top: 1px solid var(--rule);
 }
-.comms__label { flex: none; font-size: 0.66rem; letter-spacing: 0.3em; color: var(--dim); }
+.comms__label { flex: none; font-size: 0.66rem; letter-spacing: 0.3em; color: var(--phosphor-dim); }
 .comms__window { flex: 1 1 auto; overflow: hidden; }
 .comms__marquee {
   display: inline-block;
   white-space: nowrap;
   font-size: 0.78rem;
-  color: var(--dim);
+  color: var(--phosphor-dim);
+  text-shadow: 0 0 0.6rem rgba(63, 217, 132, 0.35);
   animation: marquee var(--secs, 40s) linear infinite;
 }
-.comms__id { color: var(--ink-strong); }
-.comms__sep { color: var(--gate); opacity: 0.6; padding: 0 0.7rem; }
-.comms__line[data-src="codex"] .comms__body { color: color-mix(in srgb, var(--codex) 80%, var(--dim)); }
-.comms__line[data-src="claude"] .comms__body { color: color-mix(in srgb, var(--opus) 80%, var(--dim)); }
+.comms__id { color: var(--phosphor); }
+.comms__who { color: var(--crew, var(--phosphor-dim)); opacity: 0.85; padding-right: 0.4rem; }
+.comms__who::before { content: "⌁"; padding-right: 0.15em; opacity: 0.7; }
+.comms__sep { color: var(--phosphor-dim); opacity: 0.5; padding: 0 0.7rem; }
+.comms__line[data-src="codex"] .comms__body { color: color-mix(in srgb, var(--codex) 72%, var(--phosphor-dim)); }
+.comms__line[data-src="claude"] .comms__body { color: color-mix(in srgb, var(--opus) 62%, var(--phosphor-dim)); }
+.comms__line[data-src="ready"] .comms__body { color: var(--done); }
+.comms__line[data-src="failed"] .comms__body { color: var(--failed); }
+/* A line the tube has not drawn before arrives with the flicker and decay of a
+   phosphor being written for the first time. */
+.comms__line[data-new="1"] { animation: glyph-decay 1.5s var(--ease-io); }
 
 /* --- CRT overlays ---------------------------------------------------------- */
 
@@ -626,15 +862,15 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   z-index: 40;
   pointer-events: none;
   background:
-    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.24) 0 1px, transparent 1px 3px),
-    radial-gradient(130% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.26) 0 1px, transparent 1px 3px),
+    radial-gradient(130% 100% at 50% 50%, transparent 52%, rgba(0, 0, 0, 0.58) 100%);
 }
 .crt__flicker {
   position: fixed;
   inset: 0;
   z-index: 41;
   pointer-events: none;
-  background: rgba(150, 255, 200, 0.05);
+  background: rgba(120, 255, 190, 0.045);
   opacity: 0;
   animation: flicker 5.5s steps(1, end) infinite;
 }
@@ -655,8 +891,8 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   margin: 0;
   font-size: 1.15rem;
   line-height: 1.9;
-  color: var(--codex);
-  text-shadow: 0 0 1rem rgba(93, 255, 155, 0.6);
+  color: var(--phosphor);
+  text-shadow: 0 0 1rem rgba(79, 240, 143, 0.55);
 }
 .boot__text span {
   display: block;
@@ -678,19 +914,47 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 @keyframes marquee { from { transform: translateX(4vw); } to { transform: translateX(-100%); } }
 @keyframes pulse-soft { 50% { opacity: 0.45; } }
 @keyframes klaxon-text { 50% { opacity: 0.25; } }
-@keyframes sun-breathe { 50% { opacity: 0.62; } }
-@keyframes rain-near { to { background-position: -6vh 40vh, 0 0; } }
-@keyframes rain-far { to { background-position: 0 0, -9vh 62vh; } }
-@keyframes hover { 50% { transform: translateY(-0.42rem); } }
-@keyframes beacon { 0%, 62%, 100% { opacity: 1; } 72% { opacity: 0.15; } }
+@keyframes blink { 50% { opacity: 0.1; } }
+@keyframes drift { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(70vw, 0, 0); } }
+@keyframes plate-in {
+  from { opacity: 0; transform: translate3d(-0.6rem, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes glyph-decay {
+  0% { opacity: 0.1; }
+  10% { opacity: 1; }
+  22% { opacity: 0.28; }
+  36% { opacity: 1; }
+  52% { opacity: 0.62; }
+  100% { opacity: 1; }
+}
 @keyframes car-live {
   0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(1.75); }
+  50% { filter: brightness(1.7); }
 }
-@keyframes car-klaxon { 50% { opacity: 0.15; } }
-@keyframes flare {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.5); }
+@keyframes car-klaxon {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+/* The completion moment, twice: the car flares where it stopped, and the whole
+   shaft goes dark behind it before the run leaves the skyline. */
+@keyframes flare-out {
+  0% { transform: translateX(-50%) scale(1); filter: brightness(1); }
+  5% { transform: translateX(-50%) scale(2.7); filter: brightness(2.6); }
+  18% { transform: translateX(-50%) scale(1.15); filter: brightness(1.3); }
+  100% { transform: translateX(-50%) scale(0.85); filter: brightness(0.45); }
+}
+@keyframes lights-out {
+  0%, 22% { opacity: 1; }
+  70% { opacity: 0.34; }
+  100% { opacity: 0; }
+}
+@keyframes beacon-flare {
+  0% { opacity: 0; transform: scale(0.3); }
+  4% { opacity: 1; transform: scale(2.6); }
+  16% { opacity: 0.95; transform: scale(1); }
+  62% { opacity: 0.6; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.75); }
 }
 @keyframes sweep {
   from { transform: rotate(-34deg); }
@@ -701,14 +965,13 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   50% { box-shadow: inset 0 0 4rem rgba(190, 0, 20, 0.85), 0 0 3rem rgba(255, 47, 69, 0.5); }
 }
 @keyframes plate-klaxon {
-  0%, 100% { box-shadow: 0 0 2.4rem rgba(0, 0, 0, 0.75), 0 0 1rem rgba(255, 47, 69, 0.25); }
-  50% { box-shadow: 0 0 2.4rem rgba(0, 0, 0, 0.75), 0 0 3.5rem rgba(255, 47, 69, 0.7); }
+  0%, 100% { box-shadow: 0 0 2.4rem rgba(0, 0, 0, 0.8), 0 0 1rem rgba(255, 47, 69, 0.25); }
+  50% { box-shadow: 0 0 2.4rem rgba(0, 0, 0, 0.8), 0 0 3.5rem rgba(255, 47, 69, 0.7); }
 }
 @keyframes cross {
-  0%, 88% { opacity: 0; transform: translateX(0); }
-  90% { opacity: 0.85; }
-  99% { opacity: 0.85; }
-  100% { opacity: 0; transform: translateX(112vw); }
+  0%, 54% { opacity: 0; transform: translate3d(0, 0, 0) scale(var(--z)); }
+  60%, 96% { opacity: var(--lum); }
+  100% { opacity: 0; transform: translate3d(120vw, 0, 0) scale(var(--z)); }
 }
 @keyframes flicker {
   0%, 92%, 100% { opacity: 0; }
@@ -718,13 +981,14 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   96% { opacity: 0; }
 }
 
-/* A still city: no rain, no traffic, no bobbing, no sweep travel, no boot —
-   but every light stays lit and the searchlight stays drawn, so the wall says
+/* A still city: no rain, no traffic, no drift, no sweep travel, no boot — but
+   every light stays lit and the searchlight stays drawn, so the wall says
    exactly the same thing standing still as it does moving. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .boot, .rain, .traffic { display: none; }
   .tower[data-alarm="1"] .tower__mass { box-shadow: inset 0 0 4rem rgba(190, 0, 20, 0.7); }
   .tower[data-alarm="1"] .tower__sweep { transform: rotate(-12deg); }
+  .tower[data-ready="1"] .tower__beacon { opacity: 1; }
   .comms__marquee { animation: none; }
 }
