@@ -265,9 +265,25 @@ for d in "." $ENV_SUBDIRS; do
 done
 
 # --- 2. Context mount: brief travels inside the worktree, git-excluded -------
+# Specs are the brief's source documents: office files (docx/xlsx/pdf/…) the
+# planner converted to markdown into the run dir, so the workers can read the
+# spec the brief was written from. The mount is a mirror of $RUN_DIR/specs, not
+# a merge into it — a revised spec set that dropped or renamed a file must not
+# leave the stale one behind for a resumed worker to mine (same class of bug as
+# a stale REJECTED.md outliving the revision it judged). A run dir with no
+# specs/ therefore mounts nothing and removes nothing that was ever mounted:
+# the pipeline behaves exactly as it did before this existed.
+mount_specs() {  # $1 = run dir, $2 = worktree
+  rm -rf "${2:?}/.harness/specs" || return 1
+  [ -d "$1/specs" ] || return 0
+  mkdir -p "$2/.harness/specs" && cp -R "$1/specs/." "$2/.harness/specs/"
+}
+
 mkdir -p "$WORKTREE/.harness"
 cp "$BRIEF" "$WORKTREE/.harness/brief.md"
 rm -f "$WORKTREE/.harness/QUESTIONS.md"   # stale questions would re-trigger needs_input
+mount_specs "$RUN_DIR" "$WORKTREE" \
+  || fail setup_failed "could not mount $RUN_DIR/specs at $WORKTREE/.harness/specs"
 EXCLUDE_FILE="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
 mkdir -p "$(dirname "$EXCLUDE_FILE")"
 grep -qx '.harness/' "$EXCLUDE_FILE" 2>/dev/null || echo '.harness/' >> "$EXCLUDE_FILE"
@@ -291,6 +307,7 @@ fi
 # --- 4. Opus implements (Claude subscription: ANTHROPIC_API_KEY unset) -------
 IMPLEMENTER_PROMPT="You are the implementer stage of an automated pipeline.
 Read .harness/brief.md first — it is your task contract — then follow this repo's CLAUDE.md conventions.
+If .harness/specs/ exists, it holds the task's source documents (office files the planner converted to markdown) — they are part of the contract too, so read them alongside the brief; the brief says what to take from each.
 Rules:
 - Implement the brief fully. You own the implementation design; plan as you see fit.
 - Delegate to subagents (Explore — they run on a cheaper model) only for sizeable, genuinely independent exploration such as a wide multi-file investigation. Do not delegate what a few tool calls of your own would answer, and never use subagents to verify or double-check your own work.
@@ -445,7 +462,7 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
   stage "review skipped — no codex CLI found (Claude-only mode)"
 elif [ "$ARM" = "full" ]; then
 REVIEW_PROMPT="You are the reviewer stage of an automated pipeline; another agent just implemented a task.
-Context (all inside .harness/): brief.md (the task contract), implementer-notes.md, gate-latest.log (test gate output — current status: $GATE_STATUS).
+Context (all inside .harness/): brief.md (the task contract), specs/ when present (the task's source documents converted to markdown — part of the contract, read them alongside the brief), implementer-notes.md, gate-latest.log (test gate output — current status: $GATE_STATUS).
 implementer-notes.md is the implementer's own account of its work: treat it as claims to verify against the diff, not as facts.
 Review ALL changes on this branch: git log $BASE_REF..HEAD and git diff $BASE_REF...HEAD.
 
