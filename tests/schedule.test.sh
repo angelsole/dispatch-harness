@@ -36,9 +36,13 @@ HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"
 SRCDIR="$ROOT/src"; FAKES="$ROOT/bin"
 CALLS="$ROOT/run-task-calls.log"
 LCLOG="$ROOT/launchctl.log"
+LC_STATE="$ROOT/launchctl-state"
+DATE_STATE="$ROOT/date-epoch"
 UNAME_STATE="$ROOT/fake-uname"
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
 : > "$CALLS"; : > "$LCLOG"
+printf 'ok\n' > "$LC_STATE"
+: > "$DATE_STATE"
 printf 'Darwin\n' > "$UNAME_STATE"
 
 # The script under test, installed the way install.sh installs it: beside the
@@ -53,6 +57,26 @@ EOF
 cat > "$FAKES/launchctl" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$LCLOG"
+if [ "\${1-}" = bootstrap ]; then
+  state=\$(cat "$LC_STATE")
+  [ "\$state" != fail ] || exit 1
+  if [ "\$state" = fire ]; then
+    # Simulate a calendar event becoming due before bootstrap returns.
+    if [ -f "$RUNS/RACE/scheduled" ]; then
+      cp "$RUNS/RACE/scheduled" "$DATE_STATE"
+    fi
+    /bin/bash "$RUNS/RACE/scheduled-run.sh"
+    : > "$DATE_STATE"
+  fi
+fi
+EOF
+cat > "$FAKES/date" <<EOF
+#!/usr/bin/env bash
+if [ "\${1-}" = +%s ] && [ -s "$DATE_STATE" ]; then
+  cat "$DATE_STATE"
+else
+  exec /bin/date "\$@"
+fi
 EOF
 # The pipeline stand-in: every fired run appends one record, so "exactly once"
 # is a line count, and the environment it saw is asserted field by field.
@@ -72,22 +96,23 @@ cat > "$SRCDIR/run-task.sh" <<EOF
 } >> "$CALLS"
 echo "fake run-task.sh dispatched \$1"
 EOF
-chmod +x "$FAKES/uname" "$FAKES/launchctl" "$SRCDIR/run-task.sh"
+chmod +x "$FAKES/uname" "$FAKES/launchctl" "$FAKES/date" "$SRCDIR/run-task.sh"
 
 git init -q "$ROOT/greenapp" >/dev/null 2>&1
 REPO="$(cd "$ROOT/greenapp" && pwd)"
 
 brief_for() { mkdir -p "$RUNS/$1"; printf '# fixture task\n' > "$RUNS/$1/brief.md"; }
-for t in AHEAD ROLL ABS FIRE RE-ARM RELPATH; do brief_for "$t"; done
+for t in AHEAD ROLL ABS FIRE RE-ARM RELPATH BOOTFAIL RACE FUTURE; do brief_for "$t"; done
 
 sched() {  # schedule.sh inside the fixture, with the fakes ahead of the real tools
-  HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  HOME="$FHOME" HARNESS_DIR="$HARNESS" GH_TOKEN="${TEST_GH_TOKEN-}" PATH="$FAKES:$PATH" \
     bash "$SRCDIR/schedule.sh" "$@" 2>&1
 }
 plist_of()   { printf '%s/com.olyx.dispatch.%s.plist' "$AGENTS" "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"; }
 wrapper_of() { printf '%s/%s/scheduled-run.sh' "$RUNS" "$1"; }
 marker_of()  { printf '%s/%s/scheduled' "$RUNS" "$1"; }
 fired()      { cat "$(marker_of "$1")" 2>/dev/null || echo 0; }
+call_count() { grep -c "^argv:$1 " "$CALLS" 2>/dev/null | tr -d ' '; }
 
 # Values are read back out of the plist by position — the generator writes each
 # value on the line after its key — which is exactly the shape being asserted.
@@ -146,6 +171,23 @@ check "guard: wrong argument count exits 2" "$rc" "2"
 absent "guard: no agent survives the guard block" "$(plist_of AHEAD)"
 check "guard: no run was dispatched" "$(grep -c '^argv:' "$CALLS" | tr -d ' ')" "0"
 
+# Dot segments would make --cancel delete files outside the ticket run dir.
+printf 'sentinel\n' > "$HARNESS/scheduled"
+out=$(sched --cancel ..); rc=$?
+check "guard: parent-directory ticket exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
+exists "guard: parent-directory ticket cannot delete outside runs" "$HARNESS/scheduled"
+rm -f "$HARNESS/scheduled"
+
+# Failure after the files are staged must leave no schedule behind.
+printf 'fail\n' > "$LC_STATE"
+out=$(sched BOOTFAIL "$REPO" fix/bootfail "$AHEAD_HHMM"); rc=$?
+check "guard: bootstrap failure exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
+has "$out" "could not load" "guard: bootstrap failure names the failed operation"
+absent "guard: bootstrap failure removes the marker" "$(marker_of BOOTFAIL)"
+absent "guard: bootstrap failure removes the wrapper" "$(wrapper_of BOOTFAIL)"
+absent "guard: bootstrap failure removes the plist" "$(plist_of BOOTFAIL)"
+printf 'ok\n' > "$LC_STATE"
+
 # ---------------------------------------------------------------------------
 echo "== arming HH:MM still ahead today =="
 # ---------------------------------------------------------------------------
@@ -174,8 +216,19 @@ file_has "$P" "$(wrapper_of AHEAD)"              "plist: runs this run's wrapper
 file_has "$P" "$RUNS/AHEAD/scheduled.log"        "plist: output backstop points at the run log"
 has_not "$(cat "$P")" "RunAtLoad" "plist: no RunAtLoad — loading the agent must not fire it"
 check "wrapper: mode 600 (it carries an env snapshot)" \
-  "$(ls -l "$(wrapper_of AHEAD)" | cut -c1-10)" "-rw-------"
+  "$(perl -e 'printf "%04o", (stat $ARGV[0])[2] & 07777' -- "$(wrapper_of AHEAD)")" "0600"
 file_has "$LCLOG" "bootstrap gui/$UID_NUM $P" "launchctl: the agent was bootstrapped into the user domain"
+
+# A due calendar event can race bootstrap. The marker must already exist when
+# the wrapper starts, or schedule.sh will recreate stale pending state afterward.
+printf 'fire\n' > "$LC_STATE"
+out=$(sched RACE "$REPO" fix/race "$AHEAD_HHMM"); rc=$?
+printf 'ok\n' > "$LC_STATE"
+check "race: bootstrap-time fire still exits 0" "$rc" "0"
+check "race: immediate fire dispatches exactly once" "$(call_count RACE)" "1"
+absent "race: immediate fire leaves no marker" "$(marker_of RACE)"
+absent "race: immediate fire leaves no wrapper" "$(wrapper_of RACE)"
+absent "race: immediate fire leaves no plist" "$(plist_of RACE)"
 
 # launchd runs the job from a directory of its own choosing, so a repo path that
 # was relative to the scheduling shell has to be resolved at arming time.
@@ -210,6 +263,25 @@ check "abs: agent minute" "$(plist_val "$(plist_of ABS)" Minute integer)" "45"
 check "abs: agent month"  "$(plist_val "$(plist_of ABS)" Month integer)"  "$(at "$ABS_FIRE" '%m' | sed 's/^0//')"
 check "abs: agent day"    "$(plist_val "$(plist_of ABS)" Day integer)"    "$(at "$ABS_FIRE" '%d' | sed 's/^0//')"
 
+# StartCalendarInterval has no Year field. A far-future absolute schedule sees
+# annual calendar matches before its target year and must ignore them.
+FUTURE_WHEN="$(at "$((NOW + 370 * 86400))" '%Y-%m-%d') 07:45"
+out=$(sched FUTURE "$REPO" fix/future "$FUTURE_WHEN"); rc=$?
+check "future: far absolute date arms successfully" "$rc" "0"
+FUTURE_FIRE=$(fired FUTURE)
+env -i HOME="$FHOME" /bin/bash "$(wrapper_of FUTURE)"
+check "future: early annual match dispatches nothing" "$(call_count FUTURE)" "0"
+exists "future: early annual match keeps the marker" "$(marker_of FUTURE)"
+exists "future: early annual match keeps the wrapper" "$(wrapper_of FUTURE)"
+exists "future: early annual match keeps the plist" "$(plist_of FUTURE)"
+printf '%s\n' "$((FUTURE_FIRE + 60))" > "$DATE_STATE"
+env -i HOME="$FHOME" /bin/bash "$(wrapper_of FUTURE)"
+: > "$DATE_STATE"
+check "future: target-year match dispatches exactly once" "$(call_count FUTURE)" "1"
+absent "future: target-year match removes the marker" "$(marker_of FUTURE)"
+absent "future: target-year match removes the wrapper" "$(wrapper_of FUTURE)"
+absent "future: target-year match removes the plist" "$(plist_of FUTURE)"
+
 # ---------------------------------------------------------------------------
 echo "== re-arming a ticket replaces its schedule =="
 # ---------------------------------------------------------------------------
@@ -243,8 +315,9 @@ check "list: one row per armed ticket" \
 echo "== the fired wrapper: one run, with the scheduling shell's identity =="
 # ---------------------------------------------------------------------------
 CANARY="it is 08:10 and Angel's shell said so"
+: > "$CALLS"
 (
-  export HARNESS_CANARY="$CANARY" HARNESS_OWNER=angel GH_TOKEN=gho_fixture \
+  export HARNESS_CANARY="$CANARY" HARNESS_OWNER=angel TEST_GH_TOKEN=gho_fixture \
          IMPLEMENTER_EFFORT=max SCHEDULE_UNRELATED=must-not-travel
   sched FIRE "$REPO" fix/fire "$AHEAD_HHMM" > /dev/null
 )
@@ -253,8 +326,10 @@ exists "fire: wrapper armed" "$W"
 # launchd hands the job a bare environment, so the wrapper must carry its own:
 # env -i is the closest a test gets to that, and it also proves PATH travelled
 # (nothing below would resolve otherwise).
+printf '%s\n' "$(fired FIRE)" > "$DATE_STATE"
 env -i HOME="$FHOME" /bin/bash "$W"
-check "fire: run-task.sh ran exactly once" "$(grep -c '^argv:' "$CALLS" | tr -d ' ')" "1"
+: > "$DATE_STATE"
+check "fire: run-task.sh ran exactly once" "$(call_count FIRE)" "1"
 check "fire: with the ticket, repo and branch it was scheduled with" \
   "$(grep '^argv:' "$CALLS" | sed 's/^argv://')" "FIRE $REPO fix/fire"
 check "fire: HARNESS_* travelled verbatim (quotes and all)" \
@@ -303,8 +378,8 @@ sched --cancel AHEAD > /dev/null
 sched --cancel ABS   > /dev/null
 sched --cancel RE-ARM > /dev/null
 check "cancel: --list is empty once everything is disarmed" "$(sched --list)" "no pending schedules"
-check "cancel: no run was ever dispatched by cancelling" \
-  "$(grep -c '^argv:' "$CALLS" | tr -d ' ')" "1"
+check "cancel: cancelling dispatched none of its tickets" \
+  "$(( $(call_count ROLL) + $(call_count ABS) + $(call_count AHEAD) + $(call_count RE-ARM) ))" "0"
 
 # ---------------------------------------------------------------------------
 echo "== shipped and documented alongside run-task =="

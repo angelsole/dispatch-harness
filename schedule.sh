@@ -48,13 +48,14 @@ plist_for() { printf '%s/%s.plist' "$AGENTS_DIR" "$(label_for "$1")"; }
 # Time
 # ---------------------------------------------------------------------------
 # All date arithmetic goes through perl (already a hard dependency): BSD and GNU
-# date(1) disagree on every flag this would need, and mktime() re-resolves DST
-# for us, so "08:10 tomorrow" stays 08:10 across a transition.
+# date(1) disagree on every flag this would need. Scanning real minute boundaries
+# makes "08:10 next occurrence" correct across skipped and repeated DST hours.
 fire_epoch() {  # $1 = <when>; prints the fire epoch, or explains and fails
   perl -e '
     use strict; use warnings; use POSIX qw(mktime);
     my $when = $ARGV[0];
-    my @now = localtime(time);
+    my $now = time;
+    my @now = localtime($now);
     my ($y, $mo, $d, $h, $mi, $rel);
     $rel = 0;
     if ($when =~ /^(\d{1,2}):(\d{2})$/) {
@@ -68,15 +69,29 @@ fire_epoch() {  # $1 = <when>; prints the fire epoch, or explains and fails
       die "FATAL: cannot read [$when] as a time — use HH:MM or \"YYYY-MM-DD HH:MM\"\n";
     }
     die "FATAL: [$when] is not a time of day\n" if $h > 23 || $mi > 59;
+    if ($rel) {
+      # Scan real minute boundaries instead of adding 24 hours or asking
+      # mktime() to normalise a date. That finds the genuinely next occurrence
+      # across both the missing and repeated wall-clock hours at DST changes.
+      my $t = int($now / 60) * 60 + 60;
+      for (0 .. 48 * 60) {
+        my @got = localtime($t);
+        if ($got[2] == $h && $got[1] == $mi) { print $t; exit 0; }
+        $t += 60;
+      }
+      die "FATAL: cannot find the next local occurrence of [$when]\n";
+    }
+
     my $t = mktime(0, $mi, $h, $d, $mo, $y);
     defined $t or die "FATAL: no such local time: [$when]\n";
-    # mktime happily normalises 2026-02-31 into March; round-trip the calendar
-    # date so a typo fails here instead of firing on a day nobody asked for.
+    # mktime happily normalises invalid dates and nonexistent DST times. Round
+    # trip every requested calendar field so a typo never silently moves.
     my @got = localtime($t);
     die "FATAL: no such date: [$when]\n"
-      if !$rel && ($got[5] != $y || $got[4] != $mo || $got[3] != $d);
-    $t = mktime(0, $mi, $h, $d + 1, $mo, $y) if $rel && $t <= time;
-    die "FATAL: [$when] is already in the past\n" if $t <= time;
+      if $got[5] != $y || $got[4] != $mo || $got[3] != $d;
+    die "FATAL: no such local time: [$when]\n"
+      if $got[2] != $h || $got[1] != $mi;
+    die "FATAL: [$when] is already in the past\n" if $t <= $now;
     print $t;
   ' -- "$1"
 }
@@ -127,6 +142,14 @@ armed() {  # $1 = ticket: anything of this schedule still on disk?
   [ -e "$(plist_for "$1")" ] || [ -e "$RUNS/$1/scheduled" ] || [ -e "$RUNS/$1/scheduled-run.sh" ]
 }
 
+validate_ticket() {
+  case "$1" in
+    ''|.*|*[!A-Za-z0-9._-]*)
+      fail "ticket must be letters, digits, dot, dash or underscore and must not start with dot: [$1]"
+      ;;
+  esac
+}
+
 disarm() {  # $1 = ticket: remove the agent and every file that arms it
   launchctl bootout "gui/$(id -u)/$(label_for "$1")" >/dev/null 2>&1 || true
   rm -f "$(plist_for "$1")" "$RUNS/$1/scheduled" "$RUNS/$1/scheduled-run.sh"
@@ -153,10 +176,31 @@ RUN_TASK=$(shquote "$SELF_DIR/run-task.sh")
 TICKET=$(shquote "$1")
 REPO=$(shquote "$2")
 BRANCH=$(shquote "$3")
+FIRE_EPOCH=$(shquote "$4")
 
 $(env_snapshot)
 EOF
     cat <<'EOF'
+
+# launchd has no Year field, so an absolute date more than a year away may
+# produce an earlier annual calendar match. Leave the schedule armed until the
+# requested epoch; a missed target still fires on wake because now is then
+# greater than FIRE_EPOCH.
+exec >> "$LOG" 2>&1
+now=$(date +%s 2>/dev/null) || {
+  echo "[schedule] cannot read the current time; leaving $TICKET armed"
+  exit 1
+}
+case "$now" in
+  ''|*[!0-9]*)
+    echo "[schedule] invalid current time [$now]; leaving $TICKET armed"
+    exit 1
+    ;;
+esac
+if [ "$now" -lt "$FIRE_EPOCH" ]; then
+  echo "[schedule] early annual calendar match for $TICKET; still armed for $FIRE_EPOCH"
+  exit 0
+fi
 
 # Disarm BEFORE dispatching, so exactly one run can ever come out of this
 # schedule: with the plist already gone, a crash, a power cut or a reboot in the
@@ -165,7 +209,6 @@ EOF
 # running it is safe — the interpreter holds the open file descriptor.
 rm -f "$PLIST" "$WRAPPER" "$MARKER"
 
-exec >> "$LOG" 2>&1
 echo "[schedule] $(date '+%Y-%m-%d %H:%M:%S') firing $TICKET"
 "$RUN_TASK" "$TICKET" "$REPO" "$BRANCH"
 rc=$?
@@ -223,9 +266,7 @@ EOF
 arm() {  # $1 ticket, $2 repo path, $3 branch, $4 when
   local ticket="$1" repo branch="$3" fire plist wrapper run_dir now
 
-  case "$1" in
-    ''|*[!A-Za-z0-9._-]*) fail "ticket must be letters, digits, dot, dash or underscore: [$1]" ;;
-  esac
+  validate_ticket "$1"
   [ -n "$branch" ] || fail "branch name is empty"
   repo=$(cd "$2" 2>/dev/null && pwd) || repo=""
   [ -n "$repo" ] || fail "no such repo directory: $2"
@@ -249,11 +290,13 @@ arm() {  # $1 ticket, $2 repo path, $3 branch, $4 when
     || fail "cannot write $wrapper"
   write_plist "$ticket" "$wrapper" "$fire" "$plist" \
     || { rm -f "$wrapper" "$plist"; fail "cannot write $plist"; }
+  # Put the marker in place before bootstrap. A calendar event can become due
+  # while launchctl is loading the job; the wrapper must be able to remove the
+  # marker even if it starts before bootstrap returns.
+  echo "$fire" > "$run_dir/scheduled" \
+    || { rm -f "$wrapper" "$plist"; fail "cannot write $run_dir/scheduled"; }
   launchctl bootstrap "gui/$(id -u)" "$plist" \
-    || { rm -f "$wrapper" "$plist"; fail "launchctl could not load $plist"; }
-
-  # Only once launchd has actually taken the job: the marker means armed.
-  echo "$fire" > "$run_dir/scheduled"
+    || { disarm "$ticket"; fail "launchctl could not load $plist"; }
 
   now=$(date +%s)
   echo "[schedule] $ticket armed for $(human_time "$fire") ($(countdown "$((fire - now))"))"
@@ -296,9 +339,7 @@ EOF
 }
 
 cancel() {  # $1 = ticket
-  case "$1" in
-    ''|*[!A-Za-z0-9._-]*) fail "ticket must be letters, digits, dot, dash or underscore: [$1]" ;;
-  esac
+  validate_ticket "$1"
   if ! armed "$1"; then
     echo "nothing scheduled for $1"
     return 0
