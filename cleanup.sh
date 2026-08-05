@@ -5,6 +5,18 @@ set -u
 [ $# -eq 1 ] || { echo "usage: cleanup.sh <RUN-ID>" >&2; exit 2; }
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 RUN="$HARNESS_DIR/runs/$1"
+
+# A run dispatched with HARNESS_MIRROR left a copy of its run dir on another
+# machine's wall. Promoting the run should free that disk too — best-effort,
+# and before the early exit below, so it happens even when there is no worktree
+# left to remove.
+# shellcheck source=mirror.sh
+. "$HARNESS_DIR/mirror.sh"
+if mirror_enabled; then
+  mirror_remove "$1"
+  echo "cleared mirrored copy at ${HARNESS_MIRROR%/}/$1 (best-effort)"
+fi
+
 WT=$(cat "$RUN/worktree" 2>/dev/null || jq -r '.worktree // empty' "$RUN/result.json" 2>/dev/null)
 BRANCH=$(jq -r '.branch // empty' "$RUN/result.json" 2>/dev/null)
 [ -n "$WT" ] && [ -d "$WT" ] || { echo "nothing to clean for $1"; exit 0; }
