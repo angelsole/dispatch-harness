@@ -28,11 +28,25 @@ absent() { if [ -e "$2" ]; then bad "$1 ($2 is still there)"; else ok "$1"; fi; 
 file_has()     { if grep -qF -- "$2" "$1" 2>/dev/null; then ok "$3"; else bad "$3 (missing [$2] in $1)"; fi; }
 file_has_not() { if grep -qF -- "$2" "$1" 2>/dev/null; then bad "$3 (found [$2] in $1)"; else ok "$3"; fi; }
 
+# shellcheck source=../mirror.sh
+. "$SRC/mirror.sh"
+
 # Mirroring is guarded on rsync at its only call site and degrades to nothing
-# without it, so a machine that has no rsync has nothing to assert here.
+# without it. The integration cases need the real binary, but a machine without
+# it must still prove that the documented no-op path is silent and successful.
 if ! command -v rsync >/dev/null 2>&1; then
-  echo "mirror: rsync is not installed — mirroring is a no-op here, suite skipped"
-  exit 0
+  echo "== rsync absent: mirroring degrades safely =="
+  NO_RSYNC_RUN="$ROOT/no-rsync-run"
+  mkdir -p "$NO_RSYNC_RUN"
+  HARNESS_MIRROR="$ROOT/no-rsync-wall"
+  mirror_sync "$NO_RSYNC_RUN" no-rsync
+  check "missing rsync: mirror_sync still succeeds" "$?" "0"
+  exists "missing rsync: the diagnostic stays in the run dir" "$NO_RSYNC_RUN/mirror.log"
+  absent "missing rsync: no destination is created" "$HARNESS_MIRROR/no-rsync"
+  echo
+  printf 'mirror: %d passed, %d failed (rsync integration unavailable)\n' "$pass" "$fail"
+  [ "$fail" -eq 0 ]
+  exit $?
 fi
 
 # Poll rather than sleep: the assertions are about how quickly the mirror
@@ -222,7 +236,7 @@ else
 fi
 file_has_not "$ROOT/run-$T.log" "rsync"  "unreachable: no rsync noise in the run's own output"
 file_has_not "$ROOT/run-$T.log" "resolve host" "unreachable: no ssh noise in the run's own output"
-if [ "$REM_SECONDS" -le $(( OFF_SECONDS + 20 )) ]; then
+if [ "$REM_SECONDS" -le $(( OFF_SECONDS + MIRROR_SYNC_TIMEOUT + 1 )) ]; then
   ok "unreachable: the run is not slowed down (${REM_SECONDS}s vs ${OFF_SECONDS}s unmirrored)"
 else
   bad "unreachable: the run is not slowed down (${REM_SECONDS}s vs ${OFF_SECONDS}s unmirrored)"
@@ -257,12 +271,15 @@ unset HARNESS_MIRROR
 # The library's own contract, called directly
 # ---------------------------------------------------------------------------
 echo "== mirror.sh: target forms and the no-op cases =="
-# shellcheck source=../mirror.sh
-. "$SRC/mirror.sh"
 HARNESS_MIRROR="mini:.claude/harness/runs"; mirror_is_remote
 check "lib: a colon means an ssh destination" "$?" "0"
 HARNESS_MIRROR="/some/dir"; mirror_is_remote
 check "lib: a plain path means this machine" "$?" "1"
+
+ODD_REMOTE="dir/odd'name"
+QUOTED_REMOTE=$(mirror_shell_quote "$ODD_REMOTE")
+eval "ROUND_TRIP_REMOTE=$QUOTED_REMOTE"
+check "lib: remote paths are shell-quoted without changing them" "$ROUND_TRIP_REMOTE" "$ODD_REMOTE"
 
 UNIT="$ROOT/unit"; mkdir -p "$UNIT/run"
 printf 'x\n' > "$UNIT/run/status"
@@ -271,6 +288,51 @@ mirror_sync "$UNIT/run" unit-1
 exists "lib: mirror_sync creates the target directory" "$UNIT/wall/unit-1/status"
 mirror_remove unit-1
 absent "lib: mirror_remove drops just that run" "$UNIT/wall/unit-1"
+
+# A run id is untrusted input to cleanup.sh. It must never escape the configured
+# target and turn cleanup into deletion of a sibling directory.
+mkdir -p "$UNIT/safe-root/target" "$UNIT/safe-root/keep"
+HARNESS_MIRROR="$UNIT/safe-root/target"
+mirror_remove ../keep
+exists "lib: mirror_remove refuses path traversal" "$UNIT/safe-root/keep"
+
+NO_RSYNC_RUN="$UNIT/no-rsync"; mkdir -p "$NO_RSYNC_RUN"
+SAVED_PATH="$PATH"
+# shellcheck disable=SC2123  # Deliberately hide the optional binary for this call.
+PATH="$ROOT/path-without-rsync"
+HARNESS_MIRROR="$UNIT/no-rsync-wall"
+mirror_sync "$NO_RSYNC_RUN" no-rsync
+NO_RSYNC_RC=$?
+PATH="$SAVED_PATH"
+check "lib: missing rsync is successful" "$NO_RSYNC_RC" "0"
+file_has "$NO_RSYNC_RUN/mirror.log" "rsync not installed" "lib: missing rsync records one diagnostic"
+absent "lib: missing rsync creates no destination" "$UNIT/no-rsync-wall/no-rsync"
+
+# A pass that never returns must be canceled at shutdown and the final attempt
+# must hit the library's hard deadline. This pins both non-blocking best-effort
+# behavior and the original exit code.
+STALL_BIN="$ROOT/stall-bin"; STALL_RUN="$UNIT/stall-run"
+mkdir -p "$STALL_BIN" "$STALL_RUN"
+cat > "$STALL_BIN/rsync" <<'SH'
+#!/usr/bin/env bash
+trap 'exit 142' ALRM
+trap 'exit 143' TERM INT
+while :; do :; done
+SH
+chmod +x "$STALL_BIN/rsync"
+STALL_START=$(date +%s)
+PATH="$STALL_BIN:$PATH" HARNESS_MIRROR="$UNIT/stall-wall" \
+  bash -c '. "$1"; mirror_start "$2" stalled; exit 7' _ "$SRC/mirror.sh" "$STALL_RUN"
+STALL_RC=$?
+STALL_SECONDS=$(( $(date +%s) - STALL_START ))
+check "lib: a stalled mirror preserves the caller's exit code" "$STALL_RC" "7"
+if [ "$STALL_SECONDS" -le $(( MIRROR_SYNC_TIMEOUT + 1 )) ]; then
+  ok "lib: a stalled mirror cannot block shutdown (${STALL_SECONDS}s)"
+else
+  bad "lib: a stalled mirror cannot block shutdown (${STALL_SECONDS}s)"
+fi
+STALL_LEFT=$(ps -Ao args= 2>/dev/null | grep -F "$STALL_BIN/rsync" | grep -vc grep)
+check "lib: the stalled rsync is reaped before shutdown returns" "$STALL_LEFT" "0"
 
 unset HARNESS_MIRROR
 mirror_sync "$UNIT/run" unit-2
