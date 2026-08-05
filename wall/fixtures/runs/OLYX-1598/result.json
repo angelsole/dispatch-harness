@@ -1,14 +1,15 @@
 {
   "ticket": "OLYX-1598",
-  "status": "ready",
   "arm": "full",
   "implementer_model": "opus",
   "reviewer_model": "gpt-5.6-sol",
-  "gate": "pass",
-  "branch": "feat/cache-kpi-query",
   "base": "main",
   "pr_url": "https://github.com/acme/dashboard/pull/812",
   "demo_url": "https://demo.example.net/OLYX-1598/demo.mp4",
+  "status": "ready",
+  "owner": "emre",
+  "gate": "pass",
+  "branch": "feat/cache-kpi-query",
   "metrics": {
     "wall_seconds": 2800,
     "gate_rounds": [

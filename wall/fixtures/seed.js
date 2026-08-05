@@ -1,7 +1,8 @@
 'use strict';
-// Stage the wall's fixture runs: five run dirs shaped exactly as run-task.sh
-// writes them (active implement, active review, needs_input, done: ready,
-// done: rejected), with timestamps relative to now.
+// Stage the wall's fixture runs: nine run dirs shaped exactly as run-task.sh
+// writes them, spread across the crew (angel with three parallel dispatches,
+// reinier blocked on a question, emre, and the `bot` synthetic), with
+// timestamps relative to now.
 //
 // The generated runs/ directory is committed, so `wall.sh --runs
 // wall/fixtures/runs` and the demo storyboard work straight out of a clone.
@@ -24,14 +25,16 @@ function write(id, name, body) {
   fs.writeFileSync(path.join(DEST, id, name), body.endsWith('\n') ? body : body + '\n');
 }
 
-// The files every run dir has, whatever stage it is in.
-function run({ id, stageAge, totalAge, stage, activity, title }) {
+// The files every run dir has, whatever stage it is in. `owner` is the crew
+// member who dispatched it — run-task.sh pins it from HARNESS_OWNER.
+function run({ id, owner, stageAge, totalAge, stage, activity, title }) {
   fs.mkdirSync(path.join(DEST, id), { recursive: true });
   write(id, 'status', `${at(stageAge)} ${stage}`);
   write(id, 'started', at(totalAge));
   write(id, 'stages.log', `${at(totalAge)} __invocation__\n${at(stageAge)} ${stage}`);
   write(id, 'timeline', `${clk(stageAge)} ${stage}`);
   write(id, 'activity', activity);
+  write(id, 'owner', owner);
   write(id, 'brief.md', `# ${title}\n\n- **Ticket**: ${id}\n`);
   write(id, 'worktree', `/tmp/dispatch-fixture/${id}`);
   write(id, 'base', 'origin/main');
@@ -41,12 +44,19 @@ function feed(id, lines) {
   write(id, 'feed.log', lines.map(([ago, text]) => `${clk(ago)} ${text}`).join('\n'));
 }
 
+function result(id, fields) {
+  write(id, 'result.json', JSON.stringify({
+    ticket: id, arm: 'full', implementer_model: 'opus', reviewer_model: 'gpt-5.6-sol',
+    base: 'main', pr_url: '', demo_url: '', ...fields,
+  }, null, 2));
+}
+
 fs.rmSync(DEST, { recursive: true, force: true });
 fs.mkdirSync(DEST, { recursive: true });
 
-// --- 1. mid-implement: the newest thing on the wall ---------------------------
+// --- angel: three parallel dispatches, one per pipeline stage -----------------
 run({
-  id: 'OLYX-1631', stageAge: 145, totalAge: 1320,
+  id: 'OLYX-1631', owner: 'angel', stageAge: 145, totalAge: 1320,
   stage: 'implementing — Opus (Claude sub)',
   activity: '⏺ Edit src/invoices/export.ts',
   title: 'Invoice export endpoint — CSV + XLSX',
@@ -63,9 +73,8 @@ feed('OLYX-1631', [
   [145, '⏺ Edit src/invoices/export.ts'],
 ]);
 
-// --- 2. reviewer stage: the second neon signature -----------------------------
 run({
-  id: 'OLYX-1655', stageAge: 95, totalAge: 2460,
+  id: 'OLYX-1655', owner: 'angel', stageAge: 95, totalAge: 2460,
   stage: 'review — Codex (ChatGPT sub)',
   activity: '◆ codex reviewing the diff against origin/main',
   title: 'Broker payout ledger — split by desk',
@@ -81,9 +90,24 @@ feed('OLYX-1655', [
   [95, '◆ codex Re-running the gate after the refactor'],
 ]);
 
-// --- 3. blocked: the alarm state ----------------------------------------------
 run({
-  id: 'OLYX-1642', stageAge: 780, totalAge: 4020,
+  id: 'OLYX-1660', owner: 'angel', stageAge: 40, totalAge: 1800,
+  stage: 'test gate #2 (deterministic — no model)',
+  activity: 'test gate #2 (deterministic — no model)',
+  title: 'Contract PDF footer — VAT line per jurisdiction',
+});
+write('OLYX-1660', 'gate-rounds.log', '1 fail');
+feed('OLYX-1660', [
+  [600, '⏺ Edit src/contracts/footer.tsx'],
+  [430, '⏺ Bash npm run gate'],
+  [300, '💬 Two snapshots still carry the old single-VAT footer — updating both'],
+  [180, '⏺ Edit src/contracts/__snapshots__/footer.test.tsx.snap'],
+  [40, '⏺ Bash npm run gate'],
+]);
+
+// --- reinier: one blocked on a question, one running --------------------------
+run({
+  id: 'OLYX-1642', owner: 'reinier', stageAge: 780, totalAge: 4020,
   stage: 'waiting — implementer needs your input (QUESTIONS.md)',
   activity: 'waiting — implementer needs your input (QUESTIONS.md)',
   title: 'Retire the legacy quote PDF renderer',
@@ -102,20 +126,45 @@ feed('OLYX-1642', [
   [900, '⏺ Write .harness/QUESTIONS.md'],
   [780, '🏁 success'],
 ]);
-write('OLYX-1642', 'result.json', JSON.stringify({
-  ticket: 'OLYX-1642', status: 'needs_input', arm: 'full',
-  implementer_model: 'opus', reviewer_model: 'gpt-5.6-sol',
-  gate: 'not_run', branch: 'feat/retire-legacy-pdf', base: 'main',
-  pr_url: '', demo_url: '',
+result('OLYX-1642', {
+  status: 'needs_input', owner: 'reinier', gate: 'not_run',
+  branch: 'feat/retire-legacy-pdf',
   metrics: {
     wall_seconds: 4020, gate_rounds: [],
     diff: { files_changed: 3, insertions: 88, deletions: 12 },
   },
-}, null, 2));
+});
 
-// --- 4. shipped: PR + demo ----------------------------------------------------
 run({
-  id: 'OLYX-1598', stageAge: 3300, totalAge: 6100,
+  id: 'OLYX-1648', owner: 'reinier', stageAge: 260, totalAge: 2100,
+  stage: 'implementing — Opus (Claude sub)',
+  activity: '⏺ Write src/webhooks/retry-queue.ts',
+  title: 'Webhook retries — exponential backoff with a dead letter queue',
+});
+feed('OLYX-1648', [
+  [1400, '⏺ Read src/webhooks/dispatch.ts'],
+  [1100, '🧠 Retries are inline today, so one slow endpoint stalls the whole batch'],
+  [800, '⏺ Write src/webhooks/retry-queue.ts'],
+  [520, '⏺ Bash npm run test -- webhooks'],
+  [260, '⏺ Write src/webhooks/retry-queue.ts'],
+]);
+
+// --- emre: one syncing, one shipped ------------------------------------------
+run({
+  id: 'OLYX-1673', owner: 'emre', stageAge: 55, totalAge: 600,
+  stage: 'base sync — merge latest main (script — no model)',
+  activity: 'base sync — merge latest main (script — no model)',
+  title: 'Dashboard filters — persist the last used range',
+});
+feed('OLYX-1673', [
+  [420, '⏺ Edit src/dashboard/filters.tsx'],
+  [300, '⏺ Bash npm run gate'],
+  [190, '🏁 success'],
+  [55, '⏺ Bash git merge origin/main'],
+]);
+
+run({
+  id: 'OLYX-1598', owner: 'emre', stageAge: 3300, totalAge: 6100,
   stage: 'done: ready', activity: 'done: ready',
   title: 'Cache the dashboard KPI query',
 });
@@ -127,10 +176,8 @@ feed('OLYX-1598', [
   [3400, '🏁 success'],
   [3300, '⏺ Bash gh pr create --draft'],
 ]);
-write('OLYX-1598', 'result.json', JSON.stringify({
-  ticket: 'OLYX-1598', status: 'ready', arm: 'full',
-  implementer_model: 'opus', reviewer_model: 'gpt-5.6-sol',
-  gate: 'pass', branch: 'feat/cache-kpi-query', base: 'main',
+result('OLYX-1598', {
+  status: 'ready', owner: 'emre', gate: 'pass', branch: 'feat/cache-kpi-query',
   pr_url: 'https://github.com/acme/dashboard/pull/812',
   demo_url: 'https://demo.example.net/OLYX-1598/demo.mp4',
   metrics: {
@@ -139,35 +186,47 @@ write('OLYX-1598', 'result.json', JSON.stringify({
     opus_commits: 3, codex_commits: 2,
     diff: { files_changed: 7, insertions: 214, deletions: 63 },
   },
-}, null, 2));
-
-// --- 5. rejected by the reviewer ----------------------------------------------
-run({
-  id: 'OLYX-1604', stageAge: 5400, totalAge: 8200,
-  stage: 'done: rejected', activity: 'done: rejected',
-  title: 'Move session storage to Redis',
 });
-write('OLYX-1604', 'gate-rounds.log', '1 pass');
-write('OLYX-1604', 'REJECTED.md', `# Rejected
 
-Sessions move to Redis but nothing evicts them: the TTL is never set, so a
-restart leaks every session forever. That needs a design decision, not a patch.
+// --- bot: the synthetic's own dispatches --------------------------------------
+run({
+  id: 'BOT-2291', owner: 'bot', stageAge: 120, totalAge: 900,
+  stage: 'implementing — Opus (Claude sub)',
+  activity: '⏺ Bash npm audit fix --package-lock-only',
+  title: 'Nightly dependency sweep — bump and verify',
+});
+feed('BOT-2291', [
+  [700, '⏺ Bash npm outdated'],
+  [560, '💬 11 packages behind; 3 are majors — holding those back for a human'],
+  [400, '⏺ Edit package.json'],
+  [240, '⏺ Bash npm install --package-lock-only'],
+  [120, '⏺ Bash npm audit fix --package-lock-only'],
+]);
+
+run({
+  id: 'BOT-2287', owner: 'bot', stageAge: 5400, totalAge: 8200,
+  stage: 'done: rejected', activity: 'done: rejected',
+  title: 'Nightly refactor sweep — dedupe the money helpers',
+});
+write('BOT-2287', 'gate-rounds.log', '1 pass');
+write('BOT-2287', 'REJECTED.md', `# Rejected
+
+The sweep rewrote rounding at three call sites to share one helper, but billing
+and payouts round in opposite directions on purpose. Collapsing them is a
+pricing decision, not a refactor.
 `);
-feed('OLYX-1604', [
-  [6000, '◆ codex Reading src/auth/session-store.ts'],
-  [5700, '◆ codex No TTL on the Redis keys — unbounded growth'],
+feed('BOT-2287', [
+  [6000, '◆ codex Reading src/money/round.ts and both call sites'],
+  [5700, '◆ codex billing rounds half-up, payouts round half-down — deliberate'],
   [5400, '◆ codex Writing .harness/REJECTED.md instead of papering over it'],
 ]);
-write('OLYX-1604', 'result.json', JSON.stringify({
-  ticket: 'OLYX-1604', status: 'rejected', arm: 'full',
-  implementer_model: 'opus', reviewer_model: 'gpt-5.6-sol',
-  gate: 'pass', branch: 'feat/redis-sessions', base: 'main',
-  pr_url: '', demo_url: '',
+result('BOT-2287', {
+  status: 'rejected', owner: 'bot', gate: 'pass', branch: 'chore/dedupe-money-helpers',
   metrics: {
     wall_seconds: 2800, gate_rounds: [{ round: '1', result: 'pass' }],
     opus_commits: 2, codex_commits: 0,
     diff: { files_changed: 5, insertions: 131, deletions: 47 },
   },
-}, null, 2));
+});
 
-console.log(`seeded 5 fixture runs in ${DEST}`);
+console.log(`seeded ${fs.readdirSync(DEST).length} fixture runs in ${DEST}`);

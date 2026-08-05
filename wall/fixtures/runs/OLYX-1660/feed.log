@@ -1,0 +1,5 @@
+10:33:57 ⏺ Edit src/contracts/footer.tsx
+10:36:47 ⏺ Bash npm run gate
+10:38:57 💬 Two snapshots still carry the old single-VAT footer — updating both
+10:40:57 ⏺ Edit src/contracts/__snapshots__/footer.test.tsx.snap
+10:43:17 ⏺ Bash npm run gate

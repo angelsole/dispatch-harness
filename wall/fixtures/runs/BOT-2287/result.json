@@ -1,14 +1,15 @@
 {
-  "ticket": "OLYX-1604",
-  "status": "rejected",
+  "ticket": "BOT-2287",
   "arm": "full",
   "implementer_model": "opus",
   "reviewer_model": "gpt-5.6-sol",
-  "gate": "pass",
-  "branch": "feat/redis-sessions",
   "base": "main",
   "pr_url": "",
   "demo_url": "",
+  "status": "rejected",
+  "owner": "bot",
+  "gate": "pass",
+  "branch": "chore/dedupe-money-helpers",
   "metrics": {
     "wall_seconds": 2800,
     "gate_rounds": [

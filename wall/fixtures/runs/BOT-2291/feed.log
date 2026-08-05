@@ -1,0 +1,5 @@
+10:32:17 ⏺ Bash npm outdated
+10:34:37 💬 11 packages behind; 3 are majors — holding those back for a human
+10:37:17 ⏺ Edit package.json
+10:39:57 ⏺ Bash npm install --package-lock-only
+10:41:57 ⏺ Bash npm audit fix --package-lock-only

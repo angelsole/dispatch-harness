@@ -1,3 +1,0 @@
-08:18:02 ◆ codex Reading src/auth/session-store.ts
-08:23:02 ◆ codex No TTL on the Redis keys — unbounded growth
-08:28:02 ◆ codex Writing .harness/REJECTED.md instead of papering over it

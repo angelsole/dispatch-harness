@@ -32,6 +32,11 @@
 
 * { box-sizing: border-box; }
 
+/* The page hides empty regions with the hidden attribute, and several of them
+   set display (flex/grid/-webkit-box) — which outranks the UA's [hidden] rule.
+   One line here, or every one of those regions leaks back onto the wall. */
+[hidden] { display: none !important; }
+
 html {
   font-size: clamp(12px, 1.05vw, 26px);
   background: #000;
@@ -103,19 +108,135 @@ body {
 .hud__link[data-state="lost"]::before { content: "▯ "; }
 .hud__link[data-state="wait"]::before { content: "▯ "; }
 
-/* --- deck ----------------------------------------------------------------- */
+/* --- deck: one lane per crew member ---------------------------------------- */
 
 .deck {
+  --scale: 1;            /* set by the page from the lane count */
   display: grid;
   gap: var(--gap);
   min-height: 0;
 }
 
 .deck[data-layout="idle"] { grid-template-columns: 1fr; }
-.deck[data-layout="hero"] { grid-template-columns: 1fr; }
-.deck[data-layout="duo"] { grid-template-columns: 1fr 1fr; }
-.deck[data-layout="grid"] { grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; }
-.deck[data-layout="dense"] { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; }
+.deck[data-layout="lanes"] { grid-auto-flow: column; grid-auto-columns: 1fr; }
+
+/* Everything inside a lane is sized in em against this one number, so a lane
+   shrinks as a whole: --scale by how many crew are on the wall, --dens by how
+   many runs that member has going. */
+.lane {
+  --crew: var(--gate);
+  --dens: 1;
+  font-size: calc(1rem * var(--scale) * var(--dens));
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  min-width: 0;
+  min-height: 0;
+}
+.lane[data-n="1"] { --dens: 1.25; }
+.lane[data-n="2"] { --dens: 1; }
+.lane[data-n="3"] { --dens: 0.85; }
+.lane[data-n="4"] { --dens: 0.75; }
+
+.lane__head {
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  padding: 0.2em 0.55em;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--crew) 45%, transparent);
+  border-left: 0.3em solid var(--crew);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--crew) 20%, transparent), transparent 72%),
+    var(--panel);
+  clip-path: polygon(0 0, calc(100% - 0.7em) 0, 100% 0.7em, 100% 100%, 0 100%);
+}
+.lane__glyph { width: 2em; height: 2em; color: var(--crew); flex: none; }
+.lane__idBlock { min-width: 0; }
+.lane__name {
+  font-size: 1.55em;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: var(--crew);
+  text-shadow: 0 0 0.9em color-mix(in srgb, var(--crew) 60%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lane__rank {
+  font-size: 0.64em;
+  letter-spacing: 0.18em;
+  color: color-mix(in srgb, var(--crew) 40%, var(--dim));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lane__alarm {
+  color: #fff;
+  background: var(--alarm);
+  padding: 0.05em 0.4em;
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  box-shadow: 0 0 0.9em var(--alarm);
+  animation: klaxon-text 1s steps(2, end) infinite;
+}
+.lane__counts {
+  margin-left: auto;
+  font-size: 0.7em;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.lane__counts b { font-size: 1.7em; color: var(--ink-strong); font-weight: 700; }
+
+/* A spine in the crew tint, continuing the header's left rule down the column:
+   what ties a stack of panels to the person who dispatched them. */
+.lane__runs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-left: 0.3em solid color-mix(in srgb, var(--crew) 22%, transparent);
+  padding-left: 0.35em;
+}
+.lane__runs:empty { display: none; }
+.lane__runs .panel { flex: 1 1 0; }
+
+.lane__standby {
+  flex: 1 1 auto;
+  margin-left: 0.65em;
+  display: grid;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--crew) 28%, transparent);
+  color: color-mix(in srgb, var(--crew) 55%, var(--dim));
+  font-size: 0.8em;
+  letter-spacing: 0.4em;
+  opacity: 0.7;
+}
+
+/* The synthetic is not one of the crew and the wall says so: dashed plate,
+   milk-white instead of a colour signature, and a slow sheen crossing it. */
+.lane[data-kind="synthetic"] .lane__head {
+  border-style: dashed;
+  border-left-style: solid;
+  overflow: hidden;
+  position: relative;
+}
+.lane[data-kind="synthetic"] .lane__head::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(242, 238, 226, 0.22) 50%, transparent 65%);
+  animation: sheen 7s linear infinite;
+}
+.lane[data-kind="synthetic"] .lane__rank { color: color-mix(in srgb, var(--crew) 65%, var(--dim)); }
+
+.lane[data-kind="unowned"] .lane__head { border-style: dashed; border-left-style: solid; }
+.lane[data-kind="unowned"] .lane__name { letter-spacing: 0.14em; }
 
 /* --- run panel ------------------------------------------------------------ */
 
@@ -125,8 +246,8 @@ body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.55rem 0.75rem 0.5rem;
+  gap: 0.28em;
+  padding: 0.5em 0.7em 0.45em;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 45%),
     var(--panel);
@@ -170,10 +291,10 @@ body {
    two-line blocking question must not be squeezed back to one). */
 .panel > * { flex: none; }
 
-.panel__head { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.panel__head { display: flex; align-items: center; gap: 0.6em; min-width: 0; }
 
 .panel__id {
-  font-size: 1.5rem;
+  font-size: 1.45em;
   font-weight: 700;
   color: var(--ink-strong);
   letter-spacing: 0.06em;
@@ -186,19 +307,19 @@ body {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.1rem 0.45rem;
+  gap: 0.35em;
+  padding: 0.08em 0.45em;
   color: var(--accent);
   border: 1px solid currentColor;
-  font-size: 0.8rem;
+  font-size: 0.72em;
   letter-spacing: 0.2em;
   white-space: nowrap;
-  text-shadow: 0 0 0.6rem currentColor;
+  text-shadow: 0 0 0.6em currentColor;
 }
-.panel__glyph { width: 1.15rem; height: 1.15rem; display: block; }
+.panel__glyph { width: 1.2em; height: 1.2em; display: block; }
 
 .panel__title {
-  font-size: 0.95rem;
+  font-size: 0.86em;
   color: var(--ink);
   opacity: 0.92;
   white-space: nowrap;
@@ -209,12 +330,12 @@ body {
 .panel__stage {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
-  font-size: 1rem;
+  gap: 0.6em;
+  font-size: 0.95em;
   color: var(--accent);
   border-top: 1px solid var(--rule);
   border-bottom: 1px solid var(--rule);
-  padding: 0.22rem 0;
+  padding: 0.2em 0;
   min-width: 0;
 }
 .panel__stageText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -223,8 +344,8 @@ body {
 .panel__meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.15rem 0.7rem;
-  font-size: 0.75rem;
+  gap: 0.12em 0.7em;
+  font-size: 0.68em;
   color: var(--dim);
   letter-spacing: 0.12em;
 }
@@ -240,22 +361,22 @@ body {
   flex-direction: column;
   justify-content: flex-end;
   overflow: hidden;
-  font-size: 0.78rem;
+  font-size: 0.7em;
   line-height: 1.45;
   color: var(--dim);
-  mask-image: linear-gradient(180deg, transparent, #000 2.2rem);
+  mask-image: linear-gradient(180deg, transparent, #000 2.2em);
 }
 .feed__line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .feed__line:last-child { color: var(--ink-strong); }
-.feed__t { color: color-mix(in srgb, var(--dim) 70%, transparent); margin-right: 0.4rem; }
+.feed__t { color: color-mix(in srgb, var(--dim) 70%, transparent); margin-right: 0.4em; }
 .feed__line[data-src="codex"] .feed__body { color: color-mix(in srgb, var(--codex) 80%, var(--dim)); }
 .feed__line[data-src="claude"] .feed__body { color: color-mix(in srgb, var(--opus) 80%, var(--dim)); }
 
 .panel__note {
-  font-size: 0.85rem;
+  font-size: 0.78em;
   color: var(--accent);
   border-left: 2px solid currentColor;
-  padding-left: 0.5rem;
+  padding-left: 0.5em;
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -263,54 +384,35 @@ body {
   line-clamp: 2;
 }
 
-/* An odd count fills its row instead of leaving a hole: 3 up = two on top, one
-   spanning the width below. */
-.deck[data-layout="grid"][data-n="3"] .panel:last-child { grid-column: 1 / -1; }
-.deck[data-layout="dense"][data-n="5"] .panel:last-child,
-.deck[data-layout="dense"][data-n="7"] .panel:last-child { grid-column: span 2; }
-
-/* Hero: one run owns the wall. Identity on the left, the live feed running the
-   full height on the right — a lone run should read as a control panel, not as
-   a small card stretched to fit a TV. */
-.deck[data-layout="hero"] .panel {
+/* One crew member, one run: that panel owns the wall. Identity on the left, the
+   live feed running the full height on the right — it should read as a control
+   panel, not as a small card stretched to fit a TV. */
+.deck[data-lanes="1"] .lane[data-n="1"] .panel {
   display: grid;
   grid-template-columns: 1.05fr 1fr;
   grid-template-rows: auto auto auto auto minmax(0, 1fr);
-  column-gap: 1.4rem;
+  column-gap: 1.4em;
 }
-.deck[data-layout="hero"] .panel__head { grid-area: 1 / 1; }
-.deck[data-layout="hero"] .panel__title { grid-area: 2 / 1; }
-.deck[data-layout="hero"] .panel__stage { grid-area: 3 / 1; }
-.deck[data-layout="hero"] .panel__meta { grid-area: 4 / 1; }
-.deck[data-layout="hero"] .panel__note { grid-area: 5 / 1; align-self: start; }
-.deck[data-layout="hero"] .panel__feed {
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__head { grid-area: 1 / 1; }
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__title { grid-area: 2 / 1; font-size: 1.1em; white-space: normal; }
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__stage {
+  grid-area: 3 / 1;
+  align-items: flex-start;
+  /* Wide enough here to keep stage + activity whole: truncating what the worker
+     is doing right now defeats the point. */
+}
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__stageText { white-space: normal; }
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__meta { grid-area: 4 / 1; }
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__note { grid-area: 5 / 1; align-self: start; }
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__feed {
   grid-area: 1 / 2 / -1 / -1;
   border-left: 1px solid var(--rule);
-  padding-left: 1rem;
+  padding-left: 1em;
 }
-.deck[data-layout="hero"] .panel__wash { width: 42%; height: 60%; left: 2%; right: auto; bottom: -6%; }
-/* The hero column is narrow enough that stage + activity needs two lines —
-   truncating what the worker is doing right now defeats the point. */
-.deck[data-layout="hero"] .panel__stage { align-items: flex-start; }
-.deck[data-layout="hero"] .panel__stageText { white-space: normal; }
-.deck[data-layout="hero"] .panel__id { font-size: 3.2rem; }
-.deck[data-layout="hero"] .panel__title { font-size: 1.6rem; white-space: normal; }
-.deck[data-layout="hero"] .panel__stage { font-size: 1.6rem; }
-.deck[data-layout="hero"] .panel__badge { font-size: 1.1rem; }
-.deck[data-layout="hero"] .panel__glyph { width: 1.6rem; height: 1.6rem; }
-.deck[data-layout="hero"] .panel__meta { font-size: 0.95rem; }
-.deck[data-layout="hero"] .panel__feed { font-size: 1rem; }
-.deck[data-layout="hero"] .panel__note { font-size: 1.15rem; }
-
-.deck[data-layout="duo"] .panel__id { font-size: 2.1rem; }
-.deck[data-layout="duo"] .panel__stage { font-size: 1.2rem; }
-.deck[data-layout="duo"] .panel__feed { font-size: 0.9rem; }
-
-.deck[data-layout="dense"] .panel__id { font-size: 1.15rem; }
-.deck[data-layout="dense"] .panel__title { font-size: 0.8rem; }
-.deck[data-layout="dense"] .panel__stage { font-size: 0.85rem; }
-.deck[data-layout="dense"] .panel__badge { font-size: 0.68rem; }
-.deck[data-layout="dense"] .panel__feed { font-size: 0.7rem; }
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__wash {
+  width: 42%; height: 60%; left: 2%; right: auto; bottom: -6%;
+}
+.deck[data-lanes="1"] .lane[data-n="1"] .panel__id { font-size: 2.4em; }
 
 /* --- states --------------------------------------------------------------- */
 
@@ -476,6 +578,7 @@ body {
 /* --- motion ---------------------------------------------------------------- */
 
 @keyframes boot-line { to { opacity: 1; } }
+@keyframes sheen { 0%, 60% { transform: translateX(-110%); } 100% { transform: translateX(110%); } }
 @keyframes boot-out { to { opacity: 0; transform: scaleY(0.004); } }
 @keyframes scan { from { top: -30%; } to { top: 100%; } }
 @keyframes marquee { from { transform: translateX(100%); } to { transform: translateX(-100%); } }

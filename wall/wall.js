@@ -5,8 +5,26 @@
 // No network call ever leaves this origin.
 
 (function () {
-  const MAX_PANELS = 8;   // beyond this the extras go to the overflow ticker
   const POLL_MS = 2000;   // only used when SSE is unavailable
+
+  // Two colour systems, deliberately kept apart: the ACTOR neon (which model
+  // owns the current stage) accents the run panels, and the CREW tint (who
+  // dispatched them) only ever paints lane chrome — header bar, name, spine.
+  // Muted on purpose, so a lane never competes with a live panel for attention.
+  // Deliberately desaturated: pastels read as identity paint, neon reads as
+  // live state, and the eye never mistakes a lane for a working panel.
+  // Five well-separated hues rather than many near-neighbours: two crew members
+  // sharing a tint is survivable, two crew members with tints you cannot tell
+  // apart from the sofa is not.
+  const CREW_TINTS = ['#e8cfa6', '#a9c9de', '#e5b3c2', '#b3d4bd', '#c6bce0'];
+  const SYNTHETIC_TINT = '#f2eee2';   // milk-white. Synthetics do not bleed red.
+  const UNOWNED_TINT = '#7c8b96';
+  const RANK = {
+    human: 'DISPATCH CREW',
+    synthetic: 'HYPERDYNE 120-A/2',
+    unowned: 'NO OWNER PINNED',
+  };
+  const CREW_GLYPH = { human: 'g-crew', synthetic: 'g-synthetic', unowned: 'g-unregistered' };
 
   const deck = document.getElementById('deck');
   const idle = document.getElementById('idle');
@@ -27,7 +45,20 @@
 
   let skew = 0;        // server epoch minus ours, so timers agree with the harness
   let runs = [];
+  let lanes = [];
   const panels = new Map();
+  const laneEls = new Map();
+
+  // A crew member keeps the same tint whoever else is on the wall, so the room
+  // learns "amber is Emre" — an index into the sorted lanes would reshuffle
+  // every time someone's queue empties.
+  function crewTint(lane) {
+    if (lane.kind === 'synthetic') return SYNTHETIC_TINT;
+    if (lane.kind === 'unowned') return UNOWNED_TINT;
+    let h = 0;
+    for (let i = 0; i < lane.owner.length; i++) h = (h * 31 + lane.owner.charCodeAt(i)) >>> 0;
+    return CREW_TINTS[h % CREW_TINTS.length];
+  }
 
   const now = () => Math.floor(Date.now() / 1000) + skew;
 
@@ -170,14 +201,37 @@
     paintFeed(p, run);
   }
 
-  // --- the wall -------------------------------------------------------------
+  // --- crew lanes -------------------------------------------------------------
 
-  function layoutFor(n) {
-    if (n === 0) return 'idle';
-    if (n === 1) return 'hero';
-    if (n === 2) return 'duo';
-    if (n <= 4) return 'grid';
-    return 'dense';
+  function makeLane() {
+    const root = el('section', 'lane');
+    const head = el('header', 'lane__head');
+    const mark = glyph('lane__glyph');
+    const idBlock = el('div', 'lane__idBlock');
+    const name = el('div', 'lane__name');
+    const rank = el('div', 'lane__rank');
+    idBlock.append(name, rank);
+    const alarm = el('div', 'lane__alarm');
+    const counts = el('div', 'lane__counts');
+    head.append(mark, idBlock, alarm, counts);
+    const runsBox = el('div', 'lane__runs');
+    const standby = el('div', 'lane__standby', '— STANDBY —');
+    root.append(head, runsBox, standby);
+    return { root, mark, name, rank, alarm, counts, runs: runsBox, standby };
+  }
+
+  function paintLane(L, lane) {
+    L.root.dataset.kind = lane.kind;
+    L.root.dataset.n = String(lane.runIds.length);
+    L.root.style.setProperty('--crew', crewTint(lane));
+    setGlyph(L.mark, CREW_GLYPH[lane.kind] || CREW_GLYPH.human);
+    L.name.textContent = lane.label;
+    L.rank.textContent = RANK[lane.kind] || RANK.human;
+    L.counts.textContent = '';
+    L.counts.append(el('b', '', String(lane.active)), document.createTextNode(' / ' + lane.total));
+    L.alarm.textContent = lane.alarm ? '⚠ ' + lane.alarm : '';
+    L.alarm.hidden = lane.alarm === 0;
+    L.standby.hidden = lane.active !== 0;
   }
 
   function paintHistory(done) {
@@ -191,7 +245,9 @@
       chip.dataset.state = run.state;
       const mark = glyph('');
       setGlyph(mark, glyphFor(run));
-      chip.append(mark, el('b', '', run.id), el('span', 'chip__state', run.outcome || run.state));
+      chip.append(mark, el('b', '', run.id));
+      if (run.owner) chip.append(el('span', 'chip__owner', run.owner.toUpperCase()));
+      chip.append(el('span', 'chip__state', run.outcome || run.state));
       if (run.prUrl) chip.append(runLink('PR ↗', run.prUrl));
       if (run.demoUrl) chip.append(runLink('DEMO ↗', run.demoUrl));
       if (run.title) chip.append(el('span', 'chip__title', run.title));
@@ -200,31 +256,49 @@
   }
 
   function render() {
+    const byId = new Map(runs.map((r) => [r.id, r]));
     const live = runs.filter((r) => r.state === 'active' || r.state === 'alarm');
     const done = runs.filter((r) => r.state === 'ready' || r.state === 'failed');
-    const shown = live.slice(0, MAX_PANELS);
-    const extra = live.slice(MAX_PANELS);
+    // Nothing running anywhere: the Moebius idle screen takes the whole deck
+    // rather than a row of empty lanes.
+    const shownLanes = live.length ? lanes : [];
 
-    deck.dataset.layout = layoutFor(shown.length);
-    deck.dataset.n = String(shown.length);   // lets an odd count fill its row
-    idle.hidden = shown.length !== 0;
+    deck.dataset.layout = shownLanes.length ? 'lanes' : 'idle';
+    deck.dataset.lanes = String(shownLanes.length);
+    // Lanes split the width evenly, so type scales with how many there are.
+    deck.style.setProperty('--scale',
+      String(Math.max(0.5, Math.min(1.45, 3.6 / (shownLanes.length || 1)))));
+    idle.hidden = shownLanes.length !== 0;
 
-    const keep = new Set(shown.map((r) => r.id));
+    for (const [owner, L] of laneEls) {
+      if (!shownLanes.some((lane) => lane.owner === owner)) { L.root.remove(); laneEls.delete(owner); }
+    }
+    const keep = new Set(shownLanes.flatMap((lane) => lane.runIds));
     for (const [id, p] of panels) {
       if (!keep.has(id)) { p.root.remove(); panels.delete(id); }
     }
-    for (const run of shown) {
-      let p = panels.get(run.id);
-      if (!p) { p = makePanel(); panels.set(run.id, p); }
-      paintPanel(p, run);
-      deck.append(p.root); // append in sorted order; a no-op when already last
+
+    for (const lane of shownLanes) {
+      let L = laneEls.get(lane.owner);
+      if (!L) { L = makeLane(); laneEls.set(lane.owner, L); }
+      paintLane(L, lane);
+      for (const id of lane.runIds) {
+        const run = byId.get(id);
+        if (!run) continue;
+        let p = panels.get(id);
+        if (!p) { p = makePanel(); panels.set(id, p); }
+        paintPanel(p, run);
+        L.runs.append(p.root);  // append in lane order; a no-op when already last
+      }
+      deck.append(L.root);
     }
 
     paintHistory(done);
+    const extra = shownLanes.flatMap((lane) =>
+      lane.hiddenIds.map((id) => lane.label + ' ' + id));
     overflow.hidden = extra.length === 0;
     if (extra.length) {
-      overflowText.textContent = '+' + extra.length + ' MORE RUNNING · ' +
-        extra.map((r) => r.id + ' ' + r.actor).join('  ·  ');
+      overflowText.textContent = '+' + extra.length + ' MORE RUNNING · ' + extra.join('  ·  ');
     }
 
     counts.textContent = '';
@@ -256,6 +330,7 @@
   function apply(snapshot) {
     skew = (snapshot.at || 0) - Math.floor(Date.now() / 1000);
     runs = Array.isArray(snapshot.runs) ? snapshot.runs : [];
+    lanes = Array.isArray(snapshot.lanes) ? snapshot.lanes : [];
     render();
     tickClock();
   }

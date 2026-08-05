@@ -1,14 +1,15 @@
 {
   "ticket": "OLYX-1642",
-  "status": "needs_input",
   "arm": "full",
   "implementer_model": "opus",
   "reviewer_model": "gpt-5.6-sol",
-  "gate": "not_run",
-  "branch": "feat/retire-legacy-pdf",
   "base": "main",
   "pr_url": "",
   "demo_url": "",
+  "status": "needs_input",
+  "owner": "reinier",
+  "gate": "not_run",
+  "branch": "feat/retire-legacy-pdf",
   "metrics": {
     "wall_seconds": 4020,
     "gate_rounds": [],

@@ -33,8 +33,18 @@ const RUNS = process.env.WALL_RUNS ||
 const POLL_MS = Math.max(100, num(process.env.WALL_POLL_MS, 1000));
 
 const MAX_FINISHED = 24;  // compact history cap; live runs are never discarded
+const MAX_PER_LANE = 4;   // panels per crew lane; the rest go to the ticker
 const FEED_LINES = 48;    // tail of feed.log shipped per run
 const TAIL_BYTES = 16384; // how far back we read for those lines
+
+// The expected roster (--crew / WALL_CREW). Declaring it keeps a crew member's
+// lane on the wall while they have nothing running, so an empty lane reads as
+// "idle", not as "gone". Owners outside the roster always get a lane anyway.
+const CREW = (process.env.WALL_CREW || '').split(',')
+  .map((s) => s.trim().toLowerCase()).filter(Boolean);
+// Automated dispatcher accounts: the ship's synthetics. Not people, and the
+// wall says so rather than quietly listing them as crew.
+const SYNTHETIC = new Set(['bot']);
 
 // --- disk reads (never throw) -------------------------------------------------
 
@@ -173,6 +183,15 @@ function feedOf(dir) {
   });
 }
 
+// Who dispatched this run. run-task.sh pins `owner` at first dispatch from
+// HARNESS_OWNER and copies it into result.json; the file wins because it exists
+// from the first stage, while result.json only appears when the run ends or
+// pauses. Lowercased into a lane key — ANGEL and angel are one crew member.
+function ownerOf(dir, result) {
+  const raw = firstLine(path.join(dir, 'owner')) || result.owner || '';
+  return String(raw).trim().toLowerCase().slice(0, 24);
+}
+
 function readRun(id, current) {
   const dir = path.join(RUNS, id);
   const { since, stage } = current || currentStage(dir);
@@ -189,6 +208,7 @@ function readRun(id, current) {
   return {
     id,
     title: titleOf(dir),
+    owner: ownerOf(dir, result),
     stage,
     state,
     ...actorOf(stage),
@@ -263,6 +283,59 @@ function snapshot() {
   return runs;
 }
 
+// --- crew lanes ----------------------------------------------------------------
+// Runs belong to the person who dispatched them, and the wall is organised
+// around those people: one lane per crew member, their parallel dispatches
+// stacked inside it. Grouping happens here rather than in the page so it is
+// covered by the same curl-and-jq tests as everything else.
+
+function newLane(owner) {
+  return {
+    owner,
+    label: owner ? owner.toUpperCase() : 'UNREGISTERED',
+    // The rank line under the name. `bot` is the ship's synthetic — an
+    // automated dispatcher, not a crew member — and is labelled as such.
+    kind: owner === '' ? 'unowned' : SYNTHETIC.has(owner) ? 'synthetic' : 'human',
+    runIds: [],     // rendered as panels, newest urgency first
+    hiddenIds: [],  // beyond MAX_PER_LANE — the overflow ticker names these
+    active: 0,      // live runs (active + alarm)
+    alarm: 0,
+    total: 0,       // everything of theirs on the wall, finished runs included
+  };
+}
+
+// Roster order first (as declared), then everyone else alphabetically, then the
+// unowned lane. Deterministic and independent of run state, so lanes never
+// jump around while you are looking at them.
+function laneRank(lane) {
+  if (lane.owner === '') return [2, ''];
+  const i = CREW.indexOf(lane.owner);
+  return i === -1 ? [1, lane.owner] : [0, String(i).padStart(4, '0')];
+}
+
+function buildLanes(runs) {
+  const lanes = new Map();
+  const ensure = (owner) => {
+    if (!lanes.has(owner)) lanes.set(owner, newLane(owner));
+    return lanes.get(owner);
+  };
+  for (const name of CREW) ensure(name);
+  for (const run of runs) {
+    const lane = ensure(run.owner);
+    lane.total += 1;
+    if (run.state === 'alarm') lane.alarm += 1;
+    if (run.state === 'active' || run.state === 'alarm') {
+      lane.active += 1;
+      (lane.runIds.length < MAX_PER_LANE ? lane.runIds : lane.hiddenIds).push(run.id);
+    }
+  }
+  return [...lanes.values()].sort((a, b) => {
+    const [ga, ka] = laneRank(a);
+    const [gb, kb] = laneRank(b);
+    return ga - gb || ka.localeCompare(kb);
+  });
+}
+
 // --- http ---------------------------------------------------------------------
 
 const STATIC = {
@@ -276,8 +349,16 @@ const clients = new Set();
 let poller = null;
 let lastBody = '';
 
+// Lanes carry ids, not copies: every run travels once, and the page looks the
+// panel up by id.
 function payload(runs) {
-  return JSON.stringify({ at: Math.floor(Date.now() / 1000), runsDir: RUNS, runs });
+  return JSON.stringify({
+    at: Math.floor(Date.now() / 1000),
+    runsDir: RUNS,
+    crew: CREW,
+    lanes: buildLanes(runs),
+    runs,
+  });
 }
 
 // One poll for all viewers; a frame is only pushed when something actually

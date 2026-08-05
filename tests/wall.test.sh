@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for the wall: wall.sh's flags, the static page, the JSON snapshot
-# endpoint, live SSE updates, and tolerance of half-written run dirs.
+# endpoint, crew-lane grouping, live SSE updates, and tolerance of half-written
+# run dirs. Also pins run-task.sh's owner contract, which the lanes depend on.
 #
 # Hermetic: fixtures are seeded into a temp root (the committed
 # wall/fixtures/runs is only ever read), every server binds --port 0 so the OS
@@ -54,19 +55,20 @@ fi
 # --- serve the fixtures -------------------------------------------------------
 # Start a wall on an OS-assigned port. Sets PORT_OUT (empty if it never came
 # up); not a command substitution, so the background pid lands in the real PIDS.
-# $1 = runs dir, $2 = log file
+# $1 = runs dir, $2 = log file, rest = extra wall.sh flags
 serve() {
-  bash "$WALL" --runs "$1" --host 127.0.0.1 --port 0 > "$2" 2>&1 &
+  local runs="$1" log="$2"; shift 2
+  bash "$WALL" --runs "$runs" --host 127.0.0.1 --port 0 "$@" > "$log" 2>&1 &
   PIDS="$PIDS $!"
   PORT_OUT=''
   local i=0
   while [ "$i" -lt 100 ]; do
-    PORT_OUT=$(sed -n 's|.*http://[^:]*:\([0-9][0-9]*\)/.*|\1|p' "$2" 2>/dev/null | head -1)
+    PORT_OUT=$(sed -n 's|.*http://[^:]*:\([0-9][0-9]*\)/.*|\1|p' "$log" 2>/dev/null | head -1)
     [ -n "$PORT_OUT" ] && break
     sleep 0.1
     i=$((i + 1))
   done
-  [ -n "$PORT_OUT" ] || sed 's/^/       /' "$2" 2>/dev/null
+  [ -n "$PORT_OUT" ] || sed 's/^/       /' "$log" 2>/dev/null
   return 0
 }
 get() { curl -s --max-time 5 "http://127.0.0.1:$1$2"; }
@@ -88,8 +90,8 @@ check "page: unknown path 404s" "$(curl -s -o /dev/null -w '%{http_code}' "http:
 
 API="$(get "$PORT" /api/runs)"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
-check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "5"
-for id in OLYX-1631 OLYX-1655 OLYX-1642 OLYX-1598 OLYX-1604; do
+check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "9"
+for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1673 OLYX-1598 BOT-2291 BOT-2287; do
   grep_ok "$API" "\"$id\"" "api: lists $id"
 done
 
@@ -97,7 +99,7 @@ state_of() { printf '%s' "$API" | jq -r --arg id "$1" '.runs[] | select(.id==$id
 check "state: mid-implement run is active"  "$(state_of OLYX-1631 state)" "active"
 check "state: waiting run raises the alarm" "$(state_of OLYX-1642 state)" "alarm"
 check "state: done: ready is ready"         "$(state_of OLYX-1598 state)" "ready"
-check "state: done: rejected is failed"     "$(state_of OLYX-1604 state)" "failed"
+check "state: done: rejected is failed"     "$(state_of BOT-2287 state)" "failed"
 
 echo "== wall: stage -> actor attribution =="
 check "actor: implementing -> Opus"  "$(state_of OLYX-1631 actor)"    "Opus"
@@ -125,12 +127,74 @@ check "detail: gate verdict surfaces"  "$(state_of OLYX-1598 gate)" "pass"
 check "detail: gate rounds surface"    "$(state_of OLYX-1598 'gateRounds | length')" "2"
 check "detail: diff size surfaces"     "$(state_of OLYX-1598 'diff.insertions')" "214"
 grep_ok "$(state_of OLYX-1642 blocked)" "Legacy quotes" "detail: the blocking question surfaces"
-grep_ok "$(state_of OLYX-1604 reason)"  "nothing evicts" "detail: the rejection reason surfaces"
+grep_ok "$(state_of BOT-2287 reason)"  "opposite directions" "detail: the rejection reason surfaces"
 
 echo "== wall: ordering =="
 ORDER="$(printf '%s' "$API" | jq -r '.runs[].id' | tr '\n' ' ')"
 check "order: alarm first, then live oldest-first, then finished" \
-  "$ORDER" "OLYX-1642 OLYX-1655 OLYX-1631 OLYX-1598 OLYX-1604 "
+  "$ORDER" "OLYX-1642 OLYX-1655 OLYX-1648 OLYX-1660 OLYX-1631 BOT-2291 OLYX-1673 OLYX-1598 BOT-2287 "
+
+# --- crew lanes ---------------------------------------------------------------
+# Runs belong to whoever dispatched them: the wall groups them into one lane per
+# crew member, and a declared roster keeps an idle member's lane on screen.
+echo "== wall: crew lanes =="
+lane_of() { printf '%s' "$API" | jq -r --arg o "$1" '.lanes[] | select(.owner==$o) | .'"$2"; }
+check "owner: read from the run's owner file" "$(state_of OLYX-1631 owner)" "angel"
+check "owner: the synthetic's runs are its own" "$(state_of BOT-2291 owner)" "bot"
+check "lanes: one per crew member with runs" "$(printf '%s' "$API" | jq '.lanes | length')" "4"
+check "lanes: parallel dispatches stack in their owner's lane" \
+  "$(lane_of angel 'runIds | join(",")')" "OLYX-1655,OLYX-1660,OLYX-1631"
+check "lanes: active counts only live runs"  "$(lane_of emre active)" "1"
+check "lanes: total counts finished runs too" "$(lane_of emre total)" "2"
+check "lanes: a blocked run raises its lane's alarm" "$(lane_of reinier alarm)" "1"
+check "lanes: humans are crew"                "$(lane_of angel kind)" "human"
+check "lanes: bot is the ship's synthetic"    "$(lane_of bot kind)" "synthetic"
+check "lanes: the label is the crew name"     "$(lane_of reinier label)" "REINIER"
+check "lanes: unsorted roster puts crew alphabetically" \
+  "$(printf '%s' "$API" | jq -r '[.lanes[].owner] | join(",")')" "angel,bot,emre,reinier"
+
+# A declared roster fixes lane order and keeps a member on the wall while their
+# queue is empty — an absent lane would read as "gone", not "idle".
+serve "$RUNS" "$ROOT/crew.log" --crew angel,reinier,emre,ripley; ROSTER="$PORT_OUT"
+if [ -n "$ROSTER" ]; then
+  ROSTER_API="$(get "$ROSTER" /api/runs)"
+  check "roster: --crew fixes lane order, strangers follow" \
+    "$(printf '%s' "$ROSTER_API" | jq -r '[.lanes[].owner] | join(",")')" \
+    "angel,reinier,emre,ripley,bot"
+  check "roster: an idle crew member keeps an empty lane" \
+    "$(printf '%s' "$ROSTER_API" | jq -r '.lanes[] | select(.owner=="ripley") | .active')" "0"
+  check "roster: the declared crew is echoed to the page" \
+    "$(printf '%s' "$ROSTER_API" | jq -r '.crew | join(",")')" "angel,reinier,emre,ripley"
+else
+  bad "roster: server starts with --crew"
+fi
+
+# --- the owner contract with the pipeline --------------------------------------
+# The lanes are only as good as run-task.sh's pin. Exercise the real function
+# out of the real file rather than restating its rules here.
+echo "== run-task.sh: the owner pin the lanes depend on =="
+PIN_SRC="$(awk '/^pin_knob\(\)/,/^\}/' "$SRC/run-task.sh")"
+if printf '%s' "$PIN_SRC" | grep -q 'pin_knob()'; then
+  ok "owner: pin_knob extracted from run-task.sh"
+else
+  bad "owner: pin_knob extracted from run-task.sh (extraction broken?)"
+fi
+pin_owner() {  # $1 = run dir, $2 = HARNESS_OWNER ('-' = unset) -> the pinned value
+  # shellcheck disable=SC2034  # RUN_DIR is read by the pin_knob body we eval in
+  ( RUN_DIR="$1"; eval "$PIN_SRC"
+    if [ "$2" = '-' ]; then unset HARNESS_OWNER; else HARNESS_OWNER="$2"; fi
+    pin_knob owner HARNESS_OWNER ""
+    printf '%s' "$HARNESS_OWNER" )
+}
+OWNED="$ROOT/owner-run"; mkdir -p "$OWNED"
+check "owner: first dispatch pins HARNESS_OWNER"   "$(pin_owner "$OWNED" angel)" "angel"
+check "owner: the run dir records it"              "$(cat "$OWNED/owner")" "angel"
+check "owner: a resume reuses the pinned owner"    "$(pin_owner "$OWNED" reinier)" "angel"
+UNOWNED="$ROOT/owner-none"; mkdir -p "$UNOWNED"
+check "owner: an unset HARNESS_OWNER pins empty"   "$(pin_owner "$UNOWNED" -)" ""
+grep_ok "$(cat "$SRC/run-task.sh")" 'owner:$owner' "owner: result.json carries the owner"
+grep_ok "$(cat "$SRC/run-task.sh")" 'pin_knob owner HARNESS_OWNER' \
+  "owner: run-task.sh pins it the same way as the ablation knobs"
 
 # --- live updates -------------------------------------------------------------
 # The page never reloads: one SSE stream carries every later frame. Read it in
@@ -186,6 +250,12 @@ check "partial: an empty status falls back to stages.log/blank, not a crash" \
   "$(printf '%s' "$API" | jq -r '[.runs[] | select(.id=="EMPTY-1")] | length')" "0"
 check "partial: a bad started epoch degrades to the stage time" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="JUNK-1") | (.started != null)')" "true"
+check "partial: a run with no owner is unowned, not mis-assigned" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="BARE-1") | .owner')" ""
+check "lanes: unowned runs get their own lane, labelled honestly" \
+  "$(printf '%s' "$API" | jq -r '.lanes[] | select(.owner=="") | .label')" "UNREGISTERED"
+check "lanes: the unowned lane sorts last" \
+  "$(printf '%s' "$API" | jq -r '.lanes[-1].owner')" ""
 check "state: a non-done sync failure remains a live panel" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="SYNC-FAIL") | .state')" "active"
 check "actor: a sync failure keeps its failure attribution" \
@@ -268,11 +338,15 @@ echo "== wall: the committed fixtures =="
 serve "$SRC/wall/fixtures/runs" "$ROOT/fixtures.log"; FIX="$PORT_OUT"
 if [ -n "$FIX" ]; then
   FIXAPI="$(get "$FIX" /api/runs)"
-  check "fixtures: five staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "5"
+  check "fixtures: nine staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "9"
   check "fixtures: one alarm" \
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="alarm")] | length')" "1"
   check "fixtures: one ready, one failed" \
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "2"
+  check "fixtures: four crew lanes, every run owned" \
+    "$(printf '%s' "$FIXAPI" | jq '[.lanes[] | select(.owner != "")] | length')" "4"
+  check "fixtures: one crew member runs three in parallel" \
+    "$(printf '%s' "$FIXAPI" | jq '[.lanes[] | select(.active == 3)] | length')" "1"
 else
   bad "fixtures: server starts against wall/fixtures/runs"
 fi
