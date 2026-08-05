@@ -29,8 +29,8 @@ pass=0; fail=0
 ok()   { pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; fi; }
-grep_ok()  { if printf '%s' "$1" | grep -qF -- "$2"; then ok "$3"; else bad "$3 (missing [$2])"; fi; }
-grep_not() { if printf '%s' "$1" | grep -qF -- "$2"; then bad "$3 (unexpected [$2])"; else ok "$3"; fi; }
+grep_ok()  { if grep -qF -- "$2" <<< "$1"; then ok "$3"; else bad "$3 (missing [$2])"; fi; }
+grep_not() { if grep -qF -- "$2" <<< "$1"; then bad "$3 (unexpected [$2])"; else ok "$3"; fi; }
 
 if ! command -v node >/dev/null 2>&1; then
   echo "  FAIL wall: node is required to run this suite"
