@@ -330,7 +330,7 @@ CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --setti
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
 if [ -f "$OPUS_SESSION_FILE" ]; then
   OPUS_SESSION=$(cat "$OPUS_SESSION_FILE")
-  OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and continue the task under the same rules as before."
+  OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and, if .harness/specs/ exists, re-read those source documents too before continuing under the same rules as before."
   CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --resume "$OPUS_SESSION")
   stage "resuming — Opus (Claude sub)"
 else

@@ -88,6 +88,8 @@ else
 fi
 grep_ok "$(awk '/^IMPLEMENTER_PROMPT="/,/^$/' "$RT")" '.harness/specs/' \
   "wiring: the implementer prompt points at .harness/specs/"
+grep_ok "$(grep -F 'OPUS_PROMPT="The orchestrator updated' "$RT")" '.harness/specs/' \
+  "wiring: the resumed implementer is told to re-read .harness/specs/"
 grep_ok "$(grep -F 'Context (all inside .harness/)' "$RT")" 'specs/' \
   "wiring: the reviewer's context line names specs/"
 
