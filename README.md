@@ -461,6 +461,7 @@ room reads as *which repos are busy, how far along, and who is driving*:
 | A tower | One project. It stands only while it has live work — a repo nobody is working in right now is simply not in the skyline. Its silhouette is stable, so the room learns the city as a place. |
 | A lit car | One run, at the floor of its current stage, in its actor's neon. |
 | A rooftop beacon flare | A run reached `done: ready` and its PR is open. |
+| A tower lighting up floor by floor | The same run, celebrating: six seconds of light climbing the facade, the rooftop lamp thrown wide and the ticker printing what shipped, before the run leaves the skyline the normal way. Once per run — a browser opening halfway through joins the beat in progress rather than replaying it. |
 | A searchlight + red tower | A run wrote `QUESTIONS.md` and is waiting on a human. It is the loudest thing on the screen, and it pins the brief plate until you answer it. |
 | A red flare, then dark | A rejected or failed run, burning out at the floor it stopped on. |
 | A beam out of the cloud | The run the brief plate is currently featuring — its building lights up and the rest of the city steps back, so the plate and the skyline are never two separate stories. |
@@ -479,6 +480,11 @@ Towers cannot carry type you can read from four metres, so two surfaces do:
 a Blade Runner **brief plate** cycling the live runs in big letters (ticket,
 project, stage, actor, dispatcher, the blocking question), and a green-phosphor
 **comms ticker** along the bottom carrying the tail of every live `feed.log`.
+The plate is chrome around the words and never instead of them — cut corners, a
+hairline frame with registration ticks, and an edge lit in the featured run's
+own actor neon, which goes red the moment that run is the one asking for a
+human. Moving on to the next run is a hand-over rather than a cut: the old
+contents ease out, and the new ones are not written until the plate is empty.
 
 ```bash
 wall.sh                             # ~/.claude/harness/runs on http://0.0.0.0:4711
@@ -498,6 +504,16 @@ moves by `transform` or `opacity` on one of two easing curves, and
 travel and leaves the same city standing still. There is no auth: keep it off
 the public internet. `wall/fixtures/seed.js` regenerates the staged fixture
 runs.
+
+**The weather is not a loop.** Rain drifts over tens of minutes between
+near-dry spells and downpours, the street haze thickens and clears several
+minutes behind it, and the sky cools toward dawn on the browser's own clock —
+so a wall in another timezone is right without the server knowing where the
+room is. The weather state is a pure function of the wall clock, and individual
+drops use a coarse wall-clock seed, which is what makes two screens opened side
+by side show the same night.
+`prefers-reduced-motion` leaves the whole drift unwritten and keeps the static
+scene.
 
 **Which tower a run stands in.** `run-task.sh` builds each worktree as
 `<repo-dir>-<ticket>` beside the repo and records that absolute path in the run

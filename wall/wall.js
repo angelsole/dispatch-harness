@@ -12,8 +12,17 @@
 (function () {
   const POLL_MS = 2000;    // only used when SSE is unavailable
   const BRIEF_MS = 7000;   // how long one run holds the brief plate
+  const SWAP_MS = 200;     // the gap the plate is empty for, mid hand-off
   const MAX_TOWER_WIDTH_RUNS = 8; // later shafts still render without widening the tower
   const TILT = 0.2;        // how far off vertical the rain falls
+  const CEREMONY_S = 6;    // the shipping beat; must match --ceremony in wall.css
+  const RAIN_LAG = 420;    // the haze trails the rain by seven minutes
+  const DRY = 0.06;        // a near-dry spell is drips, never a dead canvas
+  const DAWN_H = 6.5;      // local hour the sky is coldest at
+  const DAWN_RAMP = 2.5;   // hours either side of it that the cooling spans
+  const WEATHER_SEED_MS = 15 * 60 * 1000; // nearby screens share a rain field
+
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   // Two colour systems, deliberately kept apart: the ACTOR neon (which model
   // owns the current stage) lights the car and the brief plate, and the CREW
@@ -63,6 +72,7 @@
   const towerEls = new Map();   // project -> tower elements (incl. its shafts)
   let plateId = '';             // the run currently holding the brief plate
   let plateSince = 0;
+  let swapTimer = 0;            // set while the plate is empty between two runs
   let commsKey = '';            // last ticker text, so it only restarts on change
   const commsSeen = new Map();  // run id -> the line already drawn for it
 
@@ -163,14 +173,22 @@
 
   function makeTower() {
     const root = el('section', 'tower');
-    root.append(el('div', 'tower__pool'), el('div', 'tower__sweep'), el('div', 'tower__spot'));
+    // The searchlight is two halves of one beam: the sweep out of the roof, and
+    // the patch it paints on the overcast above.
+    root.append(el('div', 'tower__pool'), el('div', 'tower__sweep'),
+                el('div', 'tower__ceiling'), el('div', 'tower__spot'));
     const crown = el('div', 'tower__crown');
-    crown.append(el('div', 'tower__beacon'));
+    crown.append(el('div', 'tower__halo'), el('div', 'tower__beacon'));
     const mass = el('div', 'tower__mass');
     const windows = el('i', 'tower__windows');
+    // The shipping cascade goes over the facade and under the ladder: the light
+    // climbs the windows, never the shafts. Its child is the travelling glow;
+    // the wrapper holds the storey mask still while that glow moves behind it.
+    const cascade = el('i', 'tower__cascade');
+    cascade.append(el('i'));
     const slabs = el('i', 'tower__floors');
     const shafts = el('div', 'tower__shafts');
-    mass.append(windows, slabs, shafts);
+    mass.append(windows, cascade, slabs, shafts);
     const sign = el('div', 'tower__sign');
     // The wet-tarmac reflection reuses the window-grid styling wholesale (same
     // class, same per-shape storey variables) and restyles itself via the
@@ -188,15 +206,24 @@
     T.root.dataset.crown = String(tower.crown);
     T.root.dataset.known = tower.known ? '1' : '0';
     T.root.dataset.alarm = tower.alarm ? '1' : '0';
-    // The rooftop beacon belongs to a run that has just shipped, and it flares
-    // and dies with that run's completion moment — hence the shared --age.
+    // The rooftop beacon and the shipping ceremony both belong to a run that
+    // has just shipped, and both flare and die with that run's completion
+    // moment — hence the one shared --age, written once when the tower gains a
+    // shipped run so a late-joining browser lands mid-beat instead of replaying
+    // it, and never rewritten, which is what keeps it to once per run.
     const shipped = tower.runIds.find((id) => (byId.get(id) || {}).state === 'ready') || '';
-    T.root.dataset.ready = shipped ? '1' : '0';
     if (shipped !== T.ready) {
+      // Dropping the selector before changing --age gives each shipped run its
+      // own animation timeline. Without the reflow, a second run shipping from
+      // the same tower while the first is still present inherits the first
+      // run's completed animation instead of receiving a ceremony.
+      T.root.dataset.ready = '0';
       T.ready = shipped;
       const run = byId.get(shipped);
       if (run) T.root.style.setProperty('--age', String(Math.max(0, now() - (run.since || now()))));
+      void T.root.offsetWidth;
     }
+    T.root.dataset.ready = shipped ? '1' : '0';
     // A tower grows gently with the work standing in it — enough that a busy
     // repo reads as the tall one, not enough to turn the skyline into a chart.
     T.root.style.height = Math.min(94, 48 + n * 8) + '%';
@@ -233,7 +260,12 @@
 
   function paintPlate(run, index, total) {
     plate.root.dataset.state = run.state;
-    plate.root.style.setProperty('--accent', 'var(--' + run.actorKey + ')');
+    // The accent edge is the featured run's actor neon, except that a run
+    // asking for a human is red down that edge whatever was running when it
+    // stopped. Pinned here rather than left to the actor mapping: the alarm
+    // must not be one stage rename away from turning blue.
+    plate.root.style.setProperty('--accent',
+      'var(--' + (run.state === 'alarm' ? 'alarm' : run.actorKey) + ')');
     plate.root.style.setProperty('--crew', crewTint(run));
     setGlyph(plate.glyph, glyphFor(run));
     plate.project.textContent = run.projectLabel;
@@ -260,11 +292,25 @@
     [...plate.dots.children].forEach((dot, i) => { dot.dataset.on = i === index ? '1' : '0'; });
   }
 
+  // Re-light the plate contents, on the way out or on the way in. The attribute
+  // has to leave the DOM and come back for the animation to run a second time,
+  // and the read between the two is what makes the browser believe it.
+  function relight(phase) {
+    plate.root.removeAttribute('data-swap');
+    void plate.root.offsetWidth;
+    plate.root.dataset.swap = phase;
+  }
+
   function tickPlate() {
     const queue = plateQueue();
     if (queue.length === 0) {
       plate.root.hidden = true;
-      if (plateId) { plateId = ''; applySpot(); }
+      if (plateId) {
+        plateId = '';
+        clearTimeout(swapTimer);
+        swapTimer = 0;
+        applySpot();
+      }
       return;
     }
     let i = queue.findIndex((r) => r.id === plateId);
@@ -274,16 +320,28 @@
       plateSince = Date.now();
     }
     const moved = queue[i].id !== plateId;
+    const handing = moved && plateId !== '';
     plateId = queue[i].id;
     plate.root.hidden = false;
+    if (handing) {
+      // The carousel hands over rather than cutting: the run leaving eases out
+      // first, and the one arriving is not written until the plate is empty.
+      // The beam travels with the hand-off rather than after it, so the plate
+      // and the skyline are never briefly telling two different stories.
+      relight('out');
+      clearTimeout(swapTimer);
+      swapTimer = setTimeout(() => { swapTimer = 0; tickPlate(); }, SWAP_MS);
+      applySpot();
+      return;
+    }
+    // Mid hand-off the plate is blank on purpose, and the pending timer owns
+    // what gets written next: a snapshot landing inside those milliseconds must
+    // not put the outgoing run's words back on screen.
+    if (swapTimer) return;
+    const arriving = moved || plate.root.dataset.swap === 'out';
     paintPlate(queue[i], i, queue.length);
-    if (moved) {
-      // Re-light the plate for the run it just moved to. The attribute has to
-      // leave the DOM and come back for the animation to run a second time,
-      // and the read between the two is what makes the browser believe it.
-      plate.root.removeAttribute('data-swap');
-      void plate.root.offsetWidth;
-      plate.root.dataset.swap = '1';
+    if (arriving) {
+      relight('in');
       applySpot();
     }
   }
@@ -316,6 +374,7 @@
 
   function commsLines() {
     const items = [];
+    const at = now();
     for (const run of runs) {
       const who = { id: run.id, owner: run.owner, tint: crewTint(run) };
       if (isLive(run)) {
@@ -324,7 +383,16 @@
       } else if (skyline.has(run.id)) {
         const verdict = run.state === 'ready' ? 'SHIPPED' : 'STOPPED';
         const detail = run.prUrl || run.reason || run.outcome || run.stage;
-        items.push({ ...who, text: verdict + ' — ' + detail, src: run.state });
+        // The ticker's half of the shipping ceremony: for as long as the tower
+        // is celebrating, this run's line is what shipped, in the brightest
+        // type the tube has. The line already opens with the ticket id, so the
+        // title is what the sentence adds. Aged off the same clock as the
+        // tower's beat, which is why a browser joining late gets the settled
+        // line rather than a celebration nobody is having any more.
+        const shipping = run.state === 'ready' && at - (run.since || at) < CEREMONY_S;
+        items.push(shipping
+          ? { ...who, text: 'SHIPPED · ' + (run.title || detail), src: 'shipped' }
+          : { ...who, text: verdict + ' — ' + detail, src: run.state });
       }
     }
     return items;
@@ -411,6 +479,11 @@
     clock.textContent = [d.getHours(), d.getMinutes(), d.getSeconds()]
       .map((n) => String(n).padStart(2, '0')).join(':');
     tickPlate();
+    // A ceremony ending changes nothing on disk, and neither does the weather:
+    // both age on this clock, so both are re-read here rather than waiting for
+    // a run somewhere to move.
+    tickComms();
+    paintSky();
   }
 
   function apply(snapshot) {
@@ -452,6 +525,62 @@
     src.addEventListener('error', () => setLink('lost'));
   }
 
+  // --- weather --------------------------------------------------------------------
+  // The weather drifts instead of looping: identical rain at 09:00 and at 21:00
+  // is a screensaver, and a room stops seeing a screensaver by week two.
+  // Everything here is a pure function of the wall clock, so two TVs opened side
+  // by side read the same sky without a byte crossing the network to agree on
+  // it, and an hour later they have drifted together. A wall-clock-seeded
+  // generator places individual drops; it never decides how hard it is raining.
+
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+  // Two slow sines whose periods do not divide each other (~69 and ~181
+  // minutes), so the sky takes most of a day to come back round. The clamp is
+  // the point rather than a safety rail: it is what gives the city sustained
+  // downpours and sustained near-dry spells instead of a sine that never rests.
+  function wetness(t) {
+    return clamp01(0.5 + 0.4 * Math.sin(t / 660) + 0.2 * Math.sin(t / 1730 + 2.1));
+  }
+
+  // Individual drops use a small deterministic generator too. The coarse
+  // wall-clock seed makes nearby screens opened together share the same rain
+  // field, while a later visit does not replay one permanent arrangement.
+  function weatherSeed(ms) { return Math.floor(ms / WEATHER_SEED_MS) >>> 0; }
+
+  function seededRandom(seed) {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  }
+
+  // How near the local clock is to dawn, 0 to 1. Read off the browser and never
+  // the server: the harness has no idea which room the screen is in, and a wall
+  // in another timezone still has to cool at its own sunrise.
+  function dawn(d) {
+    const hour = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+    const gap = Math.abs(hour - DAWN_H);
+    return clamp01(1 - Math.min(gap, 24 - gap) / DAWN_RAMP);
+  }
+
+  // The two things the canvas cannot draw: how thick the street haze is — which
+  // follows the rain several minutes behind, because wet air clears long after
+  // the downpour does — and how cold the sky is. Both are left unwritten under
+  // reduced motion, where the fallbacks in wall.css are the city standing still.
+  function paintSky() {
+    const style = document.documentElement.style;
+    if (still.matches) {
+      style.removeProperty('--haze');
+      style.removeProperty('--dawn');
+      return;
+    }
+    const t = Date.now() / 1000;
+    style.setProperty('--haze', (0.45 + 0.55 * wetness(t - RAIN_LAG)).toFixed(3));
+    style.setProperty('--dawn', dawn(new Date()).toFixed(3));
+  }
+
   // --- rain ---------------------------------------------------------------------
   // Weather, drawn one drop at a time. A tiled CSS sheet reads as a texture
   // from four metres; these are streaks with their own depth, length and speed,
@@ -462,14 +591,14 @@
     const canvas = document.getElementById('rain');
     const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
     if (!ctx) return;
-    const still = window.matchMedia('(prefers-reduced-motion: reduce)');
     const drops = [];
+    const random = seededRandom(weatherSeed(Date.now()));
     let w = 0, h = 0, running = false, last = 0;
 
     function spawn(y) {
-      const depth = Math.random();      // 0 = far, slow and faint; 1 = near and fast
+      const depth = random();      // 0 = far, slow and faint; 1 = near and fast
       return {
-        x: Math.random() * (w + h * TILT) - h * TILT,
+        x: random() * (w + h * TILT) - h * TILT,
         y,
         len: 12 + depth * 46,
         speed: 420 + depth * 900,
@@ -479,11 +608,18 @@
     }
 
     // One drop per ~5000 px², clamped: heavy enough to read across a room on a
-    // 4K panel, light enough that the stick driving the TV keeps up.
-    function fill() {
-      const want = Math.max(80, Math.min(420, Math.round((w * h) / 5000)));
+    // 4K panel, light enough that the stick driving the TV keeps up. What the
+    // weather then does is scale that between a downpour and a handful of
+    // drips — never nothing, because rain that stops dead reads as a crash.
+    function target(wet) {
+      const full = Math.max(80, Math.min(420, Math.round((w * h) / 5000)));
+      return Math.max(8, Math.round(full * (DRY + (1 - DRY) * wet)));
+    }
+
+    function fill(wet) {
+      const want = target(wet);
       while (drops.length > want) drops.pop();
-      while (drops.length < want) drops.push(spawn(Math.random() * h));
+      while (drops.length < want) drops.push(spawn(random() * h));
     }
 
     function size() {
@@ -493,30 +629,41 @@
       canvas.width = Math.max(1, Math.round(w * dpr));
       canvas.height = Math.max(1, Math.round(h * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      fill();
+      fill(wetness(Date.now() / 1000));
     }
 
-    function draw(dt) {
+    function draw(dt, wet) {
+      const want = target(wet);
+      const glow = 0.55 + 0.45 * wet;      // a downpour is denser and brighter
       ctx.clearRect(0, 0, w, h);
       ctx.lineCap = 'round';
-      for (const drop of drops) {
+      for (let i = drops.length - 1; i >= 0; i--) {
+        const drop = drops[i];
         drop.y += drop.speed * dt;
         drop.x += drop.speed * TILT * dt;
-        if (drop.y - drop.len > h) Object.assign(drop, spawn(-drop.len - Math.random() * h * 0.4));
-        ctx.strokeStyle = 'rgba(196, 226, 255, ' + drop.alpha.toFixed(3) + ')';
+        if (drop.y - drop.len > h) {
+          // The bottom of the frame is the only place the weather is allowed to
+          // change: rain eases off by not recycling a drop that has left, and
+          // picks up by adding one above the top edge. Nothing ever pops into
+          // existence, or out of it, in front of the room.
+          if (drops.length > want) { drops.splice(i, 1); continue; }
+          Object.assign(drop, spawn(-drop.len - random() * h * 0.4));
+        }
+        ctx.strokeStyle = 'rgba(196, 226, 255, ' + (drop.alpha * glow).toFixed(3) + ')';
         ctx.lineWidth = drop.width;
         ctx.beginPath();
         ctx.moveTo(drop.x, drop.y);
         ctx.lineTo(drop.x - drop.len * TILT, drop.y - drop.len);
         ctx.stroke();
       }
+      if (drops.length < want) drops.push(spawn(-random() * h * 0.5));
     }
 
     function frame(t) {
       if (!running) return;
       const dt = Math.min(0.05, (t - last) / 1000) || 0.016;
       last = t;
-      draw(dt);
+      draw(dt, wetness(Date.now() / 1000));
       requestAnimationFrame(frame);
     }
 
@@ -542,6 +689,9 @@
   render();
   connect();
   rain();
+  paintSky();
+  // A room that turns motion off mid-shift gets the static sky back too.
+  still.addEventListener('change', paintSky);
   setInterval(tick, 1000);
   setTimeout(() => { boot.hidden = true; }, 3100);
 })();

@@ -151,6 +151,166 @@ BAD_KEYFRAMES="$(printf '%s\n' "$CSS_SRC" | awk '
 check "motion: keyframes use only transform and opacity" "$BAD_KEYFRAMES" ""
 grep_not "$CSS_SRC" 'steps(' "motion: no animation uses stepped jumps"
 
+# --- the brief plate ------------------------------------------------------------
+# The plate is the thing people actually read, so it gets chrome — and the
+# carousel hands over between runs instead of cutting. Neither may cost the type
+# hierarchy anything: the chrome is around the words, never instead of them.
+echo "== wall: the brief plate is chrome, and hands over =="
+grep_ok "$CSS_SRC" '.brief::after' "plate: the frame carries its own hairline and ticks"
+grep_ok "$CSS_SRC" 'clip-path: polygon(0.85rem 0' "plate: its corners are cut, not square"
+grep_ok "$CSS_SRC" 'repeating-linear-gradient(180deg, rgba(150, 216, 200, 0.045)' \
+  "plate: and a whisper of scan texture under the panel"
+grep_ok "$CSS_SRC" '.brief[data-swap="out"]' "plate: the outgoing run eases out"
+grep_ok "$CSS_SRC" '.brief[data-swap="in"]'  "plate: and the incoming one eases in"
+grep_ok "$PAGE_SRC" "relight('out')" "plate: the hand-off is two phases, never a cut"
+grep_ok "$PAGE_SRC" "run.state === 'alarm' ? 'alarm' : run.actorKey" \
+  "plate: an alarm outranks the actor neon on the accent edge"
+check "plate: the ticket type is untouched by the chrome pass" \
+  "$(printf '%s\n' "$CSS_SRC" | sed -n '/^\.brief__id {/,/^}/p' | grep -c 'font-size: 2.5rem')" "1"
+
+# --- the shipping ceremony ------------------------------------------------------
+# A run reaching `done: ready` gets a short beat before the normal completion
+# exit: light climbing the facade, the rooftop lamp thrown wide, one bright line
+# on the ticker. It is one animation family on one duration, fast-forwarded by
+# --age exactly like the exit it precedes, and every part has to end on nothing
+# or a browser opening tomorrow finds a tower still celebrating.
+echo "== wall: the shipping ceremony =="
+grep_ok "$PAGE_SRC" 'tower__cascade' "ceremony: light climbs the facade floor by floor"
+grep_ok "$CSS_SRC" '.tower[data-ready="1"] .tower__cascade' \
+  "ceremony: only a tower with a shipped run plays it"
+grep_ok "$CSS_SRC" '.tower[data-ready="1"] .tower__halo' \
+  "ceremony: and the rooftop lamp throws wider"
+grep_ok "$PAGE_SRC" "if (shipped !== T.ready)" \
+  "ceremony: a tower remembers which run received the beat"
+grep_ok "$PAGE_SRC" "T.root.dataset.ready = '0'" \
+  "ceremony: a second shipped run first detaches the old animation"
+grep_ok "$PAGE_SRC" 'void T.root.offsetWidth' \
+  "ceremony: then commits that reset before starting its own timeline"
+grep_ok "$PAGE_SRC" "'SHIPPED · '" "ceremony: the ticker prints the shipped line"
+grep_ok "$CSS_SRC" '.comms__line[data-src="shipped"]' "ceremony: in the brightest type it has"
+CEREMONY_CSS="$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *--ceremony: \([0-9.]*\)s;.*/\1/p' | head -1)"
+CEREMONY_JS="$(sed -n 's/^  const CEREMONY_S = \([0-9.]*\);.*/\1/p' "$SRC/wall/wall.js")"
+check "ceremony: the page and the stylesheet agree on the beat" "$CEREMONY_JS" "$CEREMONY_CSS"
+if [ -n "$CEREMONY_CSS" ] && awk "BEGIN { exit !($CEREMONY_CSS > 0 && $CEREMONY_CSS <= 6) }"; then
+  ok "ceremony: the whole beat is six seconds or less"
+else
+  bad "ceremony: the whole beat is six seconds or less (got [$CEREMONY_CSS])"
+fi
+check "ceremony: every part of it runs on that one duration" \
+  "$(printf '%s\n' "$CSS_SRC" | grep -cE 'animation: ship-[a-z]+ var\(--ceremony\)')" "3"
+check "ceremony: and is fast-forwarded by --age, like the exit it precedes" \
+  "$(printf '%s\n' "$CSS_SRC" | grep -A1 -E 'animation: ship-[a-z]+ var\(--ceremony\)' \
+     | grep -cF 'animation-delay: calc(var(--age, 0) * -1s)')" "3"
+for beat in ship-lit ship-halo; do
+  check "ceremony: $beat leaves nothing behind" \
+    "$(printf '%s\n' "$CSS_SRC" | awk -v k="@keyframes $beat" 'index($0, k) == 1, /^}/' \
+       | grep -c '100% { opacity: 0')" "1"
+done
+
+# --- living weather -------------------------------------------------------------
+# The weather is a pure function of the wall clock, which is what lets two TVs
+# opened side by side show the same sky. That makes it checkable the same way
+# run-task.sh's owner pin is: run the real code out of the real file rather than
+# restating its numbers here.
+echo "== wall: the weather drifts =="
+grep_ok "$PAGE_SRC" 'function wetness' "weather: rain intensity is a function, not a loop"
+grep_ok "$CSS_SRC" 'var(--haze, 1)'      "weather: the street haze reads it, a lag behind"
+grep_ok "$CSS_SRC" 'opacity: var(--dawn, 0)' "weather: and the sky cools toward local dawn"
+check "weather: haze and dawn samples blend instead of stepping each second" \
+  "$(printf '%s\n' "$CSS_SRC" | grep -c 'transition: opacity var(--weather-blend) linear')" "2"
+grep_ok "$PAGE_SRC" 'if (still.matches)' \
+  "weather: reduced motion leaves both of those unwritten — today's static scene"
+WEATHER_SRC="$(awk '/^  \/\/ --- weather/,/^  \/\/ --- rain/' "$SRC/wall/wall.js")"
+RAIN_SRC="$(awk '/^  \/\/ --- rain/,/^  render\(\);/' "$SRC/wall/wall.js")"
+grep_not "$(printf '%s\n' "$WEATHER_SRC" "$RAIN_SRC" | grep -v '^ *//')" 'Math.random' \
+  "weather: neither its state nor its drops rely on unseeded randomness"
+
+PROBE="$ROOT/weather-probe.js"
+{
+  grep -E '^  const (RAIN_LAG|DAWN_H|DAWN_RAMP|WEATHER_SEED_MS) =' "$SRC/wall/wall.js"
+  printf '%s\n' "$WEATHER_SRC"
+  cat <<'JS'
+  const DAY = 86400;
+  let lo = 1, hi = 0, step = 0, dry = -1, fastest = Infinity;
+  for (let t = 0; t < DAY * 3; t += 15) {
+    const v = wetness(t);
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
+    step = Math.max(step, Math.abs(wetness(t + 1) - v));
+    if (v < 0.1) dry = t;
+    if (v > 0.9 && dry >= 0) { fastest = Math.min(fastest, t - dry); dry = -1; }
+  }
+  const at = (h, m) => dawn(new Date(2026, 0, 2, h, m));
+  const sequence = (seed) => {
+    const random = seededRandom(seed);
+    return Array.from({ length: 8 }, random);
+  };
+  const seeded = sequence(weatherSeed(WEATHER_SEED_MS));
+  console.log(JSON.stringify({
+    bounded: lo >= 0 && hi <= 1,
+    nearDry: lo < 0.05,
+    downpour: hi > 0.9,
+    smooth: step < 0.002,
+    slow: fastest > 15 * 60,
+    lagMinutes: RAIN_LAG / 60,
+    dawnPeak: at(6, 30) > 0.95,
+    dawnRamp: at(5, 15) > 0.4 && at(5, 15) < 0.6,
+    dawnNoon: at(12, 0),
+    dawnNight: at(22, 0),
+    seededSame: JSON.stringify(seeded) === JSON.stringify(sequence(weatherSeed(WEATHER_SEED_MS))),
+    seededChanges: JSON.stringify(seeded) !== JSON.stringify(sequence(weatherSeed(WEATHER_SEED_MS * 2))),
+    seededBounded: seeded.every((value) => value >= 0 && value < 1),
+    seedWindow: weatherSeed(0) === weatherSeed(WEATHER_SEED_MS - 1)
+      && weatherSeed(0) !== weatherSeed(WEATHER_SEED_MS),
+  }));
+JS
+} > "$PROBE"
+WEATHER="$(node "$PROBE" 2>&1)"
+weather_of() { printf '%s' "$WEATHER" | jq -r ".$1" 2>/dev/null; }
+check "weather: intensity never leaves 0..1"        "$(weather_of bounded)"  "true"
+check "weather: it reaches a near-dry spell"        "$(weather_of nearDry)"  "true"
+check "weather: and it reaches a downpour"          "$(weather_of downpour)" "true"
+check "weather: it drifts — under 0.2% of its range a second" \
+  "$(weather_of smooth)" "true"
+check "weather: no swing between the two inside a quarter of an hour" \
+  "$(weather_of slow)" "true"
+check "weather: the haze follows the rain minutes later" "$(weather_of lagMinutes)" "7"
+check "weather: the sky is coldest at local dawn"   "$(weather_of dawnPeak)" "true"
+check "weather: and ramps into it rather than switching" "$(weather_of dawnRamp)" "true"
+check "weather: midday is not dawn"                 "$(weather_of dawnNoon)"  "0"
+check "weather: nor is late evening"                "$(weather_of dawnNight)" "0"
+check "weather: equal wall-clock seeds draw equal rain" "$(weather_of seededSame)" "true"
+check "weather: later seed windows draw a fresh field"  "$(weather_of seededChanges)" "true"
+check "weather: seeded drop values stay in range"       "$(weather_of seededBounded)" "true"
+check "weather: nearby openings share one seed window"  "$(weather_of seedWindow)" "true"
+
+# --- traffic and the searchlight -------------------------------------------------
+echo "== wall: ground traffic, and a beam that lands =="
+grep_ok "$PAGE_SRC" 'street__car' "traffic: something crosses at street level"
+grep_ok "$CSS_SRC" '.street { display: none; }' "traffic: and reduced motion parks it"
+# Every animation duration declared for a selector matching $1, whichever of the
+# two spellings the rule uses.
+durations() {
+  printf '%s\n' "$CSS_SRC" | awk -v want="$1" '
+    /^[.@]/ { sel = $0 }
+    sel ~ want && /animation(-duration)?:/ {
+      if (match($0, /[0-9.]+s/)) print substr($0, RSTART, RLENGTH - 1)
+    }
+  '
+}
+AIR_SLOWEST="$(durations 'traffic__ship' | sort -n | tail -1)"
+GROUND_RAREST="$(durations 'street__car' | sort -n | head -1)"
+if [ -n "$AIR_SLOWEST" ] && [ -n "$GROUND_RAREST" ] \
+   && awk "BEGIN { exit !($GROUND_RAREST > $AIR_SLOWEST) }"; then
+  ok "traffic: a ground pass is rarer than anything in the air (${GROUND_RAREST}s vs ${AIR_SLOWEST}s)"
+else
+  bad "traffic: a ground pass is rarer than anything in the air (ground [$GROUND_RAREST] air [$AIR_SLOWEST])"
+fi
+grep_ok "$PAGE_SRC" 'tower__ceiling' "alarm: the beam paints a patch on the cloud ceiling"
+check "alarm: and the patch runs on the sweep's own timing, not its own" \
+  "$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *animation: ceiling \(.*\);$/\1/p')" \
+  "$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *animation: sweep \(.*\);$/\1/p')"
+
 # The palette is night, not sunset. These are the exact sunset stops and the
 # pink/purple neon the city shipped with in #8 — none of them may come back.
 echo "== wall: the synthwave palette is gone =="

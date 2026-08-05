@@ -177,9 +177,15 @@
   </g>
 </svg>
 
+<!-- The cold wash the sky picks up either side of local sunrise. wall.js sets
+     its opacity off the client's own clock; at every other hour it is nothing. -->
+<div class="dawn" aria-hidden="true"></div>
+
 <!-- Weather, drawn rather than tiled: each streak is its own drop, and the
      layer screens over the city so rain crossing a lit window or the carousel
-     spotlight lights up on its own. -->
+     spotlight lights up on its own. How hard it is raining, and how thick the
+     haze below is, drift with the wall clock — see the weather section of
+     wall.js. -->
 <canvas class="rain" id="rain" aria-hidden="true"></canvas>
 <div class="haze" aria-hidden="true"><i></i><i></i></div>
 <div class="traffic" aria-hidden="true">
@@ -188,6 +194,12 @@
   <i class="traffic__ship traffic__ship--c"></i>
   <i class="traffic__ship traffic__ship--d"></i>
   <i class="traffic__ship traffic__ship--e"></i>
+</div>
+<!-- Ground level: a rare fast pass in front of the city, much rarer than
+     anything in the air above it. -->
+<div class="street" aria-hidden="true">
+  <i class="street__car"></i>
+  <i class="street__car street__car--b"></i>
 </div>
 
 <header class="hud">
@@ -212,7 +224,10 @@
 </div>
 
 <!-- Legibility layer 1: towers cannot carry type you can read from meters, so
-     one run at a time gets a Blade Runner chrome plate with big letters. -->
+     one run at a time gets a Blade Runner chrome plate with big letters — cut
+     corners, a hairline frame with registration ticks, and an edge in the
+     featured run's own actor neon. The carousel hands over between runs rather
+     than cutting; both halves of that live in wall.css. -->
 <section class="brief" id="brief" hidden>
   <svg class="brief__glyph" id="briefGlyph" aria-hidden="true"><use/></svg>
   <div class="brief__body">
