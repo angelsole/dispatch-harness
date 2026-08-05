@@ -150,6 +150,7 @@ BAD_KEYFRAMES="$(printf '%s\n' "$CSS_SRC" | awk '
 ')"
 check "motion: keyframes use only transform and opacity" "$BAD_KEYFRAMES" ""
 grep_not "$CSS_SRC" 'steps(' "motion: no animation uses stepped jumps"
+
 # --- the brief plate ------------------------------------------------------------
 # The plate is the thing people actually read, so it gets chrome — and the
 # carousel hands over between runs instead of cutting. Neither may cost the type
@@ -200,6 +201,66 @@ for beat in ship-lit ship-halo; do
        | grep -c '100% { opacity: 0')" "1"
 done
 
+# --- living weather -------------------------------------------------------------
+# The weather is a pure function of the wall clock, which is what lets two TVs
+# opened side by side show the same sky. That makes it checkable the same way
+# run-task.sh's owner pin is: run the real code out of the real file rather than
+# restating its numbers here.
+echo "== wall: the weather drifts =="
+grep_ok "$PAGE_SRC" 'function wetness' "weather: rain intensity is a function, not a loop"
+grep_ok "$CSS_SRC" 'var(--haze, 1)'      "weather: the street haze reads it, a lag behind"
+grep_ok "$CSS_SRC" 'opacity: var(--dawn, 0)' "weather: and the sky cools toward local dawn"
+grep_ok "$PAGE_SRC" 'if (still.matches)' \
+  "weather: reduced motion leaves both of those unwritten — today's static scene"
+WEATHER_SRC="$(awk '/^  \/\/ --- weather/,/^  \/\/ --- rain/' "$SRC/wall/wall.js")"
+grep_not "$(printf '%s\n' "$WEATHER_SRC" | grep -v '^ *//')" 'Math.random' \
+  "weather: no line of it is random, or two screens disagree about the sky"
+
+PROBE="$ROOT/weather-probe.js"
+{
+  grep -E '^  const (RAIN_LAG|DAWN_H|DAWN_RAMP) =' "$SRC/wall/wall.js"
+  printf '%s\n' "$WEATHER_SRC"
+  cat <<'JS'
+  const DAY = 86400;
+  let lo = 1, hi = 0, step = 0, dry = -1, fastest = Infinity;
+  for (let t = 0; t < DAY * 3; t += 15) {
+    const v = wetness(t);
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
+    step = Math.max(step, Math.abs(wetness(t + 1) - v));
+    if (v < 0.1) dry = t;
+    if (v > 0.9 && dry >= 0) { fastest = Math.min(fastest, t - dry); dry = -1; }
+  }
+  const at = (h, m) => dawn(new Date(2026, 0, 2, h, m));
+  console.log(JSON.stringify({
+    bounded: lo >= 0 && hi <= 1,
+    nearDry: lo < 0.05,
+    downpour: hi > 0.9,
+    smooth: step < 0.002,
+    slow: fastest > 15 * 60,
+    lagMinutes: RAIN_LAG / 60,
+    dawnPeak: at(6, 30) > 0.95,
+    dawnRamp: at(5, 15) > 0.4 && at(5, 15) < 0.6,
+    dawnNoon: at(12, 0),
+    dawnNight: at(22, 0),
+  }));
+JS
+} > "$PROBE"
+WEATHER="$(node "$PROBE" 2>&1)"
+weather_of() { printf '%s' "$WEATHER" | jq -r ".$1" 2>/dev/null; }
+check "weather: intensity never leaves 0..1"        "$(weather_of bounded)"  "true"
+check "weather: it reaches a near-dry spell"        "$(weather_of nearDry)"  "true"
+check "weather: and it reaches a downpour"          "$(weather_of downpour)" "true"
+check "weather: it drifts — under 0.2% of its range a second" \
+  "$(weather_of smooth)" "true"
+check "weather: no swing between the two inside a quarter of an hour" \
+  "$(weather_of slow)" "true"
+check "weather: the haze follows the rain minutes later" "$(weather_of lagMinutes)" "7"
+check "weather: the sky is coldest at local dawn"   "$(weather_of dawnPeak)" "true"
+check "weather: and ramps into it rather than switching" "$(weather_of dawnRamp)" "true"
+check "weather: midday is not dawn"                 "$(weather_of dawnNoon)"  "0"
+check "weather: nor is late evening"                "$(weather_of dawnNight)" "0"
+
 # --- traffic and the searchlight -------------------------------------------------
 echo "== wall: ground traffic, and a beam that lands =="
 grep_ok "$PAGE_SRC" 'street__car' "traffic: something crosses at street level"
@@ -226,7 +287,6 @@ grep_ok "$PAGE_SRC" 'tower__ceiling' "alarm: the beam paints a patch on the clou
 check "alarm: and the patch runs on the sweep's own timing, not its own" \
   "$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *animation: ceiling \(.*\);$/\1/p')" \
   "$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *animation: sweep \(.*\);$/\1/p')"
-
 
 # The palette is night, not sunset. These are the exact sunset stops and the
 # pink/purple neon the city shipped with in #8 — none of them may come back.

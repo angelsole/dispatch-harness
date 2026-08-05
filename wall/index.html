@@ -177,9 +177,15 @@
   </g>
 </svg>
 
+<!-- The cold wash the sky picks up either side of local sunrise. wall.js sets
+     its opacity off the client's own clock; at every other hour it is nothing. -->
+<div class="dawn" aria-hidden="true"></div>
+
 <!-- Weather, drawn rather than tiled: each streak is its own drop, and the
      layer screens over the city so rain crossing a lit window or the carousel
-     spotlight lights up on its own. -->
+     spotlight lights up on its own. How hard it is raining, and how thick the
+     haze below is, drift with the wall clock — see the weather section of
+     wall.js. -->
 <canvas class="rain" id="rain" aria-hidden="true"></canvas>
 <div class="haze" aria-hidden="true"><i></i><i></i></div>
 <div class="traffic" aria-hidden="true">

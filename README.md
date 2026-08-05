@@ -505,6 +505,15 @@ travel and leaves the same city standing still. There is no auth: keep it off
 the public internet. `wall/fixtures/seed.js` regenerates the staged fixture
 runs.
 
+**The weather is not a loop.** Rain drifts over tens of minutes between
+near-dry spells and downpours, the street haze thickens and clears several
+minutes behind it, and the sky cools toward dawn on the browser's own clock —
+so a wall in another timezone is right without the server knowing where the
+room is. All of it is a pure function of the wall clock rather than of a random
+seed, which is what makes two screens side by side show the same night.
+`prefers-reduced-motion` leaves the whole drift unwritten and keeps the static
+scene.
+
 **Which tower a run stands in.** `run-task.sh` builds each worktree as
 `<repo-dir>-<ticket>` beside the repo and records that absolute path in the run
 dir (and in `result.json`); the wall reverses the construction to recover the

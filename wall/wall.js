@@ -472,6 +472,11 @@
     clock.textContent = [d.getHours(), d.getMinutes(), d.getSeconds()]
       .map((n) => String(n).padStart(2, '0')).join(':');
     tickPlate();
+    // A ceremony ending changes nothing on disk, and neither does the weather:
+    // both age on this clock, so both are re-read here rather than waiting for
+    // a run somewhere to move.
+    tickComms();
+    paintSky();
   }
 
   function apply(snapshot) {
@@ -513,6 +518,49 @@
     src.addEventListener('error', () => setLink('lost'));
   }
 
+  // --- weather --------------------------------------------------------------------
+  // The weather drifts instead of looping: identical rain at 09:00 and at 21:00
+  // is a screensaver, and a room stops seeing a screensaver by week two.
+  // Everything here is a pure function of the wall clock, so two TVs opened side
+  // by side read the same sky without a byte crossing the network to agree on
+  // it, and an hour later they have drifted together. Math.random still places
+  // the individual drops; it never decides how hard it is raining.
+
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+  // Two slow sines whose periods do not divide each other (~69 and ~181
+  // minutes), so the sky takes most of a day to come back round. The clamp is
+  // the point rather than a safety rail: it is what gives the city sustained
+  // downpours and sustained near-dry spells instead of a sine that never rests.
+  function wetness(t) {
+    return clamp01(0.5 + 0.4 * Math.sin(t / 660) + 0.2 * Math.sin(t / 1730 + 2.1));
+  }
+
+  // How near the local clock is to dawn, 0 to 1. Read off the browser and never
+  // the server: the harness has no idea which room the screen is in, and a wall
+  // in another timezone still has to cool at its own sunrise.
+  function dawn(d) {
+    const hour = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+    const gap = Math.abs(hour - DAWN_H);
+    return clamp01(1 - Math.min(gap, 24 - gap) / DAWN_RAMP);
+  }
+
+  // The two things the canvas cannot draw: how thick the street haze is — which
+  // follows the rain several minutes behind, because wet air clears long after
+  // the downpour does — and how cold the sky is. Both are left unwritten under
+  // reduced motion, where the fallbacks in wall.css are the city standing still.
+  function paintSky() {
+    const style = document.documentElement.style;
+    if (still.matches) {
+      style.removeProperty('--haze');
+      style.removeProperty('--dawn');
+      return;
+    }
+    const t = Date.now() / 1000;
+    style.setProperty('--haze', wetness(t - RAIN_LAG).toFixed(3));
+    style.setProperty('--dawn', dawn(new Date()).toFixed(3));
+  }
+
   // --- rain ---------------------------------------------------------------------
   // Weather, drawn one drop at a time. A tiled CSS sheet reads as a texture
   // from four metres; these are streaks with their own depth, length and speed,
@@ -523,7 +571,6 @@
     const canvas = document.getElementById('rain');
     const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
     if (!ctx) return;
-    const still = window.matchMedia('(prefers-reduced-motion: reduce)');
     const drops = [];
     let w = 0, h = 0, running = false, last = 0;
 
@@ -540,9 +587,16 @@
     }
 
     // One drop per ~5000 px², clamped: heavy enough to read across a room on a
-    // 4K panel, light enough that the stick driving the TV keeps up.
-    function fill() {
-      const want = Math.max(80, Math.min(420, Math.round((w * h) / 5000)));
+    // 4K panel, light enough that the stick driving the TV keeps up. What the
+    // weather then does is scale that between a downpour and a handful of
+    // drips — never nothing, because rain that stops dead reads as a crash.
+    function target(wet) {
+      const full = Math.max(80, Math.min(420, Math.round((w * h) / 5000)));
+      return Math.max(8, Math.round(full * (DRY + (1 - DRY) * wet)));
+    }
+
+    function fill(wet) {
+      const want = target(wet);
       while (drops.length > want) drops.pop();
       while (drops.length < want) drops.push(spawn(Math.random() * h));
     }
@@ -554,30 +608,41 @@
       canvas.width = Math.max(1, Math.round(w * dpr));
       canvas.height = Math.max(1, Math.round(h * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      fill();
+      fill(wetness(Date.now() / 1000));
     }
 
-    function draw(dt) {
+    function draw(dt, wet) {
+      const want = target(wet);
+      const glow = 0.55 + 0.45 * wet;      // a downpour is denser and brighter
       ctx.clearRect(0, 0, w, h);
       ctx.lineCap = 'round';
-      for (const drop of drops) {
+      for (let i = drops.length - 1; i >= 0; i--) {
+        const drop = drops[i];
         drop.y += drop.speed * dt;
         drop.x += drop.speed * TILT * dt;
-        if (drop.y - drop.len > h) Object.assign(drop, spawn(-drop.len - Math.random() * h * 0.4));
-        ctx.strokeStyle = 'rgba(196, 226, 255, ' + drop.alpha.toFixed(3) + ')';
+        if (drop.y - drop.len > h) {
+          // The bottom of the frame is the only place the weather is allowed to
+          // change: rain eases off by not recycling a drop that has left, and
+          // picks up by adding one above the top edge. Nothing ever pops into
+          // existence, or out of it, in front of the room.
+          if (drops.length > want) { drops.splice(i, 1); continue; }
+          Object.assign(drop, spawn(-drop.len - Math.random() * h * 0.4));
+        }
+        ctx.strokeStyle = 'rgba(196, 226, 255, ' + (drop.alpha * glow).toFixed(3) + ')';
         ctx.lineWidth = drop.width;
         ctx.beginPath();
         ctx.moveTo(drop.x, drop.y);
         ctx.lineTo(drop.x - drop.len * TILT, drop.y - drop.len);
         ctx.stroke();
       }
+      if (drops.length < want) drops.push(spawn(-Math.random() * h * 0.5));
     }
 
     function frame(t) {
       if (!running) return;
       const dt = Math.min(0.05, (t - last) / 1000) || 0.016;
       last = t;
-      draw(dt);
+      draw(dt, wetness(Date.now() / 1000));
       requestAnimationFrame(frame);
     }
 
@@ -603,6 +668,9 @@
   render();
   connect();
   rain();
+  paintSky();
+  // A room that turns motion off mid-shift gets the static sky back too.
+  still.addEventListener('change', paintSky);
   setInterval(tick, 1000);
   setTimeout(() => { boot.hidden = true; }, 3100);
 })();

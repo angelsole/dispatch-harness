@@ -103,6 +103,23 @@ body {
   filter: saturate(0.9) contrast(1.06);
 }
 
+/* Dawn. In the couple of hours either side of local sunrise the sky goes cold
+   rather than bright — a thin blue-grey wash coming up off the horizon behind
+   the city. wall.js reads the client's own clock for it, so a wall in another
+   timezone cools at its own sunrise and the server never learns where the room
+   is. Zero by default, which is the night this city has always been. */
+.dawn {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background:
+    linear-gradient(0deg, rgba(96, 150, 190, 0.28) 0%, rgba(74, 122, 168, 0.14) 26%, transparent 62%),
+    radial-gradient(120% 42% at 50% 100%, rgba(120, 168, 205, 0.2), transparent 70%);
+  opacity: var(--dawn, 0);
+}
+
 /* Rain is a canvas: CSS gradients tile into a texture, and this has to read as
    weather from four metres — individual angled streaks at their own depths.
    `screen` is what makes it Blade Runner: a streak over the dark sky is almost
@@ -120,7 +137,10 @@ body {
 }
 
 /* Street-level haze: the drifting wet air the towers stand in. Two slabs at
-   different speeds, moved by transform only. */
+   different speeds, moved by transform only. How much of it there is follows
+   the rain, several minutes behind — wet air clears long after the downpour
+   does. wall.js writes --haze; the fallback is the thick air the city has
+   always stood in, which is what a reduced-motion wall keeps. */
 .haze {
   position: fixed;
   left: 0;
@@ -130,6 +150,7 @@ body {
   height: 38vh;
   overflow: hidden;
   pointer-events: none;
+  opacity: calc(0.45 + 0.55 * var(--haze, 1));
   background:
     linear-gradient(0deg, rgba(90, 170, 170, 0.09), transparent 58%),
     linear-gradient(0deg, rgba(1, 4, 8, 0.92), transparent 72%);
