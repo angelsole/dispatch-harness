@@ -49,7 +49,8 @@ STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 FILES=(
   run-task.sh sync-pr.sh status.sh statusline.sh metrics.sh attach.sh cleanup.sh
   preview.sh station.sh wall.sh wall demo-auth.sh auth-capture.py repos.conf.sh
-  setup-repo.sh worker-settings.json setup-ai-settings.json brief-template.md
+  mirror.sh setup-repo.sh worker-settings.json setup-ai-settings.json
+  brief-template.md
 )
 
 link_or_copy() {  # $1 = source path, $2 = dest path

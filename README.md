@@ -171,6 +171,13 @@ Optional (only for [`wall.sh`](#the-wall), the big-screen run dashboard):
 - **`node`** (≥ 20) — runs the wall's zero-dependency HTTP server. Nothing else
   in the harness needs it.
 
+Optional (only for [mirroring runs](#runs-from-any-machine-harness_mirror) to
+another machine's wall):
+
+- **`rsync`** — copies the run dir to the target. Guarded: without it, a
+  mirrored run simply isn't mirrored. A remote target also needs `ssh` reaching
+  the host non-interactively (key auth, already in `known_hosts`).
+
 Optional (only for the auto-recorded PR demo videos on frontend runs):
 
 - **[`shot-scraper`](https://shot-scraper.datasette.io/)** — records the
@@ -430,6 +437,9 @@ and `status.sh --watch` gives you the same picture on demand.
   redrawn in place every 2s (`HARNESS_WATCH_INTERVAL` to retune).
 - **Notifications** — a desktop banner (macOS `osascript`) and/or a phone push
   (ntfy) on every stage handoff. Silence the desktop ones with `HARNESS_NOTIFY=0`.
+- **`HARNESS_MIRROR`** — mirror this machine's run dirs onto another machine
+  while they run, so its wall shows them too:
+  [Runs from any machine](#runs-from-any-machine-harness_mirror).
 - **`status.sh`** — one-shot table of all runs; `status.sh <RUN-ID>` prints a
   run's full timeline and result.
 - **`feed.log`** — a live transcript across both model stages
@@ -536,6 +546,36 @@ per-person counts and no idle states anywhere on the wall: an empty slot beside
 a colleague's three lit floors is social pressure, not information. `--crew` (or
 `WALL_CREW`) is still accepted so existing launch scripts keep working, but a
 declared roster no longer puts anything on screen.
+
+#### Runs from any machine (`HARNESS_MIRROR`)
+
+The wall reads the run dirs of the machine that serves it, so a run dispatched
+on a laptop is invisible on the office screen. Set `HARNESS_MIRROR` wherever you
+dispatch and the run mirrors its own run dir to that machine for as long as it
+runs — no rsync loop of your own, nothing to start or stop:
+
+```bash
+export HARNESS_MIRROR=mini:.claude/harness/runs   # an ssh target (has a colon)
+export HARNESS_MIRROR=/mnt/wall/runs              # a local path (no colon)
+```
+
+The copy lands at `<target>/<RUN-ID>/` and is refreshed every two seconds, with
+deletions included — an answered `QUESTIONS.md` clears the wall's alarm the same
+way it clears your own. Only the run dir travels: never the worktree, never the
+code. The last pass happens after the final stage, so the wall gets the run's
+`done:` line and `result.json` too, and the loop dies with the invocation.
+
+It is best-effort in the strongest sense — an unreachable target, a dead
+tailnet or a machine without `rsync` never fails, slows or blocks a run, and
+never says anything in the run's output. The last error, if any, sits in
+`mirror.log` in the run dir. `sync-pr.sh` mirrors on the same terms for its own
+short lifecycle, and `cleanup.sh` removes the mirrored copy when it promotes a
+run, so the wall's disk empties with yours. With the variable unset, none of
+this exists: no loop, no extra file, byte-identical behaviour.
+
+The target is a machine you already trust with the run dir: mirroring copies
+briefs, feeds and worker logs onto it, and gives it whatever your ssh key gives
+it. Point it at your own wall, not at a shared box.
 
 ---
 
@@ -654,6 +694,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `run-task.sh` | The pipeline: worktree → implement → gate → review → PR |
 | `sync-pr.sh` | Re-merge the latest base into an already-pushed PR branch on conflict |
 | `repos.conf.sh` | Generic per-repo detection + sources your `repos.local.sh` |
+| `mirror.sh` | `HARNESS_MIRROR`: mirror a live run dir to another machine's wall |
 | `setup-repo.sh` | Inspect a repo and propose/write its pinned `repos.local.sh` entry |
 | `worker-settings.json` | The implementer's tool allow/deny list |
 | `setup-ai-settings.json` | Read-only tool sandbox for `setup-repo.sh --ai` |
@@ -666,7 +707,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |

@@ -74,7 +74,7 @@ chmod +x "$FAKES/claude" "$FAKES/codex"
 run_pipeline() {  # $1 = ticket, $2 = 1 to pin PREPROD for the fixture repo
   local ticket="$1" h="$ROOT/harness-$1"
   mkdir -p "$h/runs/$ticket"
-  cp "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$h/"
+  cp "$SRC/repos.conf.sh" "$SRC/mirror.sh" "$SRC/worker-settings.json" "$h/"
   if [ "$2" = 1 ]; then
     cat > "$h/repos.local.sh" <<'SH'
 repo_config_local() {
