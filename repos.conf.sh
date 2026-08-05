@@ -5,7 +5,12 @@
 # Per-repo pipeline config, sourced by run-task.sh / sync-pr.sh / preview.sh.
 # repo_config <repo-or-worktree-path> sets:
 #   BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUBDIRS DEV_CMD \
-#   PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT
+#   PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD
+#
+# PREPROD=1 marks a repo that has not shipped yet: run-task.sh then states the
+# pre-production posture (delete obsolete paths, no compatibility layers, no
+# migrations) to both the implementer and the reviewer. Never auto-detected —
+# only a pin can claim a repo is pre-production.
 #
 # The shipped file is generic: it auto-detects from lockfiles and the remote's
 # default branch, so it works for any repo out of the box. To PIN settings for
@@ -27,7 +32,7 @@ repo_config() {
   local repo="$1"
   local name; name=$(basename "$repo")
   BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; MCP_CONFIG=""; ENV_SUBDIRS=""
-  DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""
+  DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
 
   # User pins first (if repos.local.sh defined the hook); auto-detection then
   # fills only the fields the hook left blank, so a pin can set just one value.

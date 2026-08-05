@@ -322,6 +322,7 @@ docker-compose DB) — it never writes an untested preflight path.
 | `PREFLIGHT_CMD` | Env check run *before* the implementer (e.g. test DB up + migrated) | none |
 | `DEMO_DEV_CMD` | Dev server command for demo recording (must pin the port) | none |
 | `DEMO_PORT` | Port `DEMO_DEV_CMD` binds (storyboard origin + post-demo cleanup) | none |
+| `PREPROD` | `1` = repo is not in production yet: both worker prompts get the greenfield posture | none |
 
 `GATE_CMD` is the heart of it: it is the objective checkpoint both models are
 measured against. Point it at the strictest fast feedback your repo has —
@@ -331,6 +332,27 @@ types, lint, and tests.
 implementer pass. See
 [`examples/preflight-postgres.example.sh`](examples/preflight-postgres.example.sh)
 for a Postgres test-DB check.
+
+#### `PREPROD` — the pre-production posture
+
+Both models default to conservative, compatibility-preserving changes. That is
+the right instinct for a live system and the wrong one for a repo that has no
+users yet, where a compatibility layer is dead weight from the day it lands.
+Pin `PREPROD=1` and `run-task.sh` appends a posture block to the implementer
+**and** the reviewer prompts: remove obsolete paths instead of adding
+compatibility layers, fallbacks or migrations; choose the simplest
+implementation that fully meets the current requirements; grow the system in
+layers without trading a working product for unfinished complexity; keep
+components modular; prefer established libraries, and the dependencies already
+in the project, over your own implementation; decide architecture for the long
+term rather than accepting a stopgap. The reviewer is told the same thing
+explicitly — otherwise it spends its round demanding the back-compat shims the
+implementer was told not to write.
+
+It is a pin, never a detection: no heuristic gets to decide a repo is
+pre-production. With `PREPROD` unset both prompts are byte-identical to a run
+without the feature — [`tests/preprod.test.sh`](tests/preprod.test.sh) captures
+the real prompts from a fabricated run and asserts it.
 
 ### Local config files (all gitignored)
 
@@ -545,7 +567,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `context-mount`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |
