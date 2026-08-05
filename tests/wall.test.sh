@@ -180,6 +180,12 @@ grep_ok "$CSS_SRC" '.tower[data-ready="1"] .tower__cascade' \
   "ceremony: only a tower with a shipped run plays it"
 grep_ok "$CSS_SRC" '.tower[data-ready="1"] .tower__halo' \
   "ceremony: and the rooftop lamp throws wider"
+grep_ok "$PAGE_SRC" "if (shipped !== T.ready)" \
+  "ceremony: a tower remembers which run received the beat"
+grep_ok "$PAGE_SRC" "T.root.dataset.ready = '0'" \
+  "ceremony: a second shipped run first detaches the old animation"
+grep_ok "$PAGE_SRC" 'void T.root.offsetWidth' \
+  "ceremony: then commits that reset before starting its own timeline"
 grep_ok "$PAGE_SRC" "'SHIPPED · '" "ceremony: the ticker prints the shipped line"
 grep_ok "$CSS_SRC" '.comms__line[data-src="shipped"]' "ceremony: in the brightest type it has"
 CEREMONY_CSS="$(printf '%s\n' "$CSS_SRC" | sed -n 's/^ *--ceremony: \([0-9.]*\)s;.*/\1/p' | head -1)"

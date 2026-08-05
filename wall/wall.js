@@ -211,12 +211,18 @@
     // shipped run so a late-joining browser lands mid-beat instead of replaying
     // it, and never rewritten, which is what keeps it to once per run.
     const shipped = tower.runIds.find((id) => (byId.get(id) || {}).state === 'ready') || '';
-    T.root.dataset.ready = shipped ? '1' : '0';
     if (shipped !== T.ready) {
+      // Dropping the selector before changing --age gives each shipped run its
+      // own animation timeline. Without the reflow, a second run shipping from
+      // the same tower while the first is still present inherits the first
+      // run's completed animation instead of receiving a ceremony.
+      T.root.dataset.ready = '0';
       T.ready = shipped;
       const run = byId.get(shipped);
       if (run) T.root.style.setProperty('--age', String(Math.max(0, now() - (run.since || now()))));
+      void T.root.offsetWidth;
     }
+    T.root.dataset.ready = shipped ? '1' : '0';
     // A tower grows gently with the work standing in it — enough that a busy
     // repo reads as the tall one, not enough to turn the skyline into a chart.
     T.root.style.height = Math.min(94, 48 + n * 8) + '%';
