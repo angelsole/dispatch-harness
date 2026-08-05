@@ -1,0 +1,9 @@
+09:43:02 🧠 Reading the existing report handlers before touching the router
+09:44:02 ⏺ Read src/invoices/report.ts
+09:46:22 ⏺ Grep createWorkbook
+09:47:52 💬 Reusing the sheet builder from reports instead of writing a second one
+09:49:22 ⏺ Write src/invoices/export.ts
+09:50:52 ⏺ Edit src/invoices/router.ts
+09:53:02 ⏺ Bash npm run test -- invoices
+09:54:32 🧠 The XLSX golden file wants the amounts as numbers, not strings
+09:55:37 ⏺ Edit src/invoices/export.ts

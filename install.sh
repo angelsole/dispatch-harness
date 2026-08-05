@@ -44,16 +44,22 @@ SKILL_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}/dispatch"
 SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 
-# Runtime files installed into HARNESS_DIR.
+# Runtime files installed into HARNESS_DIR. `wall` is a directory: the wall's
+# page and server travel with wall.sh.
 FILES=(
   run-task.sh sync-pr.sh status.sh statusline.sh metrics.sh attach.sh cleanup.sh
-  preview.sh station.sh demo-auth.sh auth-capture.py repos.conf.sh setup-repo.sh
-  worker-settings.json setup-ai-settings.json brief-template.md
+  preview.sh station.sh wall.sh wall demo-auth.sh auth-capture.py repos.conf.sh
+  setup-repo.sh worker-settings.json setup-ai-settings.json brief-template.md
 )
 
 link_or_copy() {  # $1 = source path, $2 = dest path
+  # A directory entry is replaced wholesale: ln would otherwise drop the link
+  # *inside* an existing real directory, and cp -R would merge into it.
+  if [ -d "$1" ]; then rm -rf "$2"; fi
   if [ "$MODE" = symlink ]; then
     ln -sfn "$1" "$2"
+  elif [ -d "$1" ]; then
+    cp -R "$1" "$2"
   else
     cp -f "$1" "$2"
   fi

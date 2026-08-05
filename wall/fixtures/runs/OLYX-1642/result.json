@@ -1,0 +1,21 @@
+{
+  "ticket": "OLYX-1642",
+  "status": "needs_input",
+  "arm": "full",
+  "implementer_model": "opus",
+  "reviewer_model": "gpt-5.6-sol",
+  "gate": "not_run",
+  "branch": "feat/retire-legacy-pdf",
+  "base": "main",
+  "pr_url": "",
+  "demo_url": "",
+  "metrics": {
+    "wall_seconds": 4020,
+    "gate_rounds": [],
+    "diff": {
+      "files_changed": 3,
+      "insertions": 88,
+      "deletions": 12
+    }
+  }
+}
