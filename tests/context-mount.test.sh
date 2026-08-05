@@ -72,11 +72,18 @@ absent "resume: dropped file gone"     "$WT/.harness/specs/annex"
 
 echo "== no run-dir specs on a later invocation: existing context is untouched =="
 rm -rf "$RUN/specs"
-mount_specs "$RUN" "$WT"; check "withdrawn: succeeds" "$?" "0"
-check "withdrawn: existing spec context untouched" \
+mount_specs "$RUN" "$WT"; check "absent: succeeds" "$?" "0"
+check "absent: existing spec context untouched" \
   "$(cat "$WT/.harness/specs/margin.md")" "tier rules v2"
-exists "withdrawn: existing spec set untouched" "$WT/.harness/specs/pricing.md"
-check  "withdrawn: notes left alone" "$(cat "$WT/.harness/implementer-notes.md")" "the notes"
+exists "absent: existing spec set untouched" "$WT/.harness/specs/pricing.md"
+check  "absent: notes left alone" "$(cat "$WT/.harness/implementer-notes.md")" "the notes"
+
+echo "== empty run-dir specs on resume: existing context is cleared =="
+mkdir -p "$RUN/specs"
+mount_specs "$RUN" "$WT"; check "empty: succeeds" "$?" "0"
+exists "empty: mount directory remains present" "$WT/.harness/specs"
+absent "empty: previous margin spec removed" "$WT/.harness/specs/margin.md"
+absent "empty: previous pricing spec removed" "$WT/.harness/specs/pricing.md"
 
 echo "== wiring: mounted before the implementer, and both workers told =="
 call_line=$(grep -nF 'mount_specs "$RUN_DIR" "$WORKTREE"' "$RT" | cut -d: -f1)
