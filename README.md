@@ -196,9 +196,10 @@ with Node 20+ — converts document attachments to markdown via `npx -y
 
 Portability notes: the scripts target **bash 3.2** (the macOS default). macOS
 ships no `timeout(1)`, so the harness uses a `perl -e 'alarm ...'` wrapper as a
-process cap. The only hard macOS-specific dependency is `osascript` for local
-desktop notifications — it is guarded, so on Linux notifications are simply
-skipped (phone push via [ntfy](https://ntfy.sh) still works). CI
+process cap. `schedule.sh` is the only macOS-only flow and requires `launchctl`;
+`osascript`, used elsewhere for local desktop notifications, is guarded, so on
+Linux notifications are simply skipped (phone push via [ntfy](https://ntfy.sh)
+still works). CI
 ([`.github/workflows/gate.yml`](.github/workflows/gate.yml)) runs the gate on
 Linux to keep the shipped scripts portable.
 
@@ -288,13 +289,15 @@ refused on the spot rather than at 08:10.
 
 **How it fires.** Arming writes a one-shot wrapper into the run dir and loads a
 per-user launchd LaunchAgent (`com.olyx.dispatch.<ticket>`) with a single
-`StartCalendarInterval` for that minute. When it fires, the wrapper deletes its
-own plist, wrapper and marker *before* dispatching, then runs `run-task.sh` with
-output in `runs/<TICKET>/scheduled.log` and boots its own agent out of launchd
-last — so a crash, a reboot or a calendar rollover can never turn one schedule
-into two runs. While a schedule is armed, `runs/<TICKET>/scheduled` holds its
-fire epoch; `--cancel` removes the agent, the plist, the wrapper and that
-marker, and leaves the brief alone.
+`StartCalendarInterval` for that minute. launchd has no `Year` field, so for a
+far-future absolute date the wrapper ignores earlier annual calendar matches
+and stays armed until the marker's fire epoch. At or after that epoch, it
+deletes its own plist, wrapper and marker *before* dispatching, then runs
+`run-task.sh` with output in `runs/<TICKET>/scheduled.log` and boots its own
+agent out of launchd last — so a crash, a reboot or a calendar rollover can
+never turn one schedule into two runs. While a schedule is armed,
+`runs/<TICKET>/scheduled` holds its fire epoch; `--cancel` removes the agent,
+the plist, the wrapper and that marker, and leaves the brief alone.
 
 **It runs as the shell that scheduled it.** The wrapper carries a snapshot of
 the scheduling shell's harness environment — every `HARNESS_*` variable
