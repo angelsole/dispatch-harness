@@ -44,12 +44,12 @@
 
   /* City stock: wet-dark masonry, and the three colours its windows are lit
      with — pale amber, dirty white, cold cyan. */
-  --stone: #05080d;
-  --stone-lit: #0a1017;
-  --win-a: rgba(255, 198, 128, 0.34);
-  --win-b: rgba(222, 234, 238, 0.24);
-  --win-c: rgba(122, 214, 236, 0.2);
-  --edge: rgba(150, 195, 200, 0.3);
+  --stone: #0a1220;
+  --stone-lit: #15202e;
+  --win-a: rgba(255, 198, 128, 0.52);
+  --win-b: rgba(222, 234, 238, 0.4);
+  --win-c: rgba(122, 214, 236, 0.34);
+  --edge: rgba(150, 195, 200, 0.45);
 
   --accent: var(--codex);
   --ground: 9vh;         /* how far above the bottom edge the towers stand */
@@ -78,7 +78,12 @@ body {
   margin: 0;
   height: 100vh;
   overflow: hidden;
-  background: var(--bg);
+  /* The city glow: a low warm-teal dome over the horizon the skyline stands
+     against — the cloud ceiling catching the streets. Without it the towers
+     dissolve into the same black as the sky. */
+  background:
+    radial-gradient(130% 36% at 50% calc(100% - var(--ground)), rgba(58, 116, 134, 0.3), rgba(30, 62, 84, 0.12) 55%, transparent 76%),
+    linear-gradient(180deg, #02050b 0%, #051222 62%, var(--bg) 100%);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace;
   font-variant-ligatures: none;
@@ -309,8 +314,8 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   bottom: -1.4rem;
   height: 3.4rem;
   pointer-events: none;
-  background: radial-gradient(58% 100% at 50% 0%, rgba(140, 196, 206, 0.16), transparent 72%);
-  opacity: 0.75;
+  background: radial-gradient(58% 100% at 50% 0%, rgba(140, 196, 206, 0.24), transparent 72%);
+  opacity: 0.9;
   transition: opacity var(--spot-in) var(--ease);
 }
 
@@ -606,7 +611,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 .shaft__lit {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
   mask-image: repeating-linear-gradient(0deg, #000 0 0.44rem, transparent 0.44rem 0.88rem);
   transform: scaleY(calc(1 / var(--lvl)));
   transform-origin: 50% 100%;
@@ -618,9 +623,9 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   left: 50%;
   top: 0;
   bottom: 0;
-  width: 0.1rem;
-  margin-left: -0.05rem;
-  background: linear-gradient(0deg, color-mix(in srgb, var(--accent) 40%, transparent), rgba(255, 255, 255, 0.04));
+  width: 0.14rem;
+  margin-left: -0.07rem;
+  background: linear-gradient(0deg, color-mix(in srgb, var(--accent) 60%, transparent), rgba(255, 255, 255, 0.08));
 }
 
 /* Everything that rides with the car — the car, its crew light, the spotlight
@@ -637,11 +642,16 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   position: absolute;
   left: 50%;
   bottom: 0;
-  width: 0.85rem;
-  height: 0.55rem;
-  margin-bottom: -0.28rem;
-  background: var(--accent);
-  box-shadow: 0 0 0.6rem var(--accent), 0 0 2rem color-mix(in srgb, var(--accent) 75%, transparent);
+  width: 1.3rem;
+  height: 0.74rem;
+  margin-bottom: -0.37rem;
+  /* A cab, not a light: lit roofline over the body colour, a bright rim to
+     hold the shape, and a glow tight enough that the shape survives it. */
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 55%, #f2fbff) 0 30%, var(--accent) 30%);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, #dff2ff);
+  border-radius: 0.1rem;
+  box-shadow: 0 0 0.3rem color-mix(in srgb, var(--accent) 85%, transparent),
+              0 0 0.9rem color-mix(in srgb, var(--accent) 40%, transparent);
   transform: translateX(-50%);
   transition: transform var(--spot-in) var(--ease);
 }
@@ -653,11 +663,11 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   position: absolute;
   left: 50%;
   top: 100%;
-  width: 1.6rem;
-  height: 0.55rem;
-  margin: -0.06rem 0 0 -0.8rem;
+  width: 0.8rem;
+  height: 0.28rem;
+  margin: 0 0 0 -0.4rem;
   border-radius: 50%;
-  background: radial-gradient(50% 50% at 50% 40%, color-mix(in srgb, var(--crew) 72%, transparent), transparent 72%);
+  background: radial-gradient(50% 50% at 50% 45%, color-mix(in srgb, var(--crew) 90%, transparent), transparent 62%);
 }
 /* The floor the car is standing on, lit right across the shaft. This is the
    line that carries "which stage" to the far side of the room; the car itself
@@ -665,13 +675,13 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 .shaft__car::after {
   content: "";
   position: absolute;
-  left: -0.6rem;
-  right: -0.6rem;
+  left: -0.9rem;
+  right: -0.9rem;
   top: 50%;
-  height: 0.12rem;
-  margin-top: -0.06rem;
+  height: 0.14rem;
+  margin-top: -0.07rem;
   background: var(--accent);
-  opacity: 0.6;
+  opacity: 0.75;
   box-shadow: 0 0 0.7rem var(--accent);
 }
 
