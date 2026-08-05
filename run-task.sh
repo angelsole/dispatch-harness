@@ -288,6 +288,32 @@ if [ -n "${PREFLIGHT_CMD:-}" ]; then
     || fail setup_failed "gate preflight failed (see $RUN_DIR/preflight.log)"
 fi
 
+# --- 3c. Pre-production posture (PREPROD=1 pinned in repos.local.sh) ---------
+# A repo that has not shipped yet wants the opposite defaults from a mature one:
+# delete obsolete paths rather than preserve them. Both models default to
+# conservative, compatibility-preserving changes, so the posture goes to BOTH —
+# a reviewer left on the default checklist would demand back-compat shims the
+# implementer was told not to write. An AGENTS.md in the target repo cannot
+# cover this: a greenfield first dispatch starts from a tree the implementer
+# itself scaffolds, so there is nothing to read yet.
+# Empty unless pinned, which leaves both prompts byte-identical to a run without
+# this feature.
+PREPROD_POSTURE=""; PREPROD_POSTURE_REVIEW=""
+if [ "${PREPROD:-}" = "1" ]; then
+  PREPROD_POSTURE="
+
+This repo is NOT in production yet. Work under this posture:
+- Do not preserve backward compatibility. Remove obsolete paths instead of adding compatibility layers, fallbacks, or migrations.
+- Choose the simplest implementation that fully meets the current requirements. Avoid speculative abstractions, configuration, and indirection.
+- Grow the system in layers: start from the smallest version that works end to end; never trade a working product for unfinished complexity.
+- Keep components modular and concerns clearly separated.
+- Prefer established, well-maintained libraries over reimplementing common functionality.
+- Lean on the dependencies already in the project before writing your own implementation or adding packages; do not assume a library lacks a capability without checking its documentation and types.
+- Make architectural decisions for the long term; do not accept a stopgap that only works for now and is meant to be replaced later."
+  PREPROD_POSTURE_REVIEW="$PREPROD_POSTURE
+- Judge the diff under this posture: do NOT request backward-compatibility shims, fallbacks, or migration paths for pre-production code."
+fi
+
 # --- 4. Opus implements (Claude subscription: ANTHROPIC_API_KEY unset) -------
 IMPLEMENTER_PROMPT="You are the implementer stage of an automated pipeline.
 Read .harness/brief.md first — it is your task contract — then follow this repo's CLAUDE.md conventions.
@@ -302,7 +328,7 @@ Rules:
 - Database/MCP tools: local environment only. Never switch environments or touch staging/production.
 - If you hit a decision the brief does not resolve and that materially changes the outcome, do NOT guess: write the specific question(s), each with the options you considered, to .harness/QUESTIONS.md and stop working. The orchestrator will get answers and resume you.
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
-- When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body."
+- When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
 
 # Worker sessions are resumable: we pin the session id so the user can step in
 # interactively at any time (attach.sh), and so a re-dispatch after needs_input
@@ -464,7 +490,7 @@ Boundary: refactor freely within the code this branch introduces or touches; do 
 - Do NOT push or create PRs.
 - Write .harness/review-notes.md: what you fixed or refactored and why, plus anything you flagged but deliberately left alone.
 - If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: do not fix it — write your findings to .harness/REJECTED.md and stop.
-- If everything is genuinely sound, say so in review-notes.md and change nothing."
+- If everything is genuinely sound, say so in review-notes.md and change nothing.$PREPROD_POSTURE_REVIEW"
 
 # A rejection from a previous dispatch must not outlive the revision it judged:
 # the outcome check below keys off this file's existence, so a re-review that
