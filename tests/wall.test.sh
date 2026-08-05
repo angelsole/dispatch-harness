@@ -150,6 +150,23 @@ BAD_KEYFRAMES="$(printf '%s\n' "$CSS_SRC" | awk '
 ')"
 check "motion: keyframes use only transform and opacity" "$BAD_KEYFRAMES" ""
 grep_not "$CSS_SRC" 'steps(' "motion: no animation uses stepped jumps"
+# --- the brief plate ------------------------------------------------------------
+# The plate is the thing people actually read, so it gets chrome — and the
+# carousel hands over between runs instead of cutting. Neither may cost the type
+# hierarchy anything: the chrome is around the words, never instead of them.
+echo "== wall: the brief plate is chrome, and hands over =="
+grep_ok "$CSS_SRC" '.brief::after' "plate: the frame carries its own hairline and ticks"
+grep_ok "$CSS_SRC" 'clip-path: polygon(0.85rem 0' "plate: its corners are cut, not square"
+grep_ok "$CSS_SRC" 'repeating-linear-gradient(180deg, rgba(150, 216, 200, 0.045)' \
+  "plate: and a whisper of scan texture under the panel"
+grep_ok "$CSS_SRC" '.brief[data-swap="out"]' "plate: the outgoing run eases out"
+grep_ok "$CSS_SRC" '.brief[data-swap="in"]'  "plate: and the incoming one eases in"
+grep_ok "$PAGE_SRC" "relight('out')" "plate: the hand-off is two phases, never a cut"
+grep_ok "$PAGE_SRC" "run.state === 'alarm' ? 'alarm' : run.actorKey" \
+  "plate: an alarm outranks the actor neon on the accent edge"
+check "plate: the ticket type is untouched by the chrome pass" \
+  "$(printf '%s\n' "$CSS_SRC" | sed -n '/^\.brief__id {/,/^}/p' | grep -c 'font-size: 2.5rem')" "1"
+
 
 # The palette is night, not sunset. These are the exact sunset stops and the
 # pink/purple neon the city shipped with in #8 — none of them may come back.

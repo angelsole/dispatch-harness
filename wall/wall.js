@@ -12,8 +12,16 @@
 (function () {
   const POLL_MS = 2000;    // only used when SSE is unavailable
   const BRIEF_MS = 7000;   // how long one run holds the brief plate
+  const SWAP_MS = 200;     // the gap the plate is empty for, mid hand-off
   const MAX_TOWER_WIDTH_RUNS = 8; // later shafts still render without widening the tower
   const TILT = 0.2;        // how far off vertical the rain falls
+  const CEREMONY_S = 6;    // the shipping beat; must match --ceremony in wall.css
+  const RAIN_LAG = 420;    // the haze trails the rain by seven minutes
+  const DRY = 0.06;        // a near-dry spell is drips, never a dead canvas
+  const DAWN_H = 6.5;      // local hour the sky is coldest at
+  const DAWN_RAMP = 2.5;   // hours either side of it that the cooling spans
+
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   // Two colour systems, deliberately kept apart: the ACTOR neon (which model
   // owns the current stage) lights the car and the brief plate, and the CREW
@@ -63,6 +71,7 @@
   const towerEls = new Map();   // project -> tower elements (incl. its shafts)
   let plateId = '';             // the run currently holding the brief plate
   let plateSince = 0;
+  let swapTimer = 0;            // set while the plate is empty between two runs
   let commsKey = '';            // last ticker text, so it only restarts on change
   const commsSeen = new Map();  // run id -> the line already drawn for it
 
@@ -233,7 +242,12 @@
 
   function paintPlate(run, index, total) {
     plate.root.dataset.state = run.state;
-    plate.root.style.setProperty('--accent', 'var(--' + run.actorKey + ')');
+    // The accent edge is the featured run's actor neon, except that a run
+    // asking for a human is red down that edge whatever was running when it
+    // stopped. Pinned here rather than left to the actor mapping: the alarm
+    // must not be one stage rename away from turning blue.
+    plate.root.style.setProperty('--accent',
+      'var(--' + (run.state === 'alarm' ? 'alarm' : run.actorKey) + ')');
     plate.root.style.setProperty('--crew', crewTint(run));
     setGlyph(plate.glyph, glyphFor(run));
     plate.project.textContent = run.projectLabel;
@@ -260,11 +274,25 @@
     [...plate.dots.children].forEach((dot, i) => { dot.dataset.on = i === index ? '1' : '0'; });
   }
 
+  // Re-light the plate contents, on the way out or on the way in. The attribute
+  // has to leave the DOM and come back for the animation to run a second time,
+  // and the read between the two is what makes the browser believe it.
+  function relight(phase) {
+    plate.root.removeAttribute('data-swap');
+    void plate.root.offsetWidth;
+    plate.root.dataset.swap = phase;
+  }
+
   function tickPlate() {
     const queue = plateQueue();
     if (queue.length === 0) {
       plate.root.hidden = true;
-      if (plateId) { plateId = ''; applySpot(); }
+      if (plateId) {
+        plateId = '';
+        clearTimeout(swapTimer);
+        swapTimer = 0;
+        applySpot();
+      }
       return;
     }
     let i = queue.findIndex((r) => r.id === plateId);
@@ -274,16 +302,28 @@
       plateSince = Date.now();
     }
     const moved = queue[i].id !== plateId;
+    const handing = moved && plateId !== '';
     plateId = queue[i].id;
     plate.root.hidden = false;
+    if (handing) {
+      // The carousel hands over rather than cutting: the run leaving eases out
+      // first, and the one arriving is not written until the plate is empty.
+      // The beam travels with the hand-off rather than after it, so the plate
+      // and the skyline are never briefly telling two different stories.
+      relight('out');
+      clearTimeout(swapTimer);
+      swapTimer = setTimeout(() => { swapTimer = 0; tickPlate(); }, SWAP_MS);
+      applySpot();
+      return;
+    }
+    // Mid hand-off the plate is blank on purpose, and the pending timer owns
+    // what gets written next: a snapshot landing inside those milliseconds must
+    // not put the outgoing run's words back on screen.
+    if (swapTimer) return;
+    const arriving = moved || plate.root.dataset.swap === 'out';
     paintPlate(queue[i], i, queue.length);
-    if (moved) {
-      // Re-light the plate for the run it just moved to. The attribute has to
-      // leave the DOM and come back for the animation to run a second time,
-      // and the read between the two is what makes the browser believe it.
-      plate.root.removeAttribute('data-swap');
-      void plate.root.offsetWidth;
-      plate.root.dataset.swap = '1';
+    if (arriving) {
+      relight('in');
       applySpot();
     }
   }

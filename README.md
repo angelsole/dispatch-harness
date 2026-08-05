@@ -479,6 +479,11 @@ Towers cannot carry type you can read from four metres, so two surfaces do:
 a Blade Runner **brief plate** cycling the live runs in big letters (ticket,
 project, stage, actor, dispatcher, the blocking question), and a green-phosphor
 **comms ticker** along the bottom carrying the tail of every live `feed.log`.
+The plate is chrome around the words and never instead of them — cut corners, a
+hairline frame with registration ticks, and an edge lit in the featured run's
+own actor neon, which goes red the moment that run is the one asking for a
+human. Moving on to the next run is a hand-over rather than a cut: the old
+contents ease out, and the new ones are not written until the plate is empty.
 
 ```bash
 wall.sh                             # ~/.claude/harness/runs on http://0.0.0.0:4711
