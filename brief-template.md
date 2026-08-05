@@ -9,6 +9,15 @@
 What is broken or needed, with the concrete evidence found during research
 (error messages, Sentry links, code locations as file:line).
 
+## Attached specs
+(Only when the task ships source documents the planner converted to markdown —
+DELETE this section otherwise.) Everything in the run dir's `specs/` is mounted
+at `.harness/specs/` in the worktree, so reference the files by that path. One
+line per file: what the implementer should take from it, and where.
+
+- `.harness/specs/margin-rules.md` — the authoritative tier boundaries and
+  rounding rules (§3); the Problem section only summarises them.
+
 ## Constraints & pointers
 Architectural decisions already made by the planner — the implementer designs
 the rest. Relevant files/services. Repo invariants that apply (e.g. money in
