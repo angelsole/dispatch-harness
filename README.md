@@ -166,6 +166,12 @@ your phone):
 - **`tmux`** — `station.sh` runs the session inside it. Nothing else in the
   harness needs tmux.
 
+Optional (only for `schedule.sh`, firing a prepared run at a set time):
+
+- **`launchctl`** — the macOS launchd client. It ships with macOS and exists
+  nowhere else, which is why `schedule.sh` is the one macOS-only script in the
+  harness: everything else runs anywhere.
+
 Optional (only for [`wall.sh`](#the-wall), the big-screen run dashboard):
 
 - **`node`** (≥ 20) — runs the wall's zero-dependency HTTP server. Nothing else
@@ -197,9 +203,10 @@ with Node 20+ — converts document attachments to markdown via `npx -y
 
 Portability notes: the scripts target **bash 3.2** (the macOS default). macOS
 ships no `timeout(1)`, so the harness uses a `perl -e 'alarm ...'` wrapper as a
-process cap. The only hard macOS-specific dependency is `osascript` for local
-desktop notifications — it is guarded, so on Linux notifications are simply
-skipped (phone push via [ntfy](https://ntfy.sh) still works). CI
+process cap. `schedule.sh` is the only macOS-only flow and requires `launchctl`;
+`osascript`, used elsewhere for local desktop notifications, is guarded, so on
+Linux notifications are simply skipped (phone push via [ntfy](https://ntfy.sh)
+still works). CI
 ([`.github/workflows/gate.yml`](.github/workflows/gate.yml)) runs the gate on
 Linux to keep the shipped scripts portable.
 
@@ -266,6 +273,60 @@ approval. On approval it launches the run in the background:
 When the run finishes you get a verdict and, if it's `ready`, a draft PR. See
 [`skills/dispatch/SKILL.md`](skills/dispatch/SKILL.md) for the full planner
 protocol.
+
+### Scheduling a run for later
+
+`schedule.sh` takes the same arguments as `run-task.sh` plus a time, and fires
+that run for you — the planner writes the brief tonight, the pipeline works
+while nobody is at the desk, and the reviewed PR is open when the office
+arrives.
+
+```bash
+~/.claude/harness/schedule.sh <TICKET> <repo-path> <branch-name> 08:10
+~/.claude/harness/schedule.sh <TICKET> <repo-path> <branch-name> "2026-08-06 08:10"
+~/.claude/harness/schedule.sh --list             # what is pending, soonest first
+~/.claude/harness/schedule.sh --cancel <TICKET>  # disarm (the brief is kept)
+```
+
+The brief must already exist at `runs/<TICKET>/brief.md` — scheduling arms a
+prepared run, it never writes a brief. A bare `HH:MM` means the next occurrence
+(today if that is still ahead, tomorrow otherwise); the absolute form is local
+time too. A time in the past, a date that does not exist, or a missing brief is
+refused on the spot rather than at 08:10.
+
+**How it fires.** Arming writes a one-shot wrapper into the run dir and loads a
+per-user launchd LaunchAgent (`com.olyx.dispatch.<ticket>`) with a single
+`StartCalendarInterval` for that minute. launchd has no `Year` field, so for a
+far-future absolute date the wrapper ignores earlier annual calendar matches
+and stays armed until the marker's fire epoch. At or after that epoch, it
+deletes its own plist, wrapper and marker *before* dispatching, then runs
+`run-task.sh` with output in `runs/<TICKET>/scheduled.log` and boots its own
+agent out of launchd last — so a crash, a reboot or a calendar rollover can
+never turn one schedule into two runs. While a schedule is armed,
+`runs/<TICKET>/scheduled` holds its fire epoch; `--cancel` removes the agent,
+the plist, the wrapper and that marker, and leaves the brief alone.
+
+**It runs as the shell that scheduled it.** The wrapper carries a snapshot of
+the scheduling shell's harness environment — every `HARNESS_*` variable
+(`HARNESS_OWNER`, notification settings, …), `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+`GH_CONFIG_DIR`, `GH_TOKEN`, the model/effort knobs and `PATH` — because launchd
+hands a job an almost empty environment. That snapshot can therefore contain a
+token, so the wrapper is written **mode 600** and lives in the run dir with the
+rest of the run's metadata. Anything you would `export` before `run-task.sh`,
+export before `schedule.sh` instead.
+
+**Sleep, honestly.** launchd does not wake the machine for a
+`StartCalendarInterval`; a fire time missed while the Mac was asleep is
+coalesced into the next wake. The promise is therefore
+"08:10, or as soon as the machine wakes after that" — good enough for a laptop
+opened in the morning, and exact only on a machine that stays awake. For a hard
+08:10, arm it on the always-on office Mac — schedules do not travel, a run fires
+on the machine it was scheduled on. (`station.sh` already runs under
+`caffeinate`.)
+
+macOS only — `launchctl` is the mechanism, and on any other platform
+`schedule.sh` says so and exits instead of arming something that will never
+fire.
 
 To point the whole harness somewhere other than `~/.claude/harness`, set
 `HARNESS_DIR` (every script honors it) and install with
@@ -692,6 +753,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | Path | What it is |
 | --- | --- |
 | `run-task.sh` | The pipeline: worktree → implement → gate → review → PR |
+| `schedule.sh` | [Fire a prepared run at a set time](#scheduling-a-run-for-later) (launchd one-shot; `--list` / `--cancel`) |
 | `sync-pr.sh` | Re-merge the latest base into an already-pushed PR branch on conflict |
 | `repos.conf.sh` | Generic per-repo detection + sources your `repos.local.sh` |
 | `mirror.sh` | `HARNESS_MIRROR`: mirror a live run dir to another machine's wall |

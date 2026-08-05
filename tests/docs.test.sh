@@ -51,7 +51,7 @@ PREREQ_BINS='claude gh jq git bash curl perl lsof uuidgen'
 
 # Optional features, example tooling, and this repo's own dev tooling: not
 # needed to run the pipeline, but README must still say they exist.
-DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npx shellcheck node rsync'
+DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npx shellcheck node rsync launchctl'
 
 # Guarded at every call site and degrade silently when absent — README owes
 # them nothing.
