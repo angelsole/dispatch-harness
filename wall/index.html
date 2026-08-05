@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>THE WALL — dispatch harness</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23050709'/><rect x='3' y='3' width='10' height='10' fill='none' stroke='%235dff9b' stroke-width='2'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23050709'/><rect x='6' y='2' width='4' height='12' fill='%23ffb648'/><rect x='2' y='6' width='3' height='8' fill='%235dff9b'/><rect x='11' y='8' width='3' height='6' fill='%2356c8ff'/></svg>">
 <link rel="stylesheet" href="wall.css">
 </head>
 <body>
 
-<!-- Semiotic-Standard-style pictograms: one flat glyph per actor, readable as a
-     silhouette from across the room. Stroke follows the panel's neon colour. -->
 <svg class="sprite" aria-hidden="true">
   <defs>
+    <!-- Semiotic-Standard-style pictograms: one flat glyph per actor, readable
+         as a silhouette from across the room. Stroke follows the actor neon. -->
     <symbol id="g-opus" viewBox="0 0 24 24">
       <path d="M3 19h18M6 15l6-11 6 11M9 11h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
     </symbol>
@@ -59,95 +59,124 @@
       <path d="M3 12h5m3 0h2m3 0h5" fill="none" stroke="currentColor" stroke-width="2"/>
       <path d="m16 7 5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
     </symbol>
-    <!-- Crew plates: who dispatched the runs in this lane. The synthetic is the
-         same silhouette with the circuitry showing — an honest label, not a
-         disguise. -->
-    <symbol id="g-crew" viewBox="0 0 24 24">
-      <path d="M12 3.5a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0v-2a4 4 0 0 1 4-4Z" fill="none" stroke="currentColor" stroke-width="2"/>
-      <path d="M4 21v-1.5c0-2.8 3.6-4.5 8-4.5s8 1.7 8 4.5V21" fill="none" stroke="currentColor" stroke-width="2"/>
-    </symbol>
-    <symbol id="g-synthetic" viewBox="0 0 24 24">
-      <path d="M12 3.5a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0v-2a4 4 0 0 1 4-4Z" fill="none" stroke="currentColor" stroke-width="2"/>
-      <path d="M4 21v-1.5c0-2.8 3.6-4.5 8-4.5s8 1.7 8 4.5V21" fill="none" stroke="currentColor" stroke-width="2"/>
-      <path d="M8.5 8h7M12 5.5v5M9.5 12.5h5" stroke="currentColor" stroke-width="1.4"/>
-      <circle cx="12" cy="8" r="1.3" fill="currentColor"/>
-    </symbol>
-    <symbol id="g-unregistered" viewBox="0 0 24 24">
-      <path d="M12 3.5a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0v-2a4 4 0 0 1 4-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 2.5"/>
-      <path d="M4 21v-1.5c0-2.8 3.6-4.5 8-4.5s8 1.7 8 4.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 2.5"/>
-    </symbol>
     <symbol id="g-unknown" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
       <path d="M9 9.5a3 3 0 1 1 3 3.5v1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
       <circle cx="12" cy="17.5" r="1.2" fill="currentColor"/>
     </symbol>
+
+    <!-- Crew vehicles: who dispatched a run, hovering beside its car. Ambient
+         attribution — a shape and a tint, never a name in type. The synthetic
+         flies an unmanned drone: honest about what it is, not a disguise. -->
+    <symbol id="g-spinner" viewBox="0 0 32 16">
+      <path d="M3 10.5 7 6h13l7 3.5-2 3.5H5Z" fill="currentColor" opacity="0.85"/>
+      <path d="M8.5 6.6 11 3.4h7l2.4 3.2Z" fill="currentColor" opacity="0.45"/>
+      <path d="M1 9.5h4M27 9.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="g-drone" viewBox="0 0 32 16">
+      <path d="M11 11h10l3-3.5-3-3.5H11L8 7.5Z" fill="currentColor" opacity="0.85"/>
+      <path d="M2 4.5h7M23 4.5h7M2 11h7M23 11h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="16" cy="7.5" r="1.6" fill="#05070a"/>
+    </symbol>
+    <symbol id="g-unregistered" viewBox="0 0 32 16">
+      <path d="M3 10.5 7 6h13l7 3.5-2 3.5H5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 2.5"/>
+    </symbol>
   </defs>
 </svg>
 
+<!-- Moebius dusk: one vast gradient, a low sun, thin-line clouds, and a
+     decorative back-city so an idle wall is a place rather than a blank. None
+     of this is data — the project towers stand in front of it. -->
+<svg class="sky" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+  <defs>
+    <linearGradient id="dusk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0a0620"/>
+      <stop offset="30%" stop-color="#231041"/>
+      <stop offset="55%" stop-color="#5b2450"/>
+      <stop offset="74%" stop-color="#a3454a"/>
+      <stop offset="88%" stop-color="#d9803f"/>
+      <stop offset="100%" stop-color="#f3bd6c"/>
+    </linearGradient>
+    <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2a1436" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#150a20" stop-opacity="0.98"/>
+    </linearGradient>
+    <linearGradient id="near" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#120a1c"/>
+      <stop offset="100%" stop-color="#06040c"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#dusk)"/>
+  <circle class="sky__sun" cx="1180" cy="742" r="196" fill="#ffd9a0" opacity="0.5"/>
+  <g stroke="#1a0c22" stroke-width="9" opacity="0.5">
+    <path d="M1000 660h360M990 700h380M1010 740h350M1040 782h290"/>
+  </g>
+
+  <!-- thin-line clouds -->
+  <g fill="none" stroke="#f6cd94" stroke-width="1.5" opacity="0.3">
+    <path d="M0 190c250-52 500-52 750 0s520 52 850 0"/>
+    <path d="M0 232c250-52 500-52 750 0s520 52 850 0"/>
+    <path d="M-40 300c300-46 600-38 900 8s450 46 760 6"/>
+    <path d="M-40 336c300-46 600-38 900 8s450 46 760 6"/>
+    <path d="M120 420c260-34 520-26 780 6s380 26 700-4"/>
+  </g>
+
+  <!-- far skyline: flat, hazy, never lit -->
+  <g fill="url(#far)" opacity="0.75">
+    <path d="M0 900V656h72v-52h44v52h58v-96h40v96h74v-64h96v64h58v-118h36v118h84v-40h70v40h60v-86h48v86h78v-52h64v52h72v-108h34v108h96v-70h58v70h74v-44h52v44h80v-92h40v92h92v900Z"/>
+  </g>
+  <g fill="none" stroke="#f0a86e" stroke-width="1" opacity="0.18">
+    <path d="M0 700h1600M0 760h1600"/>
+  </g>
+
+  <!-- near backdrop: the block the project towers stand on -->
+  <g fill="url(#near)">
+    <path d="M0 900V784h130v-44h86v44h150v-70h72v70h180v-36h120v36h210v-58h90v58h180v-40h124v40h258v116Z"/>
+  </g>
+</svg>
+
+<div class="rain" aria-hidden="true"></div>
+<div class="haze" aria-hidden="true"></div>
+<div class="traffic" aria-hidden="true"><i class="traffic__ship"></i><i class="traffic__ship traffic__ship--b"></i></div>
+
 <header class="hud">
-  <div class="hud__brand">
-    <span class="hud__mark">◤</span>
-    <span class="hud__name">THE WALL</span>
-    <span class="hud__sub">MU/TH/UR · DISPATCH HARNESS · READ ONLY</span>
-  </div>
+  <span class="hud__mark">◤</span>
+  <span class="hud__name">THE WALL</span>
+  <span class="hud__sub">MU/TH/UR · DISPATCH HARNESS · READ ONLY</span>
   <div class="hud__counts" id="counts"></div>
-  <div class="hud__right">
-    <span class="hud__link" id="link" data-state="wait">LINK</span>
-    <span class="hud__clock" id="clock">--:--:--</span>
-  </div>
+  <span class="hud__link" id="link" data-state="wait">LINK</span>
+  <span class="hud__clock" id="clock">--:--:--</span>
 </header>
 
-<main class="deck" id="deck" data-layout="idle">
-  <!-- Idle: Moebius dusk — thin-line desert, vast sky, nothing to report. -->
-  <section class="idle" id="idle">
-    <svg class="idle__sky" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <defs>
-        <linearGradient id="dusk" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#120a2a"/>
-          <stop offset="42%" stop-color="#3b1c4a"/>
-          <stop offset="68%" stop-color="#8a3f4a"/>
-          <stop offset="86%" stop-color="#d87a3f"/>
-          <stop offset="100%" stop-color="#f0b25e"/>
-        </linearGradient>
-        <linearGradient id="mesa" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#1b0f22"/>
-          <stop offset="100%" stop-color="#080510"/>
-        </linearGradient>
-      </defs>
-      <rect width="1600" height="900" fill="url(#dusk)"/>
-      <circle cx="1120" cy="612" r="150" fill="#ffd9a0" opacity=".55"/>
-      <g stroke="#0b0714" stroke-width="7" opacity=".65">
-        <path d="M960 560h330M950 590h360M962 620h340M978 650h310M1000 680h270"/>
-      </g>
-      <g fill="none" stroke="#f4c98a" stroke-width="1.4" opacity=".35">
-        <path d="M0 300c260-60 520-60 780 0s520 60 820 0"/>
-        <path d="M0 340c260-60 520-60 780 0s520 60 820 0"/>
-        <path d="M0 386c300-50 600-40 900 10s440 50 700 10"/>
-      </g>
-      <g fill="url(#mesa)">
-        <path d="M0 720h250l60-120h180l50 120h240l70-70h150l60 70h620v180H0Z"/>
-      </g>
-      <g fill="none" stroke="#f6c98d" stroke-width="1.6" opacity=".5">
-        <path d="M250 720l60-120h180l50 120"/>
-        <path d="M770 720l70-70h150l60 70"/>
-        <path d="M0 762h1600M120 800h1400M300 840h1100"/>
-      </g>
-      <g fill="none" stroke="#f6c98d" stroke-width="2" opacity=".8">
-        <path d="M392 720V560m0 0-26 26m26-26 26 26M366 612h52"/>
-        <circle cx="392" cy="546" r="7"/>
-      </g>
-    </svg>
-    <div class="idle__plate">
-      <div class="idle__title">NO ACTIVE DISPATCH</div>
-      <div class="idle__body">All channels quiet. The wall is listening.</div>
-    </div>
-  </section>
-</main>
+<!-- The city: one tower per project, built by wall.js from /api/stream. -->
+<main class="city" id="city" data-empty="1"></main>
 
-<footer class="rail">
-  <div class="rail__label">RECENT</div>
-  <div class="rail__items" id="history"></div>
-  <div class="rail__ticker" id="overflow" hidden><div class="rail__marquee" id="overflowText"></div></div>
+<!-- Legibility layer 1: towers cannot carry type you can read from meters, so
+     one run at a time gets a Blade Runner chrome plate with big letters. -->
+<section class="brief" id="brief" hidden>
+  <svg class="brief__glyph" id="briefGlyph" aria-hidden="true"><use/></svg>
+  <div class="brief__body">
+    <div class="brief__top">
+      <span class="brief__project" id="briefProject"></span>
+      <span class="brief__floor" id="briefFloor"></span>
+    </div>
+    <div class="brief__id" id="briefId"></div>
+    <div class="brief__title" id="briefTitle"></div>
+    <div class="brief__stage">
+      <span class="brief__actor" id="briefActor"></span>
+      <span class="brief__stageText" id="briefStage"></span>
+      <span class="brief__timer" id="briefTimer"></span>
+    </div>
+    <div class="brief__note" id="briefNote" hidden></div>
+    <div class="brief__dots" id="briefDots"></div>
+  </div>
+</section>
+
+<!-- Legibility layer 2: the comms ticker, the tail of every live feed.log. -->
+<footer class="comms" id="comms" hidden>
+  <span class="comms__label">COMMS</span>
+  <div class="comms__window"><div class="comms__marquee" id="commsText"></div></div>
 </footer>
 
 <!-- CRT: scanlines, phosphor bloom and a slow flicker over the whole surface. -->
@@ -157,11 +186,11 @@
 <section class="boot" id="boot" aria-hidden="true">
   <pre class="boot__text">
 <span>INTERFACE 2037 READY FOR INQUIRY</span>
-<span>MU/TH/UR 6000 · WALL TERMINAL · REV 2.1</span>
+<span>MU/TH/UR 6000 · WALL TERMINAL · REV 3.0</span>
 <span>PHOSPHOR ARRAY .................. OK</span>
-<span>RUN CHANNELS .................... SCANNING</span>
+<span>SECTOR SURVEY ................... MAPPING</span>
 <span>UPLINK /api/stream .............. OPEN</span>
-<span class="boot__ok">THE WALL IS UP</span>
+<span class="boot__ok">THE CITY IS LIT</span>
   </pre>
 </section>
 
