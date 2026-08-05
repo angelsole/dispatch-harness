@@ -32,7 +32,7 @@ const RUNS = process.env.WALL_RUNS ||
   path.join(process.env.HOME || '.', '.claude/harness/runs');
 const POLL_MS = Math.max(100, num(process.env.WALL_POLL_MS, 1000));
 
-const MAX_RUNS = 24;      // newest-first cap: a machine with hundreds of runs
+const MAX_FINISHED = 24;  // compact history cap; live runs are never discarded
 const FEED_LINES = 48;    // tail of feed.log shipped per run
 const TAIL_BYTES = 16384; // how far back we read for those lines
 
@@ -117,7 +117,6 @@ function actorOf(stage) {
 function stateOf(stage) {
   if (/^waiting/.test(stage)) return 'alarm';
   if (/^done:/.test(stage)) return /fail|reject/i.test(stage.slice(5)) ? 'failed' : 'ready';
-  if (/^sync failed/.test(stage)) return 'failed';
   return 'active';
 }
 
@@ -174,9 +173,9 @@ function feedOf(dir) {
   });
 }
 
-function readRun(id) {
+function readRun(id, current) {
   const dir = path.join(RUNS, id);
-  const { since, stage } = currentStage(dir);
+  const { since, stage } = current || currentStage(dir);
   if (since === null && stage === '') return null; // not a run dir (yet)
   const result = readJSON(path.join(dir, 'result.json')) || {};
   const metrics = result.metrics || {};
@@ -211,8 +210,9 @@ function readRun(id) {
   };
 }
 
-// Newest-first by the mtime of `status` (what stage() touches), capped before
-// the expensive per-run reads so hundreds of old runs cost one stat each.
+// Newest-first by the mtime of `status` (what stage() touches). The finished
+// cap is applied in snapshot(), after each cheap stage read: capping IDs here
+// could let a burst of completed runs hide an older run that is still active.
 function listRunIds() {
   let entries;
   try {
@@ -229,7 +229,6 @@ function listRunIds() {
     })
     .filter((e) => e.mtime > 0)
     .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, MAX_RUNS)
     .map((e) => e.name);
 }
 
@@ -237,10 +236,20 @@ const ORDER = { alarm: 0, active: 1, failed: 2, ready: 2 };
 
 function snapshot() {
   const runs = [];
+  let finished = 0;
   for (const id of listRunIds()) {
     try {
-      const run = readRun(id);
-      if (run) runs.push(run);
+      const dir = path.join(RUNS, id);
+      const current = currentStage(dir);
+      if (current.since === null && current.stage === '') continue;
+      const state = stateOf(current.stage);
+      const isFinished = state === 'ready' || state === 'failed';
+      if (isFinished && finished >= MAX_FINISHED) continue;
+      const run = readRun(id, current);
+      if (run) {
+        runs.push(run);
+        if (isFinished) finished += 1;
+      }
     } catch { /* one broken run dir never blanks the wall */ }
   }
   // Alarms shout first, then live runs oldest-first (the one that has been

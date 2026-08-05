@@ -170,6 +170,7 @@ mkdir -p "$RUNS/BARE-1" "$RUNS/EMPTY-1" "$RUNS/JUNK-1"
 printf '%s setup: worktree\n' "$(date +%s)" > "$RUNS/BARE-1/status"   # status only
 : > "$RUNS/EMPTY-1/status"                                            # caught mid-write
 printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$RUNS/JUNK-1/status"
+printf '%s sync failed: gate failed after base sync\n' "$(date +%s)" > "$RUNS/SYNC-FAIL/status"
 printf '{"status": "rea' > "$RUNS/JUNK-1/result.json"                 # half-written JSON
 printf 'not an epoch\n' > "$RUNS/JUNK-1/started"
 mkdir -p "$RUNS/NOTARUN"                                              # no status at all
@@ -178,12 +179,17 @@ API="$(get "$PORT" /api/runs)"
 check "partial: still valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
 grep_ok  "$API" "BARE-1"   "partial: a status-only run still renders"
 grep_ok  "$API" "JUNK-1"   "partial: a half-written result.json does not drop the run"
+grep_ok  "$API" "SYNC-FAIL" "partial: a sync failure remains prominent on the live wall"
 grep_not "$API" "NOTARUN"  "partial: a dir with no status is not a run"
 grep_ok  "$API" "OLYX-1598" "partial: the healthy runs are untouched"
 check "partial: an empty status falls back to stages.log/blank, not a crash" \
   "$(printf '%s' "$API" | jq -r '[.runs[] | select(.id=="EMPTY-1")] | length')" "0"
 check "partial: a bad started epoch degrades to the stage time" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="JUNK-1") | (.started != null)')" "true"
+check "state: a non-done sync failure remains a live panel" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="SYNC-FAIL") | .state')" "active"
+check "actor: a sync failure keeps its failure attribution" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="SYNC-FAIL") | .actor')" "failed"
 
 echo "== wall: no runs dir at all =="
 serve "$ROOT/does-not-exist" "$ROOT/nope.log"; NOPE="$PORT_OUT"
@@ -192,6 +198,68 @@ if [ -n "$NOPE" ]; then
   check "missing runs dir: empty snapshot" "$(get "$NOPE" /api/runs | jq '.runs | length')" "0"
   check "missing runs dir: page still serves" \
     "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$NOPE/")" "200"
+fi
+
+# A wall with lots of history must never lose an older run that is still live.
+# Only completed history is capped; every active/alarm run reaches the client,
+# where excess live panels are represented by the overflow ticker.
+echo "== wall: busy history never evicts live work =="
+CROWDED="$ROOT/crowded"
+BUSY_NOW="$(date +%s)"
+mkdir -p "$CROWDED/LIVE-OLD"
+printf '%s implementing — Opus (Claude sub)\n' "$((BUSY_NOW - 7200))" > "$CROWDED/LIVE-OLD/status"
+printf '%s\n' "$((BUSY_NOW - 9000))" > "$CROWDED/LIVE-OLD/started"
+touch -t 200001010000 "$CROWDED/LIVE-OLD/status"
+for i in $(seq 1 25); do
+  mkdir -p "$CROWDED/DONE-$i"
+  printf '%s done: ready\n' "$((BUSY_NOW - i))" > "$CROWDED/DONE-$i/status"
+  printf '%s\n' "$((BUSY_NOW - 100 - i))" > "$CROWDED/DONE-$i/started"
+done
+serve "$CROWDED" "$ROOT/crowded.log"; BUSY="$PORT_OUT"
+if [ -n "$BUSY" ]; then
+  BUSY_API="$(get "$BUSY" /api/runs)"
+  check "busy: the older live run survives the history cap" \
+    "$(printf '%s' "$BUSY_API" | jq '[.runs[] | select(.id=="LIVE-OLD" and .state=="active")] | length')" "1"
+  check "busy: only completed history is capped" \
+    "$(printf '%s' "$BUSY_API" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "24"
+else
+  bad "busy: server starts against crowded history"
+fi
+
+# Mirror the complete stage contract, using statusline.sh itself as the oracle
+# rather than a second hand-maintained expectation table in this test.
+echo "== wall: every pipeline stage mirrors statusline attribution =="
+MAP_RUNS="$ROOT/mapping-runs"
+MAP_EXPECTED="$ROOT/mapping-expected.tsv"
+mkdir -p "$MAP_RUNS"
+i=0
+grep -hoE 'stage "[^"]+"' "$SRC/run-task.sh" "$SRC/sync-pr.sh" \
+  | sed -e 's/^stage "//' -e 's/"$//' \
+        -e 's/\$[A-Za-z_][A-Za-z0-9_]*/X/g' -e 's/\$[0-9]/X/g' \
+  | sort -u | while IFS= read -r stage; do
+      i=$((i + 1))
+      id="$(printf 'MAP-%02d' "$i")"
+      mkdir -p "$MAP_RUNS/$id"
+      printf '%s %s\n' "$(date +%s)" "$stage" > "$MAP_RUNS/$id/status"
+      expected="$(NO_COLOR=1 bash -c '. "$1"; harness_actor "$2"; printf "%s" "$HARNESS_ACTOR"' \
+        _ "$SRC/statusline.sh" "$stage")"
+      printf '%s\t%s\t%s\n' "$id" "$expected" "$stage" >> "$MAP_EXPECTED"
+    done
+serve "$MAP_RUNS" "$ROOT/mapping.log"; MAP_PORT="$PORT_OUT"
+if [ -n "$MAP_PORT" ]; then
+  MAP_API="$(get "$MAP_PORT" /api/runs)"
+  mismatches=''
+  while IFS=$'\t' read -r id expected stage; do
+    actual="$(printf '%s' "$MAP_API" | jq -r --arg id "$id" '.runs[] | select(.id==$id) | .actor')"
+    [ "$actual" = "$expected" ] || mismatches="$mismatches\n    $stage: want [$expected], got [$actual]"
+  done < "$MAP_EXPECTED"
+  if [ -z "$mismatches" ]; then
+    ok "mapping: every pipeline stage matches statusline.sh"
+  else
+    bad "mapping: wall attribution drift:$mismatches"
+  fi
+else
+  bad "mapping: server starts against generated stage fixtures"
 fi
 
 # --- the committed fixtures ---------------------------------------------------
@@ -224,6 +292,33 @@ if bash "$WALL" --port abc >/dev/null 2>&1; then
 else
   ok "flags: a non-numeric --port exits non-zero"
 fi
+
+# wall.sh is only useful after install if its sibling wall/ assets travel with
+# it. Cover both supported installer modes, including replacement of stale
+# files in a previous copied directory.
+echo "== wall: install modes =="
+INSTALL_HOME="$ROOT/install-home"
+COPY_HARNESS="$ROOT/install-copy"
+HOME="$INSTALL_HOME" HARNESS_DIR="$COPY_HARNESS" \
+  CLAUDE_SKILLS_DIR="$ROOT/copy-skills" CLAUDE_SETTINGS_FILE="$ROOT/copy-settings.json" \
+  bash "$SRC/install.sh" --copy --no-statusline >/dev/null
+if [ -x "$COPY_HARNESS/wall.sh" ]; then ok "install: copy includes wall.sh"; else bad "install: copy includes wall.sh"; fi
+if [ -f "$COPY_HARNESS/wall/server.js" ]; then ok "install: copy includes wall assets"; else bad "install: copy includes wall assets"; fi
+printf 'stale\n' > "$COPY_HARNESS/wall/removed-in-update.txt"
+HOME="$INSTALL_HOME" HARNESS_DIR="$COPY_HARNESS" \
+  CLAUDE_SKILLS_DIR="$ROOT/copy-skills" CLAUDE_SETTINGS_FILE="$ROOT/copy-settings.json" \
+  bash "$SRC/install.sh" --copy --no-statusline >/dev/null
+if [ ! -e "$COPY_HARNESS/wall/removed-in-update.txt" ]; then
+  ok "install: copy replaces a stale wall directory"
+else
+  bad "install: copy replaces a stale wall directory"
+fi
+
+LINK_HARNESS="$ROOT/install-link"
+HOME="$INSTALL_HOME" HARNESS_DIR="$LINK_HARNESS" \
+  CLAUDE_SKILLS_DIR="$ROOT/link-skills" CLAUDE_SETTINGS_FILE="$ROOT/link-settings.json" \
+  bash "$SRC/install.sh" --symlink --no-statusline >/dev/null
+if [ -L "$LINK_HARNESS/wall" ]; then ok "install: symlink mode links wall assets"; else bad "install: symlink mode links wall assets"; fi
 
 echo
 printf 'wall smoke: %d passed, %d failed\n' "$pass" "$fail"
