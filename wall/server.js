@@ -188,7 +188,8 @@ function feedOf(dir) {
 // from the first stage, while result.json only appears when the run ends or
 // pauses. Lowercased into a lane key — ANGEL and angel are one crew member.
 function ownerOf(dir, result) {
-  const raw = firstLine(path.join(dir, 'owner')) || result.owner || '';
+  const pinned = readChunk(path.join(dir, 'owner'), 4096, false);
+  const raw = pinned ? pinned.text.split('\n')[0].trim() : result.owner || '';
   return String(raw).trim().toLowerCase().slice(0, 24);
 }
 
