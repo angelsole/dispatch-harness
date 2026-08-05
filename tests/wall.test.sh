@@ -188,6 +188,7 @@ if [ -n "$PORT" ]; then ok "wall.sh starts and reports its port"; else bad "wall
 
 PAGE="$(get "$PORT" /)"
 grep_ok "$PAGE" "GHOST SHIFT"  "page: renders the wall document"
+grep_ok "$PAGE" "SHIFT STANDING BY" "page: carries the idle standby plate"
 grep_ok "$PAGE" "wall.css"    "page: links its stylesheet"
 grep_ok "$PAGE" "wall.js"     "page: links its script"
 grep_ok "$PAGE" 'id="city"'   "page: ships the skyline the towers are built into"

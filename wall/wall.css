@@ -289,6 +289,40 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
    the whole point. Nothing renders an empty state. */
 .city[data-empty="1"] { display: none; }
 
+/* The standby plate: only exists while the skyline is empty. Dim phosphor —
+   present enough to say "alive and waiting", never loud enough to compete
+   with the night. */
+.idle {
+  position: fixed;
+  left: 50%;
+  top: 34%;
+  transform: translateX(-50%);
+  display: none;
+  text-align: center;
+  color: var(--phosphor-dim);
+  letter-spacing: 0.3em;
+  z-index: 3;
+}
+body:has(.city[data-empty="1"]) .idle { display: block; }
+.idle__label { font-size: 0.66rem; opacity: 0.7; }
+.idle__title {
+  margin-top: 0.5rem;
+  font-size: 1.5rem;
+  color: var(--phosphor);
+  text-shadow: 0 0 1rem color-mix(in srgb, var(--phosphor) 45%, transparent);
+}
+.idle__note { margin-top: 0.6rem; font-size: 0.72rem; }
+.idle__cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 0.3em;
+  vertical-align: -0.12em;
+  background: var(--phosphor);
+  animation: idle-blink 1.1s steps(1) infinite;
+}
+@keyframes idle-blink { 50% { opacity: 0; } }
+
 .tower {
   position: relative;
   height: 50%;
