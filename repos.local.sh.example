@@ -26,6 +26,10 @@
 #   PREFLIGHT_CMD  env check run before the implementer (e.g. test DB up + migrated)
 #   DEMO_DEV_CMD   dev server command for demo recording (MUST pin the port)
 #   DEMO_PORT      port DEMO_DEV_CMD binds (storyboard origin + post-demo cleanup)
+#   PREPROD        set to 1 for a repo that is not in production yet: both worker
+#                  prompts then get the greenfield posture (remove obsolete paths
+#                  instead of keeping compatibility layers, fallbacks or
+#                  migrations; simplest thing that fully meets the requirements)
 
 repo_config_local() {
   # $1 = absolute repo/worktree path, $2 = its basename
@@ -59,6 +63,14 @@ repo_config_local() {
       # Copy examples/preflight-postgres.example.sh to HARNESS_DIR and adapt it.
       PREFLIGHT_CMD="${HARNESS_DIR:-$HOME/.claude/harness}/preflight-postgres.sh"
       DEV_CMD="npm run dev"
+      ;;
+    # Not shipped yet, so the workers get the opposite defaults from a mature
+    # repo: no back-compat, no migrations, no compatibility layers.
+    greenfield-app|greenfield-app-*)
+      BASE_BRANCH=main
+      INSTALL_CMD="npm ci"
+      GATE_CMD="npm run type-check && npm test"
+      PREPROD=1
       ;;
     my-python-svc|my-python-svc-*)
       BASE_BRANCH=main
