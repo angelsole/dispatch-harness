@@ -319,9 +319,11 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   margin-left: 0.3em;
   vertical-align: -0.12em;
   background: var(--phosphor);
-  animation: idle-blink 1.1s steps(1) infinite;
+  animation: idle-blink 1.2s var(--ease-io) infinite;
 }
-@keyframes idle-blink { 50% { opacity: 0; } }
+/* A phosphor cursor decays rather than switches — and the motion rule the
+   gate enforces (nothing snaps) holds even here. */
+@keyframes idle-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.08; } }
 
 .tower {
   position: relative;
