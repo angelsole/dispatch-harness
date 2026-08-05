@@ -40,6 +40,21 @@ if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executa
 for f in wall/server.js wall/wall.js wall/fixtures/seed.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
+# The fixture generator accepts a target for hermetic tests, but must never
+# treat an arbitrary existing directory as disposable fixture output.
+UNMARKED="$ROOT/not-fixtures"
+mkdir -p "$UNMARKED"
+printf 'keep\n' > "$UNMARKED/important.txt"
+if node "$SRC/wall/fixtures/seed.js" "$UNMARKED" >/dev/null 2>&1; then
+  bad "fixtures: seeder refuses an unmarked existing directory"
+else
+  ok "fixtures: seeder refuses an unmarked existing directory"
+fi
+if [ -f "$UNMARKED/important.txt" ]; then
+  ok "fixtures: refused seed target is untouched"
+else
+  bad "fixtures: refused seed target is untouched"
+fi
 # The page must not pull anything in from off-origin: the TV may only see the
 # tailnet, so a CDN font or script would render as a blank. XML namespace URIs
 # (w3.org) are identifiers, never fetched.
