@@ -126,6 +126,20 @@ in parallel without colliding. The brief and all metadata live in a
 `.harness/` directory inside the worktree that is git-excluded — it never ships
 in a commit or PR.
 
+**Spec attachments.** When the real spec lives in an office document — a Word
+feature spec, an Excel rules table, a PDF — the planner converts it to markdown
+with [anydoc](https://github.com/firecrawl/anydoc) (`npx -y @firecrawl/anydoc
+<file> -o <run-dir>/specs/<name>.md`: 14 formats, auto-detected, nothing to
+install) and leaves it in the run dir. Everything under the run dir's `specs/`
+is mounted at `.harness/specs/` in the worktree before the implementer starts,
+and both workers are told to read it as part of the task contract — so the
+detail the brief distils stays consultable instead of being paraphrased away.
+When the run dir has a `specs/` directory, re-dispatching replaces the mounted
+set wholesale with its current contents, so a revised spec never piles up next
+to the version it supersedes. To withdraw every spec from a run in flight,
+leave that directory present but empty; an absent source directory is a no-op.
+The pipeline never runs `anydoc` itself; conversion is planner-side only.
+
 ---
 
 ## Prerequisites
@@ -167,8 +181,12 @@ Optional (only for the auto-recorded PR demo videos on frontend runs):
   (any S3-compatible bucket: Cloudflare R2, AWS S3, Backblaze B2, MinIO).
 - **`ffmpeg`** — transcodes the recording and builds the preview GIF.
 
-Optional (only for the copyable Postgres preflight example): **`docker`**,
-**`nc`**, and **`npx`**.
+Optional (only for the copyable Postgres preflight example): **`docker`** and
+**`nc`**.
+
+Optional (planner-side only, for [spec attachments](#architecture)): **`npx`**
+with Node 20+ — converts document attachments to markdown via `npx -y
+@firecrawl/anydoc`. Nothing in the pipeline itself invokes it.
 
 Portability notes: the scripts target **bash 3.2** (the macOS default). macOS
 ships no `timeout(1)`, so the harness uses a `perl -e 'alarm ...'` wrapper as a
@@ -309,6 +327,7 @@ docker-compose DB) — it never writes an untested preflight path.
 | `PREFLIGHT_CMD` | Env check run *before* the implementer (e.g. test DB up + migrated) | none |
 | `DEMO_DEV_CMD` | Dev server command for demo recording (must pin the port) | none |
 | `DEMO_PORT` | Port `DEMO_DEV_CMD` binds (storyboard origin + post-demo cleanup) | none |
+| `PREPROD` | `1` = repo is not in production yet: both worker prompts get the greenfield posture | none |
 
 `GATE_CMD` is the heart of it: it is the objective checkpoint both models are
 measured against. Point it at the strictest fast feedback your repo has —
@@ -318,6 +337,27 @@ types, lint, and tests.
 implementer pass. See
 [`examples/preflight-postgres.example.sh`](examples/preflight-postgres.example.sh)
 for a Postgres test-DB check.
+
+#### `PREPROD` — the pre-production posture
+
+Both models default to conservative, compatibility-preserving changes. That is
+the right instinct for a live system and the wrong one for a repo that has no
+users yet, where a compatibility layer is dead weight from the day it lands.
+Pin `PREPROD=1` and `run-task.sh` appends a posture block to the implementer
+**and** the reviewer prompts: remove obsolete paths instead of adding
+compatibility layers, fallbacks or migrations; choose the simplest
+implementation that fully meets the current requirements; grow the system in
+layers without trading a working product for unfinished complexity; keep
+components modular; prefer established libraries, and the dependencies already
+in the project, over your own implementation; decide architecture for the long
+term rather than accepting a stopgap. The reviewer is told the same thing
+explicitly — otherwise it spends its round demanding the back-compat shims the
+implementer was told not to write.
+
+It is a pin, never a detection: no heuristic gets to decide a repo is
+pre-production. With `PREPROD` unset both prompts are byte-identical to a run
+without the feature — [`tests/preprod.test.sh`](tests/preprod.test.sh) captures
+the real prompts from a fabricated run and asserts it.
 
 ### Local config files (all gitignored)
 
@@ -400,8 +440,9 @@ and `status.sh --watch` gives you the same picture on demand.
 - **`preview.sh <RUN-ID>`** — run the dev server inside the worktree to see the
   change live before approving.
 
-The paper trail per run: `brief.md`, `QUESTIONS.md`, `implementer-notes.md`,
-`review-notes.md`, `feed.log`, `gate-*.log`, `result.json`, `opus-head`.
+The paper trail per run: `brief.md`, `specs/` (converted spec attachments, when
+the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
+`feed.log`, `gate-*.log`, `result.json`, `opus-head`.
 
 ### The Wall
 
@@ -556,7 +597,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |
