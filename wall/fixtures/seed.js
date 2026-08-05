@@ -142,9 +142,10 @@ result('OLYX-1642', {
   },
 });
 
-// Shipped a while back: a warm rooftop beacon fading out of the skyline. Its
-// worktree lives only in result.json — the run dir's pin is the primary source,
-// this proves the fallback still names the tower.
+// Shipped an hour ago: its completion moment is long over, so it is in the
+// snapshot but not in the skyline. Its worktree lives only in result.json — the
+// run dir's pin is the primary source, this proves the fallback still names the
+// tower.
 run({
   id: 'OLYX-1598', project: 'olyxbase', owner: 'emre', stageAge: 3300, totalAge: 6100,
   stage: 'done: ready', activity: 'done: ready', worktree: 'result',

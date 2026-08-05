@@ -4,25 +4,27 @@
 // Towers and cars are created once and mutated in place — a full re-render
 // would restart every CRT animation, and would teleport a car that is supposed
 // to be seen climbing. No network call ever leaves this origin.
+//
+// The skyline is whatever the server says is standing: live work, plus a
+// finished run's one completion moment. Nothing here keeps a run on screen
+// after the server has dropped it.
 
 (function () {
   const POLL_MS = 2000;    // only used when SSE is unavailable
   const BRIEF_MS = 7000;   // how long one run holds the brief plate
-  const FRESH_S = 900;     // a finished run stays fully lit this long
-  const COLD_S = 10800;    // ...then dims to a warm ember over this long
   const MAX_TOWER_WIDTH_RUNS = 8; // later shafts still render without widening the tower
+  const TILT = 0.2;        // how far off vertical the rain falls
 
   // Two colour systems, deliberately kept apart: the ACTOR neon (which model
   // owns the current stage) lights the car and the brief plate, and the CREW
-  // tint (who dispatched the run) only ever paints the little vehicle beside
-  // it. Desaturated on purpose — a crew tint must never read as live state.
-  // Five well-separated hues rather than many near-neighbours: two crew members
-  // sharing a tint is survivable, two crew members with tints you cannot tell
-  // apart from the sofa is not.
+  // tint (who dispatched the run) only ever lights the lamp under the car and
+  // the name on the plate and the ticker. Desaturated on purpose — a crew tint
+  // must never read as live state. Five well-separated hues rather than many
+  // near-neighbours: two crew members sharing a tint is survivable, two crew
+  // members with tints you cannot tell apart from the sofa is not.
   const CREW_TINTS = ['#e8cfa6', '#a9c9de', '#e5b3c2', '#b3d4bd', '#c6bce0'];
   const SYNTHETIC_TINT = '#f2eee2';   // milk-white. Synthetics do not bleed red.
   const UNOWNED_TINT = '#7c8b96';
-  const SHIP = { human: 'g-spinner', synthetic: 'g-drone', unowned: 'g-unregistered' };
 
   const GLYPH = {
     opus: 'g-opus', codex: 'g-codex', gate: 'g-gate', pr: 'g-pr', demo: 'g-demo',
@@ -43,6 +45,7 @@
     glyph: document.getElementById('briefGlyph'),
     project: document.getElementById('briefProject'),
     floor: document.getElementById('briefFloor'),
+    owner: document.getElementById('briefOwner'),
     id: document.getElementById('briefId'),
     title: document.getElementById('briefTitle'),
     actor: document.getElementById('briefActor'),
@@ -56,15 +59,17 @@
   let runs = [];
   let towers = [];
   let floors = 6;
+  let skyline = new Set();      // the run ids the server is standing in the city
   const towerEls = new Map();   // project -> tower elements (incl. its shafts)
   let plateId = '';             // the run currently holding the brief plate
   let plateSince = 0;
   let commsKey = '';            // last ticker text, so it only restarts on change
+  const commsSeen = new Map();  // run id -> the line already drawn for it
 
   const now = () => Math.floor(Date.now() / 1000) + skew;
 
   // A crew member keeps the same tint whoever else is on the wall, so the room
-  // learns "the pale blue spinner is Reinier" — an index into the current runs
+  // learns "the pale blue lamp is Reinier" — an index into the current runs
   // would repaint everyone every time somebody's queue emptied.
   function crewTint(run) {
     if (run.ownerKind === 'synthetic') return SYNTHETIC_TINT;
@@ -91,12 +96,12 @@
     return node;
   }
 
-  function svg(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag); }
-
-  function glyph(cls) {
-    const node = svg('svg');
-    node.setAttribute('class', cls);
-    node.appendChild(svg('use'));
+  // Put `node` straight after `after` (or first) in `parent`, and touch the DOM
+  // only when it is not already there: re-inserting a node restarts its CSS
+  // animations, and this runs on every frame the server pushes.
+  function place(parent, node, after) {
+    const want = after ? after.nextSibling : parent.firstChild;
+    if (want !== node) parent.insertBefore(node, want);
     return node;
   }
 
@@ -114,26 +119,19 @@
 
   const isLive = (run) => run.state === 'active' || run.state === 'alarm';
 
-  // A finished run leaves its windows warm and then dims — recent work stays
-  // visible on the skyline for a while, but never as bright as live work, and
-  // never all the way out: its tower is on the wall because of it.
-  function fade(run) {
-    if (isLive(run)) return 1;
-    const age = now() - (run.since || now());
-    const t = Math.max(0, Math.min(1, (age - FRESH_S) / (COLD_S - FRESH_S)));
-    return Math.round((1 - t * 0.72) * 100) / 100;
-  }
-
   // --- one run: a car in a shaft ---------------------------------------------
 
   function makeShaft() {
     const root = el('div', 'shaft');
     const col = el('i', 'shaft__col');
+    col.append(el('i', 'shaft__lit'));
     const rail = el('i', 'shaft__rail');
-    const car = el('i', 'shaft__car');
-    const ship = glyph('shaft__ship');
-    root.append(col, rail, car, ship);
-    return { root, ship };
+    // Everything that rides with the car goes in the lift: one transform moves
+    // the car, its crew lamp and the spotlight bloom together.
+    const lift = el('i', 'shaft__lift');
+    lift.append(el('i', 'shaft__halo'), el('i', 'shaft__car'));
+    root.append(col, rail, lift);
+    return { root, state: '' };
   }
 
   function paintShaft(S, run) {
@@ -141,29 +139,36 @@
     S.root.dataset.actor = run.actorKey;
     S.root.title = run.id + ' — ' + run.stage;   // for a desk browser; the TV never hovers
     // Half a floor up from the slab it stopped on, so a car reads as standing
-    // on that floor rather than balancing on the line between two.
-    S.root.style.setProperty('--pos', ((run.floor + 0.55) / floors * 100).toFixed(2) + '%');
+    // on that floor rather than balancing on the line between two. The same
+    // number twice: a percentage for the lift, a factor for the lit column.
+    const level = (run.floor + 0.55) / floors;
+    S.root.style.setProperty('--pos', (level * 100).toFixed(2) + '%');
+    S.root.style.setProperty('--lvl', level.toFixed(4));
     S.root.style.setProperty('--crew', crewTint(run));
-    S.root.style.setProperty('--fade', String(fade(run)));
-    setGlyph(S.ship, SHIP[run.ownerKind] || SHIP.human);
+    // --age fast-forwards the completion animation, so a browser opening
+    // halfway through a flare joins the city where it already is. Written once
+    // per state change: rewriting it every frame would restart the animation.
+    if (S.state !== run.state) {
+      S.state = run.state;
+      S.root.style.setProperty('--age', String(Math.max(0, now() - (run.since || now()))));
+    }
   }
 
   // --- one project: a tower ---------------------------------------------------
 
   function makeTower() {
     const root = el('section', 'tower');
-    const sweep = el('div', 'tower__sweep');
+    root.append(el('div', 'tower__pool'), el('div', 'tower__sweep'), el('div', 'tower__spot'));
     const crown = el('div', 'tower__crown');
-    const beacon = el('div', 'tower__beacon');
-    crown.append(beacon);
+    crown.append(el('div', 'tower__beacon'));
     const mass = el('div', 'tower__mass');
     const windows = el('i', 'tower__windows');
     const slabs = el('i', 'tower__floors');
     const shafts = el('div', 'tower__shafts');
     mass.append(windows, slabs, shafts);
     const base = el('div', 'tower__base');
-    root.append(sweep, crown, mass, base);
-    return { root, shafts, base, shaftEls: new Map() };
+    root.append(crown, mass, base);
+    return { root, shafts, base, ready: '', shaftEls: new Map() };
   }
 
   function paintTower(T, tower, byId) {
@@ -173,25 +178,34 @@
     T.root.dataset.crown = String(tower.crown);
     T.root.dataset.known = tower.known ? '1' : '0';
     T.root.dataset.alarm = tower.alarm ? '1' : '0';
-    T.root.dataset.ready =
-      tower.runIds.some((id) => (byId.get(id) || {}).state === 'ready') ? '1' : '0';
+    // The rooftop beacon belongs to a run that has just shipped, and it flares
+    // and dies with that run's completion moment — hence the shared --age.
+    const shipped = tower.runIds.find((id) => (byId.get(id) || {}).state === 'ready') || '';
+    T.root.dataset.ready = shipped ? '1' : '0';
+    if (shipped !== T.ready) {
+      T.ready = shipped;
+      const run = byId.get(shipped);
+      if (run) T.root.style.setProperty('--age', String(Math.max(0, now() - (run.since || now()))));
+    }
     // A tower grows gently with the work standing in it — enough that a busy
     // repo reads as the tall one, not enough to turn the skyline into a chart.
     T.root.style.height = Math.min(94, 48 + n * 8) + '%';
     T.root.style.width = (3.4 + Math.min(n, MAX_TOWER_WIDTH_RUNS) * 2.2).toFixed(1) + 'rem';
     T.root.style.setProperty('--floors', String(floors));
     T.base.textContent = tower.label;
+    T.base.dataset.label = tower.label;
 
     for (const [id, S] of T.shaftEls) {
       if (!tower.runIds.includes(id)) { S.root.remove(); T.shaftEls.delete(id); }
     }
+    let cursor = null;
     for (const id of tower.runIds) {
       const run = byId.get(id);
       if (!run) continue;
       let S = T.shaftEls.get(id);
       if (!S) { S = makeShaft(); T.shaftEls.set(id, S); }
       paintShaft(S, run);
-      T.shafts.append(S.root);   // a no-op when it is already in this position
+      cursor = place(T.shafts, S.root, cursor);
     }
   }
 
@@ -208,9 +222,11 @@
   function paintPlate(run, index, total) {
     plate.root.dataset.state = run.state;
     plate.root.style.setProperty('--accent', 'var(--' + run.actorKey + ')');
+    plate.root.style.setProperty('--crew', crewTint(run));
     setGlyph(plate.glyph, glyphFor(run));
     plate.project.textContent = run.projectLabel;
     plate.floor.textContent = run.floorName;
+    plate.owner.textContent = run.owner ? run.owner.toUpperCase() : '';
     plate.id.textContent = run.id;
     plate.title.textContent = run.title || '(no brief title)';
     plate.actor.textContent = run.actor.toUpperCase();
@@ -234,33 +250,83 @@
 
   function tickPlate() {
     const queue = plateQueue();
-    if (queue.length === 0) { plate.root.hidden = true; plateId = ''; return; }
+    if (queue.length === 0) {
+      plate.root.hidden = true;
+      if (plateId) { plateId = ''; applySpot(); }
+      return;
+    }
     let i = queue.findIndex((r) => r.id === plateId);
     if (i === -1) { i = 0; plateSince = Date.now(); }
     else if (queue.length > 1 && Date.now() - plateSince >= BRIEF_MS) {
       i = (i + 1) % queue.length;
       plateSince = Date.now();
     }
+    const moved = queue[i].id !== plateId;
     plateId = queue[i].id;
     plate.root.hidden = false;
     paintPlate(queue[i], i, queue.length);
+    if (moved) {
+      // Re-light the plate for the run it just moved to. The attribute has to
+      // leave the DOM and come back for the animation to run a second time,
+      // and the read between the two is what makes the browser believe it.
+      plate.root.removeAttribute('data-swap');
+      void plate.root.offsetWidth;
+      plate.root.dataset.swap = '1';
+      applySpot();
+    }
+  }
+
+  // The plate and the skyline tell the same story twice, so they are lit
+  // together: the featured run's car gets the searchbeam and its building gets
+  // named in light. One glance has to connect the two.
+  function applySpot() {
+    let lit = false;
+    for (const T of towerEls.values()) {
+      let hit = false;
+      for (const [id, S] of T.shaftEls) {
+        const on = id === plateId;
+        S.root.dataset.spot = on ? '1' : '0';
+        hit = hit || on;
+      }
+      T.root.dataset.spot = hit ? '1' : '0';
+      lit = lit || hit;
+    }
+    // With a beam on one building the rest of the city steps back, which is
+    // what turns "brighter" into "that one".
+    city.dataset.spot = lit ? '1' : '0';
   }
 
   // --- the comms ticker --------------------------------------------------------
   // The tail of every live run's feed.log, in one line across the bottom: the
   // running commentary the panels used to carry, at a size the room can read.
+  // A run in its completion moment gets one last line here — the skyline is
+  // done with it, but the room deserves the sentence.
 
-  function tickComms() {
+  function commsLines() {
     const items = [];
     for (const run of runs) {
-      if (!isLive(run)) continue;
-      const last = run.feed[run.feed.length - 1];
-      if (last) items.push({ id: run.id, text: last.text, src: last.src || 'opus' });
+      const who = { id: run.id, owner: run.owner, tint: crewTint(run) };
+      if (isLive(run)) {
+        const last = run.feed[run.feed.length - 1];
+        if (last) items.push({ ...who, text: last.text, src: last.src || 'opus' });
+      } else if (skyline.has(run.id)) {
+        const verdict = run.state === 'ready' ? 'SHIPPED' : 'STOPPED';
+        const detail = run.prUrl || run.reason || run.outcome || run.stage;
+        items.push({ ...who, text: verdict + ' — ' + detail, src: run.state });
+      }
     }
+    return items;
+  }
+
+  function tickComms() {
+    const items = commsLines();
     const key = items.map((i) => i.id + i.text).join('|');
     if (key === commsKey) return;
     commsKey = key;
     comms.hidden = items.length === 0;
+
+    const live = new Set(items.map((i) => i.id));
+    for (const id of [...commsSeen.keys()]) if (!live.has(id)) commsSeen.delete(id);
     if (!items.length) return;
 
     commsText.textContent = '';
@@ -268,9 +334,19 @@
     for (const item of items) {
       const line = el('span', 'comms__line');
       line.dataset.src = item.src;
-      line.append(el('b', 'comms__id', item.id + ' '), el('span', 'comms__body', item.text));
+      // Only a line this tube has not drawn before flickers in; a rebuild
+      // caused by somebody else's run must not repaint the whole ticker.
+      if (commsSeen.get(item.id) !== item.text) line.dataset.new = '1';
+      commsSeen.set(item.id, item.text);
+      line.append(el('b', 'comms__id', item.id + ' '));
+      if (item.owner) {
+        const who = el('span', 'comms__who', item.owner);
+        who.style.setProperty('--crew', item.tint);
+        line.append(who);
+      }
+      line.append(el('span', 'comms__body', item.text));
       commsText.append(line, el('span', 'comms__sep', '·'));
-      chars += item.id.length + item.text.length + 4;
+      chars += item.id.length + item.owner.length + item.text.length + 6;
     }
     // Scroll speed, not scroll duration: a long ticker must not race.
     commsText.style.setProperty('--secs', Math.max(24, Math.round(chars * 0.34)) + 's');
@@ -281,25 +357,27 @@
   function render() {
     const byId = new Map(runs.map((r) => [r.id, r]));
     city.dataset.empty = towers.length ? '0' : '1';
-    document.body.dataset.quiet = runs.length ? '0' : '1';
+    document.body.dataset.quiet = towers.length ? '0' : '1';
 
     for (const [project, T] of towerEls) {
       if (!towers.some((t) => t.project === project)) { T.root.remove(); towerEls.delete(project); }
     }
+    let cursor = null;
     for (const tower of towers) {
       let T = towerEls.get(tower.project);
       if (!T) { T = makeTower(); towerEls.set(tower.project, T); }
       paintTower(T, tower, byId);
-      city.append(T.root);
+      cursor = place(city, T.root, cursor);
     }
 
     counts.textContent = '';
-    counts.hidden = runs.length === 0;
+    counts.hidden = towers.length === 0;
+    // What is happening, not what happened: a wall full of yesterday's green
+    // ticks is what this dashboard is trying not to be.
     const tally = [
       ['active', runs.filter((r) => r.state === 'active').length],
       ['alarm', runs.filter((r) => r.state === 'alarm').length],
-      ['ready', runs.filter((r) => r.state === 'ready').length],
-      ['failed', runs.filter((r) => r.state === 'failed').length],
+      ['projects', towers.length],
     ];
     for (const [kind, n] of tally) {
       const box = el('span', 'hud__count');
@@ -311,19 +389,15 @@
 
     tickComms();
     tickPlate();
+    applySpot();
   }
 
-  // Once a second: the clock, the live timer on the plate, whether the plate
-  // should move on, and how far the finished runs have dimmed.
+  // Once a second: the clock, the live timer on the plate, and whether the
+  // plate should move on.
   function tick() {
     const d = new Date((Date.now() / 1000 + skew) * 1000);
     clock.textContent = [d.getHours(), d.getMinutes(), d.getSeconds()]
       .map((n) => String(n).padStart(2, '0')).join(':');
-    for (const run of runs) {
-      if (isLive(run)) continue;
-      const S = (towerEls.get(run.project) || { shaftEls: new Map() }).shaftEls.get(run.id);
-      if (S) S.root.style.setProperty('--fade', String(fade(run)));
-    }
     tickPlate();
   }
 
@@ -332,6 +406,11 @@
     runs = Array.isArray(snapshot.runs) ? snapshot.runs : [];
     towers = Array.isArray(snapshot.towers) ? snapshot.towers : [];
     floors = Array.isArray(snapshot.floors) && snapshot.floors.length ? snapshot.floors.length : 6;
+    skyline = new Set(towers.flatMap((t) => t.runIds));
+    // The completion moment is the server's number; the page only animates it.
+    if (snapshot.completionSeconds > 0) {
+      document.documentElement.style.setProperty('--completion', snapshot.completionSeconds + 's');
+    }
     render();
     tick();
   }
@@ -361,8 +440,96 @@
     src.addEventListener('error', () => setLink('lost'));
   }
 
+  // --- rain ---------------------------------------------------------------------
+  // Weather, drawn one drop at a time. A tiled CSS sheet reads as a texture
+  // from four metres; these are streaks with their own depth, length and speed,
+  // and the canvas is screened over the city (wall.css) so a drop crossing a
+  // lit window or the carousel spotlight catches that light and flares.
+
+  function rain() {
+    const canvas = document.getElementById('rain');
+    const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+    if (!ctx) return;
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const drops = [];
+    let w = 0, h = 0, running = false, last = 0;
+
+    function spawn(y) {
+      const depth = Math.random();      // 0 = far, slow and faint; 1 = near and fast
+      return {
+        x: Math.random() * (w + h * TILT) - h * TILT,
+        y,
+        len: 12 + depth * 46,
+        speed: 420 + depth * 900,
+        alpha: 0.08 + depth * 0.36,
+        width: 0.6 + depth * 1.1,
+      };
+    }
+
+    // One drop per ~5000 px², clamped: heavy enough to read across a room on a
+    // 4K panel, light enough that the stick driving the TV keeps up.
+    function fill() {
+      const want = Math.max(80, Math.min(420, Math.round((w * h) / 5000)));
+      while (drops.length > want) drops.pop();
+      while (drops.length < want) drops.push(spawn(Math.random() * h));
+    }
+
+    function size() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      w = canvas.clientWidth;
+      h = canvas.clientHeight;
+      canvas.width = Math.max(1, Math.round(w * dpr));
+      canvas.height = Math.max(1, Math.round(h * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      fill();
+    }
+
+    function draw(dt) {
+      ctx.clearRect(0, 0, w, h);
+      ctx.lineCap = 'round';
+      for (const drop of drops) {
+        drop.y += drop.speed * dt;
+        drop.x += drop.speed * TILT * dt;
+        if (drop.y - drop.len > h) Object.assign(drop, spawn(-drop.len - Math.random() * h * 0.4));
+        ctx.strokeStyle = 'rgba(196, 226, 255, ' + drop.alpha.toFixed(3) + ')';
+        ctx.lineWidth = drop.width;
+        ctx.beginPath();
+        ctx.moveTo(drop.x, drop.y);
+        ctx.lineTo(drop.x - drop.len * TILT, drop.y - drop.len);
+        ctx.stroke();
+      }
+    }
+
+    function frame(t) {
+      if (!running) return;
+      const dt = Math.min(0.05, (t - last) / 1000) || 0.016;
+      last = t;
+      draw(dt);
+      requestAnimationFrame(frame);
+    }
+
+    function start() {
+      if (running || still.matches) return;
+      size();
+      running = true;
+      last = performance.now();
+      requestAnimationFrame(frame);
+    }
+
+    function stop() {
+      running = false;
+      ctx.clearRect(0, 0, w, h);
+    }
+
+    window.addEventListener('resize', () => { if (running) size(); });
+    // A room that turns motion off mid-shift gets a dry city without a reload.
+    still.addEventListener('change', () => (still.matches ? stop() : start()));
+    start();
+  }
+
   render();
   connect();
+  rain();
   setInterval(tick, 1000);
   setTimeout(() => { boot.hidden = true; }, 3100);
 })();

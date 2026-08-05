@@ -2,6 +2,10 @@
 // The Wall — read-only big-screen dashboard over $HARNESS_DIR/runs, rendered as
 // a city: one tower per project, each run a lit car climbing it.
 //
+// The skyline is LIVE: it carries what is running now, plus a finished run's one
+// short completion moment. The city grows and shrinks with the work, which is
+// the whole point of putting it on a wall.
+//
 // node:http + node:fs only: no dependencies, no build step, and no runtime
 // request that leaves this origin (the TV may only see the tailnet). Launched
 // by ../wall.sh, which owns the flags and computes the defaults below.
@@ -33,11 +37,18 @@ const RUNS = process.env.WALL_RUNS ||
   path.join(process.env.HOME || '.', '.claude/harness/runs');
 const POLL_MS = Math.max(100, num(process.env.WALL_POLL_MS, 1000));
 
-const MAX_FINISHED = 24;  // compact history cap; live runs are never discarded
+const MAX_FINISHED = 24;  // compact cap on the JSON feed; live runs are never discarded
 const FEED_LINES = 48;    // tail of feed.log shipped per run
 const TAIL_BYTES = 16384; // how far back we read for those lines
 const SILHOUETTES = 5;    // tower body outlines the page can draw
 const CROWNS = 4;         // roof furniture (mast, water tank, sign rig) per body
+
+// How long a finished run holds its place in the skyline: one completion moment
+// — the rooftop flare, or the burnout — and then it is gone, and a tower with
+// nothing left standing in it goes with it. Nobody watching a wall wants
+// yesterday's green ticks; they want to see the work move. The page mirrors this
+// number as --completion (shipped in every snapshot) to time the animation.
+const COMPLETION_S = 20;
 
 // A run whose worktree we cannot read still has to stand somewhere, and guessing
 // a repo for it would be a lie. It gets an honest tower of its own instead.
@@ -375,10 +386,10 @@ function snapshot() {
 
 // --- the skyline ----------------------------------------------------------------
 // The wall is organised around the WORK: one tower per project, with that
-// project's runs climbing it. A project with nothing current or recent is simply
-// not in the skyline — there is no empty tower, no standby, and no per-person
-// aggregate anywhere in here. Who dispatched a run survives only as the run's
-// `owner`, which the page paints on a small vehicle beside its car.
+// project's runs climbing it. A project with nothing live is simply not in the
+// skyline — there is no empty tower, no standby, and no per-person aggregate
+// anywhere in here. Who dispatched a run survives only as the run's `owner`,
+// which the page paints as a tinted light on its car.
 //
 // Grouping happens here rather than in the page so it is covered by the same
 // curl-and-jq tests as everything else.
@@ -405,8 +416,16 @@ function newTower(project) {
     runIds: [],     // rendered as lit shafts, most urgent first
     live: 0,        // active + alarm: what is climbing right now
     alarm: 0,
-    total: 0,       // everything of this project's on the wall, finished included
   };
+}
+
+// What stands in the skyline: everything live, plus a run that has just
+// finished, for as long as its completion moment lasts. An alarm is live by
+// definition — a run waiting on a human stays pinned up there until somebody
+// answers it, however long that takes.
+function onSkyline(run, at) {
+  if (run.state === 'active' || run.state === 'alarm') return true;
+  return at - (run.since || 0) <= COMPLETION_S;
 }
 
 // Alphabetical, with the fallback tower last. Deterministic and independent of
@@ -416,14 +435,14 @@ function towerRank(tower) {
   return tower.known ? [0, tower.project] : [1, ''];
 }
 
-function buildTowers(runs) {
+function buildTowers(runs, at) {
   const towers = new Map();
   // `runs` arrives in wall order (alarms, then live oldest-first, then finished
   // newest-first), which also gives the shafts a stable urgency order.
   for (const run of runs) {
+    if (!onSkyline(run, at)) continue;
     if (!towers.has(run.project)) towers.set(run.project, newTower(run.project));
     const tower = towers.get(run.project);
-    tower.total += 1;
     if (run.state === 'alarm') tower.alarm += 1;
     if (run.state === 'active' || run.state === 'alarm') tower.live += 1;
     tower.runIds.push(run.id);
@@ -449,27 +468,39 @@ let poller = null;
 let lastBody = '';
 
 // Towers carry ids, not copies: every run travels once, and the page looks the
-// run up by id.
-function payload(runs) {
-  return JSON.stringify({
-    at: Math.floor(Date.now() / 1000),
+// run up by id. `runs` is the honest snapshot of the disk (live work plus a
+// compact tail of finished runs); `towers` is the skyline, which is live only.
+function payload() {
+  const at = Math.floor(Date.now() / 1000);
+  const runs = snapshot();
+  return {
+    at,
     runsDir: RUNS,
     crew: CREW,
     floors: FLOORS,
-    towers: buildTowers(runs),
+    completionSeconds: COMPLETION_S,
+    towers: buildTowers(runs, at),
     runs,
-  });
+  };
+}
+
+// Everything a viewer can see, and nothing that ticks on its own: `at` moves
+// every second, and pushing a frame for it would repaint an idle wall forever.
+// The skyline is in here because a completion moment ending is a real change
+// even when no run on disk moved.
+function fingerprint(frame) {
+  return JSON.stringify([frame.towers, frame.runs]);
 }
 
 // One poll for all viewers; a frame is only pushed when something actually
 // changed, so an idle wall is silent and a busy one repaints at POLL_MS.
 function tick() {
-  let runs;
-  try { runs = snapshot(); } catch { return; }
-  const body = JSON.stringify(runs);
-  if (body === lastBody) return;
-  lastBody = body;
-  const frame = `event: snapshot\ndata: ${payload(runs)}\n\n`;
+  let body;
+  try { body = payload(); } catch { return; }
+  const fp = fingerprint(body);
+  if (fp === lastBody) return;
+  lastBody = fp;
+  const frame = `event: snapshot\ndata: ${JSON.stringify(body)}\n\n`;
   for (const res of clients) { try { res.write(frame); } catch { /* dropped */ } }
 }
 
@@ -489,7 +520,7 @@ function stream(req, res) {
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
   });
-  res.write(`retry: 2000\nevent: snapshot\ndata: ${payload(snapshot())}\n\n`);
+  res.write(`retry: 2000\nevent: snapshot\ndata: ${JSON.stringify(payload())}\n\n`);
   clients.add(res);
   startPolling();
   // A comment frame every 15s: proxies keep the socket, and the page can tell a
@@ -515,7 +546,7 @@ const server = http.createServer((req, res) => {
     if (url === '/api/stream') return stream(req, res);
     if (url === '/api/runs') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-      return res.end(payload(snapshot()));
+      return res.end(JSON.stringify(payload()));
     }
     const entry = STATIC[url];
     if (entry) return serveStatic(res, entry);
