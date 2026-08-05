@@ -1,4 +1,4 @@
-/* THE WALL — a city at night, in the rain. One tower per project, one lit car
+/* GHOST SHIFT — a city at night, in the rain. One tower per project, one lit car
    per run climbing it, and nothing on the skyline that is not happening now.
 
    Everything is vw-relative so the same page reads correctly on a 1280x720
@@ -1041,6 +1041,92 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 /* A still city: no rain, no traffic, no drift, no sweep travel, no boot — but
    every light stays lit and the searchlight stays drawn, so the wall says
    exactly the same thing standing still as it does moving. */
+/* --- cinematography ---------------------------------------------------------
+   Three things separate this frame from a film still: depth, light that
+   lives, and a camera that breathes. Everything here is transform/opacity
+   only, and the reduced-motion block below silences all of it. */
+
+/* Parallax: the painted planes drift at depth-sorted speeds — far barely,
+   near the most. The differential is the depth. */
+.sky__far  { animation: par-drift 260s var(--ease-io) infinite alternate; }
+.sky__mid  { --par: 2.4; animation: par-drift 185s var(--ease-io) infinite alternate; }
+.sky__near { --par: 4;   animation: par-drift 150s var(--ease-io) infinite alternate; }
+@keyframes par-drift {
+  from { transform: translateX(calc(-5px * var(--par, 1))); }
+  to   { transform: translateX(calc(5px * var(--par, 1))); }
+}
+
+/* The breathing camera: an imperceptible push-in over two minutes, towers
+   moving a touch more than the sky behind them. */
+.city { transform-origin: 50% 100%; animation: cam-city 140s var(--ease-io) infinite alternate; }
+.sky  { transform-origin: 50% 100%; animation: cam-sky 140s var(--ease-io) infinite alternate; }
+@keyframes cam-city { from { transform: scale(1); } to { transform: scale(1.035); } }
+@keyframes cam-sky  { from { transform: scale(1); } to { transform: scale(1.016); } }
+
+/* Neon signage: the project's name hung off its tower's shoulder, vertical,
+   in that project's own neon. Red never appears here unless the tower is
+   asking for a human. */
+.tower__sign {
+  position: absolute;
+  z-index: 2;
+  top: 12%;
+  right: -0.5rem;
+  writing-mode: vertical-rl;
+  padding: 0.6rem 0.16rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  white-space: nowrap;
+  color: var(--sign, #7fd4ec);
+  background: rgba(2, 6, 10, 0.6);
+  border: 1px solid color-mix(in srgb, var(--sign, #7fd4ec) 40%, transparent);
+  box-shadow: 0 0 0.8rem color-mix(in srgb, var(--sign, #7fd4ec) 22%, transparent);
+  text-shadow: 0 0 0.45rem var(--sign, #7fd4ec),
+               0 0 1.5rem color-mix(in srgb, var(--sign, #7fd4ec) 60%, transparent);
+  animation: sign-flicker 16s linear infinite;
+  animation-delay: var(--drift, 0s);
+}
+.tower[data-alarm="1"] .tower__sign { --sign: var(--alarm); }
+.tower[data-spot="1"] .tower__sign {
+  box-shadow: 0 0 1.3rem color-mix(in srgb, var(--sign, #7fd4ec) 45%, transparent);
+}
+/* A neon tube misbehaves briefly and rarely; the dips live in a narrow slice
+   of a long loop, staggered per tower by --drift. */
+@keyframes sign-flicker {
+  0%, 90.6%, 93.4%, 100% { opacity: 1; }
+  91%, 92.2% { opacity: 0.3; }
+  91.6% { opacity: 0.85; }
+  92.8% { opacity: 0.55; }
+}
+
+/* Wet tarmac, tower edition: the lit facade smeared under its own building.
+   Reuses the window-grid styling wholesale (same class); this modifier only
+   flips it into a reflection. */
+.tower__windows.tower__mirror {
+  position: absolute;
+  inset: auto 0 auto 0;
+  top: 100%;
+  height: 34%;
+  opacity: 0.2;
+  filter: blur(2.5px) saturate(0.85);
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 78%);
+  mask-image: linear-gradient(180deg, #000, transparent 78%);
+}
+
+/* Light that lives: every facade breathes slowly, out of phase per tower.
+   Scoped to the facade inside the mass so the reflection keeps its own
+   opacity. */
+.tower__mass > .tower__windows {
+  animation: win-live 26s var(--ease-io) infinite;
+  animation-delay: calc(var(--drift, 0s) * -1.9);
+}
+@keyframes win-live {
+  0%, 100% { opacity: 0.9; }
+  45% { opacity: 0.8; }
+  62% { opacity: 0.87; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .boot, .rain, .traffic { display: none; }

@@ -1,5 +1,5 @@
 'use strict';
-// The Wall's renderer. Subscribes to /api/stream (SSE), falls back to polling
+// Ghost Shift's renderer. Subscribes to /api/stream (SSE), falls back to polling
 // /api/runs, and builds the city: one tower per project, one lit car per run.
 // Towers and cars are created once and mutated in place — a full re-render
 // would restart every CRT animation, and would teleport a car that is supposed
@@ -156,6 +156,11 @@
 
   // --- one project: a tower ---------------------------------------------------
 
+  // Neon stock for the vertical project signs: cold noir hues only — red stays
+  // reserved for alarms. Which sign a project gets rides the same hash slices
+  // that pick its silhouette, so the colour is stable run to run.
+  const SIGN_TINTS = ['#7fd4ec', '#ffc27d', '#9fe8b8', '#e8e2cf', '#8fb0ff'];
+
   function makeTower() {
     const root = el('section', 'tower');
     root.append(el('div', 'tower__pool'), el('div', 'tower__sweep'), el('div', 'tower__spot'));
@@ -166,9 +171,14 @@
     const slabs = el('i', 'tower__floors');
     const shafts = el('div', 'tower__shafts');
     mass.append(windows, slabs, shafts);
+    const sign = el('div', 'tower__sign');
+    // The wet-tarmac reflection reuses the window-grid styling wholesale (same
+    // class, same per-shape storey variables) and restyles itself via the
+    // modifier — one source of truth for what a lit facade looks like.
+    const mirror = el('i', 'tower__windows tower__mirror');
     const base = el('div', 'tower__base');
-    root.append(crown, mass, base);
-    return { root, shafts, base, ready: '', shaftEls: new Map() };
+    root.append(crown, mass, sign, mirror, base);
+    return { root, shafts, base, sign, ready: '', shaftEls: new Map() };
   }
 
   function paintTower(T, tower, byId) {
@@ -192,8 +202,10 @@
     T.root.style.height = Math.min(94, 48 + n * 8) + '%';
     T.root.style.width = (3.4 + Math.min(n, MAX_TOWER_WIDTH_RUNS) * 2.2).toFixed(1) + 'rem';
     T.root.style.setProperty('--floors', String(floors));
-    T.base.textContent = tower.label;
     T.base.dataset.label = tower.label;
+    T.sign.textContent = tower.label;
+    T.root.style.setProperty('--sign', SIGN_TINTS[(tower.shape * 7 + tower.crown) % SIGN_TINTS.length]);
+    T.root.style.setProperty('--drift', ((tower.shape * 3.1 + tower.crown * 5.7) % 17).toFixed(1) + 's');
 
     for (const [id, S] of T.shaftEls) {
       if (!tower.runIds.includes(id)) { S.root.remove(); T.shaftEls.delete(id); }
