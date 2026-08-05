@@ -202,6 +202,15 @@
 <!-- The city: one tower per project, built by wall.js from /api/stream. -->
 <main class="city" id="city" data-empty="1"></main>
 
+<!-- When no work is standing the city sleeps — and says so, or a quiet night
+     reads as a dead dashboard. Visibility is pure CSS off the same data-empty
+     flag the city already carries; wall.js never touches this element. -->
+<div class="idle" aria-hidden="true">
+  <div class="idle__label">MU/TH/UR 6000 · OVERNIGHT LOG</div>
+  <div class="idle__title">SHIFT STANDING BY</div>
+  <div class="idle__note">NO ACTIVE DISPATCH · AWAITING WORK ORDER<span class="idle__cursor"></span></div>
+</div>
+
 <!-- Legibility layer 1: towers cannot carry type you can read from meters, so
      one run at a time gets a Blade Runner chrome plate with big letters. -->
 <section class="brief" id="brief" hidden>
