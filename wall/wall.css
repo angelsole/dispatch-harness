@@ -294,6 +294,11 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   flex-direction: column;
   justify-content: flex-end;
   transition: opacity var(--spot-in) var(--ease);
+  /* A project arriving on the wall rises into it. Runs entering and leaving
+     resize their tower, and that is a layout change rather than motion — it is
+     deliberately not animated, because animating a row of flex heights is the
+     one thing on this page that would cost a relayout per frame. */
+  animation: tower-in 900ms var(--ease);
 }
 
 /* Wet tarmac: every tower stands in a little of its own light. It brightens
@@ -556,6 +561,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   position: relative;
   flex: 1 1 0;
   min-width: 0;
+  animation: shaft-in 700ms var(--ease);   /* a run arrives; it does not appear */
 }
 
 /* The column of the building this run occupies, lit up to the car. The clip
@@ -916,6 +922,14 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 @keyframes klaxon-text { 50% { opacity: 0.25; } }
 @keyframes blink { 50% { opacity: 0.1; } }
 @keyframes drift { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(70vw, 0, 0); } }
+@keyframes tower-in {
+  from { opacity: 0; transform: translate3d(0, 1.4rem, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes shaft-in {
+  from { opacity: 0; transform: translate3d(0, 0.7rem, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
 @keyframes plate-in {
   from { opacity: 0; transform: translate3d(-0.6rem, 0, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }

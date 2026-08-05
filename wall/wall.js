@@ -96,6 +96,15 @@
     return node;
   }
 
+  // Put `node` straight after `after` (or first) in `parent`, and touch the DOM
+  // only when it is not already there: re-inserting a node restarts its CSS
+  // animations, and this runs on every frame the server pushes.
+  function place(parent, node, after) {
+    const want = after ? after.nextSibling : parent.firstChild;
+    if (want !== node) parent.insertBefore(node, want);
+    return node;
+  }
+
   function setGlyph(node, id) {
     const use = node.firstChild;
     const ref = '#' + id;
@@ -188,13 +197,14 @@
     for (const [id, S] of T.shaftEls) {
       if (!tower.runIds.includes(id)) { S.root.remove(); T.shaftEls.delete(id); }
     }
+    let cursor = null;
     for (const id of tower.runIds) {
       const run = byId.get(id);
       if (!run) continue;
       let S = T.shaftEls.get(id);
       if (!S) { S = makeShaft(); T.shaftEls.set(id, S); }
       paintShaft(S, run);
-      T.shafts.append(S.root);   // a no-op when it is already in this position
+      cursor = place(T.shafts, S.root, cursor);
     }
   }
 
@@ -351,11 +361,12 @@
     for (const [project, T] of towerEls) {
       if (!towers.some((t) => t.project === project)) { T.root.remove(); towerEls.delete(project); }
     }
+    let cursor = null;
     for (const tower of towers) {
       let T = towerEls.get(tower.project);
       if (!T) { T = makeTower(); towerEls.set(tower.project, T); }
       paintTower(T, tower, byId);
-      city.append(T.root);
+      cursor = place(city, T.root, cursor);
     }
 
     counts.textContent = '';
