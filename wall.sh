@@ -6,10 +6,13 @@
 # Point a fullscreen browser on the TV at this machine's tailnet address. Zero
 # dependencies beyond node (>= 20) and zero build step.
 #
-# The wall is a city. Each project is a tower — named by reversing the worktree
-# path run-task.sh records — and each run is a lit car climbing it, its floor
-# being its pipeline stage. A blocked run puts a searchlight over its tower.
-# Whoever dispatched a run appears only as a small tinted vehicle beside it.
+# The wall is a city at night. Each project is a tower — named by reversing the
+# worktree path run-task.sh records — and each run is a lit car climbing it, its
+# floor being its pipeline stage. A blocked run puts a searchlight over its
+# tower. Whoever dispatched a run appears only as a tinted light on its car.
+#
+# The skyline is live: a finished run gets one short completion moment and then
+# leaves it, and a tower with nothing left standing in it leaves too.
 #
 # Usage:
 #   wall.sh                             serve ~/.claude/harness/runs on :4711
@@ -29,7 +32,7 @@
 # only what is already on this machine's disk. Do not port-forward it publicly.
 set -u
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
