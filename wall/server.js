@@ -1,5 +1,6 @@
 'use strict';
-// The Wall — read-only big-screen dashboard over $HARNESS_DIR/runs.
+// The Wall — read-only big-screen dashboard over $HARNESS_DIR/runs, rendered as
+// a city: one tower per project, each run a lit car climbing it.
 //
 // node:http + node:fs only: no dependencies, no build step, and no runtime
 // request that leaves this origin (the TV may only see the tailnet). Launched
@@ -33,13 +34,20 @@ const RUNS = process.env.WALL_RUNS ||
 const POLL_MS = Math.max(100, num(process.env.WALL_POLL_MS, 1000));
 
 const MAX_FINISHED = 24;  // compact history cap; live runs are never discarded
-const MAX_PER_LANE = 4;   // panels per crew lane; the rest go to the ticker
 const FEED_LINES = 48;    // tail of feed.log shipped per run
 const TAIL_BYTES = 16384; // how far back we read for those lines
+const SILHOUETTES = 5;    // tower body outlines the page can draw
+const CROWNS = 4;         // roof furniture (mast, water tank, sign rig) per body
 
-// The expected roster (--crew / WALL_CREW). Declaring it keeps a crew member's
-// lane on the wall while they have nothing running, so an empty lane reads as
-// "idle", not as "gone". Owners outside the roster always get a lane anyway.
+// A run whose worktree we cannot read still has to stand somewhere, and guessing
+// a repo for it would be a lie. It gets an honest tower of its own instead.
+const UNCHARTED = 'UNCHARTED';
+
+// The expected roster (--crew / WALL_CREW), still accepted so an existing
+// launch script keeps working, and echoed to the page. It no longer shapes the
+// wall: crew tints are hashed from the owner name and are stable on their own,
+// and a roster that conjured up empty crew furniture is exactly what the city
+// replaced. A project with nothing running is simply not in the skyline.
 const CREW = (process.env.WALL_CREW || '').split(',')
   .map((s) => s.trim().toLowerCase()).filter(Boolean);
 // Automated dispatcher accounts: the ship's synthetics. Not people, and the
@@ -124,10 +132,75 @@ function actorOf(stage) {
 // every failing STATUS in run-task.sh ends in _failed or is "rejected"; sync-pr's
 // "done: PR branch synced …" is a success, so match the failure words, not a
 // whitelist of the good ones.
+const DONE_NEEDS_INPUT = /^done:\s*needs_input\b/i;
+
 function stateOf(stage) {
-  if (/^waiting/.test(stage)) return 'alarm';
+  if (/^waiting/.test(stage) || DONE_NEEDS_INPUT.test(stage)) return 'alarm';
   if (/^done:/.test(stage)) return /fail|reject/i.test(stage.slice(5)) ? 'failed' : 'ready';
   return 'active';
+}
+
+// --- the stage -> floor ladder -------------------------------------------------
+// The city's other axis: a run is a lit car climbing its tower, and how high it
+// has got IS its pipeline stage. Keyed off actorKey rather than the raw stage
+// text so there is one stage table in this file, not two.
+const FLOORS = ['SETUP', 'IMPLEMENT', 'GATE', 'REVIEW', 'DEMO', 'PUSH'];
+const FLOOR_OF = {
+  setup: 0, sync: 0, failed: 0, unknown: 0,
+  opus: 1, alarm: 1,
+  gate: 2,
+  codex: 3, skipped: 3,
+  demo: 4,
+  pr: 5,
+};
+
+// A finished run parks at the floor it stopped on, not at the roof: a
+// `done: gate_failed` burnout two floors down is the honest picture, and only a
+// run that actually shipped lights the rooftop. Anything unrecognised (a future
+// status, sync-pr.sh's prose "done: PR branch synced …") made it to the top.
+const DONE_FLOOR = [
+  [/setup_failed/, 0],
+  [/implementer_failed/, 1],
+  [/gate_failed/, 2],
+  [/rejected/, 3],
+];
+
+function floorOf(stage, actorKey) {
+  if (/^done:/.test(stage)) {
+    const outcome = stage.slice(5).trim();
+    for (const [re, floor] of DONE_FLOOR) if (re.test(outcome)) return floor;
+    return FLOORS.length - 1;
+  }
+  return FLOOR_OF[actorKey] ?? 0;
+}
+
+// A terminal `done: needs_input` is written after the actual stage that
+// blocked. Recover that last stage so the alarm stays on the floor where work
+// stopped instead of jumping to the rooftop and looking like a successful PR.
+function previousFloor(dir) {
+  const lines = tailLines(path.join(dir, 'stages.log'), 8);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^\d+\s+(\S.*)$/.exec(lines[i]);
+    if (!m || m[1] === '__invocation__' || /^done:/.test(m[1])) continue;
+    const prior = actorOf(m[1]);
+    return floorOf(m[1], prior.actorKey);
+  }
+  return FLOOR_OF.alarm;
+}
+
+// --- which project a run belongs to --------------------------------------------
+// run-task.sh builds the worktree as "<repo-dir>-<ticket-lowercased>" next to
+// the repo (run-task.sh:59) and writes that absolute path into the run dir's
+// `worktree` file before the first stage, then again into result.json. Reversing
+// that construction is the only project identity a run dir carries — there is no
+// repo field to read. The file wins: it exists from the very first stage.
+function projectOf(id, dir, result) {
+  const raw = firstLine(path.join(dir, 'worktree')) || String(result.worktree || '').trim();
+  if (!raw) return '';
+  const leaf = path.basename(raw.replace(/[/\\]+$/, ''));
+  const suffix = '-' + String(id).toLowerCase();
+  const repo = leaf.toLowerCase().endsWith(suffix) ? leaf.slice(0, -suffix.length) : leaf;
+  return repo.trim().toLowerCase();
 }
 
 // --- one run ------------------------------------------------------------------
@@ -206,13 +279,29 @@ function readRun(id, current) {
     .filter((p) => p.length >= 2)
     .map(([round, verdict]) => ({ round, verdict }));
 
+  const owner = ownerOf(dir, result);
+  const project = projectOf(id, dir, result);
+  let { actor, actorKey } = actorOf(stage);
+  const terminalNeedsInput = DONE_NEEDS_INPUT.test(stage);
+  const floor = terminalNeedsInput ? previousFloor(dir) : floorOf(stage, actorKey);
+  if (terminalNeedsInput) {
+    actor = 'needs input';
+    actorKey = 'alarm';
+  }
+
   return {
     id,
     title: titleOf(dir),
-    owner: ownerOf(dir, result),
+    owner,
+    ownerKind: owner === '' ? 'unowned' : SYNTHETIC.has(owner) ? 'synthetic' : 'human',
+    project,
+    projectLabel: project ? project.toUpperCase() : UNCHARTED,
     stage,
     state,
-    ...actorOf(stage),
+    actor,
+    actorKey,
+    floor,
+    floorName: FLOORS[floor] || FLOORS[0],
     activity: firstLine(path.join(dir, 'activity')).slice(0, 160),
     started: started || null,
     since: since || null,
@@ -284,55 +373,64 @@ function snapshot() {
   return runs;
 }
 
-// --- crew lanes ----------------------------------------------------------------
-// Runs belong to the person who dispatched them, and the wall is organised
-// around those people: one lane per crew member, their parallel dispatches
-// stacked inside it. Grouping happens here rather than in the page so it is
-// covered by the same curl-and-jq tests as everything else.
+// --- the skyline ----------------------------------------------------------------
+// The wall is organised around the WORK: one tower per project, with that
+// project's runs climbing it. A project with nothing current or recent is simply
+// not in the skyline — there is no empty tower, no standby, and no per-person
+// aggregate anywhere in here. Who dispatched a run survives only as the run's
+// `owner`, which the page paints on a small vehicle beside its car.
+//
+// Grouping happens here rather than in the page so it is covered by the same
+// curl-and-jq tests as everything else.
 
-function newLane(owner) {
+// A small polynomial hash over the project name: a project keeps the same
+// silhouette whoever else is on the wall, so the room learns the skyline as a
+// place. An index into the sorted towers would re-shape the whole city every
+// time one drained.
+function hash(text) {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+function newTower(project) {
   return {
-    owner,
-    label: owner ? owner.toUpperCase() : 'UNREGISTERED',
-    // The rank line under the name. `bot` is the ship's synthetic — an
-    // automated dispatcher, not a crew member — and is labelled as such.
-    kind: owner === '' ? 'unowned' : SYNTHETIC.has(owner) ? 'synthetic' : 'human',
-    runIds: [],     // rendered as panels, newest urgency first
-    hiddenIds: [],  // beyond MAX_PER_LANE — the overflow ticker names these
-    active: 0,      // live runs (active + alarm)
+    project,
+    label: project ? project.toUpperCase() : UNCHARTED,
+    known: project !== '',
+    // Body outline and roof furniture from two slices of the same hash: 20
+    // combinations, enough that a handful of repos read as different buildings.
+    shape: hash(project || UNCHARTED) % SILHOUETTES,
+    crown: (hash(project || UNCHARTED) >>> 8) % CROWNS,
+    runIds: [],     // rendered as lit shafts, most urgent first
+    live: 0,        // active + alarm: what is climbing right now
     alarm: 0,
-    total: 0,       // everything of theirs on the wall, finished runs included
+    total: 0,       // everything of this project's on the wall, finished included
   };
 }
 
-// Roster order first (as declared), then everyone else alphabetically, then the
-// unowned lane. Deterministic and independent of run state, so lanes never
-// jump around while you are looking at them.
-function laneRank(lane) {
-  if (lane.owner === '') return [2, ''];
-  const i = CREW.indexOf(lane.owner);
-  return i === -1 ? [1, lane.owner] : [0, String(i).padStart(4, '0')];
+// Alphabetical, with the fallback tower last. Deterministic and independent of
+// run state: a skyline that re-ordered itself as runs came and went would be
+// unreadable as a place.
+function towerRank(tower) {
+  return tower.known ? [0, tower.project] : [1, ''];
 }
 
-function buildLanes(runs) {
-  const lanes = new Map();
-  const ensure = (owner) => {
-    if (!lanes.has(owner)) lanes.set(owner, newLane(owner));
-    return lanes.get(owner);
-  };
-  for (const name of CREW) ensure(name);
+function buildTowers(runs) {
+  const towers = new Map();
+  // `runs` arrives in wall order (alarms, then live oldest-first, then finished
+  // newest-first), which also gives the shafts a stable urgency order.
   for (const run of runs) {
-    const lane = ensure(run.owner);
-    lane.total += 1;
-    if (run.state === 'alarm') lane.alarm += 1;
-    if (run.state === 'active' || run.state === 'alarm') {
-      lane.active += 1;
-      (lane.runIds.length < MAX_PER_LANE ? lane.runIds : lane.hiddenIds).push(run.id);
-    }
+    if (!towers.has(run.project)) towers.set(run.project, newTower(run.project));
+    const tower = towers.get(run.project);
+    tower.total += 1;
+    if (run.state === 'alarm') tower.alarm += 1;
+    if (run.state === 'active' || run.state === 'alarm') tower.live += 1;
+    tower.runIds.push(run.id);
   }
-  return [...lanes.values()].sort((a, b) => {
-    const [ga, ka] = laneRank(a);
-    const [gb, kb] = laneRank(b);
+  return [...towers.values()].sort((a, b) => {
+    const [ga, ka] = towerRank(a);
+    const [gb, kb] = towerRank(b);
     return ga - gb || ka.localeCompare(kb);
   });
 }
@@ -350,14 +448,15 @@ const clients = new Set();
 let poller = null;
 let lastBody = '';
 
-// Lanes carry ids, not copies: every run travels once, and the page looks the
-// panel up by id.
+// Towers carry ids, not copies: every run travels once, and the page looks the
+// run up by id.
 function payload(runs) {
   return JSON.stringify({
     at: Math.floor(Date.now() / 1000),
     runsDir: RUNS,
     crew: CREW,
-    lanes: buildLanes(runs),
+    floors: FLOORS,
+    towers: buildTowers(runs),
     runs,
   });
 }

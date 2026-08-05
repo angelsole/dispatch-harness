@@ -1,5 +1,5 @@
-09:33:57 ◆ codex Checkpoint 3 — the TTL belongs in config, not inline
-09:38:57 ◆ codex Moving 300 to CACHE_TTL_SECONDS in src/config/cache.ts
-09:43:57 ⏺ Bash npm run gate
-09:47:17 🏁 success
-09:48:57 ⏺ Bash gh pr create --draft
+13:40:48 ◆ codex Checkpoint 3 — the TTL belongs in config, not inline
+13:45:48 ◆ codex Moving 300 to CACHE_TTL_SECONDS in src/config/cache.ts
+13:50:48 ⏺ Bash npm run gate
+13:54:08 🏁 success
+13:55:48 ⏺ Bash gh pr create --draft

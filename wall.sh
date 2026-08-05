@@ -6,17 +6,19 @@
 # Point a fullscreen browser on the TV at this machine's tailnet address. Zero
 # dependencies beyond node (>= 20) and zero build step.
 #
-# Runs are grouped into one lane per crew member — whoever dispatched them
-# (run-task.sh pins HARNESS_OWNER into the run dir). Runs dispatched without an
-# owner land in an UNREGISTERED lane.
+# The wall is a city. Each project is a tower — named by reversing the worktree
+# path run-task.sh records — and each run is a lit car climbing it, its floor
+# being its pipeline stage. A blocked run puts a searchlight over its tower.
+# Whoever dispatched a run appears only as a small tinted vehicle beside it.
 #
 # Usage:
 #   wall.sh                             serve ~/.claude/harness/runs on :4711
 #   wall.sh --port 8080                 listen on another port
 #   wall.sh --host 127.0.0.1            bind to one interface (default 0.0.0.0)
 #   wall.sh --runs wall/fixtures/runs   serve the staged fixtures instead
-#   wall.sh --crew angel,reinier,emre   keep a lane for each of them even when
-#                                       they have nothing running
+#   wall.sh --crew angel,reinier,emre   declare the roster (accepted for
+#                                       compatibility; it adds nothing to the
+#                                       skyline — crew tints are stable already)
 #
 # Env:
 #   HARNESS_DIR     where runs live      (default: ~/.claude/harness)
@@ -27,7 +29,7 @@
 # only what is already on this machine's disk. Do not port-forward it publicly.
 set -u
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"

@@ -10,6 +10,7 @@
   "owner": "emre",
   "gate": "pass",
   "branch": "feat/cache-kpi-query",
+  "worktree": "/Users/angel/Projects/olyxbase-olyx-1598",
   "metrics": {
     "wall_seconds": 2800,
     "gate_rounds": [
