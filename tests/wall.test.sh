@@ -166,7 +166,7 @@ check "poll: the snapshot endpoint agrees" "$(state_of OLYX-1631 actorKey)" "gat
 # Run dirs are written by live pipelines: any file can be missing, empty or
 # caught mid-write. None of that may blank the wall.
 echo "== wall: partial and missing files =="
-mkdir -p "$RUNS/BARE-1" "$RUNS/EMPTY-1" "$RUNS/JUNK-1"
+mkdir -p "$RUNS/BARE-1" "$RUNS/EMPTY-1" "$RUNS/JUNK-1" "$RUNS/SYNC-FAIL"
 printf '%s setup: worktree\n' "$(date +%s)" > "$RUNS/BARE-1/status"   # status only
 : > "$RUNS/EMPTY-1/status"                                            # caught mid-write
 printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$RUNS/JUNK-1/status"
