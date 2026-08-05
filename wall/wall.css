@@ -263,8 +263,6 @@ body {
   line-clamp: 2;
 }
 
-.panel__link { font-size: 0.8rem; color: var(--pr); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* An odd count fills its row instead of leaving a hole: 3 up = two on top, one
    spanning the width below. */
 .deck[data-layout="grid"][data-n="3"] .panel:last-child { grid-column: 1 / -1; }
@@ -321,8 +319,6 @@ body {
   animation: klaxon 1.1s ease-in-out infinite;
 }
 .panel[data-state="alarm"] .panel__id { color: #fff; }
-.panel[data-state="ready"] { --accent: var(--done); opacity: 0.95; }
-.panel[data-state="failed"] { --accent: var(--failed); }
 
 .panel[data-actor="opus"] { --accent: var(--opus); }
 .panel[data-actor="codex"] { --accent: var(--codex); }
@@ -332,11 +328,10 @@ body {
 .panel[data-actor="setup"] { --accent: var(--setup); }
 .panel[data-actor="sync"] { --accent: var(--sync); }
 .panel[data-actor="skipped"] { --accent: var(--skipped); }
+.panel[data-actor="failed"] { --accent: var(--failed); }
 .panel[data-actor="unknown"] { --accent: var(--unknown); }
 /* State beats actor: an alarm is red whatever was running. */
 .panel[data-state="alarm"][data-actor] { --accent: var(--alarm); }
-.panel[data-state="failed"][data-actor] { --accent: var(--failed); }
-.panel[data-state="ready"][data-actor] { --accent: var(--done); }
 
 /* A working panel breathes: a scan bar crawls down behind the text. */
 .panel[data-state="active"]::before {
@@ -402,6 +397,19 @@ body {
 .chip[data-state="failed"] { --accent: var(--failed); }
 .chip b { color: var(--ink-strong); font-weight: 600; }
 .chip svg { width: 0.9rem; height: 0.9rem; }
+.chip__state { color: var(--accent); text-transform: uppercase; }
+.chip__link {
+  color: var(--ink-strong);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+.chip__link:not([href]) { border-bottom: 0; opacity: 0.6; }
+.chip__title {
+  max-width: 16rem;
+  overflow: hidden;
+  color: var(--dim);
+  text-overflow: ellipsis;
+}
 .rail__empty { font-size: 0.78rem; color: var(--dim); letter-spacing: 0.18em; }
 
 .rail__ticker { flex: 0 0 32%; overflow: hidden; border-left: 1px solid var(--rule); padding-left: 0.7rem; }

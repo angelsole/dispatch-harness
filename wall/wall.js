@@ -67,6 +67,23 @@
     return STATE_GLYPH[run.state] || GLYPH[run.actorKey] || GLYPH.unknown;
   }
 
+  function runLink(label, rawUrl) {
+    const link = el('a', 'chip__link', label);
+    try {
+      const url = new URL(rawUrl);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported URL');
+      link.href = url.href;
+      link.title = rawUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    } catch {
+      // A partial result.json should not turn an otherwise healthy history chip
+      // into a dangerous or broken link. The marker still conveys availability.
+      link.removeAttribute('href');
+    }
+    return link;
+  }
+
   // --- panels ---------------------------------------------------------------
 
   function makePanel() {
@@ -106,7 +123,7 @@
     }
     if (run.gate) metaChip(p.meta, 'GATE', String(run.gate).toUpperCase(), run.gate === 'pass' ? 'ok' : 'bad');
     if (run.gateRounds && run.gateRounds.length > 1) metaChip(p.meta, 'ROUNDS', String(run.gateRounds.length));
-    if (run.started) metaChip(p.meta, 'TOTAL', dur((run.state === 'active' || run.state === 'alarm' ? now() : run.since) - run.started));
+    if (run.started) metaChip(p.meta, 'TOTAL', dur(now() - run.started));
     if (run.implementer) metaChip(p.meta, 'IMPL', run.implementer);
     if (run.reviewer) metaChip(p.meta, 'REV', run.reviewer);
     if (run.branch) metaChip(p.meta, 'BRANCH', run.branch);
@@ -125,20 +142,15 @@
   }
 
   function paintNote(p, run) {
-    let note = '';
-    if (run.state === 'alarm') note = '⚠ ' + (run.blocked || 'needs your input — see QUESTIONS.md');
-    else if (run.state === 'failed') note = '✖ ' + (run.reason || run.outcome || 'failed');
-    else if (run.state === 'ready') note = '✔ ' + ([run.prUrl, run.demoUrl].filter(Boolean).join('  ·  ') || 'ready');
+    const note = run.state === 'alarm'
+      ? '⚠ ' + (run.blocked || 'needs your input — see QUESTIONS.md')
+      : '';
     p.note.textContent = note;
     p.note.hidden = note === '';
   }
 
   function paintTimer(p, run) {
-    if (run.state === 'active' || run.state === 'alarm') {
-      p.timer.textContent = run.since ? '⧗ ' + dur(now() - run.since) : '';
-    } else {
-      p.timer.textContent = run.started && run.since ? 'Σ ' + dur(run.since - run.started) : '';
-    }
+    p.timer.textContent = run.since ? '⧗ ' + dur(now() - run.since) : '';
   }
 
   function paintPanel(p, run) {
@@ -179,9 +191,10 @@
       chip.dataset.state = run.state;
       const mark = glyph('');
       setGlyph(mark, glyphFor(run));
-      chip.append(mark, el('b', '', run.id), el('span', '', run.outcome || run.state));
-      if (run.prUrl) chip.append(el('span', '', '· PR'));
-      if (run.demoUrl) chip.append(el('span', '', '· DEMO'));
+      chip.append(mark, el('b', '', run.id), el('span', 'chip__state', run.outcome || run.state));
+      if (run.prUrl) chip.append(runLink('PR ↗', run.prUrl));
+      if (run.demoUrl) chip.append(runLink('DEMO ↗', run.demoUrl));
+      if (run.title) chip.append(el('span', 'chip__title', run.title));
       history.append(chip);
     }
   }
