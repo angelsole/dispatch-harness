@@ -166,6 +166,11 @@ your phone):
 - **`tmux`** — `station.sh` runs the session inside it. Nothing else in the
   harness needs tmux.
 
+Optional (only for [`wall.sh`](#the-wall), the big-screen run dashboard):
+
+- **`node`** (≥ 20) — runs the wall's zero-dependency HTTP server. Nothing else
+  in the harness needs it.
+
 Optional (only for the auto-recorded PR demo videos on frontend runs):
 
 - **[`shot-scraper`](https://shot-scraper.datasette.io/)** — records the
@@ -439,6 +444,52 @@ The paper trail per run: `brief.md`, `specs/` (converted spec attachments, when
 the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
 `feed.log`, `gate-*.log`, `result.json`, `opus-head`.
 
+### The Wall
+
+`wall.sh` is the same picture for a room instead of a terminal: a read-only
+web page for an office TV showing what every agent is doing right now — one
+CRT-style panel per live run with its stage, the model that owns it, its diff
+size and a scrolling tail of `feed.log`, a klaxon-red panel when a run needs
+your input, and a rail of recently finished runs with their PR links. It reads
+the same run dirs as everything above and never dispatches anything.
+
+The wall is organised as a **crew manifest**: one lane per person, holding all
+of their parallel dispatches, so the room can see at a glance who has work in
+flight and whose run is blocked. Automated dispatchers (`bot`) get a lane of
+their own, marked as the ship's synthetic rather than listed as crew.
+
+```bash
+wall.sh                             # ~/.claude/harness/runs on http://0.0.0.0:4711
+wall.sh --port 8080 --host 100.x.y.z
+wall.sh --runs wall/fixtures/runs   # staged demo data, no live runs needed
+wall.sh --crew angel,reinier,emre   # keep their lanes up even when idle
+```
+
+Then point a browser on the TV at `http://<this-machine>:4711/` and put it in
+fullscreen (Chrome: `--kiosk --app=http://<host>:4711/`). Lanes share the screen
+width and the type scales to how many crew and runs are on it: one run gets a
+full control panel, a stack of parallel runs compresses to fit, anything beyond
+four per lane moves to the overflow ticker, and an empty queue gets an idle
+screen. It is a single dependency-free `node` (≥ 20) server plus one static
+page — no build step, no npm, and no request that leaves the machine, so it is
+happy on a tailnet-only screen. There is no auth: keep it off the public
+internet. `wall/fixtures/seed.js` regenerates the staged fixture runs.
+
+**Who owns a run.** `run-task.sh` pins `HARNESS_OWNER` into the run dir on the
+first dispatch (and into `result.json`), the same way it pins the arm and the
+model knobs — a resume from someone else's session never re-attributes a run.
+Export it wherever you dispatch from:
+
+```bash
+export HARNESS_OWNER=angel        # e.g. in the station session's shell
+```
+
+Runs dispatched without it are unowned and collect in an `UNREGISTERED` lane —
+honest about the gap rather than silently assigning them to someone. `--crew`
+(or `WALL_CREW`) declares the expected roster: those lanes stay on the wall
+while their queue is empty, and anyone who dispatches from outside the roster
+still gets a lane.
+
 ---
 
 ## Measuring the harness
@@ -563,6 +614,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `skills/dispatch/SKILL.md` | The planner protocol (a Claude Code skill) |
 | `statusline.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose) |
 | `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Monitoring (`status.sh --watch` is the live dashboard) & lifecycle helpers |
+| `wall.sh` `wall/` | [The Wall](#the-wall): the big-screen live dashboard (node server + one static page + fixtures) |
 | `metrics.sh` | Tabulate per-run metrics from `result.json` (table / `--csv`) |
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |

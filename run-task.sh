@@ -98,6 +98,12 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
 fi
 pin_knob reviewer-model REVIEWER_MODEL gpt-5.6-sol
 pin_knob reviewer-effort REVIEWER_EFFORT high
+# Who dispatched this run. Not an ablation knob — provenance, so the wall can
+# group runs by the crew member who owns them — but the same pin-at-first-
+# dispatch rule applies: resuming from someone else's station must not
+# re-attribute a run. Station sessions export HARNESS_OWNER; an unset one pins
+# empty and the run is simply unowned.
+pin_knob owner HARNESS_OWNER ""
 
 # A Claude-only run resumed after codex is installed may still need Codex for
 # base-sync conflicts. Use the normal defaults for that mechanical step while
@@ -205,9 +211,10 @@ write_result() {
     --arg arm "$ARM" --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
     --arg rmodel "$REVIEWER_MODEL" --arg reffort "$REVIEWER_EFFORT" \
     --arg worktree "$WORKTREE" --arg branch "$BRANCH" --arg base "$BASE_BRANCH" \
+    --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,arm:$arm,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
     > "$RUN_DIR/result.json"
 }
 

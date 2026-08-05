@@ -1,0 +1,29 @@
+{
+  "ticket": "BOT-2287",
+  "arm": "full",
+  "implementer_model": "opus",
+  "reviewer_model": "gpt-5.6-sol",
+  "base": "main",
+  "pr_url": "",
+  "demo_url": "",
+  "status": "rejected",
+  "owner": "bot",
+  "gate": "pass",
+  "branch": "chore/dedupe-money-helpers",
+  "metrics": {
+    "wall_seconds": 2800,
+    "gate_rounds": [
+      {
+        "round": "1",
+        "result": "pass"
+      }
+    ],
+    "opus_commits": 2,
+    "codex_commits": 0,
+    "diff": {
+      "files_changed": 5,
+      "insertions": 131,
+      "deletions": 47
+    }
+  }
+}
