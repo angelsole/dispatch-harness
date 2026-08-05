@@ -55,10 +55,22 @@ fail() { echo "FATAL: $*" >&2; write_result "$1" ""; stage "done: $1"; exit 1; }
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
 repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD
+# Keep the unset path independent of the optional library, including on an old
+# install that predates mirror.sh.
+if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
+  # shellcheck source=mirror.sh
+  . "$HARNESS_DIR/mirror.sh"   # HARNESS_MIRROR: mirror_start / mirror_stop
+fi
 
 WORKTREE="$(dirname "$REPO")/$(basename "$REPO")-$TICKET_LC"
 BASE_REF="origin/$BASE_BRANCH"
 mkdir -p "$RUN_DIR"
+# From here the run dir exists, so another machine's wall can follow this run
+# (HARNESS_MIRROR). Best-effort throughout, and stopped — after one last pass —
+# on every exit path by the EXIT trap mirror_start installs.
+if [ -n "${HARNESS_MIRROR:-}" ] && declare -F mirror_start >/dev/null; then
+  mirror_start "$RUN_DIR" "$TICKET"
+fi
 
 # --- Ablation knobs, pinned at first dispatch --------------------------------
 # The arm (full pipeline vs. review-skipped) and the implementer model are

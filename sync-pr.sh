@@ -48,6 +48,16 @@ REPO="${WORKTREE%-$TICKET_LC}"
 repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD ENV_SUBDIRS ...
 BASE_REF="origin/$BASE_BRANCH"
 
+# This script writes the same status/timeline/activity files a run does, so a
+# wall on another machine should follow it too (HARNESS_MIRROR). Identical
+# contract to run-task.sh: best-effort, one last pass on exit, no loop left
+# behind — including the fail() path below, which exits 1.
+if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
+  # shellcheck source=mirror.sh
+  . "$HARNESS_DIR/mirror.sh"
+  mirror_start "$RUN_DIR" "$TICKET"
+fi
+
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
 stage() {
   echo "$(date +%s) $1" > "$RUN_DIR/status"
