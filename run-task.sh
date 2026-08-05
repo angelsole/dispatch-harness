@@ -274,8 +274,8 @@ done
 # specs/ therefore mounts nothing and removes nothing that was ever mounted:
 # the pipeline behaves exactly as it did before this existed.
 mount_specs() {  # $1 = run dir, $2 = worktree
-  rm -rf "${2:?}/.harness/specs" || return 1
   [ -d "$1/specs" ] || return 0
+  rm -rf "${2:?}/.harness/specs" || return 1
   mkdir -p "$2/.harness/specs" && cp -R "$1/specs/." "$2/.harness/specs/"
 }
 

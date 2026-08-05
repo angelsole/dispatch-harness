@@ -70,10 +70,12 @@ check  "resume: revised file replaced" "$(cat "$WT/.harness/specs/margin.md")" "
 exists "resume: added file mounted"    "$WT/.harness/specs/pricing.md"
 absent "resume: dropped file gone"     "$WT/.harness/specs/annex"
 
-echo "== specs withdrawn from the run dir: the stale mount goes too =="
+echo "== no run-dir specs on a later invocation: existing context is untouched =="
 rm -rf "$RUN/specs"
 mount_specs "$RUN" "$WT"; check "withdrawn: succeeds" "$?" "0"
-absent "withdrawn: stale mount removed"    "$WT/.harness/specs"
+check "withdrawn: existing spec context untouched" \
+  "$(cat "$WT/.harness/specs/margin.md")" "tier rules v2"
+exists "withdrawn: existing spec set untouched" "$WT/.harness/specs/pricing.md"
 check  "withdrawn: notes left alone" "$(cat "$WT/.harness/implementer-notes.md")" "the notes"
 
 echo "== wiring: mounted before the implementer, and both workers told =="
