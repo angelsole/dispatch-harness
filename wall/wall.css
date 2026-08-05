@@ -61,6 +61,7 @@
   --spot-in: 800ms;                             /* the searchbeam finding it */
   --completion: 0s;     /* set from the snapshot before any tower is rendered */
   --ceremony: 6s;       /* the shipping beat, inside the completion moment */
+  --weather-blend: 2s;  /* smooth the one-second ambient samples */
 }
 
 * { box-sizing: border-box; }
@@ -118,6 +119,7 @@ body {
     linear-gradient(0deg, rgba(96, 150, 190, 0.28) 0%, rgba(74, 122, 168, 0.14) 26%, transparent 62%),
     radial-gradient(120% 42% at 50% 100%, rgba(120, 168, 205, 0.2), transparent 70%);
   opacity: var(--dawn, 0);
+  transition: opacity var(--weather-blend) linear;
 }
 
 /* Rain is a canvas: CSS gradients tile into a texture, and this has to read as
@@ -150,7 +152,8 @@ body {
   height: 38vh;
   overflow: hidden;
   pointer-events: none;
-  opacity: calc(0.45 + 0.55 * var(--haze, 1));
+  opacity: var(--haze, 1);
+  transition: opacity var(--weather-blend) linear;
   background:
     linear-gradient(0deg, rgba(90, 170, 170, 0.09), transparent 58%),
     linear-gradient(0deg, rgba(1, 4, 8, 0.92), transparent 72%);
@@ -1139,7 +1142,7 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
    wall.js drops it back to the ordinary completion line above. */
 .comms__line[data-src="shipped"] .comms__id { color: var(--done); }
 .comms__line[data-src="shipped"] .comms__body {
-  color: #e6fff2;
+  color: var(--ink-strong);
   text-shadow: 0 0 0.7rem var(--done), 0 0 1.8rem color-mix(in srgb, var(--done) 55%, transparent);
 }
 /* A line the tube has not drawn before arrives with the flicker and decay of a

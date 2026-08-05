@@ -216,15 +216,18 @@ echo "== wall: the weather drifts =="
 grep_ok "$PAGE_SRC" 'function wetness' "weather: rain intensity is a function, not a loop"
 grep_ok "$CSS_SRC" 'var(--haze, 1)'      "weather: the street haze reads it, a lag behind"
 grep_ok "$CSS_SRC" 'opacity: var(--dawn, 0)' "weather: and the sky cools toward local dawn"
+check "weather: haze and dawn samples blend instead of stepping each second" \
+  "$(printf '%s\n' "$CSS_SRC" | grep -c 'transition: opacity var(--weather-blend) linear')" "2"
 grep_ok "$PAGE_SRC" 'if (still.matches)' \
   "weather: reduced motion leaves both of those unwritten — today's static scene"
 WEATHER_SRC="$(awk '/^  \/\/ --- weather/,/^  \/\/ --- rain/' "$SRC/wall/wall.js")"
-grep_not "$(printf '%s\n' "$WEATHER_SRC" | grep -v '^ *//')" 'Math.random' \
-  "weather: no line of it is random, or two screens disagree about the sky"
+RAIN_SRC="$(awk '/^  \/\/ --- rain/,/^  render\(\);/' "$SRC/wall/wall.js")"
+grep_not "$(printf '%s\n' "$WEATHER_SRC" "$RAIN_SRC" | grep -v '^ *//')" 'Math.random' \
+  "weather: neither its state nor its drops rely on unseeded randomness"
 
 PROBE="$ROOT/weather-probe.js"
 {
-  grep -E '^  const (RAIN_LAG|DAWN_H|DAWN_RAMP) =' "$SRC/wall/wall.js"
+  grep -E '^  const (RAIN_LAG|DAWN_H|DAWN_RAMP|WEATHER_SEED_MS) =' "$SRC/wall/wall.js"
   printf '%s\n' "$WEATHER_SRC"
   cat <<'JS'
   const DAY = 86400;
@@ -238,6 +241,11 @@ PROBE="$ROOT/weather-probe.js"
     if (v > 0.9 && dry >= 0) { fastest = Math.min(fastest, t - dry); dry = -1; }
   }
   const at = (h, m) => dawn(new Date(2026, 0, 2, h, m));
+  const sequence = (seed) => {
+    const random = seededRandom(seed);
+    return Array.from({ length: 8 }, random);
+  };
+  const seeded = sequence(weatherSeed(WEATHER_SEED_MS));
   console.log(JSON.stringify({
     bounded: lo >= 0 && hi <= 1,
     nearDry: lo < 0.05,
@@ -249,6 +257,11 @@ PROBE="$ROOT/weather-probe.js"
     dawnRamp: at(5, 15) > 0.4 && at(5, 15) < 0.6,
     dawnNoon: at(12, 0),
     dawnNight: at(22, 0),
+    seededSame: JSON.stringify(seeded) === JSON.stringify(sequence(weatherSeed(WEATHER_SEED_MS))),
+    seededChanges: JSON.stringify(seeded) !== JSON.stringify(sequence(weatherSeed(WEATHER_SEED_MS * 2))),
+    seededBounded: seeded.every((value) => value >= 0 && value < 1),
+    seedWindow: weatherSeed(0) === weatherSeed(WEATHER_SEED_MS - 1)
+      && weatherSeed(0) !== weatherSeed(WEATHER_SEED_MS),
   }));
 JS
 } > "$PROBE"
@@ -266,6 +279,10 @@ check "weather: the sky is coldest at local dawn"   "$(weather_of dawnPeak)" "tr
 check "weather: and ramps into it rather than switching" "$(weather_of dawnRamp)" "true"
 check "weather: midday is not dawn"                 "$(weather_of dawnNoon)"  "0"
 check "weather: nor is late evening"                "$(weather_of dawnNight)" "0"
+check "weather: equal wall-clock seeds draw equal rain" "$(weather_of seededSame)" "true"
+check "weather: later seed windows draw a fresh field"  "$(weather_of seededChanges)" "true"
+check "weather: seeded drop values stay in range"       "$(weather_of seededBounded)" "true"
+check "weather: nearby openings share one seed window"  "$(weather_of seedWindow)" "true"
 
 # --- traffic and the searchlight -------------------------------------------------
 echo "== wall: ground traffic, and a beam that lands =="

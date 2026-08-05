@@ -20,6 +20,7 @@
   const DRY = 0.06;        // a near-dry spell is drips, never a dead canvas
   const DAWN_H = 6.5;      // local hour the sky is coldest at
   const DAWN_RAMP = 2.5;   // hours either side of it that the cooling spans
+  const WEATHER_SEED_MS = 15 * 60 * 1000; // nearby screens share a rain field
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -529,8 +530,8 @@
   // is a screensaver, and a room stops seeing a screensaver by week two.
   // Everything here is a pure function of the wall clock, so two TVs opened side
   // by side read the same sky without a byte crossing the network to agree on
-  // it, and an hour later they have drifted together. Math.random still places
-  // the individual drops; it never decides how hard it is raining.
+  // it, and an hour later they have drifted together. A wall-clock-seeded
+  // generator places individual drops; it never decides how hard it is raining.
 
   function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
@@ -540,6 +541,19 @@
   // downpours and sustained near-dry spells instead of a sine that never rests.
   function wetness(t) {
     return clamp01(0.5 + 0.4 * Math.sin(t / 660) + 0.2 * Math.sin(t / 1730 + 2.1));
+  }
+
+  // Individual drops use a small deterministic generator too. The coarse
+  // wall-clock seed makes nearby screens opened together share the same rain
+  // field, while a later visit does not replay one permanent arrangement.
+  function weatherSeed(ms) { return Math.floor(ms / WEATHER_SEED_MS) >>> 0; }
+
+  function seededRandom(seed) {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
   }
 
   // How near the local clock is to dawn, 0 to 1. Read off the browser and never
@@ -563,7 +577,7 @@
       return;
     }
     const t = Date.now() / 1000;
-    style.setProperty('--haze', wetness(t - RAIN_LAG).toFixed(3));
+    style.setProperty('--haze', (0.45 + 0.55 * wetness(t - RAIN_LAG)).toFixed(3));
     style.setProperty('--dawn', dawn(new Date()).toFixed(3));
   }
 
@@ -578,12 +592,13 @@
     const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
     if (!ctx) return;
     const drops = [];
+    const random = seededRandom(weatherSeed(Date.now()));
     let w = 0, h = 0, running = false, last = 0;
 
     function spawn(y) {
-      const depth = Math.random();      // 0 = far, slow and faint; 1 = near and fast
+      const depth = random();      // 0 = far, slow and faint; 1 = near and fast
       return {
-        x: Math.random() * (w + h * TILT) - h * TILT,
+        x: random() * (w + h * TILT) - h * TILT,
         y,
         len: 12 + depth * 46,
         speed: 420 + depth * 900,
@@ -604,7 +619,7 @@
     function fill(wet) {
       const want = target(wet);
       while (drops.length > want) drops.pop();
-      while (drops.length < want) drops.push(spawn(Math.random() * h));
+      while (drops.length < want) drops.push(spawn(random() * h));
     }
 
     function size() {
@@ -632,7 +647,7 @@
           // picks up by adding one above the top edge. Nothing ever pops into
           // existence, or out of it, in front of the room.
           if (drops.length > want) { drops.splice(i, 1); continue; }
-          Object.assign(drop, spawn(-drop.len - Math.random() * h * 0.4));
+          Object.assign(drop, spawn(-drop.len - random() * h * 0.4));
         }
         ctx.strokeStyle = 'rgba(196, 226, 255, ' + (drop.alpha * glow).toFixed(3) + ')';
         ctx.lineWidth = drop.width;
@@ -641,7 +656,7 @@
         ctx.lineTo(drop.x - drop.len * TILT, drop.y - drop.len);
         ctx.stroke();
       }
-      if (drops.length < want) drops.push(spawn(-Math.random() * h * 0.5));
+      if (drops.length < want) drops.push(spawn(-random() * h * 0.5));
     }
 
     function frame(t) {

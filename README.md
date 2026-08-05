@@ -509,8 +509,9 @@ runs.
 near-dry spells and downpours, the street haze thickens and clears several
 minutes behind it, and the sky cools toward dawn on the browser's own clock —
 so a wall in another timezone is right without the server knowing where the
-room is. All of it is a pure function of the wall clock rather than of a random
-seed, which is what makes two screens side by side show the same night.
+room is. The weather state is a pure function of the wall clock, and individual
+drops use a coarse wall-clock seed, which is what makes two screens opened side
+by side show the same night.
 `prefers-reduced-motion` leaves the whole drift unwritten and keeps the static
 scene.
 
