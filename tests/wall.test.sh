@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Smoke test for the wall: wall.sh's flags, the static page, the JSON snapshot
-# endpoint, the project towers runs are grouped into, the stage -> floor ladder
-# a run climbs, live SSE updates, and tolerance of half-written run dirs. Also
-# pins the two run-task.sh contracts the city is derived from: the `worktree`
-# path (which names the tower) and the `owner` pin (which tints the vehicle).
+# endpoint, the live-only skyline runs are grouped into, the stage -> floor
+# ladder a run climbs, live SSE updates, and tolerance of half-written run dirs.
+# Also pins the two run-task.sh contracts the city is derived from: the
+# `worktree` path (which names the tower) and the `owner` pin (which tints the
+# light on the car).
 #
 # Hermetic: fixtures are seeded into a temp root (the committed
 # wall/fixtures/runs is only ever read), every server binds --port 0 so the OS
@@ -77,12 +78,34 @@ else
 fi
 
 # The crew manifest is gone, and must not creep back: the wall organises around
-# the work. Attribution survives only as a tinted vehicle beside a run, so none
-# of the lane vocabulary — nor any per-person furniture — may exist in the page.
+# the work. Attribution survives only as a tinted light on the run's own car and
+# its dispatcher's name in type, so none of the lane vocabulary — nor any
+# per-person furniture — may exist in the page.
 echo "== wall: no crew-lane furniture survives =="
 for banned in STANDBY UNREGISTERED 'DISPATCH CREW' lane__ '.lane' laneEls; do
   grep_not "$PAGE_SRC" "$banned" "ui: no [$banned] anywhere in the page"
 done
+
+# Nothing may hover: the crew vehicles that used to sit beside every car are
+# gone, and the crossing traffic they were confused with stays.
+echo "== wall: nothing hovers, the traffic still crosses =="
+for banned in shaft__ship g-spinner g-drone g-unregistered '@keyframes hover'; do
+  grep_not "$PAGE_SRC" "$banned" "ui: no [$banned] anywhere in the page"
+done
+grep_ok "$PAGE_SRC" 'traffic__ship' "ui: distant traffic still crosses the sky"
+grep_ok "$PAGE_SRC" '.shaft__car::before' \
+  "ui: the dispatcher is a tinted light on the car itself"
+grep_ok "$PAGE_SRC" 'brief__owner' "ui: the dispatcher is named on the brief plate"
+grep_ok "$PAGE_SRC" 'comms__who' "ui: and on their run's ticker line"
+
+# Nothing on the wall keeps a finished run alive: the retention fade the city
+# shipped with is gone, and the completion moment the server times replaced it.
+echo "== wall: the retention fade is gone =="
+for banned in FRESH_S COLD_S 'function fade' '--fade'; do
+  grep_not "$PAGE_SRC" "$banned" "ui: no [$banned] anywhere in the page"
+done
+grep_ok "$PAGE_SRC" 'completionSeconds' \
+  "ui: the completion moment is timed by the server, not the page"
 
 echo "== wall: city state vocabulary =="
 grep_ok "$PAGE_SRC" '.tower[data-ready="1"] .tower__beacon' \
@@ -91,12 +114,27 @@ grep_ok "$PAGE_SRC" '.tower[data-alarm="1"] .tower__sweep' \
   "ui: needs_input towers raise the searchlight"
 grep_ok "$PAGE_SRC" '.shaft[data-state="failed"] .shaft__car' \
   "ui: failed runs use the flare treatment"
+grep_ok "$PAGE_SRC" '.tower[data-spot="1"] .tower__spot' \
+  "ui: the run on the brief plate is spotlit in the skyline"
+grep_ok "$PAGE_SRC" '.shaft[data-spot="1"] .shaft__halo' \
+  "ui: and the beam lands on that run's own car"
+grep_ok "$PAGE_SRC" 'id="rain"' "ui: rain is a drawn layer, not a tiled texture"
 grep_ok "$PAGE_SRC" '@media (prefers-reduced-motion: reduce)' \
   "motion: the page honors reduced-motion"
 grep_ok "$PAGE_SRC" 'animation: none !important; transition: none !important' \
   "motion: reduced-motion freezes animation and travel"
 grep_ok "$PAGE_SRC" '.boot, .rain, .traffic { display: none; }' \
   "motion: reduced-motion removes the boot, rain, and traffic"
+grep_ok "$PAGE_SRC" "matchMedia('(prefers-reduced-motion: reduce)')" \
+  "motion: and the rain loop never starts in the first place"
+
+# The palette is night, not sunset. These are the exact sunset stops and the
+# pink/purple neon the city shipped with in #8 — none of them may come back.
+echo "== wall: the synthwave palette is gone =="
+for banned in sky__sun '#f3bd6c' '#d9803f' '#a3454a' '#5b2450' '#231041' '#ff5ec9' '#b78bff'; do
+  grep_not "$PAGE_SRC" "$banned" "palette: no [$banned] anywhere in the page"
+done
+grep_ok "$PAGE_SRC" '--phosphor' "palette: the comms ticker is green phosphor"
 
 # --- serve the fixtures -------------------------------------------------------
 # Start a wall on an OS-assigned port. Sets PORT_OUT (empty if it never came
@@ -205,8 +243,8 @@ check "order: alarm first, then live oldest-first, then finished" \
 
 # --- project towers -------------------------------------------------------------
 # The wall is organised around the work: one tower per project, that project's
-# runs climbing it. The project comes out of the run's worktree path, which is
-# the only repo identity a run dir carries.
+# live runs climbing it. The project comes out of the run's worktree path, which
+# is the only repo identity a run dir carries.
 echo "== wall: project towers =="
 tower_of() { printf '%s' "$API" | jq -r --arg p "$1" '.towers[] | select(.project==$p) | .'"$2"; }
 check "project: derived from the run dir's worktree pin" \
@@ -227,10 +265,15 @@ check "towers: one per project present on the wall" \
 check "towers: alphabetical, fallback last — a skyline must not reshuffle" \
   "$(printf '%s' "$API" | jq -r '[.towers[].project] | join(",")')" \
   "olyx-agents,olyx-dashboard,olyxbase,valoryx-graphql-api,"
-check "towers: a project's runs climb its own tower" \
-  "$(tower_of olyxbase 'runIds | join(",")')" "OLYX-1642,OLYX-1660,OLYX-1631,OLYX-1598"
+check "towers: a project's live runs climb its own tower" \
+  "$(tower_of olyxbase 'runIds | join(",")')" "OLYX-1642,OLYX-1660,OLYX-1631"
 check "towers: live counts what is climbing right now" "$(tower_of olyxbase live)" "3"
-check "towers: total counts the finished runs too"     "$(tower_of olyxbase total)" "4"
+# The run shipped 55 minutes ago is still in the JSON — it is what is on disk —
+# but its completion moment is long over, so it stands in nobody's skyline.
+check "towers: a long-finished run is still in the snapshot" \
+  "$(printf '%s' "$API" | jq '[.runs[] | select(.id=="OLYX-1598")] | length')" "1"
+check "towers: but it has left the skyline"  \
+  "$(printf '%s' "$API" | jq '[.towers[].runIds[]] | index("OLYX-1598")')" "null"
 check "towers: a blocked run raises its tower's alarm" "$(tower_of olyxbase alarm)" "1"
 check "towers: a quiet tower raises none"              "$(tower_of olyx-agents alarm)" "0"
 check "towers: the fallback tower is labelled honestly" \
@@ -244,11 +287,82 @@ check "towers: silhouettes stay inside the shapes the page can draw" \
 check "towers: a project with nothing on the wall has no tower" \
   "$(printf '%s' "$API" | jq '[.towers[] | select(.project=="never-dispatched")] | length')" "0"
 
+# --- the skyline is live only -----------------------------------------------------
+# Nobody watching a wall wants yesterday's green ticks. The skyline carries what
+# is happening, plus one short completion moment per run that just finished; a
+# tower with nothing left standing in it leaves with its runs, and an alarm
+# stays pinned however long it has been waiting for a human.
+echo "== wall: the skyline is live only =="
+SKY="$ROOT/skyline"
+SKY_NOW="$(date +%s)"
+sky_run() {  # $1 = id, $2 = project, $3 = seconds since the stage, $4 = stage
+  mkdir -p "$SKY/$1"
+  printf '%s %s\n' "$((SKY_NOW - $3))" "$4" > "$SKY/$1/status"
+  printf '/tmp/%s-%s\n' "$2" "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" > "$SKY/$1/worktree"
+}
+sky_run LIVE-1   alpha   30   'implementing — Opus (Claude sub)'
+sky_run FRESH-1  alpha   2    'done: ready'
+sky_run STALE-1  alpha   3600 'done: ready'
+sky_run GONE-1   beta    3600 'done: rejected'
+sky_run PINNED-1 gamma   9000 'waiting — implementer needs your input (QUESTIONS.md)'
+serve "$SKY" "$ROOT/skyline.log"; SKY_PORT="$PORT_OUT"
+WINDOW=0
+if [ -n "$SKY_PORT" ]; then
+  SKY_API="$(get "$SKY_PORT" /api/runs)"
+  WINDOW="$(printf '%s' "$SKY_API" | jq -r '.completionSeconds')"
+  check "skyline: every run is still in the snapshot — it is what is on disk" \
+    "$(printf '%s' "$SKY_API" | jq '.runs | length')" "5"
+  check "skyline: only live work and a fresh completion stand in it" \
+    "$(printf '%s' "$SKY_API" | jq -r '[.towers[].runIds[]] | sort | join(",")')" \
+    "FRESH-1,LIVE-1,PINNED-1"
+  check "skyline: the completion moment is a short one" \
+    "$(printf '%s' "$SKY_API" | jq '.completionSeconds > 0 and .completionSeconds <= 60')" "true"
+  check "skyline: a tower with nothing left standing leaves too" \
+    "$(printf '%s' "$SKY_API" | jq '[.towers[] | select(.project=="beta")] | length')" "0"
+  check "skyline: an alarm stays pinned however long it has waited" \
+    "$(printf '%s' "$SKY_API" | jq -r '.towers[] | select(.project=="gamma") | .alarm')" "1"
+  check "skyline: live counts what is climbing, not what is finishing" \
+    "$(printf '%s' "$SKY_API" | jq -r '.towers[] | select(.project=="alpha") | .live')" "1"
+  check "skyline: no tower carries a retention aggregate any more" \
+    "$(printf '%s' "$SKY_API" | jq '[.towers[] | has("total")] | any')" "false"
+else
+  bad "skyline: server starts against the live-only fixtures"
+fi
+
+# A moment ending is a change nothing on disk records: no run moved, but the
+# skyline did, and a wall nobody touches has to push that frame by itself.
+echo "== wall: a completion moment ends on its own =="
+ENDING="$ROOT/ending"
+mkdir -p "$ENDING/KEEP-1" "$ENDING/ENDS-1"
+printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$ENDING/KEEP-1/status"
+printf '/tmp/delta-keep-1\n' > "$ENDING/KEEP-1/worktree"
+printf '%s done: ready\n' "$(( $(date +%s) - WINDOW + 3 ))" > "$ENDING/ENDS-1/status"
+printf '/tmp/delta-ends-1\n' > "$ENDING/ENDS-1/worktree"
+serve "$ENDING" "$ROOT/ending.log"; END_PORT="$PORT_OUT"
+if [ -n "$END_PORT" ] && [ "$WINDOW" -gt 3 ]; then
+  check "expiry: a run still inside its moment is standing" \
+    "$(get "$END_PORT" /api/runs | jq '[.towers[].runIds[]] | index("ENDS-1") != null')" "true"
+  END_SSE="$ROOT/ending.sse"
+  curl -sN --max-time 8 "http://127.0.0.1:$END_PORT/api/stream" > "$END_SSE" 2>/dev/null &
+  END_SSE_PID=$!
+  PIDS="$PIDS $END_SSE_PID"
+  sleep 5
+  kill "$END_SSE_PID" 2>/dev/null || true
+  wait "$END_SSE_PID" 2>/dev/null || true
+  LAST_END="$(grep '^data: ' "$END_SSE" | tail -1 | cut -c7-)"
+  check "expiry: the wall pushes the moment ending with nothing else changing" \
+    "$(printf '%s' "$LAST_END" | jq '[.towers[].runIds[]] | index("ENDS-1")')" "null"
+  check "expiry: and the live run beside it keeps the tower" \
+    "$(printf '%s' "$LAST_END" | jq -r '[.towers[].runIds[]] | join(",")')" "KEEP-1"
+else
+  bad "expiry: server starts against a run mid-completion"
+fi
+
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
 check "owner: the synthetic's runs are its own" "$(state_of BOT-2291 owner)" "bot"
-check "owner: humans fly the crew spinner"      "$(state_of OLYX-1631 ownerKind)" "human"
-check "owner: bot flies the synthetic's drone"  "$(state_of BOT-2291 ownerKind)" "synthetic"
+check "owner: a human dispatcher gets a crew tint" "$(state_of OLYX-1631 ownerKind)" "human"
+check "owner: the synthetic is named as one"    "$(state_of BOT-2291 ownerKind)" "synthetic"
 check "owner: an unowned run is not mis-assigned" "$(state_of LEGACY-0042 ownerKind)" "unowned"
 check "crew: the snapshot carries no per-person aggregate at all" \
   "$(printf '%s' "$API" | jq -r '[paths | map(tostring) | join(".")] | map(select(test("lane"))) | length')" "0"
@@ -414,8 +528,8 @@ if [ -n "$NOPE" ]; then
 fi
 
 # A wall with lots of history must never lose an older run that is still live.
-# Only completed history is capped; every active/alarm run reaches the client,
-# and every retained run remains a visible shaft in its project tower.
+# Only completed history is capped in the JSON, and none of it reaches the
+# skyline: what a busy day leaves behind is one lit shaft, not twenty-five.
 echo "== wall: busy history never evicts live work =="
 CROWDED="$ROOT/crowded"
 BUSY_NOW="$(date +%s)"
@@ -425,8 +539,8 @@ printf '%s\n' "$((BUSY_NOW - 9000))" > "$CROWDED/LIVE-OLD/started"
 touch -t 200001010000 "$CROWDED/LIVE-OLD/status"
 for i in $(seq 1 25); do
   mkdir -p "$CROWDED/DONE-$i"
-  printf '%s done: ready\n' "$((BUSY_NOW - i))" > "$CROWDED/DONE-$i/status"
-  printf '%s\n' "$((BUSY_NOW - 100 - i))" > "$CROWDED/DONE-$i/started"
+  printf '%s done: ready\n' "$((BUSY_NOW - 3600 - i))" > "$CROWDED/DONE-$i/status"
+  printf '%s\n' "$((BUSY_NOW - 3700 - i))" > "$CROWDED/DONE-$i/started"
 done
 serve "$CROWDED" "$ROOT/crowded.log"; BUSY="$PORT_OUT"
 if [ -n "$BUSY" ]; then
@@ -435,8 +549,8 @@ if [ -n "$BUSY" ]; then
     "$(printf '%s' "$BUSY_API" | jq '[.runs[] | select(.id=="LIVE-OLD" and .state=="active")] | length')" "1"
   check "busy: only completed history is capped" \
     "$(printf '%s' "$BUSY_API" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "24"
-  check "busy: every retained run renders as a shaft in its tower" \
-    "$(printf '%s' "$BUSY_API" | jq '.towers[] | select(.project=="") | .runIds | length')" "25"
+  check "busy: a day of finished work leaves the live run alone up there" \
+    "$(printf '%s' "$BUSY_API" | jq -r '.towers[] | select(.project=="") | .runIds | join(",")')" "LIVE-OLD"
   check "busy: towers do not hide runs behind an overflow count" \
     "$(printf '%s' "$BUSY_API" | jq '[.towers[] | has("hiddenIds")] | any')" "false"
 else
@@ -492,6 +606,8 @@ if [ -n "$FIX" ]; then
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "2"
   check "fixtures: four repos plus the fallback tower" \
     "$(printf '%s' "$FIXAPI" | jq '.towers | length')" "5"
+  check "fixtures: the long-finished runs are not in the skyline" \
+    "$(printf '%s' "$FIXAPI" | jq '[.towers[].runIds[]] | length')" "9"
   check "fixtures: exactly one of those towers is the fallback" \
     "$(printf '%s' "$FIXAPI" | jq '[.towers[] | select(.known == false)] | length')" "1"
   check "fixtures: one project has three runs climbing at once" \
