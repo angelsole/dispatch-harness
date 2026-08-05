@@ -1,5 +1,5 @@
 'use strict';
-// The Wall — read-only big-screen dashboard over $HARNESS_DIR/runs, rendered as
+// Ghost Shift — read-only big-screen dashboard over $HARNESS_DIR/runs, rendered as
 // a city: one tower per project, each run a lit car climbing it.
 //
 // The skyline is LIVE: it carries what is running now, plus a finished run's one

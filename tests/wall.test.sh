@@ -187,7 +187,7 @@ if [ -n "$PORT" ]; then ok "wall.sh starts and reports its port"; else bad "wall
 [ -n "$PORT" ] || { echo; cat "$ROOT/server.log"; printf 'wall smoke: %d passed, %d failed\n' "$pass" "$((fail+1))"; exit 1; }
 
 PAGE="$(get "$PORT" /)"
-grep_ok "$PAGE" "THE WALL"    "page: renders the wall document"
+grep_ok "$PAGE" "GHOST SHIFT"  "page: renders the wall document"
 grep_ok "$PAGE" "wall.css"    "page: links its stylesheet"
 grep_ok "$PAGE" "wall.js"     "page: links its script"
 grep_ok "$PAGE" 'id="city"'   "page: ships the skyline the towers are built into"

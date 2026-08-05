@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The Wall — the office-TV dashboard for dispatch runs. Serves one page that
+# Ghost Shift — the office-TV dashboard for dispatch runs. Serves one page that
 # shows what every agent is doing right now, live, read-only: it visualises the
 # run dirs the pipeline already writes and never dispatches anything.
 #

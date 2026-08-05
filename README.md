@@ -444,7 +444,7 @@ The paper trail per run: `brief.md`, `specs/` (converted spec attachments, when
 the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
 `feed.log`, `gate-*.log`, `result.json`, `opus-head`.
 
-### The Wall
+### Ghost Shift
 
 `wall.sh` is the same picture for a room instead of a terminal: a read-only web
 page for an office TV showing what every agent is doing right now. It reads the
@@ -645,7 +645,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `skills/dispatch/SKILL.md` | The planner protocol (a Claude Code skill) |
 | `statusline.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose) |
 | `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Monitoring (`status.sh --watch` is the live dashboard) & lifecycle helpers |
-| `wall.sh` `wall/` | [The Wall](#the-wall): the big-screen live dashboard (node server + one static page + fixtures) |
+| `wall.sh` `wall/` | [Ghost Shift](#ghost-shift): the big-screen live dashboard (node server + one static page + fixtures) |
 | `metrics.sh` | Tabulate per-run metrics from `result.json` (table / `--csv`) |
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
