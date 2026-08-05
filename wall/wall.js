@@ -193,6 +193,7 @@
     T.root.style.width = (3.4 + Math.min(n, MAX_TOWER_WIDTH_RUNS) * 2.2).toFixed(1) + 'rem';
     T.root.style.setProperty('--floors', String(floors));
     T.base.textContent = tower.label;
+    T.base.dataset.label = tower.label;
 
     for (const [id, S] of T.shaftEls) {
       if (!tower.runIds.includes(id)) { S.root.remove(); T.shaftEls.delete(id); }

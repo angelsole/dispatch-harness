@@ -62,6 +62,7 @@ fi
 # tailnet, so a CDN font or script would render as a blank. XML namespace URIs
 # (w3.org) are identifiers, never fetched.
 PAGE_SRC="$(cat "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js")"
+CSS_SRC="$(cat "$SRC/wall/wall.css")"
 OFFSITE="$(printf '%s' "$PAGE_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' \
   | grep -v '^https\{0,1\}://www\.w3\.org/' | sort -u | tr '\n' ' ')"
 if [ -z "$OFFSITE" ]; then
@@ -128,6 +129,28 @@ grep_ok "$PAGE_SRC" '.boot, .rain, .traffic { display: none; }' \
 grep_ok "$PAGE_SRC" "matchMedia('(prefers-reduced-motion: reduce)')" \
   "motion: and the rain loop never starts in the first place"
 
+# Motion that changes the scene must stay on composited properties. Static
+# shadows and filters are fine; transitioning or keyframing them makes the
+# browser repaint the city on every frame and is exactly the jank this pass is
+# meant to remove.
+BAD_TRANSITIONS="$(printf '%s\n' "$CSS_SRC" | grep 'transition:' \
+  | grep -Eo '(filter|color|background(-color)?|box-shadow|text-shadow|height|width|top|right|bottom|left)' \
+  | sort -u | tr '\n' ' ')"
+check "motion: transitions use only transform and opacity" "$BAD_TRANSITIONS" ""
+BAD_KEYFRAMES="$(printf '%s\n' "$CSS_SRC" | awk '
+  /@keyframes/ { inside=1; depth=0 }
+  inside {
+    line=$0
+    opens=gsub(/{/, "{", line)
+    closes=gsub(/}/, "}", line)
+    depth += opens - closes
+    if ($0 ~ /(filter|color|background|box-shadow|text-shadow|height|width|top|right|bottom|left):/) print
+    if (depth == 0) inside=0
+  }
+')"
+check "motion: keyframes use only transform and opacity" "$BAD_KEYFRAMES" ""
+grep_not "$CSS_SRC" 'steps(' "motion: no animation uses stepped jumps"
+
 # The palette is night, not sunset. These are the exact sunset stops and the
 # pink/purple neon the city shipped with in #8 — none of them may come back.
 echo "== wall: the synthwave palette is gone =="
@@ -168,7 +191,7 @@ grep_ok "$PAGE" "THE WALL"    "page: renders the wall document"
 grep_ok "$PAGE" "wall.css"    "page: links its stylesheet"
 grep_ok "$PAGE" "wall.js"     "page: links its script"
 grep_ok "$PAGE" 'id="city"'   "page: ships the skyline the towers are built into"
-grep_ok "$PAGE" 'class="sky"' "page: ships the dusk an idle wall is left with"
+grep_ok "$PAGE" 'class="sky"' "page: ships the night sky an idle wall is left with"
 check "page: css is served"   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.css")" "200"
 check "page: js is served"    "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.js")"  "200"
 check "page: unknown path 404s" "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/etc/passwd")" "404"
