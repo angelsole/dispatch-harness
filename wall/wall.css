@@ -199,10 +199,8 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
 .city[data-empty="1"] { display: none; }
 
 .tower {
-  --n: 1;                 /* runs on this tower, set inline */
-  --h: 50%;               /* its share of the city height, set inline */
   position: relative;
-  height: var(--h);
+  height: 50%;
   flex: 0 1 auto;
   min-width: 0;
   display: flex;

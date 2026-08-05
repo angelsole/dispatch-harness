@@ -10,6 +10,7 @@
   const BRIEF_MS = 7000;   // how long one run holds the brief plate
   const FRESH_S = 900;     // a finished run stays fully lit this long
   const COLD_S = 10800;    // ...then dims to a warm ember over this long
+  const MAX_TOWER_WIDTH_RUNS = 8; // later shafts still render without widening the tower
 
   // Two colour systems, deliberately kept apart: the ACTOR neon (which model
   // owns the current stage) lights the car and the brief plate, and the CREW
@@ -177,7 +178,7 @@
     // A tower grows gently with the work standing in it — enough that a busy
     // repo reads as the tall one, not enough to turn the skyline into a chart.
     T.root.style.height = Math.min(94, 48 + n * 8) + '%';
-    T.root.style.width = (3.4 + n * 2.2).toFixed(1) + 'rem';
+    T.root.style.width = (3.4 + Math.min(n, MAX_TOWER_WIDTH_RUNS) * 2.2).toFixed(1) + 'rem';
     T.root.style.setProperty('--floors', String(floors));
     T.base.textContent = tower.label;
 
@@ -256,8 +257,7 @@
       const last = run.feed[run.feed.length - 1];
       if (last) items.push({ id: run.id, text: last.text, src: last.src || 'opus' });
     }
-    const hidden = towers.reduce((n, t) => n + t.hiddenIds.length, 0);
-    const key = items.map((i) => i.id + i.text).join('|') + '#' + hidden;
+    const key = items.map((i) => i.id + i.text).join('|');
     if (key === commsKey) return;
     commsKey = key;
     comms.hidden = items.length === 0;
@@ -271,10 +271,6 @@
       line.append(el('b', 'comms__id', item.id + ' '), el('span', 'comms__body', item.text));
       commsText.append(line, el('span', 'comms__sep', '·'));
       chars += item.id.length + item.text.length + 4;
-    }
-    if (hidden) {
-      commsText.append(el('span', 'comms__line', '+' + hidden + ' MORE RUNNING'));
-      chars += 18;
     }
     // Scroll speed, not scroll duration: a long ticker must not race.
     commsText.style.setProperty('--secs', Math.max(24, Math.round(chars * 0.34)) + 's');

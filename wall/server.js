@@ -34,7 +34,6 @@ const RUNS = process.env.WALL_RUNS ||
 const POLL_MS = Math.max(100, num(process.env.WALL_POLL_MS, 1000));
 
 const MAX_FINISHED = 24;  // compact history cap; live runs are never discarded
-const MAX_PER_TOWER = 6;  // shafts a tower can show; the rest ride the comms ticker
 const FEED_LINES = 48;    // tail of feed.log shipped per run
 const TAIL_BYTES = 16384; // how far back we read for those lines
 const SILHOUETTES = 5;    // tower body outlines the page can draw
@@ -133,8 +132,10 @@ function actorOf(stage) {
 // every failing STATUS in run-task.sh ends in _failed or is "rejected"; sync-pr's
 // "done: PR branch synced …" is a success, so match the failure words, not a
 // whitelist of the good ones.
+const DONE_NEEDS_INPUT = /^done:\s*needs_input\b/i;
+
 function stateOf(stage) {
-  if (/^waiting/.test(stage)) return 'alarm';
+  if (/^waiting/.test(stage) || DONE_NEEDS_INPUT.test(stage)) return 'alarm';
   if (/^done:/.test(stage)) return /fail|reject/i.test(stage.slice(5)) ? 'failed' : 'ready';
   return 'active';
 }
@@ -173,6 +174,20 @@ function floorOf(stage, actorKey) {
   return FLOOR_OF[actorKey] ?? 0;
 }
 
+// A terminal `done: needs_input` is written after the actual stage that
+// blocked. Recover that last stage so the alarm stays on the floor where work
+// stopped instead of jumping to the rooftop and looking like a successful PR.
+function previousFloor(dir) {
+  const lines = tailLines(path.join(dir, 'stages.log'), 8);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^\d+\s+(\S.*)$/.exec(lines[i]);
+    if (!m || m[1] === '__invocation__' || /^done:/.test(m[1])) continue;
+    const prior = actorOf(m[1]);
+    return floorOf(m[1], prior.actorKey);
+  }
+  return FLOOR_OF.alarm;
+}
+
 // --- which project a run belongs to --------------------------------------------
 // run-task.sh builds the worktree as "<repo-dir>-<ticket-lowercased>" next to
 // the repo (run-task.sh:59) and writes that absolute path into the run dir's
@@ -185,7 +200,7 @@ function projectOf(id, dir, result) {
   const leaf = path.basename(raw.replace(/[/\\]+$/, ''));
   const suffix = '-' + String(id).toLowerCase();
   const repo = leaf.toLowerCase().endsWith(suffix) ? leaf.slice(0, -suffix.length) : leaf;
-  return repo.trim().toLowerCase().slice(0, 32);
+  return repo.trim().toLowerCase();
 }
 
 // --- one run ------------------------------------------------------------------
@@ -266,8 +281,13 @@ function readRun(id, current) {
 
   const owner = ownerOf(dir, result);
   const project = projectOf(id, dir, result);
-  const { actor, actorKey } = actorOf(stage);
-  const floor = floorOf(stage, actorKey);
+  let { actor, actorKey } = actorOf(stage);
+  const terminalNeedsInput = DONE_NEEDS_INPUT.test(stage);
+  const floor = terminalNeedsInput ? previousFloor(dir) : floorOf(stage, actorKey);
+  if (terminalNeedsInput) {
+    actor = 'needs input';
+    actorKey = 'alarm';
+  }
 
   return {
     id,
@@ -363,9 +383,10 @@ function snapshot() {
 // Grouping happens here rather than in the page so it is covered by the same
 // curl-and-jq tests as everything else.
 
-// djb2-ish, over the project name: a project keeps the same silhouette whoever
-// else is on the wall, so the room learns the skyline as a place. An index into
-// the sorted towers would re-shape the whole city every time one drained.
+// A small polynomial hash over the project name: a project keeps the same
+// silhouette whoever else is on the wall, so the room learns the skyline as a
+// place. An index into the sorted towers would re-shape the whole city every
+// time one drained.
 function hash(text) {
   let h = 0;
   for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
@@ -382,7 +403,6 @@ function newTower(project) {
     shape: hash(project || UNCHARTED) % SILHOUETTES,
     crown: (hash(project || UNCHARTED) >>> 8) % CROWNS,
     runIds: [],     // rendered as lit shafts, most urgent first
-    hiddenIds: [],  // beyond MAX_PER_TOWER — the comms ticker names these
     live: 0,        // active + alarm: what is climbing right now
     alarm: 0,
     total: 0,       // everything of this project's on the wall, finished included
@@ -399,14 +419,14 @@ function towerRank(tower) {
 function buildTowers(runs) {
   const towers = new Map();
   // `runs` arrives in wall order (alarms, then live oldest-first, then finished
-  // newest-first), so the shafts a capped tower keeps are the urgent ones.
+  // newest-first), which also gives the shafts a stable urgency order.
   for (const run of runs) {
     if (!towers.has(run.project)) towers.set(run.project, newTower(run.project));
     const tower = towers.get(run.project);
     tower.total += 1;
     if (run.state === 'alarm') tower.alarm += 1;
     if (run.state === 'active' || run.state === 'alarm') tower.live += 1;
-    (tower.runIds.length < MAX_PER_TOWER ? tower.runIds : tower.hiddenIds).push(run.id);
+    tower.runIds.push(run.id);
   }
   return [...towers.values()].sort((a, b) => {
     const [ga, ka] = towerRank(a);

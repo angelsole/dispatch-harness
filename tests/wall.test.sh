@@ -84,6 +84,20 @@ for banned in STANDBY UNREGISTERED 'DISPATCH CREW' lane__ '.lane' laneEls; do
   grep_not "$PAGE_SRC" "$banned" "ui: no [$banned] anywhere in the page"
 done
 
+echo "== wall: city state vocabulary =="
+grep_ok "$PAGE_SRC" '.tower[data-ready="1"] .tower__beacon' \
+  "ui: ready runs light a rooftop beacon"
+grep_ok "$PAGE_SRC" '.tower[data-alarm="1"] .tower__sweep' \
+  "ui: needs_input towers raise the searchlight"
+grep_ok "$PAGE_SRC" '.shaft[data-state="failed"] .shaft__car' \
+  "ui: failed runs use the flare treatment"
+grep_ok "$PAGE_SRC" '@media (prefers-reduced-motion: reduce)' \
+  "motion: the page honors reduced-motion"
+grep_ok "$PAGE_SRC" 'animation: none !important; transition: none !important' \
+  "motion: reduced-motion freezes animation and travel"
+grep_ok "$PAGE_SRC" '.boot, .rain, .traffic { display: none; }' \
+  "motion: reduced-motion removes the boot, rain, and traffic"
+
 # --- serve the fixtures -------------------------------------------------------
 # Start a wall on an OS-assigned port. Sets PORT_OUT (empty if it never came
 # up); not a command substitution, so the background pid lands in the real PIDS.
@@ -332,7 +346,8 @@ check "poll: the snapshot endpoint agrees" "$(state_of OLYX-1631 actorKey)" "gat
 # Run dirs are written by live pipelines: any file can be missing, empty or
 # caught mid-write. None of that may blank the wall.
 echo "== wall: partial and missing files =="
-mkdir -p "$RUNS/BARE-1" "$RUNS/EMPTY-1" "$RUNS/JUNK-1" "$RUNS/PINNED-EMPTY" "$RUNS/SYNC-FAIL"
+mkdir -p "$RUNS/BARE-1" "$RUNS/EMPTY-1" "$RUNS/JUNK-1" "$RUNS/PINNED-EMPTY" \
+  "$RUNS/SYNC-FAIL" "$RUNS/DONE-INPUT" "$RUNS/LONG-1"
 printf '%s setup: worktree\n' "$(date +%s)" > "$RUNS/BARE-1/status"   # status only
 : > "$RUNS/EMPTY-1/status"                                            # caught mid-write
 printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$RUNS/JUNK-1/status"
@@ -340,6 +355,15 @@ printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$RUNS/PINNED-E
 : > "$RUNS/PINNED-EMPTY/owner"                                       # empty is a real pin
 printf '{"owner":"stale-result-owner"}\n' > "$RUNS/PINNED-EMPTY/result.json"
 printf '%s sync failed: gate failed after base sync\n' "$(date +%s)" > "$RUNS/SYNC-FAIL/status"
+printf '%s done: needs_input\n' "$(date +%s)" > "$RUNS/DONE-INPUT/status"
+printf '%s review — Codex (ChatGPT sub)\n%s done: needs_input\n' \
+  "$(( $(date +%s) - 10 ))" "$(date +%s)" > "$RUNS/DONE-INPUT/stages.log"
+printf '{"status":"needs_input"}\n' > "$RUNS/DONE-INPUT/result.json"
+printf '# Questions\n\nChoose the deployment region.\n' > "$RUNS/DONE-INPUT/QUESTIONS.md"
+printf '/tmp/input-project-done-input\n' > "$RUNS/DONE-INPUT/worktree"
+printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$RUNS/LONG-1/status"
+LONG_PROJECT='a-project-name-that-is-definitely-longer-than-thirty-two-characters'
+printf '/tmp/%s-long-1\n' "$LONG_PROJECT" > "$RUNS/LONG-1/worktree"
 printf '{"status": "rea' > "$RUNS/JUNK-1/result.json"                 # half-written JSON
 printf 'not an epoch\n' > "$RUNS/JUNK-1/started"
 mkdir -p "$RUNS/NOTARUN"                                              # no status at all
@@ -369,6 +393,16 @@ check "state: a non-done sync failure remains a live panel" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="SYNC-FAIL") | .state')" "active"
 check "actor: a sync failure keeps its failure attribution" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="SYNC-FAIL") | .actor')" "failed"
+check "state: terminal needs_input remains an alarm, never a ready beacon" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .state')" "alarm"
+check "actor: terminal needs_input keeps the blocking attribution" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .actor')" "needs input"
+check "floor: terminal needs_input stays where work stopped" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .floor')" "3"
+check "alarm: terminal needs_input raises its project's searchlight" \
+  "$(printf '%s' "$API" | jq -r '.towers[] | select(.project=="input-project") | .alarm')" "1"
+check "project: long repo basenames are not truncated or merged" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="LONG-1") | .project')" "$LONG_PROJECT"
 
 echo "== wall: no runs dir at all =="
 serve "$ROOT/does-not-exist" "$ROOT/nope.log"; NOPE="$PORT_OUT"
@@ -381,7 +415,7 @@ fi
 
 # A wall with lots of history must never lose an older run that is still live.
 # Only completed history is capped; every active/alarm run reaches the client,
-# where excess live panels are represented by the overflow ticker.
+# and every retained run remains a visible shaft in its project tower.
 echo "== wall: busy history never evicts live work =="
 CROWDED="$ROOT/crowded"
 BUSY_NOW="$(date +%s)"
@@ -401,6 +435,10 @@ if [ -n "$BUSY" ]; then
     "$(printf '%s' "$BUSY_API" | jq '[.runs[] | select(.id=="LIVE-OLD" and .state=="active")] | length')" "1"
   check "busy: only completed history is capped" \
     "$(printf '%s' "$BUSY_API" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "24"
+  check "busy: every retained run renders as a shaft in its tower" \
+    "$(printf '%s' "$BUSY_API" | jq '.towers[] | select(.project=="") | .runIds | length')" "25"
+  check "busy: towers do not hide runs behind an overflow count" \
+    "$(printf '%s' "$BUSY_API" | jq '[.towers[] | has("hiddenIds")] | any')" "false"
 else
   bad "busy: server starts against crowded history"
 fi
