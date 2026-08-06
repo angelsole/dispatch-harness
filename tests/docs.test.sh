@@ -176,6 +176,26 @@ done
 list_ok "$phantom" "claim: every script named in README/SKILL.md ships" \
                    "claim: docs name scripts that do not exist"
 
+# ---------------------------------------------------------------------------
+# Run outcomes <-> the planner's triage list
+# ---------------------------------------------------------------------------
+# Every status run-task.sh can write into result.json is a state the planner
+# has to know what to do about. A new outcome that never reaches SKILL.md
+# leaves the orchestrator staring at a word it has no instruction for — which
+# is exactly what an undocumented `deferred_capacity` would have done.
+echo "== run statuses vs. the planner's triage list =="
+STATUSES="$(grep -ohE '(^|[^_A-Za-z])STATUS="[a-z_]+"' "$SRC/run-task.sh" \
+  | tr -d ' \t' | sed -e 's/^STATUS="//' -e 's/"$//' | sort -u)"
+n=$(printf '%s\n' "$STATUSES" | grep -c '' | tr -d ' ')
+if [ "$n" -ge 8 ]; then ok "status: found $n run outcomes"; else bad "status: only $n run outcomes found — extraction broken?"; fi
+
+undocumented=''
+for s in $STATUSES; do
+  grep -qF -- "$s" "$SKILL" || undocumented="$undocumented $s"
+done
+list_ok "$undocumented" "claim: SKILL.md triages every status run-task.sh writes" \
+                        "claim: run outcomes the planner is given no instruction for"
+
 echo
 printf 'docs smoke: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

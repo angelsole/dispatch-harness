@@ -152,6 +152,14 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 - **rejected** — read `REJECTED.md` in the run dir. The reviewer (or the
   conflict resolver) found a fundamental flaw. Decide: revise the brief and
   re-dispatch, or surface to the user.
+- **deferred_capacity** — nothing failed. The subscription window was empty, so
+  the run armed itself through `schedule.sh` for just after the block resets
+  (`runs/<RUN-ID>/capacity.log` says why, `schedule.sh --list` when). There is
+  nothing to do but tell the user when it will fire; `schedule.sh --cancel
+  <RUN-ID>` calls it off.
+- **capacity_failed** — the same thing, twice already (`HARNESS_MAX_DEFERRALS`).
+  The run stopped rescheduling itself rather than loop. Re-dispatch it once the
+  window is genuinely back.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
   read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
   or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the

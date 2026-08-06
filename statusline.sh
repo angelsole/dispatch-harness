@@ -55,6 +55,7 @@ harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
     push*)                     HARNESS_ACTOR='PR';          HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;
     demo*)                     HARNESS_ACTOR='demo';        HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;
     setup*|installing*)        HARNESS_ACTOR='setup';       HARNESS_ACTOR_COLOR="$C_CYAN" ;;
+    deferred:*)                HARNESS_ACTOR='deferred';    HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
     'base sync'*|'already up'*) HARNESS_ACTOR='sync';       HARNESS_ACTOR_COLOR="$C_CYAN" ;;
     'sync failed'*)            HARNESS_ACTOR='failed';      HARNESS_ACTOR_COLOR="$C_RED" ;;
     done:*)                    HARNESS_ACTOR='done';        HARNESS_ACTOR_COLOR="$C_DIM" ;;

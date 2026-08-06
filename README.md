@@ -336,6 +336,62 @@ To point the whole harness somewhere other than `~/.claude/harness`, set
 `HARNESS_DIR` (every script honors it) and install with
 `HARNESS_DIR=/path ./install.sh`.
 
+### Capacity preflight: a run that defers itself
+
+A dispatch launched into an exhausted subscription window is pure waste. It
+pays for a worktree, a deps install and an implementer spawn, dies instantly on
+*"You've hit your session limit · resets 1:30pm"*, and records
+`implementer_failed` — indistinguishable from a real failure, and recovered by
+a human re-arming it. So `run-task.sh` checks first.
+
+Before the worktree, it asks the launching identity's *own* Claude logs
+(`CLAUDE_CONFIG_DIR`, through the same
+[local-file accountant the quartermaster uses](#the-quartermaster) —
+`capacity.sh`, `ccusage … --offline`, no endpoint contacted from anywhere) how
+much of the current five-hour block is left. If the block is exhausted, or
+fewer than `HARNESS_MIN_SESSION_TOKENS` output tokens remain, the run does not
+spawn. It hands *itself* to `schedule.sh` for the block's reset time plus
+`HARNESS_DEFER_BUFFER_SECS`, writes a status line the wall and `status.sh`
+show —
+
+```
+deferred: capacity, armed for 13:35
+```
+
+— pushes it through the usual notification path, and exits 0. Nothing was
+built, nothing was installed, no model was called. Because `schedule.sh`
+snapshots the environment of the shell that arms it, and that shell is the run
+itself, the deferred dispatch fires with the identity, config dirs and knobs it
+was launched with; on disk it is indistinguishable from a human-armed one
+(`runs/<TICKET>/scheduled`, `schedule.sh --list`, and the quartermaster's
+`already armed` skip all just work).
+
+**Belt to the braces.** A window can also empty *during* a run. When the
+implementer exits non-zero and the session-limit message appears in the live
+feed, its stderr, or its final result message, the run is classified as capacity
+rather than `implementer_failed` and takes the same path. The message is only
+the trigger — the reset time always comes from ccusage, so nothing here depends
+on parsing the reset time out of prose Anthropic is free to reword.
+
+**Advisory, never a blocker.** ccusage missing, erroring, or unable to name a
+reset time, and a `schedule.sh` that refuses to arm, all log one line and
+dispatch anyway. `HARNESS_PREFLIGHT=off` disables the preflight and the mid-run
+classifier together. With capacity in hand, a run behaves exactly as it did
+before this existed — the check writes its verdict to
+`runs/<TICKET>/capacity.log` and says nothing on the console.
+
+**And it stops.** A run auto-defers at most `HARNESS_MAX_DEFERRALS` times
+(counted in `runs/<TICKET>/deferrals`). After that it fails as
+`capacity_failed` — a status of its own, so the honest outcome is never dressed
+up as a broken implementer, and no run can reschedule itself forever.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_PREFLIGHT` | `off` disables the capacity preflight *and* the mid-run classifier | `on` |
+| `HARNESS_MIN_SESSION_TOKENS` | Output-token headroom a dispatch wants before it will spawn | `20000` |
+| `HARNESS_DEFER_BUFFER_SECS` | Clearance added past the block's reset time when arming | `300` |
+| `HARNESS_MAX_DEFERRALS` | Auto-deferrals allowed per run before it fails honestly | `2` |
+
 ### The Quartermaster
 
 Subscription capacity that is still unused at the end of the day expires
@@ -616,7 +672,8 @@ and `status.sh --watch` gives you the same picture on demand.
 
 The paper trail per run: `brief.md`, `specs/` (converted spec attachments, when
 the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
-`feed.log`, `gate-*.log`, `result.json`, `opus-head`.
+`feed.log`, `gate-*.log`, `result.json`, `opus-head`, `capacity.log`
+(the [preflight's](#capacity-preflight-a-run-that-defers-itself) verdict).
 
 ### Ghost Shift
 
@@ -857,6 +914,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | --- | --- |
 | `run-task.sh` | The pipeline: worktree → implement → gate → review → PR |
 | `schedule.sh` | [Fire a prepared run at a set time](#scheduling-a-run-for-later) (launchd one-shot; `--list` / `--cancel`) |
+| `capacity.sh` | Local-file subscription accounting (`ccusage --offline`), shared by the [preflight](#capacity-preflight-a-run-that-defers-itself) and the quartermaster |
 | `quartermaster.sh` | [The Quartermaster](#the-quartermaster): the 19:00 capacity check that fills the night with briefed work |
 | `sync-pr.sh` | Re-merge the latest base into an already-pushed PR branch on conflict |
 | `repos.conf.sh` | Generic per-repo detection + sources your `repos.local.sh` |
@@ -873,7 +931,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `wall`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |
