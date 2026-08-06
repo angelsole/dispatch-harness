@@ -8,6 +8,10 @@
 // The skyline is whatever the server says is standing: live work, plus a
 // finished run's one completion moment. Nothing here keeps a run on screen
 // after the server has dropped it.
+//
+// Behind it, the district ACCRETES: one permanent building per run the server
+// reports as shipped this week, plus last week's as a flat ghost. Those are
+// facts, not state — they land once, play one settle, and are furniture.
 
 (function () {
   const POLL_MS = 2000;    // only used when SSE is unavailable
@@ -21,6 +25,7 @@
   const DAWN_H = 6.5;      // local hour the sky is coldest at
   const DAWN_RAMP = 2.5;   // hours either side of it that the cooling spans
   const WEATHER_SEED_MS = 15 * 60 * 1000; // nearby screens share a rain field
+  const MAX_MOVERS = 8;    // the server caps it too; this is the page's own floor-plan limit
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -45,6 +50,11 @@
   const STATE_GLYPH = { alarm: 'g-alarm', ready: 'g-done', failed: 'g-failed' };
 
   const city = document.getElementById('city');
+  const district = document.getElementById('district');
+  const ghostLayer = document.getElementById('ghost');
+  const life = document.getElementById('life');
+  const movers = document.getElementById('movers');
+  const rest = document.getElementById('rest');
   const counts = document.getElementById('counts');
   const clock = document.getElementById('clock');
   const link = document.getElementById('link');
@@ -70,8 +80,13 @@
   let runs = [];
   let towers = [];
   let floors = 6;
+  let blocks = [];              // this week's buildings, newest included
+  let ghosts = [];              // last week's, as bare silhouettes
+  let week = { ships: 0, life: {} };
+  let ghostKey = '';            // the silhouette layer is rebuilt only when it changes
   let skyline = new Set();      // the run ids the server is standing in the city
   const towerEls = new Map();   // project -> tower elements (incl. its shafts)
+  const blockEls = new Map();   // run id -> building element, built once and left alone
   let plateId = '';             // the run currently holding the brief plate
   let plateSince = 0;
   let swapTimer = 0;            // set while the plate is empty between two runs
@@ -248,6 +263,93 @@
       paintShaft(S, run);
       cursor = place(T.shafts, S.root, cursor);
     }
+  }
+
+  // --- the week's district -----------------------------------------------------
+  // What the city has accreted since Monday. A building is written ONCE, when it
+  // lands: everything about it — its plot, its height, its type, the age its
+  // settle and its cooling sign are fast-forwarded by — is fixed the moment the
+  // run shipped. Repainting one on every frame would restart both animations and
+  // turn a permanent record into a flicker.
+
+  function makeBlock() {
+    const root = el('div', 'block');
+    const mass = el('i', 'block__mass');
+    // The facade grid is the towers' own, wholesale — one source of truth for
+    // what a lit facade looks like, at the district's smaller storey pitch.
+    mass.append(el('i', 'tower__windows block__windows'), el('i', 'block__shop'));
+    // The sign is the only thing on a building that names anybody: a small neon
+    // in the dispatcher's own crew tint, cooling to the district's neutral
+    // within --sign-life of landing. No zones, no lanes, nothing cumulative.
+    root.append(el('i', 'block__crown'), mass, el('i', 'block__sign'));
+    return { root };
+  }
+
+  function paintBlock(B, b) {
+    B.root.dataset.kind = b.kind;
+    B.root.dataset.depth = String(b.depth);
+    B.root.style.setProperty('--x', (b.x * 100).toFixed(2) + '%');
+    B.root.style.setProperty('--storeys', String(b.storeys));
+    B.root.style.setProperty('--crew', crewTint(b));
+    // Same idiom as the completion moment: a browser opening this afternoon
+    // fast-forwards a building that landed this morning to where it already is,
+    // rather than replaying every settle in the week at once.
+    B.root.style.setProperty('--age', String(Math.max(0, now() - (b.at || now()))));
+    B.root.title = b.id + (b.project ? ' — ' + b.project : '');
+  }
+
+  function renderDistrict() {
+    const standing = new Set(blocks.map((b) => b.id));
+    for (const [id, B] of blockEls) {
+      // Only the week rolling over takes a building down, and then it takes the
+      // whole district with it.
+      if (!standing.has(id)) { B.root.remove(); blockEls.delete(id); }
+    }
+    let cursor = null;
+    for (const b of blocks) {
+      let B = blockEls.get(b.id);
+      if (!B) { B = makeBlock(); blockEls.set(b.id, B); paintBlock(B, b); }
+      cursor = place(district, B.root, cursor);
+    }
+    district.dataset.shops = week.life && week.life.shops ? '1' : '0';
+  }
+
+  // Last week, flattened: a height and a plot, drawn once per change of shape.
+  // No windows, no signs, no types — if you can tell what shipped last week from
+  // this layer, it is doing too much.
+  function renderGhost() {
+    const key = ghosts.map((g) => g.x + ':' + g.storeys).join(',');
+    if (key === ghostKey) return;
+    ghostKey = key;
+    ghostLayer.textContent = '';
+    ghostLayer.hidden = ghosts.length === 0;
+    for (const g of ghosts) {
+      const shape = el('i', 'ghost__block');
+      shape.style.setProperty('--x', (g.x * 100).toFixed(2) + '%');
+      shape.style.setProperty('--storeys', String(g.storeys));
+      ghostLayer.append(shape);
+    }
+  }
+
+  // Ambient life, scaled to the week's ship count by the server. Movers are
+  // created and removed rather than hidden, so an empty week costs the page
+  // nothing, and their lanes come from their index alone — two screens standing
+  // side by side have the same street.
+  function renderLife() {
+    const plan = week.life || {};
+    const want = Math.max(0, Math.min(MAX_MOVERS, plan.movers || 0));
+    while (movers.childElementCount > want) movers.lastElementChild.remove();
+    while (movers.childElementCount < want) {
+      const slot = movers.childElementCount;
+      const mover = el('i', 'life__mover');
+      mover.dataset.kind = slot % 2 ? 'robot' : 'car';
+      mover.style.setProperty('--lane', ((7 + slot * 23) % 88) + '%');
+      mover.style.setProperty('--slot', String(slot));
+      mover.append(el('i'));
+      movers.append(mover);
+    }
+    life.dataset.tram = plan.tram ? '1' : '0';
+    life.hidden = want === 0 && !plan.tram;
   }
 
   // --- the brief plate --------------------------------------------------------
@@ -440,6 +542,20 @@
     const byId = new Map(runs.map((r) => [r.id, r]));
     city.dataset.empty = towers.length ? '0' : '1';
     document.body.dataset.quiet = towers.length ? '0' : '1';
+    // The standby plate used to fire on an empty skyline. With a district that
+    // accretes, "nothing live" is a normal Thursday evening on a week that
+    // shipped nine things, and the plate would be saying the wrong sentence over
+    // a full city. It now needs a genuinely empty week — nothing standing AND
+    // nothing climbing; anything else gets the quiet line instead.
+    document.body.dataset.idle = towers.length ? 'off' : blocks.length ? 'rest' : 'empty';
+    rest.textContent = blocks.length
+      ? 'DISTRICT AT REST · ' + blocks.length + (blocks.length === 1 ? ' SHIP' : ' SHIPS')
+        + ' THIS WEEK · NOTHING CLIMBING'
+      : '';
+
+    renderGhost();
+    renderDistrict();
+    renderLife();
 
     for (const [project, T] of towerEls) {
       if (!towers.some((t) => t.project === project)) { T.root.remove(); towerEls.delete(project); }
@@ -453,12 +569,14 @@
     }
 
     counts.textContent = '';
-    counts.hidden = towers.length === 0;
-    // What is happening, not what happened: a wall full of yesterday's green
-    // ticks is what this dashboard is trying not to be.
+    counts.hidden = towers.length === 0 && blocks.length === 0;
+    // What is happening, plus the one thing that accumulates: the week's ships.
+    // Still not a scoreboard — it is the count the district in front of it is
+    // already showing, in a number you can read from the far side of the room.
     const tally = [
       ['active', runs.filter((r) => r.state === 'active').length],
       ['alarm', runs.filter((r) => r.state === 'alarm').length],
+      ['ships', blocks.length],
       ['projects', towers.length],
     ];
     for (const [kind, n] of tally) {
@@ -493,10 +611,17 @@
     runs = Array.isArray(snapshot.runs) ? snapshot.runs : [];
     towers = Array.isArray(snapshot.towers) ? snapshot.towers : [];
     floors = Array.isArray(snapshot.floors) && snapshot.floors.length ? snapshot.floors.length : 6;
+    blocks = Array.isArray(snapshot.city) ? snapshot.city : [];
+    ghosts = Array.isArray(snapshot.ghost) ? snapshot.ghost : [];
+    week = snapshot.week && typeof snapshot.week === 'object' ? snapshot.week : { ships: 0, life: {} };
     skyline = new Set(towers.flatMap((t) => t.runIds));
     // The completion moment is the server's number; the page only animates it.
     if (snapshot.completionSeconds > 0) {
       document.documentElement.style.setProperty('--completion', snapshot.completionSeconds + 's');
+    }
+    // Same contract for how long a building keeps its dispatcher's tint.
+    if (snapshot.signSeconds > 0) {
+      document.documentElement.style.setProperty('--sign-life', snapshot.signSeconds + 's');
     }
     render();
     tick();
