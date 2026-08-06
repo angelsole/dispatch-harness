@@ -436,6 +436,20 @@ file_has "$REPORT" "**schedule.sh refused**" "refusal: the report says the arm d
 absent "refusal: no marker was left behind" "$RUNS/REFUSE-ME/scheduled"
 
 # ---------------------------------------------------------------------------
+echo "== identifiers are remote data, and they become paths =="
+# ---------------------------------------------------------------------------
+mkdir -p "$RUNS/traversal"
+printf -- '- **Repo**: %s\n- **Branch**: fix/x\n' "$REPO" > "$RUNS/traversal/brief.md"
+printf '{"data":{"issues":{"nodes":[%s]}}}\n' \
+  "$(issue id-t1 '../traversal' 'Escape artist' 1 angel.sole@olyx.nl backlog)" > "$LINEAR_JSON"
+before=$(arm_calls)
+out=$(qm "" --arm); rc=$?
+check "traversal: a path-shaped identifier still exits 0" "$rc" "0"
+check "traversal: nothing was armed for it" "$(arm_calls)" "$before"
+file_has "$REPORT" "the identifier is not usable as a run-dir name" \
+  "traversal: a path-shaped identifier is refused by name, not silently dropped"
+
+# ---------------------------------------------------------------------------
 echo "== the hard rule: no model provider, ever =="
 # ---------------------------------------------------------------------------
 has_not "$(cat "$CURL_LOG")" "anthropic" "hard rule: no Anthropic endpoint was contacted"

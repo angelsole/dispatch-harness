@@ -325,6 +325,17 @@ brief_field() {  # $1 = brief path, $2 = field name
     | head -1 | sed -e 's/[[:space:]]*$//' -e 's/^`//' -e 's/`$//'
 }
 
+# A ticket identifier and a station name both become path components under
+# runs/ and accounts/, and both are derived from what a remote API said. Same
+# rule schedule.sh validates its tickets with: letters, digits, dot, dash,
+# underscore, and never leading with a dot.
+safe_component() {  # $1 = candidate
+  case "$1" in
+    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 # angel.sole@olyx.nl -> angel. The local part up to the first dot is the
 # station name, by crew convention.
 station_for() {  # $1 = email
@@ -404,6 +415,11 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   while IFS="$TAB" read -r id ident email title; do
     [ -n "$ident" ] || continue
     [ "$(station_for "$email")" = "$station" ] || continue
+    if ! safe_component "$ident"; then
+      printf '%s\t%s\t%s\n' "$ident" "$title" \
+        "the identifier is not usable as a run-dir name" >> "$WORK/skipped"
+      continue
+    fi
     if reason=$(skip_reason "$ident"); then
       printf '%s\t%s\t%s\n' "$ident" "$title" "$reason" >> "$WORK/skipped"
       case "$reason" in "already armed"*) armed_here=$((armed_here + 1)) ;; esac
@@ -595,7 +611,7 @@ EOF
     email=$(printf '%s' "$row" | cut -f3)
     title=$(printf '%s' "$row" | cut -f4)
     station=$(station_for "$email")
-    [ -d "$ACCOUNTS_DIR/$station" ] && continue
+    if safe_component "$station" && [ -d "$ACCOUNTS_DIR/$station" ]; then continue; fi
     printf '%s\t%s\t%s\t%s\n' "$ident" "$title" "$email" "$station" >> "$WORK/orphans"
   done < "$WORK/issues"
   orphan_n=$(count_of "$WORK/orphans")
