@@ -107,7 +107,10 @@ pin_knob() {  # $1 = file basename, $2 = var name, $3 = default
   fi
   eval "$2=\"\$v\""
 }
-positive_int() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
+positive_int() {
+  case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$1" -gt 0 ] 2>/dev/null
+}
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
 pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
 # A first dispatch without codex pins blank reviewer knobs. If codex is
@@ -652,7 +655,7 @@ if opus_incomplete; then
   # A window that emptied mid-run is a capacity event, not a failed implementer.
   # The CLI's message is only the trigger; the reset time comes from ccusage, so
   # nothing here depends on parsing prose that Anthropic is free to reword.
-  if [ $OPUS_EXIT -ne 0 ] && [ "${HARNESS_PREFLIGHT:-on}" != off ] \
+  if [ "$OPUS_EXIT" -ne 0 ] && [ "${HARNESS_PREFLIGHT:-on}" != off ] \
      && declare -F capacity_for >/dev/null 2>&1 && session_limit_hit; then
     capacity_note "mid-run: the implementer stopped on a session limit"
     capacity_for "$CLAUDE_LOGS" || true   # the headroom is moot; CAP_RESET is not
@@ -679,45 +682,74 @@ fi
 AI_ATTRIBUTION_RE='^[[:space:]]*claude-[a-z-]*[[:space:]]*:|^[[:space:]]*(co-authored-by|assisted-by|session-id|generated-by|generated-with)[[:space:]]*:[[:space:]]*.*(claude|anthropic)|^[[:space:]]*(🤖[[:space:]]*)?generated with .*(claude|anthropic)'
 
 strip_ai_attribution() {
-  local commits c tree parent msg cleaned new prev_old='' prev_new='' n=0
-  local an ae ad cn ce ct pargs
-  git -C "$WORKTREE" log --format='%B' "$BASE_REF..HEAD" 2>/dev/null \
-    | grep -qiE "$AI_ATTRIBUTION_RE" || return 0
-  # Re-parenting a merge needs a parent map this deliberately does not keep. The
-  # implementer's own range is linear and base-sync merges happen further down,
-  # so anything else is left alone rather than rewritten wrongly.
-  if [ -n "$(git -C "$WORKTREE" rev-list --merges "$BASE_REF..HEAD" 2>/dev/null)" ]; then
-    echo "[harness] commit hygiene: AI attribution found, but $BASE_REF..HEAD contains a merge — left as is"
-    return 0
-  fi
-  commits=$(git -C "$WORKTREE" rev-list --reverse "$BASE_REF..HEAD" 2>/dev/null) || return 0
+  local all_messages commits c tree parents parent mapped msg cleaned new old_head new_head
+  local an ae ad cn ce ct i parent_changed n=0
+  local -a old_commits=() new_commits=() pargs=()
+  all_messages=$(git -C "$WORKTREE" log --format='%B' "$BASE_REF..HEAD" 2>/dev/null) \
+    || return 1
+  printf '%s\n' "$all_messages" | grep -qiE "$AI_ATTRIBUTION_RE" || return 0
+  old_head=$(git -C "$WORKTREE" rev-parse HEAD) || return 1
+  # Parents precede their children, including across merges. Keep an old -> new
+  # map so each changed parent can be substituted without flattening the DAG.
+  # Commits whose message and parents are unchanged are reused verbatim; among
+  # other things, that preserves signatures and nonstandard headers on clean
+  # commits before or beside the first offender.
+  commits=$(git -C "$WORKTREE" rev-list --reverse --topo-order "$BASE_REF..HEAD" 2>/dev/null) \
+    || return 1
   for c in $commits; do
-    tree=$(git -C "$WORKTREE" rev-parse "$c^{tree}") || return 0
-    parent=$(git -C "$WORKTREE" rev-parse -q --verify "$c^" 2>/dev/null) || parent=''
-    # Commits before the first offender re-create byte-identically (same tree,
-    # parent, message and identity => same sha), so only the offending tail of
-    # the range actually moves.
-    if [ -n "$prev_new" ] && [ "$parent" = "$prev_old" ]; then parent="$prev_new"; fi
-    msg=$(git -C "$WORKTREE" log -1 --format=%B "$c")
+    tree=$(git -C "$WORKTREE" rev-parse "$c^{tree}") || return 1
+    parents=$(git -C "$WORKTREE" show -s --format=%P "$c") || return 1
+    pargs=(); parent_changed=0
+    for parent in $parents; do
+      mapped="$parent"
+      for ((i=0; i<${#old_commits[@]}; i++)); do
+        if [ "${old_commits[$i]}" = "$parent" ]; then
+          mapped="${new_commits[$i]}"
+          break
+        fi
+      done
+      [ "$mapped" = "$parent" ] || parent_changed=1
+      pargs+=(-p "$mapped")
+    done
+    msg=$(git -C "$WORKTREE" log -1 --format=%B "$c") || return 1
     cleaned=$(printf '%s\n' "$msg" | grep -ivE "$AI_ATTRIBUTION_RE")
-    if [ -n "$cleaned" ] && [ "$cleaned" != "$msg" ]; then n=$((n + 1)); else cleaned="$msg"; fi
+    if [ "$cleaned" != "$msg" ]; then n=$((n + 1)); else cleaned="$msg"; fi
+    if [ "$cleaned" = "$msg" ] && [ "$parent_changed" = 0 ]; then
+      new="$c"
+      old_commits+=("$c"); new_commits+=("$new")
+      continue
+    fi
     IFS=$'\x1f' read -r an ae ad cn ce ct <<EOF
 $(git -C "$WORKTREE" log -1 --format='%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI' "$c")
 EOF
-    pargs=(); [ -n "$parent" ] && pargs=(-p "$parent")
     new=$(printf '%s\n' "$cleaned" | \
       GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
       GIT_COMMITTER_NAME="$cn" GIT_COMMITTER_EMAIL="$ce" GIT_COMMITTER_DATE="$ct" \
-      git -C "$WORKTREE" commit-tree "$tree" ${pargs[@]+"${pargs[@]}"}) || return 0
-    prev_old="$c"; prev_new="$new"
+      git -C "$WORKTREE" commit-tree "$tree" "${pargs[@]}") || return 1
+    old_commits+=("$c"); new_commits+=("$new")
   done
-  [ "$n" -gt 0 ] && [ -n "$prev_new" ] || return 0
+  [ "$n" -gt 0 ] || return 1
+  new_head=''
+  for ((i=0; i<${#old_commits[@]}; i++)); do
+    if [ "${old_commits[$i]}" = "$old_head" ]; then
+      new_head="${new_commits[$i]}"
+      break
+    fi
+  done
+  [ -n "$new_head" ] || return 1
   # HEAD is symbolic, so this moves the branch and nothing else: identical trees
   # mean the index and the working copy still match, dirty or not.
-  git -C "$WORKTREE" update-ref -m 'harness: strip AI attribution' HEAD "$prev_new" || return 0
+  git -C "$WORKTREE" update-ref -m 'harness: strip AI attribution' HEAD "$new_head" "$old_head" \
+    || return 1
+  all_messages=$(git -C "$WORKTREE" log --format='%B' "$BASE_REF..HEAD" 2>/dev/null) \
+    || return 1
+  printf '%s\n' "$all_messages" | grep -qiE "$AI_ATTRIBUTION_RE" && return 1
   echo "[harness] commit hygiene: stripped AI attribution from $n commit message(s) — trees untouched"
 }
 strip_ai_attribution
+HYGIENE_EXIT=$?
+[ "$HYGIENE_EXIT" -eq 0 ] \
+  || fail implementer_failed "commit hygiene could not remove AI attribution from $BASE_REF..HEAD"
 
 # Everything up to this commit is Opus's work; later commits are Codex's.
 OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)

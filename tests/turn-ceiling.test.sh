@@ -38,7 +38,7 @@ CLAUDE_MODE="$ROOT/claude-mode"
 ATTEMPTS="$ROOT/attempts"
 # What the implementer's own commits looked like before the hygiene backstop ran.
 PRE_DIFF="$ROOT/pre-diff"; PRE_TREE="$ROOT/pre-tree"; PRE_COUNT="$ROOT/pre-count"
-PRE_FIRST="$ROOT/pre-first"; PRE_IDENT="$ROOT/pre-ident"
+PRE_FIRST="$ROOT/pre-first"; PRE_IDENT="$ROOT/pre-ident"; PRE_CLEAN="$ROOT/pre-clean"
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$STATION/claude"
 : > "$SCHED_CALLS"; : > "$CLAUDE_CALLS"
@@ -155,6 +155,25 @@ case "\$(cat "$CLAUDE_MODE")" in
     printf 'two\n' > b.txt; git add b.txt
     printf 'feat: a human co-author\n\nCo-Authored-By: Ada Lovelace <ada@example.com>\n' | git commit -q -F -
     git rev-parse HEAD > "$PRE_FIRST"
+    finished
+    ;;
+  merge-trailers)
+    original_branch=\$(git symbolic-ref --short HEAD)
+    side_branch="fixture-side-\$(printf '%s' "\$original_branch" | tr / -)"
+    git switch -q -c "\$side_branch"
+    printf 'side\n' > side.txt; git add side.txt
+    git commit -q -m "feat: attributed side commit" \
+      -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+    git switch -q "\$original_branch"
+    printf 'main\n' > main.txt; git add main.txt
+    git commit -q -m "feat: clean mainline commit"
+    git rev-parse HEAD > "$PRE_CLEAN"
+    git merge -q --no-ff "\$side_branch" -m "Merge fixture side" \
+      -m "Co-Authored-By: Ada Lovelace <ada@example.com>" \
+      -m "Claude-Session: merge-fixture"
+    git diff origin/main..HEAD > "$PRE_DIFF"
+    git rev-parse 'HEAD^{tree}' > "$PRE_TREE"
+    git rev-list --count origin/main..HEAD > "$PRE_COUNT"
     finished
     ;;
 esac
@@ -335,6 +354,25 @@ check "hygiene: a clean range is not rewritten at all" \
 has_not "$OUT" "commit hygiene:" "hygiene: and nothing is logged about it"
 has "$(git_wt log origin/main..HEAD --format='%B')" "Co-Authored-By: Ada Lovelace" \
   "hygiene: human co-authors survive a clean run too"
+
+dispatch TURN-MERGE merge-trailers ""
+MERGE_LOG_AFTER="$(git_wt log origin/main..HEAD --format='%B')"
+has_not "$MERGE_LOG_AFTER" "Co-Authored-By: Claude" \
+  "hygiene merge: attribution is stripped from a merged side commit"
+has_not "$MERGE_LOG_AFTER" "Claude-Session:" \
+  "hygiene merge: attribution is stripped from the merge commit"
+has "$MERGE_LOG_AFTER" "Co-Authored-By: Ada Lovelace <ada@example.com>" \
+  "hygiene merge: a human merge co-author survives"
+check "hygiene merge: the merge topology survives" \
+  "$(git_wt rev-list --count --merges origin/main..HEAD)" "1"
+check "hygiene merge: the diff vs. base is byte-identical" \
+  "$(git_wt diff origin/main..HEAD)" "$(cat "$PRE_DIFF")"
+check "hygiene merge: the tip tree object is unchanged" \
+  "$(git_wt rev-parse 'HEAD^{tree}')" "$(cat "$PRE_TREE")"
+check "hygiene merge: no commit was added or dropped" \
+  "$(git_wt rev-list --count origin/main..HEAD)" "$(cat "$PRE_COUNT")"
+check "hygiene merge: an unaffected mainline commit keeps its sha" \
+  "$(git_wt rev-parse HEAD^1)" "$(cat "$PRE_CLEAN")"
 
 # ---------------------------------------------------------------------------
 echo "== a re-dispatched session is told the commit rules again =="
