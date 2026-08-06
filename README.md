@@ -1042,6 +1042,12 @@ file, so at exit the file holds the command the chain stopped on — which in an
 changes, the gate log is byte-identical (the trap writes nowhere near it), and
 no test output is parsed. Only failing rounds record a step.
 
+`HARNESS_GATE_STEP` is the path of that side file. It is **not a knob you
+set** — `run-task.sh` exports it into the gate subshell for the trap to write
+to, and a failed write is swallowed (`|| :`) so it can never be visible to your
+gate. It is documented here because it is the one `HARNESS_*` name in
+`run-task.sh` that a reader may meet without it being theirs to configure.
+
 **When the review stage doesn't happen.** A review that leaves *no* fix
 commits, *no* `review-notes.md` and *no* `REJECTED.md` has proven nothing about
 the diff. Evidence decides, never duration: a fast "everything is sound" review
