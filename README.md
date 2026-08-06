@@ -840,9 +840,11 @@ fields are `null`/empty):
 
 | Field | Meaning |
 | --- | --- |
+| `review` | How the review stage actually went: `reviewed` \| `no_evidence` \| `failed_silent` \| `skipped`, empty when the run never reached it. See [Reading the pipeline's own vitals](#reading-the-pipelines-own-vitals). |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
-| `metrics.gate_rounds` | `[{round, result}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). |
+| `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `failed_step` is the command a failing round died on, `null` on a passing round and on rounds recorded before this existed. |
+| `metrics.turn_resumes` | How many times the implementer was resumed rather than started fresh (counted across invocations). |
 | `metrics.opus_commits` | Commit count `base..opus_head` (the implementer's). |
 | `metrics.codex_commits` | Commit count `opus_head..HEAD` (the reviewer's). |
 | `metrics.diff` | `{files_changed, insertions, deletions}` vs. base. |
@@ -854,6 +856,7 @@ fields are `null`/empty):
 ```bash
 ~/.claude/harness/metrics.sh          # aligned table across all runs
 ~/.claude/harness/metrics.sh --csv    # same data as CSV for stats tools
+~/.claude/harness/metrics.sh --report # the aggregate health picture (below)
 ```
 
 Columns: run, arm, implementer model and effort, reviewer model and effort,
@@ -861,6 +864,92 @@ status, gate rounds (e.g. `fail,pass`), implementer/reviewer commit counts,
 ± lines, and wall minutes — so an effort sweep or a reviewer-model ablation
 reads straight off the table. Runs predating a field (no `metrics` object, or
 written before the model/effort knobs) render with blanks, not errors.
+
+### Reading the pipeline's own vitals
+
+The harness reports on itself. Everything below comes out of the `result.json`
+files and nothing else — no logs, no worktrees — so it works on a mirrored runs
+directory and on runs whose worktrees are long cleaned up:
+
+```bash
+~/.claude/harness/metrics.sh --report
+```
+
+```
+pipeline vitals · 179 runs · 2026-08-06 19:04
+/Users/you/.claude/harness/runs
+
+STATUS                   RUNS      %
+ready                     120   67.0
+gate_failed                31   17.3
+…
+
+REVIEW                   RUNS      %
+reviewed                  140   78.2
+skipped                    30   16.8
+no_evidence                 7    3.9
+failed_silent               2    1.1
+silent review failures      2   <- these diffs are UNREVIEWED
+
+PER RUN              MEDIAN       P90      N
+turns                    34        78    147
+wall minutes           22.4      58.1    179
+output tokens         41200     98000    140
+gate seconds            184       402    170
+
+GATE ROUNDS              RUNS      %
+1 round                    45   25.1
+2 rounds                  110   61.5
+3 rounds                   24   13.4
+
+FAILED GATE STEP               ROUNDS
+npm run type-check                 18
+npm test                            7
+
+RESUMES               12 of 179 runs resumed (6.7%) · 15 resumes total
+
+REPO                     RUNS  MED_MIN  MED_TURNS  READY%
+myapp                      80     24.1         36    70.0
+```
+
+Read it in this order: **silent review failures** first (those diffs are
+unreviewed — see below), then **GATE ROUNDS** and **FAILED GATE STEP** (a second
+gate round means a whole extra suite run, and the step names what to fix first),
+then the medians for cost. Medians and p90s are nearest-rank over the runs that
+recorded the field — the `N` column says how many those were, so a partial
+history is visibly partial instead of silently averaged with zeros. Percentages
+in `GATE ROUNDS` are over the runs that ran a numbered gate round; base-sync
+re-gates are recorded in `result.json` but left out of that distribution.
+
+**Which gate step failed.** Each entry in `metrics.gate_rounds` carries
+`seconds` and `failed_step`. The step is captured by the gate's own shell: a
+`DEBUG` trap records each top-level command just before it runs, into a side
+file, so at exit the file holds the command the chain stopped on — which in an
+`&&` chain is the first failing step. Nothing about how your `GATE_CMD` runs
+changes, the gate log is byte-identical (the trap writes nowhere near it), and
+no test output is parsed. Only failing rounds record a step.
+
+**When the review stage doesn't happen.** A review that leaves *no* fix
+commits, *no* `review-notes.md` and *no* `REJECTED.md` has proven nothing about
+the diff. Evidence decides, never duration: a fast "everything is sound" review
+that writes its notes is a real review. Duration only decides whether a retry is
+worth paying for — a stage that produced no evidence at all in less time than
+the diff takes to read is the signature of a reviewer that never started (auth
+prompt, CLI crash, empty context), so the review is run **once more**. If the
+second pass also produces nothing, the run continues (the gate has passed) but
+says so everywhere it can: `review: failed_silent` in `result.json`, the arm
+recorded as `no_review`, a `review failed silently — diff is unreviewed` stage
+line, and the same words in the macOS/ntfy notification. The pinned arm in the
+run dir is left alone, so a re-dispatch still attempts a real review.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_REVIEW_MIN_SECONDS` | Floor below which a review that produced no evidence is treated as a stage that never ran (and retried once). | `60` |
+| `HARNESS_REVIEW_TRIVIAL_LINES` | Changed lines vs. base at or below which the floor does not apply — a two-line diff genuinely can be reviewed in seconds. | `20` |
+
+A review that took real time and still left nothing behind is recorded as
+`no_evidence` and *not* retried: it is worth knowing about, but it is not the
+failure signature above, and a second full pass is expensive.
 
 ### The public-benchmark experiment
 
@@ -927,11 +1016,11 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `statusline.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose) |
 | `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Monitoring (`status.sh --watch` is the live dashboard) & lifecycle helpers |
 | `wall.sh` `wall/` | [Ghost Shift](#ghost-shift): the big-screen live dashboard (node server + one static page + fixtures) |
-| `metrics.sh` | Tabulate per-run metrics from `result.json` (table / `--csv`) |
+| `metrics.sh` | Per-run metrics from `result.json` (table / `--csv`) and the [aggregate health report](#reading-the-pipelines-own-vitals) (`--report`) |
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`, `pipeline-telemetry`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |
