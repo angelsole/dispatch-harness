@@ -601,6 +601,11 @@ and `status.sh --watch` gives you the same picture on demand.
   redrawn in place every 2s (`HARNESS_WATCH_INTERVAL` to retune).
 - **Notifications** — a desktop banner (macOS `osascript`) and/or a phone push
   (ntfy) on every stage handoff. Silence the desktop ones with `HARNESS_NOTIFY=0`.
+  The two stages you have to act on carry more than the stage text: a terminal
+  `done:` push appends the PR URL and makes the notification tappable (plus an
+  **Open PR** button), and `waiting — implementer needs your input` goes out at
+  high priority with a warning tag so it survives a silenced phone. Every other
+  stage stays a quiet tick.
 - **`HARNESS_MIRROR`** — mirror this machine's run dirs onto another machine
   while they run, so its wall shows them too:
   [Runs from any machine](#runs-from-any-machine-harness_mirror).

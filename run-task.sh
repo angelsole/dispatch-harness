@@ -250,7 +250,27 @@ stage() {
     osascript -e "display notification \"$1\" with title \"dispatch $TICKET\"" 2>/dev/null || true
   fi
   if [ -n "${HARNESS_NTFY_TOPIC:-}" ]; then
-    curl -s -m 5 -H "Title: dispatch $TICKET" -d "$1" \
+    # The phone push is the only artifact of an unattended run its owner sees
+    # before sitting back down, so the two stages they must act on carry more
+    # than the stage text: a terminal stage attaches the PR link (body + tap
+    # target), and needs_input escalates so it survives a silenced phone.
+    # Everything else stays a low-priority background tick.
+    local body="$1"; local -a extra=()
+    case "$1" in
+      done:*)
+        if [ -n "${PR_URL:-}" ]; then
+          body="$1"$'\n'"$PR_URL"
+          extra+=(-H "Click: $PR_URL" -H "Actions: view, Open PR, $PR_URL")
+        fi
+        ;;
+      waiting*)
+        extra+=(-H "Priority: high" -H "Tags: warning")
+        ;;
+    esac
+    # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
+    # treats an empty array as unbound under `set -u` and would abort the run on
+    # the first stage that adds no headers.
+    curl -s -m 5 -H "Title: dispatch $TICKET" ${extra[@]+"${extra[@]}"} -d "$body" \
       "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$HARNESS_NTFY_TOPIC" >/dev/null 2>&1 || true
   fi
 }
