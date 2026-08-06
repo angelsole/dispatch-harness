@@ -172,6 +172,14 @@ pins `arm: no_review` with empty `reviewer_model`/`reviewer_effort` and a
 logged to `claude-*.log`). When you see that arm, nothing reviewed the diff —
 scrutinize it yourself before promoting, and say so in your verdict.
 
+`result.json` also records how the review actually went in `review`. Treat
+`failed_silent` exactly like the arm above — the stage produced no commits, no
+notes and no rejection twice in a row, so the diff is unreviewed however green
+the gate is; review it yourself and say so. `no_evidence` is the softer version
+(it spent real time and still left nothing behind): read the diff more closely
+than usual. `reviewed` and `skipped` mean what they say, and an empty value means
+the run never got that far.
+
 ## Post-PR conflicts
 
 If GitHub later marks a run's PR **CONFLICTING** (base moved after the PR

@@ -152,6 +152,7 @@ actor_of() {  # $1 = stage text -> the actor column
 }
 check "actor: implementing -> Opus"   "$(actor_of 'implementing — Opus (Claude sub)')"                 "Opus"
 check "actor: resuming -> Opus"       "$(actor_of 'resuming — Opus (Claude sub)')"                     "Opus"
+check "actor: turn-ceiling resume -> Opus" "$(actor_of 'resuming: turn ceiling (1/2)')"                "Opus"
 check "actor: review -> Codex"        "$(actor_of 'review — Codex (ChatGPT sub)')"                     "Codex"
 check "actor: fix round -> Codex"     "$(actor_of 'fix round 2 — Codex (ChatGPT sub)')"                "Codex"
 check "actor: test gate -> gate"      "$(actor_of 'test gate #1 (deterministic — no model)')"          "gate"
