@@ -25,7 +25,6 @@
   const DAWN_H = 6.5;      // local hour the sky is coldest at
   const DAWN_RAMP = 2.5;   // hours either side of it that the cooling spans
   const WEATHER_SEED_MS = 15 * 60 * 1000; // nearby screens share a rain field
-  const MAX_MOVERS = 8;    // the server caps it too; this is the page's own floor-plan limit
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -83,6 +82,7 @@
   let blocks = [];              // this week's buildings, newest included
   let ghosts = [];              // last week's, as bare silhouettes
   let week = { ships: 0, life: {} };
+  let signSeconds = 0;           // supplied with the first server snapshot
   let ghostKey = '';            // the silhouette layer is rebuilt only when it changes
   let skyline = new Set();      // the run ids the server is standing in the city
   const towerEls = new Map();   // project -> tower elements (incl. its shafts)
@@ -285,6 +285,12 @@
     return { root };
   }
 
+  function paintStaticSign(B, b) {
+    const age = Math.max(0, now() - (b.at || now()));
+    B.root.style.setProperty('--sign-static', age < signSeconds ? '0.85' : '0');
+    return age;
+  }
+
   function paintBlock(B, b) {
     B.root.dataset.kind = b.kind;
     B.root.dataset.depth = String(b.depth);
@@ -294,7 +300,8 @@
     // Same idiom as the completion moment: a browser opening this afternoon
     // fast-forwards a building that landed this morning to where it already is,
     // rather than replaying every settle in the week at once.
-    B.root.style.setProperty('--age', String(Math.max(0, now() - (b.at || now()))));
+    const age = paintStaticSign(B, b);
+    B.root.style.setProperty('--age', String(age));
     B.root.title = b.id + (b.project ? ' — ' + b.project : '');
   }
 
@@ -337,7 +344,7 @@
   // side by side have the same street.
   function renderLife() {
     const plan = week.life || {};
-    const want = Math.max(0, Math.min(MAX_MOVERS, plan.movers || 0));
+    const want = Math.max(0, Math.floor(Number(plan.movers) || 0));
     while (movers.childElementCount > want) movers.lastElementChild.remove();
     while (movers.childElementCount < want) {
       const slot = movers.childElementCount;
@@ -603,6 +610,12 @@
     // both age on this clock, so both are re-read here rather than waiting for
     // a run somewhere to move.
     tickComms();
+    // Reduced-motion disables the cooling animation. Keep its static state
+    // honest by dropping the tint when the same server-owned lifetime expires.
+    for (const b of blocks) {
+      const B = blockEls.get(b.id);
+      if (B) paintStaticSign(B, b);
+    }
     paintSky();
   }
 
@@ -621,6 +634,7 @@
     }
     // Same contract for how long a building keeps its dispatcher's tint.
     if (snapshot.signSeconds > 0) {
+      signSeconds = snapshot.signSeconds;
       document.documentElement.style.setProperty('--sign-life', snapshot.signSeconds + 's');
     }
     render();

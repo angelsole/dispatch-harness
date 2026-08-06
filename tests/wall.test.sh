@@ -997,8 +997,12 @@ grep_ok "$PAGE_SRC" 'if (!B) { B = makeBlock();' \
   "district: a building is written once, when it lands"
 grep_ok "$CSS_SRC" 'animation: settle var(--settle) var(--ease) backwards' \
   "district: it arrives with one settle"
+grep_not "$CSS_SRC" '.district { transform-origin' \
+  "district: after settling, shipped buildings are not kept in a camera loop"
 grep_ok "$CSS_SRC" 'animation: sign-cool var(--sign-life) linear forwards' \
   "sign: and its dispatcher's tint cools out of it"
+grep_ok "$PAGE_SRC" "--sign-static', age < signSeconds" \
+  "sign: reduced motion still expires attribution on the server's lifetime"
 grep_ok "$PAGE_SRC" 'signSeconds' "sign: on the server's clock, not the page's"
 SIGN_CSS="$(sed -n 's/^ *--sign-life: \([0-9]*\)s;.*/\1/p' "$SRC/wall/wall.css" | head -1)"
 check "sign: the page and the server agree on how long a tint lasts" \

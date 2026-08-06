@@ -1667,11 +1667,10 @@ body[data-idle="rest"] .rest { display: block; }
   to   { transform: translateX(calc(5px * var(--par, 1))); }
 }
 
-/* The breathing camera: an imperceptible push-in over two minutes, towers
-   moving a touch more than the sky behind them. The district breathes with the
-   towers: it is the same city, one block further back. */
-.city,
-.district { transform-origin: 50% 100%; animation: cam-city 140s var(--ease-io) infinite alternate; }
+/* The breathing camera: an imperceptible push-in over two minutes for the live
+   towers. The shipped district is deliberately absent — after its one settle,
+   a permanent building is static. */
+.city { transform-origin: 50% 100%; animation: cam-city 140s var(--ease-io) infinite alternate; }
 .sky  { transform-origin: 50% 100%; animation: cam-sky 140s var(--ease-io) infinite alternate; }
 @keyframes cam-city { from { transform: scale(1); } to { transform: scale(1.035); } }
 @keyframes cam-sky  { from { transform: scale(1); } to { transform: scale(1.016); } }
@@ -1751,9 +1750,9 @@ body[data-idle="rest"] .rest { display: block; }
   .tower[data-ready="1"] .tower__beacon { opacity: 1; }
   /* The district is a record, so it stays legible standing still: the buildings
      are there, the population is parked mid-street rather than deleted, and the
-     tram sits on its line. Only the sign cannot be honest here — nothing fades
-     on a still wall, so every building keeps the tint it landed with. */
-  .block__sign::before { opacity: 0.85; }
+     tram sits on its line. JS resolves the sign to its current static age so
+     reduced motion does not make attribution permanent. */
+  .block__sign::before { opacity: var(--sign-static, 0); }
   .life[data-tram="1"] .life__tram { opacity: 0.62; }
   .comms__marquee { animation: none; }
   /* The weather never drifts here — wall.js leaves --haze and --dawn unwritten,
