@@ -562,9 +562,9 @@ fi
 # The other half of the wall. The skyline above is live and leaves nothing
 # behind; the district accretes — every run that reaches `done: ready` since
 # Monday 00:00 local is a permanent building, and last week's is a flat ghost
-# behind it. All of it is derived per poll from run dirs already on disk, so the
-# rules are arithmetic over a run id, a finish epoch and a diff — exercised out
-# of the real server.js rather than restated here, the same way the weather is.
+# behind it. The ledger is rendered per poll, so the rules are arithmetic over a
+# run id, a finish epoch and a diff — exercised out of the real server.js rather
+# than restated here, the same way the weather is.
 echo "== wall: the week's rules =="
 CITY_PROBE="$ROOT/city-probe.js"
 cat > "$CITY_PROBE" <<'JS'
@@ -573,6 +573,7 @@ const now = Number(process.argv[3]);
 const start = w.weekStartOf(now);
 const monday = new Date(start * 1000);
 const prev = w.weekStartOf(start - 1);
+const next = w.weekEndOf(now);
 
 // Which window a finish epoch lands in, straight through the real builder. A
 // ledger line is all it gets: the run dir it came from may have been cleaned up
@@ -621,6 +622,8 @@ console.log(JSON.stringify({
   lastMonday: bucket(prev),
   oneSecondBeforeThat: bucket(prev - 1),
   rightNow: bucket(now),
+  lastSecondThisWeek: bucket(next - 1),
+  nextMonday: bucket(next),
   kinds: ['olyx-agents', 'olyxbase', 'olyx-dashboard', 'olyxdashboard',
           'valoryx-intelligence', 'valoryx-graphql-api', 'dispatch-harness',
           'somebody-elses-repo', ''].map(w.kindOf).join(','),
@@ -664,6 +667,10 @@ check "week: one second earlier belongs to the old one"  "$(city_of oneSecondBef
 check "week: last Monday 00:00 is still the ghost"       "$(city_of lastMonday)" "ghost"
 check "week: one second before that is gone entirely"    "$(city_of oneSecondBeforeThat)" "gone"
 check "week: something that shipped just now is standing" "$(city_of rightNow)" "city"
+check "week: the current window includes its final second" \
+  "$(city_of lastSecondThisWeek)" "city"
+check "week: the next Monday is outside this week's city" \
+  "$(city_of nextMonday)" "gone"
 check "type: the repo family names the building" "$(city_of kinds)" \
   "residential,industrial,industrial,industrial,spire,spire,infra,midrise,midrise"
 check "height: the diff, log-scaled"  "$(city_of storeys)" "3,7,11,14"
@@ -718,6 +725,8 @@ WEEK_EDGES="$(node -e 'const w = require(process.argv[1]);
   console.log(start, w.weekStartOf(start - 1));' "$SRC/wall/server.js")"
 MONDAY="${WEEK_EDGES% *}"
 LAST_MONDAY="${WEEK_EDGES#* }"
+NEXT_MONDAY="$(node -e 'const w = require(process.argv[1]);
+  process.stdout.write(String(w.weekEndOf(Math.floor(Date.now() / 1000))));' "$SRC/wall/server.js")"
 # Last week's ledger, as the wall that was running last week left it — plus one
 # entry old enough that Monday's rollover has to prune it, and one line of junk.
 led() {  # $1 = id, $2 = epoch, $3 = repo, $4 = owner, $5 = insertions
@@ -751,6 +760,7 @@ ship_run SHIP-INFRA "$((MONDAY + 80))" dispatch-harness     'done: ready' 150
 ship_run SHIP-FLAT  "$((MONDAY + 90))" olyxbase             'done: ready' flat
 ship_run SHIP-JUNK  "$((MONDAY + 100))" olyxbase            'done: ready' junk
 ship_run SHIP-BARE  "$((MONDAY + 110))" olyxbase            'done: ready' -
+ship_run SHIP-FUTURE "$NEXT_MONDAY"      olyxbase            'done: ready' 90
 ship_run LIVE-W     "$(date +%s)"      olyxbase             'implementing — Opus (Claude sub)' -
 ship_run BURNT-W    "$((MONDAY + 200))" olyxbase            'done: rejected' 120
 ship_run SYNCED-W   "$((MONDAY + 210))" olyxbase 'done: PR branch synced with main, gate green, pushed' 120
@@ -766,6 +776,8 @@ if [ -n "$WEEK_PORT" ]; then
     "SHIP-BIG,SHIP-EDGE,SHIP-FLAT,SHIP-INFRA,SHIP-SPIRE"
   check "district: a run finishing on the stroke of Monday is this week's" \
     "$(city_at SHIP-EDGE at)" "$MONDAY"
+  check "district: a future window is neither rendered nor recorded early" \
+    "$(grep -c 'SHIP-FUTURE' "$WEEK_CITY")" "0"
   check "district: last week's ledger stands behind it as the ghost" \
     "$(printf '%s' "$WEEK_API" | jq '.ghost | length')" "2"
   check "district: only a done: ready builds — a rejection does not" \
@@ -855,6 +867,8 @@ serve "$KEEP" "$ROOT/persist.log" --city "$KEEP_CITY"; KEEP_PORT="$PORT_OUT"
 if [ -n "$KEEP_PORT" ]; then
   check "persist: the ship is discovered and stands" \
     "$(get "$KEEP_PORT" /api/runs | jq -r '[.city[].id] | join(",")')" "PERSIST-1"
+  check "ledger: a missing file is reported once while the wall starts empty" \
+    "$(grep -c 'city ledger missing' "$ROOT/persist.log")" "1"
   # Several more polls: the ledger is append-once, not append-per-poll.
   get "$KEEP_PORT" /api/runs > /dev/null
   get "$KEEP_PORT" /api/runs > /dev/null
@@ -895,6 +909,31 @@ if [ -n "$KEEP_PORT" ]; then
   fi
 else
   bad "persist: server starts against a run about to be cleaned up"
+fi
+
+# A write failure may make the building session-only for a moment, but it must
+# not become session-only forever. Once the path is writable, a later poll
+# persists the pending record without duplicating it.
+echo "== wall: a transient ledger write failure =="
+RETRY="$ROOT/retry"
+RETRY_CITY="$ROOT/retry-city.jsonl"
+mkdir -p "$RETRY/RETRY-1" "$RETRY_CITY"
+printf '%s done: ready\n' "$((MONDAY + 500))" > "$RETRY/RETRY-1/status"
+printf '/tmp/olyxbase-retry-1\n' > "$RETRY/RETRY-1/worktree"
+printf '{"metrics":{"diff":{"insertions":40,"deletions":2}}}\n' > "$RETRY/RETRY-1/result.json"
+serve "$RETRY" "$ROOT/retry.log" --city "$RETRY_CITY"; RETRY_PORT="$PORT_OUT"
+if [ -n "$RETRY_PORT" ]; then
+  check "ledger: a temporary write failure does not hide the building" \
+    "$(get "$RETRY_PORT" /api/runs | jq -r '[.city[].id] | join(",")')" "RETRY-1"
+  rmdir "$RETRY_CITY"
+  get "$RETRY_PORT" /api/runs >/dev/null
+  check "ledger: the next poll retries and persists the pending building" \
+    "$(grep -c 'RETRY-1' "$RETRY_CITY")" "1"
+  get "$RETRY_PORT" /api/runs >/dev/null
+  check "ledger: a successful retry is still append-once" \
+    "$(grep -c 'RETRY-1' "$RETRY_CITY")" "1"
+else
+  bad "ledger: server starts against a temporarily unwritable ledger"
 fi
 
 # An unreadable ledger is an empty plain and a line on stderr — never a crash,

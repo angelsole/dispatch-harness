@@ -519,6 +519,14 @@ function weekStartOf(epoch) {
   return Math.floor(d.getTime() / 1000);
 }
 
+// The exclusive far edge of that local-time window. Advancing the calendar is
+// deliberate: adding seven lots of 24 hours would be wrong across a DST change.
+function weekEndOf(epoch) {
+  const d = new Date(weekStartOf(epoch) * 1000);
+  d.setDate(d.getDate() + 7);
+  return Math.floor(d.getTime() / 1000);
+}
+
 // Building type by repo FAMILY, matched in order — legibility over cuteness. The
 // room should be able to say "that's three agent towers and a valoryx spire"
 // without reading a label. Anything unrecognised is an honest mid-rise rather
@@ -598,13 +606,14 @@ function buildingOf(record) {
 // building.
 //
 // Every read and every write here is best-effort, like the rest of this file. A
-// missing ledger is an empty plain, an unreadable one is an empty plain and one
-// line on stderr, and a corrupt LINE is skipped rather than fatal — nothing about
-// the city may take the wall down.
+// A missing or unreadable ledger is an empty plain and one line on stderr, and a
+// corrupt LINE is skipped rather than fatal — nothing about the city may take
+// the wall down.
 
 const CITY_FILE = process.env.WALL_CITY || path.join(path.dirname(RUNS), 'wall-city.jsonl');
 
 const ledger = new Map();   // run id -> record, in the order the wall saw them
+const pending = new Map();  // records visible now whose append needs retrying
 let loaded = false;
 let prunedFor = 0;          // the week start the ledger was last pruned for
 let writeWarned = false;
@@ -650,8 +659,9 @@ function loadLedger() {
   try {
     text = fs.readFileSync(CITY_FILE, 'utf8');
   } catch (err) {
-    // No ledger yet is the ordinary first run: the week simply starts empty.
-    if (err.code !== 'ENOENT') {
+    if (err.code === 'ENOENT') {
+      console.error('[wall] city ledger missing — starting from an empty plain');
+    } else {
       console.error(`[wall] city ledger unreadable (${err.message}) — starting from an empty plain`);
     }
     return;
@@ -661,19 +671,32 @@ function loadLedger() {
   if (skipped) console.error(`[wall] city ledger: skipped ${skipped} unreadable line(s)`);
 }
 
-function remember(record) {
-  if (ledger.has(record.id)) return;   // one line per run id, ever
-  ledger.set(record.id, record);
-  // The in-memory city is right for this process whether or not the append
-  // lands, and a failed write is warned about once rather than every poll.
+function appendRecord(record) {
   try {
     fs.mkdirSync(path.dirname(CITY_FILE), { recursive: true });
     fs.appendFileSync(CITY_FILE, JSON.stringify(record) + '\n');
+    return true;
   } catch (err) {
     if (!writeWarned) {
       writeWarned = true;
-      console.error(`[wall] city ledger not writable (${err.message}) — this session only`);
+      console.error(`[wall] city ledger not writable (${err.message}) — will retry`);
     }
+    return false;
+  }
+}
+
+function remember(record) {
+  if (ledger.has(record.id)) return;   // one line per run id, ever
+  ledger.set(record.id, record);
+  // Keep the city correct in memory during an I/O failure, but do not mistake
+  // that for permanence: later polls retry until the record reaches disk.
+  if (!appendRecord(record)) pending.set(record.id, record);
+}
+
+function flushPending() {
+  for (const [id, record] of pending) {
+    if (!appendRecord(record)) break;
+    pending.delete(id);
   }
 }
 
@@ -683,17 +706,26 @@ function remember(record) {
 // is rewritten: a wall left up for a month touches this file once a week.
 function pruneLedger(before) {
   const keep = [...ledger.values()].filter((record) => record.epoch >= before);
-  if (keep.length === ledger.size) return;
-  ledger.clear();
-  for (const record of keep) ledger.set(record.id, record);
+  if (keep.length === ledger.size) return true;
   const scratch = CITY_FILE + '.tmp';
   try {
     fs.mkdirSync(path.dirname(CITY_FILE), { recursive: true });
     fs.writeFileSync(scratch, keep.map((record) => JSON.stringify(record) + '\n').join(''));
     fs.renameSync(scratch, CITY_FILE);
-  } catch {
+  } catch (err) {
     try { fs.unlinkSync(scratch); } catch { /* never existed */ }
+    if (!writeWarned) {
+      writeWarned = true;
+      console.error(`[wall] city ledger not writable (${err.message}) — will retry`);
+    }
+    return false;
   }
+  ledger.clear();
+  for (const record of keep) ledger.set(record.id, record);
+  // The rewrite persisted the complete kept map, including any record whose
+  // earlier append was pending, so none of those records needs a later append.
+  pending.clear();
+  return true;
 }
 
 // Discovery. A run dir is how the wall FINDS a ship; the ledger is how it
@@ -703,10 +735,10 @@ function pruneLedger(before) {
 // A result.json that is missing or caught mid-write is skipped silently and
 // retried on the next poll: a building is a record of a real diff, and inventing
 // one from a file we could not read would be worse than waiting a second for it.
-function observe(scanned, weekStart) {
+function observe(scanned, weekStart, weekEnd) {
   for (const { id, dir, current } of scanned) {
     if (current.since === null || !DONE_READY.test(current.stage)) continue;
-    if (current.since < weekStart) continue;
+    if (current.since < weekStart || current.since >= weekEnd) continue;
     if (ledger.has(id)) continue;
     try {
       const result = readJSON(path.join(dir, 'result.json'));
@@ -753,12 +785,13 @@ function plotRank(a, b) {
 // last week yields an empty list, and the page draws no ghost at all.
 function buildCity(records, at) {
   const start = weekStartOf(at);
+  const end = weekEndOf(at);
   const before = weekStartOf(start - 1);
   const city = [];
   const ghost = [];
   for (const record of records) {
-    if (record.epoch >= start) city.push(buildingOf(record));
-    else if (record.epoch >= before) ghost.push(buildingOf(record));
+    if (record.epoch >= start && record.epoch < end) city.push(buildingOf(record));
+    else if (record.epoch >= before && record.epoch < start) ghost.push(buildingOf(record));
   }
   city.sort(plotRank);
   ghost.sort(plotRank);
@@ -774,11 +807,9 @@ function buildCity(records, at) {
 function cityNow(scanned, at) {
   loadLedger();
   const start = weekStartOf(at);
-  observe(scanned, start);
-  if (prunedFor !== start) {
-    prunedFor = start;
-    pruneLedger(weekStartOf(start - 1));
-  }
+  flushPending();
+  observe(scanned, start, weekEndOf(at));
+  if (prunedFor !== start && pruneLedger(weekStartOf(start - 1))) prunedFor = start;
   return buildCity([...ledger.values()], at);
 }
 
@@ -922,6 +953,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  weekStartOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
+  weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
   CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
 };

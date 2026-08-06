@@ -746,10 +746,10 @@ harmless: the same ship discovered twice is still one building, and the first
 sighting is the one that stands.
 
 Monday's rollover prunes anything older than the two windows the wall can draw,
-rewriting the file through a temp file and a rename. A missing ledger is an
-empty plain; an unreadable one is an empty plain and one line on stderr; a
-corrupt *line* is skipped rather than fatal. Nothing about the city can take the
-wall down — but **deleting the ledger razes the city**, and nothing else does.
+rewriting the file through a temp file and a rename. A missing or unreadable
+ledger is an empty plain and one line on stderr; a corrupt *line* is skipped
+rather than fatal. Nothing about the city can take the wall down — but
+**deleting the ledger razes the city**, and nothing else does.
 It is the only file the wall writes; it is not a schema, and nothing else in the
 harness reads it.
 
