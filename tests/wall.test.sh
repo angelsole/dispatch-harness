@@ -605,6 +605,8 @@ const ledger = w.parseLedger([
   JSON.stringify({ id: 'MIR-1', epoch: 400, repo: 'olyxbase', owner: 'emre', insertions: 99, deletions: 9 }),
   JSON.stringify({ epoch: 200, repo: 'olyxbase' }),
   JSON.stringify({ id: 'MIR-3', repo: 'olyxbase' }),
+  JSON.stringify({ id: 'MIR-BAD-EPOCH', epoch: null, repo: 'olyxbase' }),
+  JSON.stringify({ id: { nested: true }, epoch: 200, repo: 'olyxbase' }),
   JSON.stringify({ id: 'MIR-2', epoch: 200, repo: 'olyx-agents', owner: 'bot', insertions: 5, deletions: 0 }),
 ].join('\n'));
 const kept = ledger.records.get('MIR-1') || {};
@@ -632,6 +634,15 @@ console.log(JSON.stringify({
     && w.storeysOf({ insertions: 'nonsense', deletions: null }) === w.STOREYS_MIN,
   storeysRise: storeys(20) > storeys(0) && storeys(400) > storeys(20),
   storeysCapped: storeys(400000) === storeys(2000) && storeys(2000) === w.STOREYS_MAX,
+  resultShapes: [
+    { metrics: { diff: { insertions: 0, deletions: null } } },
+    true,
+    [],
+    {},
+    { metrics: { diff: {} } },
+    { metrics: { diff: { insertions: '12', deletions: 1 } } },
+    { metrics: { diff: { insertions: -1, deletions: 1 } } },
+  ].map((result) => Boolean(w.shippedDiffOf(result))).join(','),
   plotStable: JSON.stringify(w.plotOf('OLYX-1598')) === JSON.stringify(w.plotOf('OLYX-1598')),
   plotDiffers: JSON.stringify(w.plotOf('OLYX-1598')) !== JSON.stringify(w.plotOf('OLYX-1599')),
   plotInFrame: [...ids, 'adhoc-thing'].every((id) => {
@@ -678,12 +689,14 @@ check "height: an unreadable diff is the shortest building, never an invented on
   "$(city_of storeysFloor)" "true"
 check "height: more lines is a taller building" "$(city_of storeysRise)" "true"
 check "height: and a monster PR stops growing"  "$(city_of storeysCapped)" "true"
+check "tolerance: only a result-shaped JSON value supplies a building diff" \
+  "$(city_of resultShapes)" "true,false,false,false,false,false,false"
 check "plot: the same run stands on the same spot, always" "$(city_of plotStable)" "true"
 check "plot: two runs do not pile onto one"      "$(city_of plotDiffers)" "true"
 check "plot: every building is inside the frame" "$(city_of plotInFrame)" "true"
 check "plot: a ticket range spreads across the district"  "$(city_of plotSpread)" "true"
 check "plot: and across all three depth bands"            "$(city_of depthSpread)" "true"
-check "ledger: junk lines are skipped, never fatal" "$(city_of ledgerSkipped)" "3"
+check "ledger: junk lines are skipped, never fatal" "$(city_of ledgerSkipped)" "5"
 check "mirror: one line per run id survives the read" \
   "$(city_of ledgerKept)" "MIR-1,MIR-2"
 check "mirror: and the first sighting is the one that stands" \
@@ -738,8 +751,8 @@ led GHOST-MON "$LAST_MONDAY"          olyx-agents angel 90
 led ANCIENT-1 "$((LAST_MONDAY - 1))"  olyxbase    angel 500
 printf 'half a line written when the power went\n' >> "$WEEK_CITY"
 # $1 = id, $2 = finish epoch, $3 = project ('-' = unreadable), $4 = stage,
-# $5 = insertions ('-' = no result.json, 'junk' = caught mid-write, 'flat' = a
-# well-formed result.json that recorded no diff)
+# $5 = insertions ('-' = no result.json, 'junk' = caught mid-write, 'shape' =
+# valid JSON but not a result document, 'flat' = a zero-line diff)
 ship_run() {
   mkdir -p "$WEEK/$1"
   printf '%s %s\n' "$2" "$4" > "$WEEK/$1/status"
@@ -748,7 +761,9 @@ ship_run() {
   case "$5" in
     -) ;;
     junk) printf '{"metrics": {"diff": {"inser' > "$WEEK/$1/result.json" ;;
-    flat) printf '{"status":"ready"}\n' > "$WEEK/$1/result.json" ;;
+    shape) printf 'true\n' > "$WEEK/$1/result.json" ;;
+    flat) printf '{"metrics":{"diff":{"insertions":0,"deletions":0}}}\n' \
+      > "$WEEK/$1/result.json" ;;
     *) printf '{"metrics":{"diff":{"insertions":%s,"deletions":0}}}\n' "$5" \
          > "$WEEK/$1/result.json" ;;
   esac
@@ -760,6 +775,7 @@ ship_run SHIP-INFRA "$((MONDAY + 80))" dispatch-harness     'done: ready' 150
 ship_run SHIP-FLAT  "$((MONDAY + 90))" olyxbase             'done: ready' flat
 ship_run SHIP-JUNK  "$((MONDAY + 100))" olyxbase            'done: ready' junk
 ship_run SHIP-BARE  "$((MONDAY + 110))" olyxbase            'done: ready' -
+ship_run SHIP-SHAPE "$((MONDAY + 120))" olyxbase            'done: ready' shape
 ship_run SHIP-FUTURE "$NEXT_MONDAY"      olyxbase            'done: ready' 90
 ship_run LIVE-W     "$(date +%s)"      olyxbase             'implementing — Opus (Claude sub)' -
 ship_run BURNT-W    "$((MONDAY + 200))" olyxbase            'done: rejected' 120
@@ -803,7 +819,9 @@ if [ -n "$WEEK_PORT" ]; then
     "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="SHIP-JUNK")] | length')" "0"
   check "tolerance: neither does a run with no result.json at all" \
     "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="SHIP-BARE")] | length')" "0"
-  check "tolerance: a readable result.json with no diff is the shortest building" \
+  check "tolerance: valid JSON without the result schema is still malformed" \
+    "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="SHIP-SHAPE")] | length')" "0"
+  check "tolerance: a recorded zero-line diff is the shortest building" \
     "$(city_at SHIP-FLAT storeys)" "3"
   check "sign: a building carries its dispatcher, and their kind" \
     "$(city_at SHIP-EDGE owner),$(city_at SHIP-EDGE ownerKind)" "reinier,human"

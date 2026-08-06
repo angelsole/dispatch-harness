@@ -771,7 +771,7 @@ itself — and Monday 00:00 empties the plain again.
 | --- | --- |
 | A building | One run that shipped this week. It never leaves before Monday. |
 | Its shape | The repo family: `olyx-agents` is residential, `olyxbase` / `olyx-dashboard` are industrial blocks, `valoryx-*` is an observatory spire, `dispatch-harness` is infrastructure, anything else is an honest mid-rise. |
-| Its height | The run's diff (insertions + deletions), log-scaled and capped — a monster PR reads big without dwarfing the block. A run whose `result.json` recorded no diff is the shortest building there is; a run whose `result.json` could not be read is *not a building*, because a height invented from a file the wall could not read is the one thing that would make the city lie. |
+| Its height | The run's diff (insertions + deletions), log-scaled and capped — a monster PR reads big without dwarfing the block. A recorded zero-line diff is the shortest building there is; an unreadable or structurally malformed `result.json` is *not a building*, because a height invented from a result the wall could not trust is the one thing that would make the city lie. |
 | Where it stands | Hashed from the run id, so the skyline is identical on every screen and after every reload. |
 | A small lit sign | Who dispatched it, in the same crew tint as their runs' cars — cooling to the district's neutral within six hours of landing. That is the whole of the attribution. |
 | Cars, walkers, lit shop windows, a tram | The week's momentum: one mover per three ships, the shop windows at the tenth, a tram line at the twentieth. |

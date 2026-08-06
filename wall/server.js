@@ -123,6 +123,22 @@ function readJSON(file) {
   }
 }
 
+// A shipped building needs the diff shape promised by result.json. JSON.parse
+// accepting a value does not make it a valid result document: `true`, `[]`, or
+// an object caught between schema fields must be retried just like truncated
+// JSON. Zero-line diffs remain valid (and become the minimum-height building).
+function shippedDiffOf(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const metrics = result.metrics;
+  if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) return null;
+  const diff = metrics.diff;
+  if (!diff || typeof diff !== 'object' || Array.isArray(diff)) return null;
+  if (!Object.hasOwn(diff, 'insertions') || !Object.hasOwn(diff, 'deletions')) return null;
+  const valid = (value) => value === null ||
+    (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  return valid(diff.insertions) && valid(diff.deletions) ? diff : null;
+}
+
 // --- the stage-text -> actor contract ----------------------------------------
 // CONTRACT: mirrors harness_actor() in statusline.sh, which is the single source
 // of truth for the stage strings run-task.sh's stage() writes. Prefix matching,
@@ -623,9 +639,11 @@ let writeWarned = false;
 // field missing should cost that building a detail, not its place in the city.
 function recordOf(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const id = String(raw.id || '').trim();
-  const epoch = Number(raw.epoch);
-  if (id === '' || !Number.isFinite(epoch)) return null;
+  if (typeof raw.id !== 'string' || typeof raw.epoch !== 'number' ||
+      !Number.isFinite(raw.epoch)) return null;
+  const id = raw.id.trim();
+  const epoch = raw.epoch;
+  if (id === '') return null;
   const count = (v) => Math.max(0, Number(v) || 0);
   return {
     id,
@@ -732,9 +750,10 @@ function pruneLedger(before) {
 // remembers one. Only this week's finishes are ever recorded — the ledger is
 // what the wall witnessed, and it does not backfill a history it did not see.
 //
-// A result.json that is missing or caught mid-write is skipped silently and
-// retried on the next poll: a building is a record of a real diff, and inventing
-// one from a file we could not read would be worse than waiting a second for it.
+// A result.json that is missing, caught mid-write, or does not have the result
+// schema is skipped silently and retried on the next poll: a building is a
+// record of a real diff, and inventing one from a file we could not read would
+// be worse than waiting a second for it.
 function observe(scanned, weekStart, weekEnd) {
   for (const { id, dir, current } of scanned) {
     if (current.since === null || !DONE_READY.test(current.stage)) continue;
@@ -742,8 +761,8 @@ function observe(scanned, weekStart, weekEnd) {
     if (ledger.has(id)) continue;
     try {
       const result = readJSON(path.join(dir, 'result.json'));
-      if (!result) continue;
-      const diff = (result.metrics || {}).diff || {};
+      const diff = shippedDiffOf(result);
+      if (!diff) continue;
       remember(recordOf({
         id,
         epoch: current.since,
@@ -954,5 +973,5 @@ if (require.main === module) {
 
 module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
-  CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
+  shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
 };
