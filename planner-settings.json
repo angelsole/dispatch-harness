@@ -1,0 +1,62 @@
+{
+  "_comment": [
+    "Tool policy for the self-briefing planner quartermaster.sh runs unattended.",
+    "Narrower than worker-settings.json on purpose: the planner reads code and",
+    "writes exactly one file (the brief). It never edits a repo, never commits,",
+    "and never touches a remote.",
+    "",
+    "This matters more here than for the implementer, because the planner's",
+    "prompt contains a Linear ticket description — text any workspace member can",
+    "edit. An allow-list is what keeps a poisoned description from becoming",
+    "actions: everything absent from `allow` fails immediately rather than",
+    "prompting, so nothing blocks waiting for a human who is asleep.",
+    "",
+    "Edit/MultiEdit are deliberately absent. Write is the only mutation the",
+    "planner needs, and the brief path is dictated to it."
+  ],
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Task",
+      "TodoWrite",
+      "Write",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "Bash(sed -n:*)",
+      "Bash(jq:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git branch:*)",
+      "Bash(git rev-parse:*)"
+    ],
+    "deny": [
+      "Edit",
+      "MultiEdit",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git reset:*)",
+      "Bash(gh:*)",
+      "Bash(curl:*)",
+      "Bash(ssh:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(rm:*)"
+    ]
+  }
+}
