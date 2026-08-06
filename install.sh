@@ -47,9 +47,9 @@ STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 # Runtime files installed into HARNESS_DIR. `wall` is a directory: the wall's
 # page and server travel with wall.sh.
 FILES=(
-  mirror.sh run-task.sh schedule.sh sync-pr.sh status.sh statusline.sh metrics.sh attach.sh
-  cleanup.sh preview.sh station.sh wall.sh wall demo-auth.sh auth-capture.py
-  repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
+  mirror.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
+  metrics.sh attach.sh cleanup.sh preview.sh station.sh wall.sh wall demo-auth.sh
+  auth-capture.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
   brief-template.md
 )
 

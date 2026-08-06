@@ -150,6 +150,7 @@ claim() {  # $1 = label, $2 = file, $3 = literal the docs must still contain
   if grep -qF -- "$3" "$2"; then ok "claim: $1 mentions $3"; else bad "claim: $1 no longer mentions $3"; fi
 }
 claim README      "$README"    'statusline.sh'
+claim README      "$README"    'quartermaster.sh'
 claim README      "$README"    '--runs-only'
 claim README      "$README"    'status.sh --watch'
 claim SKILL.md    "$SKILL"     'statusline.sh'

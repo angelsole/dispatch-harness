@@ -3,6 +3,9 @@ notify.conf
 demo.conf.sh
 repos.local.sh
 
+# Credentials that live in HARNESS_DIR, which may be this checkout
+linear-api-key
+
 # Runtime state — never belongs in the repo. Anchored at the root: real run dirs
 # only ever land here when HARNESS_DIR points at this checkout, and an unanchored
 # `runs/` would also swallow the wall's committed fixtures (wall/fixtures/runs).
