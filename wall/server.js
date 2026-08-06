@@ -127,6 +127,7 @@ const ACTORS = [
   [/^push/, 'PR', 'pr'],
   [/^demo/, 'demo', 'demo'],
   [/^(setup|installing)/, 'setup', 'setup'],
+  [/^deferred:/, 'deferred', 'deferred'],
   [/^(base sync|already up)/, 'sync', 'sync'],
   [/^sync failed/, 'failed', 'failed'],
   [/^done:/, 'done', 'done'],
@@ -158,7 +159,7 @@ function stateOf(stage) {
 const FLOORS = ['SETUP', 'IMPLEMENT', 'GATE', 'REVIEW', 'DEMO', 'PUSH'];
 const FLOOR_OF = {
   setup: 0, sync: 0, failed: 0, unknown: 0,
-  opus: 1, alarm: 1,
+  opus: 1, alarm: 1, deferred: 1,
   gate: 2,
   codex: 3, skipped: 3,
   demo: 4,
@@ -171,7 +172,7 @@ const FLOOR_OF = {
 // status, sync-pr.sh's prose "done: PR branch synced …") made it to the top.
 const DONE_FLOOR = [
   [/setup_failed/, 0],
-  [/implementer_failed/, 1],
+  [/implementer_failed|capacity_failed/, 1],
   [/gate_failed/, 2],
   [/rejected/, 3],
 ];

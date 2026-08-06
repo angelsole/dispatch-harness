@@ -37,6 +37,7 @@
   --setup: #3f8f9c;
   --sync: #3f8f9c;
   --skipped: #6b7a80;
+  --deferred: #c8a24a;
   --alarm: #ff2f45;
   --done: #3fd984;
   --failed: #ff5a46;
@@ -845,6 +846,7 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
 .shaft[data-actor="setup"] { --accent: var(--setup); }
 .shaft[data-actor="sync"] { --accent: var(--sync); }
 .shaft[data-actor="skipped"] { --accent: var(--skipped); }
+.shaft[data-actor="deferred"] { --accent: var(--deferred); }
 .shaft[data-actor="done"] { --accent: var(--done); }
 .shaft[data-actor="failed"] { --accent: var(--failed); }
 .shaft[data-actor="unknown"] { --accent: var(--unknown); }
