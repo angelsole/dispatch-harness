@@ -2,7 +2,7 @@
 # Install the dispatch harness.
 #
 # Symlinks (default) or copies the runtime scripts into ~/.claude/harness and
-# the planner skill into ~/.claude/skills/dispatch/SKILL.md. Idempotent: safe to
+# the planner skills into ~/.claude/skills/<name>/SKILL.md. Idempotent: safe to
 # re-run. Your local config (notify.conf, repos.local.sh, demo.conf.sh) is
 # seeded from the matching *.example ONLY when absent — an existing file is
 # never overwritten.
@@ -40,7 +40,8 @@ done
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
-SKILL_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}/dispatch"
+SKILLS_ROOT="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+SKILLS=(dispatch briefed-dispatch)
 SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 
@@ -50,7 +51,7 @@ FILES=(
   mirror.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
   metrics.sh attach.sh cleanup.sh preview.sh station.sh wall.sh wall demo-auth.sh
   auth-capture.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
-  brief-template.md
+  planner-settings.json brief-template.md
 )
 
 link_or_copy() {  # $1 = source path, $2 = dest path
@@ -129,7 +130,7 @@ wire_statusline() {
   echo "      backup: $backup"
 }
 
-mkdir -p "$HARNESS_DIR" "$SKILL_DIR"
+mkdir -p "$HARNESS_DIR"
 
 for f in "${FILES[@]}"; do
   link_or_copy "$SRC/$f" "$HARNESS_DIR/$f"
@@ -140,8 +141,11 @@ for f in "${FILES[@]}"; do
   echo "$MODE  $HARNESS_DIR/$f"
 done
 
-link_or_copy "$SRC/skills/dispatch/SKILL.md" "$SKILL_DIR/SKILL.md"
-echo "$MODE  $SKILL_DIR/SKILL.md"
+for s in "${SKILLS[@]}"; do
+  mkdir -p "$SKILLS_ROOT/$s"
+  link_or_copy "$SRC/skills/$s/SKILL.md" "$SKILLS_ROOT/$s/SKILL.md"
+  echo "$MODE  $SKILLS_ROOT/$s/SKILL.md"
+done
 
 # Seed local config from *.example, never clobbering an existing file.
 seed() {  # $1 = example file, $2 = dest basename

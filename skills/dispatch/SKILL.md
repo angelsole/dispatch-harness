@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Dispatch work through the multi-model harness — the orchestrator (you) researches and writes a task brief, then Opus (Claude subscription) implements in a git worktree, a deterministic test gate runs, Codex (ChatGPT subscription) optionally reviews and fixes when the codex CLI is installed, and a draft PR opens. Takes either an existing ticket ID or a free-form description of what to build (optionally creating a ticket in your issue tracker). Use when the user says /dispatch <ticket-or-description>, "dispatch this", or asks to run the planner/implementer/reviewer pipeline.
+description: Dispatch work through the multi-model harness — the orchestrator (you) researches and writes a task brief, then Opus (Claude subscription) implements in a git worktree, a deterministic test gate runs, Codex (ChatGPT subscription) optionally reviews and fixes when the codex CLI is installed, and a draft PR opens. A ticket that spans repos (frontend + backend) fans out into one run per repo, dispatched together; when every PR is ready the ticket gets the PR links and moves to In Review. Takes either an existing ticket ID or a free-form description of what to build (optionally creating a ticket in your issue tracker). Use when the user says /dispatch <ticket-or-description>, "dispatch this", or asks to run the planner/implementer/reviewer pipeline.
 ---
 
 # Dispatch pipeline
@@ -21,8 +21,14 @@ The argument is either an **existing ticket ID** or a **free-form description**.
   repo. The run ID is decided at approval time (step 3): if a ticket gets
   created, its ID; otherwise `adhoc-<short-slug>`.
 
-Either way, resolve the target repo to an absolute path. If it's ambiguous
-(e.g. frontend vs backend), ask the user — one question, recommendation first.
+Either way, resolve **every repo the change touches** to an absolute path. A
+ticket that spans repos (an API change plus the screen that consumes it) is one
+dispatch producing one run — and one PR — per repo: never dispatch one repo and
+come back later to ask about the other. Run IDs: single repo → the ticket ID;
+multiple repos → `<TICKET>-<suffix>` per repo (e.g. `PROJ-123-api`,
+`PROJ-123-web`; letters, digits, dot, dash, underscore only — the ID becomes a
+run-dir name). Ask the user only when research genuinely cannot settle which
+repo(s) are in scope — one question, recommendation first.
 
 If the target repo has no pinned entry in `repos.local.sh` (it will fall back to
 bare lockfile detection, often a weak `GATE_CMD`), suggest the user run
@@ -59,8 +65,11 @@ unmounts nothing.
 
 ## 3. Brief
 
-Write the brief to `~/.claude/harness/runs/<RUN-ID>/brief.md` following
-`~/.claude/harness/brief-template.md`. All sections are mandatory except two
+Write one brief per run to `~/.claude/harness/runs/<RUN-ID>/brief.md` following
+`~/.claude/harness/brief-template.md`. When runs span repos, the workers never
+meet — the briefs are their only handshake: decide the cross-repo interface
+yourself (routes, payload shapes, field names, error semantics) and write the
+*identical* contract section into every brief that touches it. All sections are mandatory except two
 delete-if-unused ones: **Attached specs**, which you keep only when you
 converted document attachments above (one line per file in `.harness/specs/`
 saying what the implementer should take from it), and the **Demo storyboard**,
@@ -73,7 +82,10 @@ The first
 (`<type>/<TICKET>-<slug>` when a ticket exists, `<type>/<slug>` for ad-hoc work;
 base per repo — usually `staging`).
 
-**Show the brief to the user and get explicit approval before dispatching.**
+**Show the brief(s) to the user and get explicit approval before dispatching.**
+For a multi-repo ticket that is one approval covering the whole set — approved
+means every run launches together (parallel worktrees), not one now and a
+question later.
 
 For free-form requests, the approval question also settles tracking: if an
 issue-tracker MCP is configured, offer to create the ticket (description from
@@ -131,12 +143,21 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   (frontend), also offer a live preview BEFORE
   approving: `~/.claude/harness/preview.sh <RUN-ID>` starts the dev server
   inside the worktree (deps and .env are already there). If it satisfies the
-  brief: `gh pr ready <pr_url>`, comment on the ticket if an issue-tracker MCP
-  is available, then run `~/.claude/harness/cleanup.sh <RUN-ID>` — it removes the
-  worktree and local branch (the PR lives on origin). Summarize for the user,
-  stating which model did what. If not: leave the
-  PR draft, write a sharper brief (same file — the worktree is reused), and
+  brief: `gh pr ready <pr_url>`, then run `~/.claude/harness/cleanup.sh
+  <RUN-ID>` — it removes the worktree and local branch (the PR lives on
+  origin). Summarize for the user, stating which model did what. If not: leave
+  the PR draft, write a sharper brief (same file — the worktree is reused), and
   re-dispatch.
+
+  **Close the loop on the ticket.** When every run for the ticket has its PR
+  ready (a single-repo ticket: that one PR), and an issue-tracker MCP is
+  available: put the PR links on the ticket — attachments if the MCP supports
+  them, otherwise one comment listing `repo — PR URL` per run, never with AI
+  attribution — and move the ticket to the team's **In Review** state (fetch
+  the team's actual status names rather than assuming the label). If some runs
+  are still failing or waiting, comment the finished PRs with a note naming
+  what is missing but leave the ticket state alone — In Review with half its
+  PRs is a lie the reviewer discovers later.
 - **needs_input** — the implementer hit a fork the brief didn't cover and
   stopped instead of guessing. Read `QUESTIONS.md` in the run dir. **Triage
   before involving the user**: questions your research already answers

@@ -274,9 +274,27 @@ approval. On approval it launches the run in the background:
 ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
 ```
 
-When the run finishes you get a verdict and, if it's `ready`, a draft PR. See
+When the run finishes you get a verdict and, if it's `ready`, a draft PR. A
+ticket that spans repos (an API change plus the screen that consumes it) fans
+out into one run — and one PR — per repo, dispatched together; when every PR is
+ready the planner puts the links on the ticket and moves it to In Review. See
 [`skills/dispatch/SKILL.md`](skills/dispatch/SKILL.md) for the full planner
 protocol.
+
+For a ticket that is already written well enough to build from, skip the
+approval pause entirely:
+
+```
+/briefed-dispatch <TICKET>
+```
+
+The ticket is treated as the approved artefact: the planner researches every
+repo it touches, writes the briefs (recording the decisions it took), launches
+all runs immediately, answers worker questions itself where the ticket or the
+codebase answers them, and involves you only for genuine product forks. See
+[`skills/briefed-dispatch/SKILL.md`](skills/briefed-dispatch/SKILL.md). Thin
+tickets and free-form work stay with `/dispatch` — its approval step is the
+safety net this skill deliberately removes.
 
 ### Scheduling a run for later
 
