@@ -60,6 +60,9 @@ printf 'lin_api_TESTKEY\n' > "$KEYFILE"; chmod 600 "$KEYFILE"
 printf 'HARNESS_NTFY_TOPIC="qm-test-topic"\n' > "$HARNESS/notify.conf"
 
 cp "$SRC/quartermaster.sh" "$SRCDIR/quartermaster.sh"
+# The capacity accountant is sourced from beside the script, like schedule.sh is
+# executed from beside it.
+cp "$SRC/capacity.sh" "$SRCDIR/capacity.sh"
 chmod +x "$SRCDIR/quartermaster.sh"
 
 git init -q "$ROOT/greenapp" >/dev/null 2>&1
