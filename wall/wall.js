@@ -33,6 +33,13 @@
   const GHOST_W = 40;
   const GHOST_BASE_H = 31;
   const GHOST_STOREY_H = 17;
+  // The street's ceiling, held on the page as well as on the server: a snapshot
+  // is untrusted input, and a wall that runs for a month must never be one bad
+  // number away from putting ten thousand walkers on a compositor.
+  const MAX_WALKERS = 6;
+  const MAX_VEHICLES = 3;
+  const GAP_FLOOR = 8;    // no plan may put cars past this close together
+  const OCCUPIED = 3;     // windows per building keeping their own hours
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -60,7 +67,8 @@
   const district = document.getElementById('district');
   const ghostLayer = document.getElementById('ghost');
   const life = document.getElementById('life');
-  const movers = document.getElementById('movers');
+  const crowd = document.getElementById('crowd');
+  const road = document.getElementById('road');
   const rest = document.getElementById('rest');
   const counts = document.getElementById('counts');
   const clock = document.getElementById('clock');
@@ -291,12 +299,27 @@
     const mass = el('i', 'block__mass');
     // The facade grid is the towers' own, wholesale — one source of truth for
     // what a lit facade looks like, at the district's smaller storey pitch.
-    mass.append(el('i', 'tower__windows block__windows'), el('i', 'block__shop'));
+    mass.append(el('i', 'tower__windows block__windows'));
+    // Occupancy: a fixed handful of windows on this facade that keep their own
+    // hours, fading on and off over minutes. Fixed, because the element count on
+    // a wall that runs for a month is a budget, not a detail.
+    const occupancy = el('i', 'block__occupancy');
+    const occupants = [];
+    for (let i = 0; i < OCCUPIED; i++) {
+      const pane = el('i');
+      occupants.push(pane);
+      occupancy.append(pane);
+    }
+    // The ground floor: a lit shopfront row under every building, and on some of
+    // them the small neon that says which shop it is.
+    const shop = el('i', 'block__shop');
+    shop.append(el('i', 'block__neon'));
+    mass.append(occupancy, shop);
     // The sign is the only thing on a building that names anybody: a small neon
     // in the dispatcher's own crew tint, cooling to the district's neutral
     // within --sign-life of landing. No zones, no lanes, nothing cumulative.
     root.append(el('i', 'block__crown'), mass, el('i', 'block__sign'));
-    return { root };
+    return { root, occupants };
   }
 
   function paintStaticSign(B, b) {
@@ -317,6 +340,21 @@
     const age = paintStaticSign(B, b);
     B.root.style.setProperty('--age', String(age));
     B.root.title = b.id + (b.project ? ' — ' + b.project : '');
+    // And its nightlife, written in the same breath and for the same reason:
+    // which shop is under this building and which of its windows are still up is
+    // a fact about the run id, so it survives a reload rather than being redealt.
+    const night = storefrontOf(b.id);
+    B.root.dataset.shop = night.shop;
+    B.root.dataset.neon = night.neon ? '1' : '0';
+    B.root.style.setProperty('--bay', String(night.bay));
+    B.root.style.setProperty('--flicker', String(night.flicker));
+    night.windows.forEach((w, i) => {
+      const node = B.occupants[i];
+      if (!node) return;
+      node.style.setProperty('--wx', String(w.col));
+      node.style.setProperty('--wy', String(w.row));
+      node.style.setProperty('--phase', String(w.phase));
+    });
   }
 
   function renderDistrict() {
@@ -332,7 +370,6 @@
       if (!B) { B = makeBlock(); blockEls.set(b.id, B); paintBlock(B, b); }
       cursor = place(district, B.root, cursor);
     }
-    district.dataset.shops = week.life && week.life.shops ? '1' : '0';
   }
 
   // Last week, flattened: a height and a plot, drawn once per change of shape.
@@ -357,25 +394,91 @@
     }
   }
 
-  // Ambient life, scaled to the week's ship count by the server. Movers are
-  // created and removed rather than hidden, so an empty week costs the page
-  // nothing, and their lanes come from their index alone — two screens standing
-  // side by side have the same street.
+  // --- nightlife ----------------------------------------------------------------
+  // What is under a building at one in the morning. Every one of these is a pure
+  // function of the run id, planned the way the server plans a plot: a polynomial
+  // over the id put through murmur3's finaliser, so OLYX-1631 and OLYX-1632 do
+  // not end up with the same shop, and the noodle bar is on the same corner after
+  // a reload, on the second TV and on a colleague's laptop.
+  //
+  // The whole vocabulary of the street is four signs. More would be a theme park;
+  // fewer would be a pattern the room notices.
+  const SHOP_KINDS = ['noodle', 'diner', 'arcade', 'repair'];
+  const BAYS = 5;            // shopfronts along a building's base
+  const FLICKER_SPREAD = 89; // seconds of stagger, so no two neons ever stutter together
+
+  function seedOf(text) {
+    let h = 0;
+    for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) >>> 0;
+    let v = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+    v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35) >>> 0;
+    return (v ^ (v >>> 16)) >>> 0;
+  }
+
+  // Two draws, because a facade's hours have nothing to do with what is selling
+  // downstairs, and one 32-bit word cannot carry both without the slices sharing
+  // bits — which is how a district ends up with every arcade lit on floor three.
+  function storefrontOf(id) {
+    const street = seedOf(id);
+    const hours = seedOf(id + '·hours');
+    const pick = (seed, shift, mod) => (seed >>> shift) % mod;
+    const windows = [];
+    for (let i = 0; i < OCCUPIED; i++) {
+      windows.push({
+        col: pick(hours, i * 9, 7),
+        row: pick(hours, i * 9 + 3, 5),
+        phase: pick(hours, i * 9 + 6, 8),
+      });
+    }
+    return {
+      shop: SHOP_KINDS[pick(street, 0, SHOP_KINDS.length)],
+      // One building in three carries a sign. All of them would be Piccadilly.
+      neon: pick(street, 2, 3) === 0,
+      bay: pick(street, 4, BAYS),
+      flicker: pick(street, 7, FLICKER_SPREAD),
+      windows,
+    };
+  }
+
+  // --- the street ---------------------------------------------------------------
+  // The population, scaled by the server's plan and clamped again here. Walkers
+  // and cars are created and removed rather than hidden, so a plain with nothing
+  // on it costs the page nothing, and every lane and phase comes from the slot
+  // index alone — two screens standing side by side have the same street.
+
+  function populate(parent, cls, want, dress) {
+    while (parent.childElementCount > want) parent.lastElementChild.remove();
+    while (parent.childElementCount < want) {
+      const slot = parent.childElementCount;
+      const node = el('i', cls);
+      node.style.setProperty('--slot', String(slot));
+      dress(node, slot);
+      parent.append(node);
+    }
+  }
+
+  const bounded = (value, cap) => Math.max(0, Math.min(cap, Math.floor(Number(value) || 0)));
+
   function renderLife() {
     const plan = week.life || {};
-    const want = Math.max(0, Math.floor(Number(plan.movers) || 0));
-    while (movers.childElementCount > want) movers.lastElementChild.remove();
-    while (movers.childElementCount < want) {
-      const slot = movers.childElementCount;
-      const mover = el('i', 'life__mover');
-      mover.dataset.kind = slot % 2 ? 'robot' : 'car';
-      mover.style.setProperty('--lane', ((7 + slot * 23) % 88) + '%');
-      mover.style.setProperty('--slot', String(slot));
-      mover.append(el('i'));
-      movers.append(mover);
-    }
+    populate(crowd, 'life__walker', bounded(plan.walkers, MAX_WALKERS), (node, slot) => {
+      // Two in three are people; the rest are the small service robots that do
+      // the other half of a night shift. They cross the other way.
+      node.dataset.kind = slot % 3 === 2 ? 'robot' : 'person';
+      node.style.setProperty('--depth', String(slot % 4));
+      node.append(el('i'));
+    });
+    populate(road, 'life__car', bounded(plan.vehicles, MAX_VEHICLES), (node, slot) => {
+      node.dataset.way = slot % 2 ? 'west' : 'east';
+    });
+    // How long the street waits between passes. A car is punctuation on a quiet
+    // week and traffic on a very good one; the page only ever slows it down.
+    life.style.setProperty('--gap', Math.max(GAP_FLOOR, Number(plan.gap) || GAP_FLOOR) + 's');
     life.dataset.tram = plan.tram ? '1' : '0';
-    life.hidden = want === 0 && !plan.tram;
+    life.dataset.mall = plan.mall ? '1' : '0';
+    // The whole point of the pass: nightlife is not gated on a milestone any
+    // more. One building standing is all it takes for the ground floor to be lit.
+    life.hidden = blocks.length === 0;
   }
 
   // --- the brief plate --------------------------------------------------------
