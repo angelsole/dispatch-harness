@@ -139,6 +139,11 @@
        different speeds — the parallax that makes a flat painting deep. The
        further the plane, the slower and hazier. -->
 
+  <!-- Last week's city: ONE flat low-alpha silhouette behind every painted
+       skyline plane. An outline and a height, nothing else — no windows, signs,
+       or types. An empty last week leaves this group empty and hidden. -->
+  <g class="ghost" id="ghost" aria-hidden="true" hidden></g>
+
   <!-- far skyline: flat, hazy, pinpricked with windows -->
   <g class="sky__far">
     <g fill="url(#far)" opacity="0.85">
@@ -177,6 +182,12 @@
   </g>
 </svg>
 
+<!-- This week's shipped work, standing. One permanent building per run that
+     reached `done: ready` since Monday 00:00 — type from the repo family,
+     height from the diff, plot from the run id. wall.js builds it from
+     /api/stream; it lands with one settle and is furniture after that. -->
+<div class="district" id="district" aria-hidden="true" data-shops="0"></div>
+
 <!-- The cold wash the sky picks up either side of local sunrise. wall.js sets
      its opacity off the client's own clock; at every other hour it is nothing. -->
 <div class="dawn" aria-hidden="true"></div>
@@ -202,6 +213,15 @@
   <i class="street__car street__car--b"></i>
 </div>
 
+<!-- Population is momentum: the district's ambient life scales with how much the
+     week has shipped — a mover per few ships, a tram line once it has been a
+     very good week. wall.js owns how many; the milestones are the server's. -->
+<div class="life" id="life" aria-hidden="true" data-tram="0" hidden>
+  <i class="life__rail"></i>
+  <i class="life__tram"></i>
+  <div class="life__movers" id="movers"></div>
+</div>
+
 <header class="hud">
   <span class="hud__mark">◤</span>
   <span class="hud__name">GHOST SHIFT</span>
@@ -214,14 +234,19 @@
 <!-- The city: one tower per project, built by wall.js from /api/stream. -->
 <main class="city" id="city" data-empty="1"></main>
 
-<!-- When no work is standing the city sleeps — and says so, or a quiet night
-     reads as a dead dashboard. Visibility is pure CSS off the same data-empty
-     flag the city already carries; wall.js never touches this element. -->
+<!-- The full plate is for a truly empty week: nothing live AND nothing shipped
+     since Monday. Once the district has buildings in it, "no live runs" is a
+     normal Thursday evening and this would be a lie — the one-line status below
+     takes over instead. wall.js sets body[data-idle]; the CSS does the rest. -->
 <div class="idle" aria-hidden="true">
   <div class="idle__label">MU/TH/UR 6000 · OVERNIGHT LOG</div>
   <div class="idle__title">SHIFT STANDING BY</div>
   <div class="idle__note">NO ACTIVE DISPATCH · AWAITING WORK ORDER<span class="idle__cursor"></span></div>
 </div>
+
+<!-- Nothing climbing, but the week is on the wall behind it: one quiet line, so
+     a full district at 19:00 never reads as a broken screen. -->
+<div class="rest" id="rest" aria-hidden="true"></div>
 
 <!-- Legibility layer 1: towers cannot carry type you can read from meters, so
      one run at a time gets a Blade Runner chrome plate with big letters — cut

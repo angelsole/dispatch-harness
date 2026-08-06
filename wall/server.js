@@ -6,6 +6,11 @@
 // short completion moment. The city grows and shrinks with the work, which is
 // the whole point of putting it on a wall.
 //
+// The DISTRICT under it accretes instead: every run that reaches `done: ready`
+// this week is a permanent building, the week resets to an empty plain on Monday
+// 00:00 local, and last week's city stands behind this one as a flat ghost. See
+// "the week's city" below.
+//
 // node:http + node:fs only: no dependencies, no build step, and no runtime
 // request that leaves this origin (the TV may only see the tailnet). Launched
 // by ../wall.sh, which owns the flags and computes the defaults below.
@@ -49,6 +54,12 @@ const CROWNS = 4;         // roof furniture (mast, water tank, sign rig) per bod
 // yesterday's green ticks; they want to see the work move. The page mirrors this
 // number as --completion (shipped in every snapshot) to time the animation.
 const COMPLETION_S = 20;
+
+// How long a landed building carries its dispatcher's crew tint before cooling
+// to the district's own neutral. Long enough that this morning's ships are still
+// attributable across a standup, short enough that by tomorrow the week is just
+// the week's. The page mirrors this number as --sign-life to time the fade.
+const SIGN_S = 6 * 3600;
 
 // A run whose worktree we cannot read still has to stand somewhere, and guessing
 // a repo for it would be a lie. It gets an honest tower of its own instead.
@@ -110,6 +121,22 @@ function readJSON(file) {
   } catch {
     return null; // absent, or caught mid-rewrite — both are just "not yet"
   }
+}
+
+// A shipped building needs the diff shape promised by result.json. JSON.parse
+// accepting a value does not make it a valid result document: `true`, `[]`, or
+// an object caught between schema fields must be retried just like truncated
+// JSON. Zero-line diffs remain valid (and become the minimum-height building).
+function shippedDiffOf(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const metrics = result.metrics;
+  if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) return null;
+  const diff = metrics.diff;
+  if (!diff || typeof diff !== 'object' || Array.isArray(diff)) return null;
+  if (!Object.hasOwn(diff, 'insertions') || !Object.hasOwn(diff, 'deletions')) return null;
+  const valid = (value) => value === null ||
+    (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  return valid(diff.insertions) && valid(diff.deletions) ? diff : null;
 }
 
 // --- the stage-text -> actor contract ----------------------------------------
@@ -278,6 +305,11 @@ function ownerOf(dir, result) {
   return String(raw).trim().toLowerCase().slice(0, 24);
 }
 
+function ownerKindOf(owner) {
+  if (owner === '') return 'unowned';
+  return SYNTHETIC.has(owner) ? 'synthetic' : 'human';
+}
+
 function readRun(id, current) {
   const dir = path.join(RUNS, id);
   const { since, stage } = current || currentStage(dir);
@@ -305,7 +337,7 @@ function readRun(id, current) {
     id,
     title: titleOf(dir),
     owner,
-    ownerKind: owner === '' ? 'unowned' : SYNTHETIC.has(owner) ? 'synthetic' : 'human',
+    ownerKind: ownerKindOf(owner),
     project,
     projectLabel: project ? project.toUpperCase() : UNCHARTED,
     stage,
@@ -356,14 +388,27 @@ function listRunIds() {
 
 const ORDER = { alarm: 0, active: 1, failed: 2, ready: 2 };
 
-function snapshot() {
-  const runs = [];
-  let finished = 0;
+// One read of every run's status line per poll, shared by the live skyline and
+// by the week's city below — they ask different questions of the same fact, and
+// reading the file twice would double the wall's disk traffic for nothing.
+function scan() {
+  const seen = [];
   for (const id of listRunIds()) {
     try {
       const dir = path.join(RUNS, id);
       const current = currentStage(dir);
       if (current.since === null && current.stage === '') continue;
+      seen.push({ id, dir, current });
+    } catch { /* one broken run dir never blanks the wall */ }
+  }
+  return seen;
+}
+
+function snapshot(scanned) {
+  const runs = [];
+  let finished = 0;
+  for (const { id, current } of scanned) {
+    try {
       const state = stateOf(current.stage);
       const isFinished = state === 'ready' || state === 'failed';
       if (isFinished && finished >= MAX_FINISHED) continue;
@@ -455,6 +500,338 @@ function buildTowers(runs, at) {
   });
 }
 
+// --- the week's city ------------------------------------------------------------
+// The skyline above shows effort and leaves nothing behind. This is the other
+// half, and it inverts that: the week ACCRETES. Monday 00:00 local the plain is
+// empty; every run that reaches `done: ready` pours one PERMANENT building into
+// it; by Friday the district is the week's shipped work, standing under whatever
+// is still being built. Last week's city stays behind it as a flat ghost — the
+// name finally earning itself.
+//
+// PERMANENT is the contract, and it is the reason this reads a ledger rather
+// than the run dirs. A run dir is not permanent: cleanup.sh promotes a run and
+// mirror_remove() deletes the mirrored copy off this very machine, so a city
+// derived from what is on disk would demolish a building the moment somebody
+// tidied up after it. Run dirs are therefore the DISCOVERY source and the ledger
+// is the MEMORY — a building survives cleanup, mirror removal and a reboot,
+// which is what "permanent for the week" has to mean.
+//
+// The ledger is one append-only JSONL file the wall owns, one line per run id
+// ever. Everything a building looks like is derived from that line at render
+// time, so the mapping below can change without rewriting history.
+
+// Only `done: ready` builds. stateOf() is deliberately broader — sync-pr.sh's
+// prose "done: PR branch synced …" is a success too — but a ship is the
+// pipeline's own word for one, and the wall does not infer it from anything else.
+const DONE_READY = /^done:\s*ready\b/i;
+
+// Monday 00:00 in the server's own timezone. Walked with Date rather than
+// subtracted in seconds so the DST weeks are 23 and 25 hours long, like the
+// week everyone in the room actually had.
+function weekStartOf(epoch) {
+  const d = new Date(epoch * 1000);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return Math.floor(d.getTime() / 1000);
+}
+
+// The exclusive far edge of that local-time window. Advancing the calendar is
+// deliberate: adding seven lots of 24 hours would be wrong across a DST change.
+function weekEndOf(epoch) {
+  const d = new Date(weekStartOf(epoch) * 1000);
+  d.setDate(d.getDate() + 7);
+  return Math.floor(d.getTime() / 1000);
+}
+
+// Building type by repo FAMILY, matched in order — legibility over cuteness. The
+// room should be able to say "that's three agent towers and a valoryx spire"
+// without reading a label. Anything unrecognised is an honest mid-rise rather
+// than a guess at what somebody's repo does.
+const KINDS = [
+  [/^olyx-agents$/, 'residential'],
+  [/^olyxbase$/, 'industrial'],
+  [/^olyx-?dashboard$/, 'industrial'],
+  [/^valoryx(-|$)/, 'spire'],
+  [/^dispatch-harness$/, 'infra'],
+];
+
+function kindOf(project) {
+  for (const [re, kind] of KINDS) if (re.test(project)) return kind;
+  return 'midrise';
+}
+
+// Height is the diff, log-scaled and capped: a 40-line fix is visibly smaller
+// than a 400-line feature, and the 4000-line monster reads as big without
+// dwarfing the block it stands in. A run whose result.json recorded no diff at
+// all is the shortest building there is — a run whose result.json could not be
+// read is not a building, and never reaches this.
+const STOREYS_MIN = 3;
+const STOREYS_MAX = 14;
+const DIFF_CAP = 2000;
+
+function storeysOf(diff) {
+  const part = (v) => Math.max(0, Number(v) || 0);
+  const lines = part(diff && diff.insertions) + part(diff && diff.deletions);
+  const scale = Math.log1p(Math.min(lines, DIFF_CAP)) / Math.log1p(DIFF_CAP);
+  return STOREYS_MIN + Math.round((STOREYS_MAX - STOREYS_MIN) * scale);
+}
+
+// hash() is a polynomial, which is all a tower silhouette needs — but a run id
+// is OLYX-1631 next to OLYX-1632, and neighbouring inputs come out of that with
+// neighbouring bits. A district planned straight off it piles a whole ticket
+// range onto one plot. This is murmur3's finaliser: it decorrelates the bits so
+// two consecutive tickets land nowhere near each other, and it is still a pure
+// function of the id.
+function mix(h) {
+  let v = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35) >>> 0;
+  return (v ^ (v >>> 16)) >>> 0;
+}
+
+// Where a building stands, from its run id and nothing else: the same ship is on
+// the same plot after a reload, on the second TV, and on a colleague's laptop.
+// An index into the current week would re-plan the whole district every time
+// something shipped.
+function plotOf(id) {
+  const h = mix(hash(id));
+  return { x: (h % 1000) / 1000, depth: (h >>> 22) % 3 };
+}
+
+// A building, entirely from its ledger line. Pure: the run dir it came from may
+// have been cleaned up weeks ago, and the city has to stand anyway.
+function buildingOf(record) {
+  const plot = plotOf(record.id);
+  return {
+    id: record.id,
+    project: record.repo,
+    kind: kindOf(record.repo),
+    storeys: storeysOf(record),
+    x: plot.x,
+    depth: plot.depth,
+    owner: record.owner,
+    ownerKind: ownerKindOf(record.owner),
+    at: record.epoch,
+  };
+}
+
+// --- the ledger -----------------------------------------------------------------
+// One append-only JSONL file, one line per run id ever, first observation wins.
+// That last rule is what makes a mirrored run harmless: HARNESS_MIRROR copies a
+// run dir onto this machine under its own id, so the same ship can be discovered
+// twice — a second sighting of an id already in the ledger is simply not a new
+// building.
+//
+// Every read and every write here is best-effort, like the rest of this file. A
+// missing or unreadable ledger is an empty plain and one line on stderr, a
+// corrupt LINE is skipped rather than fatal, and a write that fails is retried
+// on later polls — nothing about the city may take the wall down.
+
+const CITY_FILE = process.env.WALL_CITY || path.join(path.dirname(RUNS), 'wall-city.jsonl');
+
+const ledger = new Map();   // run id -> record, in the order the wall saw them
+const pending = new Map();  // records visible now whose append needs retrying
+let loaded = false;
+let prunedFor = 0;          // the week start the ledger was last pruned for
+let writeWarned = false;
+
+// A line is only a record if it carries the two fields the city cannot invent:
+// which run it was, and when it landed. The rest is coerced — an old line with a
+// field missing should cost that building a detail, not its place in the city.
+function recordOf(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (typeof raw.id !== 'string' || typeof raw.epoch !== 'number' ||
+      !Number.isFinite(raw.epoch)) return null;
+  const id = raw.id.trim();
+  const epoch = raw.epoch;
+  if (id === '') return null;
+  const count = (v) => Math.max(0, Number(v) || 0);
+  return {
+    id,
+    epoch: Math.floor(epoch),
+    repo: String(raw.repo || '').trim().toLowerCase(),
+    owner: String(raw.owner || '').trim().toLowerCase().slice(0, 24),
+    insertions: count(raw.insertions),
+    deletions: count(raw.deletions),
+  };
+}
+
+// Text in, records out, first line per id winning. Separated from the file read
+// so the tolerance rules are testable without a filesystem.
+function parseLedger(text) {
+  const records = new Map();
+  let skipped = 0;
+  for (const line of String(text).split('\n')) {
+    if (line.trim() === '') continue;
+    let record = null;
+    try { record = recordOf(JSON.parse(line)); } catch { /* half a line, or junk */ }
+    if (!record) { skipped += 1; continue; }
+    if (!records.has(record.id)) records.set(record.id, record);
+  }
+  return { records, skipped };
+}
+
+function loadLedger() {
+  if (loaded) return;
+  loaded = true;
+  let text;
+  try {
+    text = fs.readFileSync(CITY_FILE, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      console.error('[wall] city ledger missing — starting from an empty plain');
+    } else {
+      console.error(`[wall] city ledger unreadable (${err.message}) — starting from an empty plain`);
+    }
+    return;
+  }
+  const { records, skipped } = parseLedger(text);
+  for (const [id, record] of records) ledger.set(id, record);
+  if (skipped) console.error(`[wall] city ledger: skipped ${skipped} unreadable line(s)`);
+}
+
+function appendRecord(record) {
+  try {
+    fs.mkdirSync(path.dirname(CITY_FILE), { recursive: true });
+    fs.appendFileSync(CITY_FILE, JSON.stringify(record) + '\n');
+    return true;
+  } catch (err) {
+    if (!writeWarned) {
+      writeWarned = true;
+      console.error(`[wall] city ledger not writable (${err.message}) — will retry`);
+    }
+    return false;
+  }
+}
+
+function remember(record) {
+  if (ledger.has(record.id)) return;   // one line per run id, ever
+  ledger.set(record.id, record);
+  // Keep the city correct in memory during an I/O failure, but do not mistake
+  // that for permanence: later polls retry until the record reaches disk.
+  if (!appendRecord(record)) pending.set(record.id, record);
+}
+
+function flushPending() {
+  for (const [id, record] of pending) {
+    if (!appendRecord(record)) break;
+    pending.delete(id);
+  }
+}
+
+// Monday's rollover, on disk. Only the two windows the wall can draw are worth
+// keeping, so anything older goes — rewritten through a temp file and renamed,
+// because a half-written ledger is a razed city. Nothing to drop means nothing
+// is rewritten: a wall left up for a month touches this file once a week.
+function pruneLedger(before) {
+  const keep = [...ledger.values()].filter((record) => record.epoch >= before);
+  if (keep.length === ledger.size) return true;
+  const scratch = CITY_FILE + '.tmp';
+  try {
+    fs.mkdirSync(path.dirname(CITY_FILE), { recursive: true });
+    fs.writeFileSync(scratch, keep.map((record) => JSON.stringify(record) + '\n').join(''));
+    fs.renameSync(scratch, CITY_FILE);
+  } catch (err) {
+    try { fs.unlinkSync(scratch); } catch { /* never existed */ }
+    if (!writeWarned) {
+      writeWarned = true;
+      console.error(`[wall] city ledger not writable (${err.message}) — will retry`);
+    }
+    return false;
+  }
+  ledger.clear();
+  for (const record of keep) ledger.set(record.id, record);
+  // The rewrite persisted the complete kept map, including any record whose
+  // earlier append was pending, so none of those records needs a later append.
+  pending.clear();
+  return true;
+}
+
+// Discovery. A run dir is how the wall FINDS a ship; the ledger is how it
+// remembers one. Only this week's finishes are ever recorded — the ledger is
+// what the wall witnessed, and it does not backfill a history it did not see.
+//
+// A result.json that is missing, caught mid-write, or does not have the result
+// schema is skipped silently and retried on the next poll: a building is a
+// record of a real diff, and inventing one from a file we could not read would
+// be worse than waiting a second for it.
+function observe(scanned, weekStart, weekEnd) {
+  for (const { id, dir, current } of scanned) {
+    if (current.since === null || !DONE_READY.test(current.stage)) continue;
+    if (current.since < weekStart || current.since >= weekEnd) continue;
+    if (ledger.has(id)) continue;
+    try {
+      const result = readJSON(path.join(dir, 'result.json'));
+      const diff = shippedDiffOf(result);
+      if (!diff) continue;
+      remember(recordOf({
+        id,
+        epoch: current.since,
+        repo: projectOf(id, dir, result),
+        owner: ownerOf(dir, result),
+        insertions: diff.insertions,
+        deletions: diff.deletions,
+      }));
+    } catch { /* one broken run dir never blanks the wall */ }
+  }
+}
+
+// Ambient life is the week's momentum, not decoration: a mover per few ships,
+// the shop windows coming on at the tenth, a tram line at the twentieth. Capped
+// so a very good week stays a city rather than a traffic jam in front of the
+// live runs.
+const PER_MOVER = 3;
+const MAX_MOVERS = 8;
+const SHOPS_AT = 10;
+const TRAM_AT = 20;
+
+function lifeOf(ships) {
+  return {
+    movers: Math.min(MAX_MOVERS, Math.floor(ships / PER_MOVER)),
+    shops: ships >= SHOPS_AT,
+    tram: ships >= TRAM_AT,
+  };
+}
+
+// Far buildings first, so the page's DOM order is its painting order and a
+// building landing in the middle of the district does not restack the ones
+// already standing.
+function plotRank(a, b) {
+  return a.depth - b.depth || a.x - b.x || (a.id < b.id ? -1 : 1);
+}
+
+// This week's buildings, and last week's as bare silhouettes: an outline and a
+// height, nothing that could be read as a type, a window or a name. An empty
+// last week yields an empty list, and the page draws no ghost at all.
+function buildCity(records, at) {
+  const start = weekStartOf(at);
+  const end = weekEndOf(at);
+  const before = weekStartOf(start - 1);
+  const city = [];
+  const ghost = [];
+  for (const record of records) {
+    if (record.epoch >= start && record.epoch < end) city.push(buildingOf(record));
+    else if (record.epoch >= before && record.epoch < start) ghost.push(buildingOf(record));
+  }
+  city.sort(plotRank);
+  ghost.sort(plotRank);
+  return {
+    week: { start, ships: city.length, life: lifeOf(city.length) },
+    city,
+    ghost: ghost.map((b) => ({ x: b.x, storeys: b.storeys })),
+  };
+}
+
+// The city, once per poll: catch up with the disk, drop what has aged out of
+// both windows, and draw what is left.
+function cityNow(scanned, at) {
+  loadLedger();
+  const start = weekStartOf(at);
+  flushPending();
+  observe(scanned, start, weekEndOf(at));
+  if (prunedFor !== start && pruneLedger(weekStartOf(start - 1))) prunedFor = start;
+  return buildCity([...ledger.values()], at);
+}
+
 // --- http ---------------------------------------------------------------------
 
 const STATIC = {
@@ -473,13 +850,19 @@ let lastBody = '';
 // compact tail of finished runs); `towers` is the skyline, which is live only.
 function payload() {
   const at = Math.floor(Date.now() / 1000);
-  const runs = snapshot();
+  const scanned = scan();
+  const runs = snapshot(scanned);
+  const { week, city, ghost } = cityNow(scanned, at);
   return {
     at,
     runsDir: RUNS,
     crew: CREW,
     floors: FLOORS,
     completionSeconds: COMPLETION_S,
+    signSeconds: SIGN_S,
+    week,
+    city,
+    ghost,
     towers: buildTowers(runs, at),
     runs,
   };
@@ -488,9 +871,12 @@ function payload() {
 // Everything a viewer can see, and nothing that ticks on its own: `at` moves
 // every second, and pushing a frame for it would repaint an idle wall forever.
 // The skyline is in here because a completion moment ending is a real change
-// even when no run on disk moved.
+// even when no run on disk moved — and so is the week rolling over at Monday
+// 00:00, which empties the district with nothing on disk having changed at all.
+// Buildings carry their finish epoch rather than their age for the same reason:
+// an age would tick, and the wall would never be quiet.
 function fingerprint(frame) {
-  return JSON.stringify([frame.towers, frame.runs]);
+  return JSON.stringify([frame.towers, frame.runs, frame.week, frame.city, frame.ghost]);
 }
 
 // One poll for all viewers; a frame is only pushed when something actually
@@ -567,14 +953,25 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(PORT, HOST, () => {
-  // The bound port, not the requested one: --port 0 asks the OS for a free one,
-  // which is how tests and a second wall on the same box stay collision-free.
-  const bound = server.address().port;
-  console.log(`[wall] serving ${RUNS}`);
-  console.log(`[wall] http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${bound}/  (ctrl-c to stop)`);
-});
+// Required rather than run: the city's rules are arithmetic over a run id, a
+// finish epoch and a diff, so tests/wall.test.sh calls them directly instead of
+// staging a run dir per rule. Nothing listens in that mode.
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    // The bound port, not the requested one: --port 0 asks the OS for a free one,
+    // which is how tests and a second wall on the same box stay collision-free.
+    const bound = server.address().port;
+    console.log(`[wall] serving ${RUNS}`);
+    console.log(`[wall] city ledger ${CITY_FILE}`);
+    console.log(`[wall] http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${bound}/  (ctrl-c to stop)`);
+  });
 
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => { server.close(); process.exit(0); });
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => { server.close(); process.exit(0); });
+  }
 }
+
+module.exports = {
+  weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
+  shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
+};

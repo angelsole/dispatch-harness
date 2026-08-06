@@ -13,5 +13,10 @@ auth/
 /runs/
 .harness/
 
+# The wall's city ledger. Unanchored on purpose: it lands beside whatever --runs
+# points at, which includes wall/fixtures/ when somebody demos off the fixtures.
+wall-city.jsonl
+wall-city.jsonl.tmp
+
 # Backups
 *.bak*
