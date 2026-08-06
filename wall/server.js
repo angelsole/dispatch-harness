@@ -606,9 +606,9 @@ function buildingOf(record) {
 // building.
 //
 // Every read and every write here is best-effort, like the rest of this file. A
-// A missing or unreadable ledger is an empty plain and one line on stderr, and a
-// corrupt LINE is skipped rather than fatal — nothing about the city may take
-// the wall down.
+// missing or unreadable ledger is an empty plain and one line on stderr, a
+// corrupt LINE is skipped rather than fatal, and a write that fails is retried
+// on later polls — nothing about the city may take the wall down.
 
 const CITY_FILE = process.env.WALL_CITY || path.join(path.dirname(RUNS), 'wall-city.jsonl');
 
