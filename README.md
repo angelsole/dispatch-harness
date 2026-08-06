@@ -377,13 +377,26 @@ directories under `~/accounts/` (`QM_ACCOUNTS_DIR`), one per station, each with
 by its local part up to the first dot, so `angel.sole@olyx.nl` is `~/accounts/angel`.
 An assignee with no station on this machine is reported, never guessed at.
 
-**A brief is still the contract.** A tagged ticket is armable only when
-`runs/<TICKET>/brief.md` already exists — the same human-approved brief
-`schedule.sh` demands. Tagged tickets without one are listed under *needs a
-brief* and left alone; generating briefs from tickets unattended is deliberately
-not something this does. Tickets already armed, already running, or already
-delivered (a `result.json` with a `pr_url`) are skipped with the reason, which
-is what makes a second run at 19:05 arm nothing at all.
+**A brief is still the contract — and the evening can now write one.** A
+tagged ticket is armable only when `runs/<TICKET>/brief.md` exists — the same
+brief `schedule.sh` demands. By default (`QM_AUTOBRIEF=1`) an `--arm` run
+self-briefs the tagged tickets that lack one, in queue order and only up to
+the night's remaining headroom: a planner session on the owning station's own
+subscription, confined by `planner-settings.json` (read-only research plus one
+`Write` into `runs/` — no Bash, no network, no git writes), turns the ticket
+text into the brief; the repo it names is verified against what actually
+exists under `QM_REPO_ROOTS`, the branch must be a valid git ref, and anything
+else is rejected and quarantined rather than armed. The report lists these
+under *Self-briefed* — no human has read those plans, which is the trade the
+default makes; set `QM_AUTOBRIEF=0` to restore the stricter contract where
+unbriefed tickets are listed under *needs a brief* and left alone. `--report`
+never briefs. Knobs: `QM_AUTOBRIEF_TIMEOUT` (planner seconds, default 1200),
+`QM_AUTOBRIEF_MODEL` (empty = the station's default), `QM_AUTOBRIEF_MAX_BODY`
+(ticket-description bytes fed to the planner), and `QM_REPO_ROOTS` /
+`QM_REPO_DEPTH` (where repos may be discovered). Tickets already armed,
+already running, or already delivered (a `result.json` with a `pr_url`) are
+skipped with the reason, which is what makes a second run at 19:05 arm nothing
+at all.
 
 **Capacity, honestly estimated.** Per station,
 `CLAUDE_CONFIG_DIR=~/accounts/<name>/claude npx -y ccusage@latest blocks --json

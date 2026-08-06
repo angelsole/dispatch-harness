@@ -63,6 +63,10 @@ link_or_copy() {  # $1 = source path, $2 = dest path
   elif [ -d "$1" ]; then
     cp -R "$1" "$2"
   else
+    # An existing file symlink is removed first: cp -f would write THROUGH it —
+    # aborting on "same file" when it points back at this checkout, and
+    # clobbering another checkout when it points there.
+    rm -f "$2"
     cp -f "$1" "$2"
   fi
 }

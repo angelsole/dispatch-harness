@@ -409,9 +409,12 @@ nth_time() {  # $1 = zero-based index into TIMES; prints nothing when we run out
 # The planner's prompt embeds a Linear description — text any workspace member
 # can edit — and runs with nobody watching, so it is confined three ways:
 #
-#   - planner-settings.json allow-lists reading and one Write. Remotes, gh,
-#     commits and package managers are denied, so a description that talks the
-#     planner into something still cannot reach anything outside the brief.
+#   - planner-settings.json allow-lists reading (Read/Grep/Glob) and one Write
+#     scoped to runs/. Bash is denied wholesale — permission patterns match the
+#     head of a command line, not what it goes on to execute or redirect, so
+#     any allow-listed binary would be a shell in disguise (find -exec,
+#     rg --pre, jq > file). A description that talks the planner into
+#     something still cannot reach anything outside the brief.
 #   - The repo must come verbatim from the list discovered under QM_REPO_ROOTS,
 #     and that is re-checked below rather than trusted. A ticket naming a repo
 #     this machine does not have fails to brief instead of arming against a
@@ -430,8 +433,16 @@ repo_candidates() {
   done | sort -u
 }
 
+# A failed self-brief must not leave brief.md behind. Tomorrow's pass reads
+# whatever sits at that path exactly like a human-approved brief: a leftover
+# with usable headers would be armed with nobody having asked for it tonight
+# or read it ever, and a junk one parks the ticket in "skipped" every evening
+# after. Moved aside, not deleted — the post-mortem wants it, the armable
+# namespace must not.
+reject_brief() { [ -f "$1" ] && mv -f "$1" "${1%.md}.rejected.md"; return 0; }
+
 # Prints the reason on stderr and returns non-zero on failure; silence and 0
-# mean the brief is on disk and has usable headers.
+# mean the brief is on disk, has usable headers, and names an armable target.
 autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 station dir
   local ticket="$1" title="$2" bodyfile="$3" station="$4" dir="$5"
   local run_dir="$RUNS/$1" brief="$RUNS/$1/brief.md" repos prompt r b rc=0
@@ -477,10 +488,15 @@ $(cat "$bodyfile" 2>/dev/null)"
 
   # Same identity export as arm_ticket: planning tokens belong to the crew
   # member who owns the ticket, not to whoever's shell the evening ran in.
+  # ANTHROPIC_API_KEY is unset for the same reason run-task.sh launches every
+  # worker with env -u ANTHROPIC_API_KEY: a key exported in the invoking shell
+  # would silently bill the planner to metered API instead of the station's
+  # subscription — and escape the very capacity accounting this script rations
+  # by, since ccusage only sees the subscription's own logs.
   # Invocation mirrors run-task.sh's unattended worker — an allow-list plus
   # acceptEdits never prompts, so no stage can block on absent hands.
   (
-    unset GH_TOKEN
+    unset GH_TOKEN ANTHROPIC_API_KEY
     export HARNESS_DIR="$HARNESS_DIR"
     export CLAUDE_CONFIG_DIR="$dir/claude"
     export CODEX_HOME="$dir/codex"
@@ -492,6 +508,9 @@ $(cat "$bodyfile" 2>/dev/null)"
     capped "$AUTOBRIEF_TIMEOUT" "$CLAUDE_BIN" -p "$prompt" "$@"
   ) </dev/null >"$run_dir/autobrief.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
+    # A timeout can strike after a perfectly valid Write; quarantine whatever
+    # landed or tomorrow arms a brief tonight reported as failed.
+    reject_brief "$brief"
     echo "planner exited $rc (see runs/$ticket/autobrief.log)" >&2
     return 1
   fi
@@ -499,12 +518,22 @@ $(cat "$bodyfile" 2>/dev/null)"
     echo "planner wrote no brief (see runs/$ticket/autobrief.log)" >&2; return 1; }
   r=$(brief_field "$brief" Repo); b=$(brief_field "$brief" Branch)
   if [ -z "$r" ] || [ -z "$b" ]; then
+    reject_brief "$brief"
     echo "the self-written brief has no **Repo** / **Branch** header line" >&2
     return 1
   fi
-  # The one claim the prompt cannot enforce, so it is verified instead.
+  # The claims the prompt cannot enforce are verified instead: the repo must
+  # be one this machine actually has, and the branch must be a ref git will
+  # accept at 02:00 — "feat/x (suggested)" arms fine and then burns the run
+  # on setup_failed with nobody awake to see it.
   if ! printf '%s\n' "$repos" | grep -qxF -- "$r"; then
+    reject_brief "$brief"
     echo "the self-written brief names a repo not on this machine: $r" >&2
+    return 1
+  fi
+  if ! git check-ref-format "refs/heads/$b" >/dev/null 2>&1; then
+    reject_brief "$brief"
+    echo "the self-written brief's branch is not a valid git ref: $b" >&2
     return 1
   fi
   printf '%s\n' "$ticket" >> "$WORK/autobriefed"
@@ -590,6 +619,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   local id ident email title reason brief repo branch slot out rc
   local n armed_here fits idx used_slots armed_hdr over_hdr
   local cap_word arms nobrief_n skipped_n refused_n st autobriefed_n briefailed_n
+  local times_n slots_left arm_cap sb
 
   say "## $station"
   say ""
@@ -649,9 +679,14 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
 
   # Self-briefing, and only up to tonight's headroom. Briefing a ticket that
   # cannot be armed anyway would spend planner tokens out of the very budget
-  # this script exists to ration, so the queue order decides who gets planned.
+  # this script exists to ration, so the queue order decides who gets planned —
+  # and the cap is the smaller of capacity and the fire times left in QM_TIMES,
+  # because nth_time hands the surplus nothing and the arming loop skips it.
   if [ "$AUTOBRIEF" = 1 ] && [ "$mode" = arm ] && [ -s "$WORK/nobrief" ]; then
-    autobrief_pass "$station" "$dir" "$fits"
+    times_n=0; for slot in $TIMES; do times_n=$((times_n + 1)); done
+    slots_left=$((times_n - armed_here)); [ "$slots_left" -gt 0 ] || slots_left=0
+    arm_cap="$fits"; [ "$slots_left" -lt "$arm_cap" ] && arm_cap="$slots_left"
+    autobrief_pass "$station" "$dir" "$arm_cap"
   fi
 
   idx="$armed_here"; used_slots=0; armed_hdr=0; over_hdr=0; arms=""
@@ -681,7 +716,10 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
       continue
     fi
     if [ "$armed_hdr" = 0 ]; then say "### Armed"; say ""; armed_hdr=1; fi
-    say "- **$slot** \`$ident\` $title — $repo ($branch)"
+    # An armed run whose plan no human has read is marked where it is armed,
+    # not only in its own section below.
+    sb=""; grep -qxF -- "$ident" "$WORK/autobriefed" 2>/dev/null && sb=" — self-briefed"
+    say "- **$slot** \`$ident\` $title — $repo ($branch)$sb"
     if ! linear_comment "$id" \
       "Armed for $slot by the quartermaster — \`$branch\` in \`$repo\`, on $station's station."; then
       say "  - (the Linear comment failed; the run is armed regardless)"
@@ -712,8 +750,9 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   if [ "${autobriefed_n:-0}" -gt 0 ]; then
     say "### Self-briefed"
     say ""
-    say "No human read these plans before they were armed — the brief was"
-    say "written tonight from the ticket text (\`QM_AUTOBRIEF\`):"
+    say "Briefs written tonight by the confined planner from the ticket text"
+    say "(\`QM_AUTOBRIEF\`) — no human has read them. Whether each was actually"
+    say "armed is recorded in the sections above:"
     say ""
     while read -r ident; do
       [ -n "$ident" ] || continue

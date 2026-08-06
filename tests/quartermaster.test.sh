@@ -539,6 +539,132 @@ has_not "$(cat "$REPORT")" "lin_api_TESTKEY" "secrets: the API key never lands i
 has_not "$(cat "$NTFY_LOG")" "lin_api_TESTKEY" "secrets: the API key never lands in the push"
 
 # ---------------------------------------------------------------------------
+echo "== self-briefing (QM_AUTOBRIEF) =="
+# ---------------------------------------------------------------------------
+# A claude stand-in beside the other fakes: records the identity it ran under
+# and simulates the planner per $CLAUDE_MODE — the good citizen, the timeout
+# that dies after a valid Write, the prose writer, the repo inventor, the
+# branch mangler, and the one that writes nothing at all.
+CLAUDE_LOG="$ROOT/claude-calls.log"; CLAUDE_MODE="$ROOT/claude-mode"
+: > "$CLAUDE_LOG"; printf 'good\n' > "$CLAUDE_MODE"
+cat > "$FAKES/claude" <<EOF
+#!/usr/bin/env bash
+{
+  printf 'call anthropic:%s config:%s\n' "\${ANTHROPIC_API_KEY-<unset>}" "\${CLAUDE_CONFIG_DIR-<unset>}"
+  printf 'argv:%s\n' "\$*"
+} >> "$CLAUDE_LOG"
+brief=\$(printf '%s\n' "\$2" | sed -n 's/^  \\(.*brief\\.md\\)\$/\\1/p' | head -1)
+# Copied verbatim from the prompt's candidate list, exactly as the prompt
+# instructs the real planner to — the arming check is an exact string match.
+repo=\$(printf '%s\n' "\$2" | grep '/greenapp\$' | head -1)
+mode=\$(cat "$CLAUDE_MODE" 2>/dev/null || echo good)
+[ -n "\$brief" ] && mkdir -p "\$(dirname "\$brief")"
+case "\$mode" in
+  good)       printf -- '# Auto\n\n- **Repo**: %s\n- **Branch**: auto/n1\n- **Base**: main\n' "\$repo" > "\$brief" ;;
+  exit-fail)  printf -- '- **Repo**: %s\n- **Branch**: auto/n1\n' "\$repo" > "\$brief"; exit 1 ;;
+  prose)      printf 'This ticket seems to be about boilers.\n' > "\$brief" ;;
+  alien-repo) printf -- '- **Repo**: /somewhere/else\n- **Branch**: auto/n1\n' > "\$brief" ;;
+  bad-branch) printf -- '- **Repo**: %s\n- **Branch**: feat/x (suggested)\n' "\$repo" > "\$brief" ;;
+  silent)     : ;;
+esac
+exit 0
+EOF
+chmod +x "$FAKES/claude"
+claude_calls() { grep -c '^call ' "$CLAUDE_LOG" 2>/dev/null | tr -d ' '; }
+
+# The path exactly as repo_candidates discovers it (macOS TMPDIR gives $ROOT a
+# double slash that pwd would normalize away) — the arming check is verbatim.
+ABREPO=$(find "$ROOT" -maxdepth 3 -name .git 2>/dev/null | sed 's;/\.git$;;' | head -1)
+
+cp "$LINEAR_JSON" "$ROOT/linear-park.json"
+{
+  printf '{"data":{"issues":{"nodes":['
+  printf '{"id":"id-n1","identifier":"OLYX-N1","title":"New boiler","priority":1,"createdAt":"2026-08-01","description":"Replace the burner assembly.","assignee":{"email":"angel.sole@olyx.nl"},"state":{"type":"backlog"}},'
+  issue id-n2 OLYX-N2 "New hull" 2 angel.sole@olyx.nl backlog
+  printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
+} > "$LINEAR_JSON"
+
+# --report announces, and spends nothing.
+before=$(claude_calls)
+qm "QM_REPO_ROOTS=$ROOT" --report >/dev/null
+has "$(section angel)" "would be self-briefed by \`--arm\`" \
+  "autobrief: --report announces what --arm would brief"
+check "autobrief: --report never invokes the planner" "$(claude_calls)" "$before"
+
+# QM_AUTOBRIEF=0 restores the strict contract exactly.
+before=$(claude_calls); before_arms=$(arm_calls)
+qm "QM_REPO_ROOTS=$ROOT QM_AUTOBRIEF=0" --arm >/dev/null
+has "$(section angel)" "no \`runs/OLYX-N1/brief.md\`, so it cannot be armed" \
+  "autobrief: QM_AUTOBRIEF=0 leaves unbriefed tickets alone, in the old words"
+check "autobrief: QM_AUTOBRIEF=0 never invokes the planner" "$(claude_calls)" "$before"
+check "autobrief: QM_AUTOBRIEF=0 arms nothing unbriefed" "$(arm_calls)" "$before_arms"
+
+# --arm self-briefs, arms from the self-written headers, and says so.
+before=$(claude_calls)
+qm "QM_REPO_ROOTS=$ROOT ANTHROPIC_API_KEY=leak-me-not" --arm >/dev/null
+ANGEL=$(section angel)
+exists "autobrief: the brief is on disk" "$RUNS/OLYX-N1/brief.md"
+check "autobrief: one planner call per briefed ticket" "$(claude_calls)" "$((before + 2))"
+has "$ANGEL" "**23:30** \`OLYX-N1\`"  "autobrief: the self-briefed ticket is armed in queue order"
+has "$ANGEL" "$ABREPO (auto/n1)"      "autobrief: repo and branch come from the self-written brief"
+has "$ANGEL" "— self-briefed"         "autobrief: the armed line carries the disclosure"
+has "$ANGEL" "### Self-briefed"       "autobrief: the report separates self-briefed work"
+file_has "$SCHED_CALLS" "argv:OLYX-N1 $ABREPO auto/n1 23:30" \
+  "autobrief: schedule.sh received the brief-derived argv"
+file_has "$CLAUDE_LOG" "Replace the burner assembly." \
+  "autobrief: the ticket description reaches the planner prompt"
+file_has "$CLAUDE_LOG" "config:$ACCOUNTS/angel/claude" \
+  "autobrief: the planner runs as the owning station"
+has_not "$(cat "$CLAUDE_LOG")" "anthropic:leak-me-not" \
+  "autobrief: a stray ANTHROPIC_API_KEY cannot bill the planner to the API"
+
+# The second evening finds the work armed and re-briefs nothing.
+before=$(claude_calls); before_arms=$(arm_calls)
+qm "QM_REPO_ROOTS=$ROOT" --arm >/dev/null
+check "autobrief: the second evening re-briefs nothing" "$(claude_calls)" "$before"
+check "autobrief: and re-arms nothing" "$(arm_calls)" "$before_arms"
+
+# Every way a planner can fail leaves no armable artifact behind.
+{
+  printf '{"data":{"issues":{"nodes":['
+  issue id-n3 OLYX-N3 "Weird one" 1 angel.sole@olyx.nl backlog
+  printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
+} > "$LINEAR_JSON"
+autobrief_fails() {  # $1 = claude mode, $2 = expected report reason, $3 = label
+  printf '%s\n' "$1" > "$CLAUDE_MODE"
+  rm -rf "$RUNS/OLYX-N3"
+  local before_arms; before_arms=$(arm_calls)
+  qm "QM_REPO_ROOTS=$ROOT" --arm >/dev/null
+  has "$(section angel)" "$2"           "autobrief: $3 is reported under Could not self-brief"
+  absent "autobrief: $3 leaves no armable brief.md" "$RUNS/OLYX-N3/brief.md"
+  check "autobrief: $3 arms nothing" "$(arm_calls)" "$before_arms"
+}
+autobrief_fails exit-fail  "planner exited 1"                        "a planner death after a valid Write"
+exists "autobrief: the quarantined brief is kept for the post-mortem" \
+  "$RUNS/OLYX-N3/brief.rejected.md"
+autobrief_fails prose      "no **Repo** / **Branch** header"        "prose instead of a brief"
+autobrief_fails alien-repo "names a repo not on this machine"       "an invented repo"
+autobrief_fails bad-branch "not a valid git ref"                    "an unusable branch name"
+autobrief_fails silent     "planner wrote no brief"                 "a planner that wrote nothing"
+
+# Briefing stops at the last remaining fire slot, not just at capacity.
+printf 'good\n' > "$CLAUDE_MODE"
+{
+  printf '{"data":{"issues":{"nodes":['
+  issue id-n8 OLYX-N8 "Slot eater" 1 angel.sole@olyx.nl backlog; printf ','
+  issue id-n9 OLYX-N9 "Slot starved" 2 angel.sole@olyx.nl backlog
+  printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
+} > "$LINEAR_JSON"
+before=$(claude_calls)
+qm "QM_REPO_ROOTS=$ROOT QM_TIMES=05:00" --arm >/dev/null
+check "autobrief: briefing stops at the last remaining fire slot" "$(claude_calls)" "$((before + 1))"
+has "$(section angel)" "beyond tonight's capacity, so it was not briefed" \
+  "autobrief: the unbriefed surplus is reported, not planned"
+
+mv "$ROOT/linear-park.json" "$LINEAR_JSON"
+rm -rf "$RUNS"/OLYX-N1 "$RUNS"/OLYX-N2 "$RUNS"/OLYX-N3 "$RUNS"/OLYX-N8 "$RUNS"/OLYX-N9
+
+# ---------------------------------------------------------------------------
 echo "== --install / --uninstall: the daily 19:00 agent =="
 # ---------------------------------------------------------------------------
 PLIST="$AGENTS/com.olyx.quartermaster.plist"

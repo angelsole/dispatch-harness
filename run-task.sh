@@ -257,6 +257,13 @@ stage() {
     # Everything else stays a low-priority background tick.
     local body="$1"; local -a extra=()
     case "$1" in
+      "done: needs_input")
+        # The other way a run stops on a question: base-sync conflicts the
+        # resolver could not finish. It never passes the waiting stage below,
+        # and the contract is the same — a stage that blocks the run must
+        # survive a silenced phone.
+        extra+=(-H "Priority: high" -H "Tags: warning")
+        ;;
       done:*)
         if [ -n "${PR_URL:-}" ]; then
           body="$1"$'\n'"$PR_URL"
