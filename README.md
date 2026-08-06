@@ -718,19 +718,45 @@ itself — and Monday 00:00 empties the plain again.
 | --- | --- |
 | A building | One run that shipped this week. It never leaves before Monday. |
 | Its shape | The repo family: `olyx-agents` is residential, `olyxbase` / `olyx-dashboard` are industrial blocks, `valoryx-*` is an observatory spire, `dispatch-harness` is infrastructure, anything else is an honest mid-rise. |
-| Its height | The run's diff (insertions + deletions), log-scaled and capped — a monster PR reads big without dwarfing the block. A run with no readable metrics is the shortest building there is, never an invented one. |
+| Its height | The run's diff (insertions + deletions), log-scaled and capped — a monster PR reads big without dwarfing the block. A run whose `result.json` recorded no diff is the shortest building there is; a run whose `result.json` could not be read is *not a building*, because a height invented from a file the wall could not read is the one thing that would make the city lie. |
 | Where it stands | Hashed from the run id, so the skyline is identical on every screen and after every reload. |
 | A small lit sign | Who dispatched it, in the same crew tint as their runs' cars — cooling to the district's neutral within six hours of landing. That is the whole of the attribution. |
 | Cars, walkers, lit shop windows, a tram | The week's momentum: one mover per three ships, the shop windows at the tenth, a tram line at the twentieth. |
 | A pale flat outline behind | Last week. A height and a plot, nothing else — no windows, no signs, no types. An empty last week draws nothing. |
 
-Nothing is stored for any of this and nothing resets it. `cleanup.sh` removes a
-promoted run's worktree and **keeps its logs**, so the evidence outlives the
-branch, and the wall derives the whole district per poll from the finish epoch
-already on each run's status line. The week is a window, not a counter: no
-files, no schema, no Monday job. A run mirrored from another machine
-([`HARNESS_MIRROR`](#runs-from-any-machine-harness_mirror)) counts exactly like a
-local one, once.
+**The ledger is the city's memory.** *Permanent* is the contract, and a run dir
+is not permanent: `cleanup.sh` promotes a run and mirror removal deletes the
+mirrored copy off the wall's own machine, so a city derived from what happens to
+be on disk would demolish a building the moment somebody tidied up after it. Run
+dirs are therefore how the wall **discovers** a ship; one append-only JSONL file
+is how it **remembers** one:
+
+```bash
+wall.sh --city /var/wall/city.jsonl   # default: beside --runs, as wall-city.jsonl
+export WALL_CITY=/var/wall/city.jsonl # same thing
+```
+
+The first time the server sees a run at `done: ready` with a finish epoch in the
+current week, it appends one line — `{id, epoch, repo, owner, insertions,
+deletions}` — and never writes that run again. Everything a building *looks
+like* is derived from that line at render time, so the mapping above can change
+without rewriting history. One line per run id is also what makes a run mirrored
+from another machine ([`HARNESS_MIRROR`](#runs-from-any-machine-harness_mirror))
+harmless: the same ship discovered twice is still one building, and the first
+sighting is the one that stands.
+
+Monday's rollover prunes anything older than the two windows the wall can draw,
+rewriting the file through a temp file and a rename. A missing ledger is an
+empty plain; an unreadable one is an empty plain and one line on stderr; a
+corrupt *line* is skipped rather than fatal. Nothing about the city can take the
+wall down — but **deleting the ledger razes the city**, and nothing else does.
+It is the only file the wall writes; it is not a schema, and nothing else in the
+harness reads it.
+
+One consequence worth knowing: the ledger records what the wall *witnessed*. A
+wall started midweek picks up this week's ships whose run dirs are still on disk,
+but a ship that was already cleaned up before the wall came up is not
+backfilled — and last week's ghost is whatever last week's wall recorded.
 
 Because a full district is normal on a Thursday evening, "nothing live" no
 longer means "nothing happened": the `SHIFT STANDING BY` plate now appears only
@@ -752,6 +778,7 @@ contents ease out, and the new ones are not written until the plate is empty.
 wall.sh                             # ~/.claude/harness/runs on http://0.0.0.0:4711
 wall.sh --port 8080 --host 100.x.y.z
 wall.sh --runs wall/fixtures/runs   # staged demo data, no live runs needed
+wall.sh --city /var/wall/city.jsonl # keep the district's memory somewhere else
 ```
 
 Then point a browser on the TV at `http://<this-machine>:4711/` and put it in
