@@ -139,6 +139,11 @@
        different speeds — the parallax that makes a flat painting deep. The
        further the plane, the slower and hazier. -->
 
+  <!-- Last week's city: ONE flat low-alpha silhouette behind every painted
+       skyline plane. An outline and a height, nothing else — no windows, signs,
+       or types. An empty last week leaves this group empty and hidden. -->
+  <g class="ghost" id="ghost" aria-hidden="true" hidden></g>
+
   <!-- far skyline: flat, hazy, pinpricked with windows -->
   <g class="sky__far">
     <g fill="url(#far)" opacity="0.85">
@@ -176,12 +181,6 @@
     </g>
   </g>
 </svg>
-
-<!-- Last week's city: ONE flat low-alpha silhouette, drifting with the painted
-     sky planes above rather than with the live skyline in front. An outline and
-     a height, nothing else — no windows, no signs, no types. An empty last week
-     leaves this layer empty and hidden. -->
-<div class="ghost" id="ghost" aria-hidden="true" hidden></div>
 
 <!-- This week's shipped work, standing. One permanent building per run that
      reached `done: ready` since Monday 00:00 — type from the repo family,

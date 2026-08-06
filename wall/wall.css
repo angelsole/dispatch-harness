@@ -906,34 +906,20 @@ body[data-idle="rest"] .rest { display: block; }
   animation-delay: calc(var(--age, 0) * -1s);
 }
 
-/* Last week, flattened. One low-alpha silhouette layer drifting with the
-   painted sky planes rather than with the live city: a height and a plot, no
-   windows, no signs, no types. Empty last week renders nothing at all — the
-   page hides the layer outright. */
+/* Last week, flattened. This SVG group sits before every painted skyline plane,
+   so their silhouettes and parallax pass in front of it: a height and a plot,
+   no windows, no signs, no types. Empty last week renders nothing at all. */
 .ghost {
   --par: 1.6;
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: var(--ground);
-  z-index: 1;
-  height: 56vh;
   pointer-events: none;
   opacity: 0.14;
   animation: par-drift 205s var(--ease-io) infinite alternate;
 }
 .ghost__block {
-  --x: 50%;
-  --storeys: 3;
-  position: absolute;
-  bottom: 0;
-  left: var(--x);
-  width: 2.4rem;
-  height: calc(3.4vh + var(--storeys) * 1.9vh);
-  transform: translate3d(-50%, 0, 0);
-  background: #7fb4c0;
-  -webkit-mask-image: linear-gradient(0deg, transparent, #000 20%);
-  mask-image: linear-gradient(0deg, transparent, #000 20%);
+  fill: #7fb4c0;
+  stroke: #b3d7dc;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 /* Population is momentum: how much life the street has is how much the week has

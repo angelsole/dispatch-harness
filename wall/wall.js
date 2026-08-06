@@ -25,6 +25,14 @@
   const DAWN_H = 6.5;      // local hour the sky is coldest at
   const DAWN_RAMP = 2.5;   // hours either side of it that the cooling spans
   const WEATHER_SEED_MS = 15 * 60 * 1000; // nearby screens share a rain field
+  // The ghost lives inside the sky's 1600x900 viewBox so the parallax skyline
+  // can genuinely paint in front of it. These mirror the district's 2.4rem
+  // width and vh height at that reference size.
+  const GHOST_VIEW_W = 1600;
+  const GHOST_GROUND_Y = 819;
+  const GHOST_W = 40;
+  const GHOST_BASE_H = 31;
+  const GHOST_STOREY_H = 17;
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -120,6 +128,12 @@
     const node = document.createElement(tag);
     if (cls) node.className = cls;
     if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function svgEl(tag, cls) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    if (cls) node.setAttribute('class', cls);
     return node;
   }
 
@@ -329,11 +343,16 @@
     if (key === ghostKey) return;
     ghostKey = key;
     ghostLayer.textContent = '';
-    ghostLayer.hidden = ghosts.length === 0;
+    // SVG elements do not consistently reflect the HTML `hidden` property;
+    // toggle the attribute that the shared [hidden] rule actually matches.
+    ghostLayer.toggleAttribute('hidden', ghosts.length === 0);
     for (const g of ghosts) {
-      const shape = el('i', 'ghost__block');
-      shape.style.setProperty('--x', (g.x * 100).toFixed(2) + '%');
-      shape.style.setProperty('--storeys', String(g.storeys));
+      const shape = svgEl('rect', 'ghost__block');
+      const height = GHOST_BASE_H + g.storeys * GHOST_STOREY_H;
+      shape.setAttribute('x', (g.x * GHOST_VIEW_W - GHOST_W / 2).toFixed(2));
+      shape.setAttribute('y', String(GHOST_GROUND_Y - height));
+      shape.setAttribute('width', String(GHOST_W));
+      shape.setAttribute('height', String(height));
       ghostLayer.append(shape);
     }
   }

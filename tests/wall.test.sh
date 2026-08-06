@@ -1003,6 +1003,15 @@ fi
 echo "== wall: the district on screen =="
 grep_ok "$PAGE_SRC" 'id="district"' "district: the week's buildings have their own layer"
 grep_ok "$PAGE_SRC" 'id="ghost"'    "district: and last week has its own behind it"
+grep_ok "$PAGE_SRC" "ghostLayer.toggleAttribute('hidden'" \
+  "ghost: the SVG layer is unhidden when last week exists"
+GHOST_LINE="$(grep -n 'id="ghost"' "$SRC/wall/index.html" | cut -d: -f1)"
+FAR_LINE="$(grep -n 'class="sky__far"' "$SRC/wall/index.html" | cut -d: -f1)"
+if [ -n "$GHOST_LINE" ] && [ -n "$FAR_LINE" ] && [ "$GHOST_LINE" -lt "$FAR_LINE" ]; then
+  ok "ghost: last week is painted behind every parallax skyline plane"
+else
+  bad "ghost: last week is painted behind every parallax skyline plane"
+fi
 grep_ok "$PAGE_SRC" "towers.length ? 'off' : blocks.length ? 'rest' : 'empty'" \
   "idle: the plate needs an empty week, not just an empty skyline"
 grep_ok "$CSS_SRC" 'body[data-idle="empty"] .idle' "idle: the full plate is gated on that"
