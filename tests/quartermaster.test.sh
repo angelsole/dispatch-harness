@@ -347,6 +347,13 @@ ANGEL=$(section angel)
 has "$ANGEL" "**05:00** \`OLYX-A1\`"           "knobs: QM_TIMES sets the fire times"
 has "$ANGEL" "### Beyond tonight's capacity"   "knobs: running out of fire times caps the plan"
 
+qm "QM_PAGE=2" --report >/dev/null
+file_has "$REPORT" "Linear returned a full page of 2 — there may be more waiting than this." \
+  "queue: a queue longer than one page is said out loud, not silently truncated"
+qm "" --report >/dev/null
+has_not "$(cat "$REPORT")" "there may be more waiting" \
+  "queue: a queue that fits in one page says nothing about truncation"
+
 # ---------------------------------------------------------------------------
 echo "== degrading without a queue =="
 # ---------------------------------------------------------------------------

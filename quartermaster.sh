@@ -76,13 +76,16 @@ capped() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 # ---------------------------------------------------------------------------
 LINEAR_HDR=""    # header file, mode 600 — keeps the key out of every argv
 LINEAR_NOTE=""   # what the report says when the queue could not be read
+LINEAR_PAGE="${QM_PAGE:-100}"  # one page is all we ask for; a full one is reported, not hidden
+case "$LINEAR_PAGE" in ''|*[!0-9]*|0) LINEAR_PAGE=100 ;; esac
+LINEAR_FULL=0
 
 # Deliberately plain. Every extra argument is one more chance for a schema
 # mismatch to turn the whole evening into "Linear unreachable", so the queue is
 # ordered here instead of server-side: priority ascending with 0 ("no
 # priority") last, oldest first within a priority.
-LINEAR_QUERY='query Overnight($label: String!) {
-  issues(first: 100, filter: {
+LINEAR_QUERY='query Overnight($label: String!, $page: Int!) {
+  issues(first: $page, filter: {
     labels: { some: { name: { eq: $label } } },
     state: { type: { in: ["backlog", "unstarted"] } },
     assignee: { null: false }
@@ -134,9 +137,9 @@ linear_errors() {  # $1 = response body
 
 # One TSV row per tagged issue: id, identifier, assignee email, title.
 fetch_issues() {  # prints rows; non-zero when the queue is unusable
-  local body response rows
-  body=$(jq -n --arg q "$LINEAR_QUERY" --arg label "$TAG" \
-    '{query: $q, variables: {label: $label}}') || return 1
+  local body response rows raw
+  body=$(jq -n --arg q "$LINEAR_QUERY" --arg label "$TAG" --argjson page "$LINEAR_PAGE" \
+    '{query: $q, variables: {label: $label, page: $page}}') || return 1
   response=$(linear_post "$body") || {
     LINEAR_NOTE="Linear did not answer (network, timeout, or no curl)"
     return 1
@@ -145,6 +148,12 @@ fetch_issues() {  # prints rows; non-zero when the queue is unusable
     LINEAR_NOTE="Linear returned no usable issue list$(linear_errors "$response")"
     return 1
   fi
+  # One page is deliberate — a crew does not tag hundreds of tickets a night —
+  # but a full page means the queue may be longer than what was read, and a
+  # truncated queue is exactly the kind of thing that must not pass silently.
+  raw=$(printf '%s' "$response" | jq -r '.data.issues.nodes | length' 2>/dev/null) || raw=0
+  case "$raw" in ''|*[!0-9]*) raw=0 ;; esac
+  [ "$raw" -lt "$LINEAR_PAGE" ] || LINEAR_FULL=1
   rows=$(printf '%s' "$response" | jq -r '
     .data.issues.nodes
     | map(select(.assignee != null and (.assignee.email // "") != ""))
@@ -538,6 +547,10 @@ EOF
     say "Queue: **unavailable** — $LINEAR_NOTE. Everything below is capacity only."
   else
     say "Queue: $n_issues tagged issue(s), assigned, in backlog or unstarted."
+    if [ "$LINEAR_FULL" = 1 ]; then
+      say "  (Linear returned a full page of $LINEAR_PAGE — there may be more waiting than this.)"
+      line "queue truncated at $LINEAR_PAGE issues"
+    fi
   fi
   say "Run cost: median $cost implementer output tokens over $samples sampled run(s)."
   if [ "$samples" -eq 0 ]; then
