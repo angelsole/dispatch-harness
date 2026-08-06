@@ -323,9 +323,25 @@ grep_ok "$PAGE_SRC" '--phosphor' "palette: the comms ticker is green phosphor"
 # Start a wall on an OS-assigned port. Sets PORT_OUT (empty if it never came
 # up); not a command substitution, so the background pid lands in the real PIDS.
 # $1 = runs dir, $2 = log file, rest = extra wall.sh flags
+#
+# Every server gets its OWN city ledger under the temp root unless the caller
+# names one. Two reasons: the default path is beside the runs dir, and most of
+# these fixture roots are siblings under $ROOT — they would otherwise share one
+# ledger and each other's cities. And the committed wall/fixtures/runs is served
+# from the repo, where nothing may be written at all. CITY_OUT is the ledger the
+# server was handed, so a test can read it back.
+SERVED=0
 serve() {
   local runs="$1" log="$2"; shift 2
-  bash "$WALL" --runs "$runs" --host 127.0.0.1 --port 0 "$@" > "$log" 2>&1 &
+  SERVED=$((SERVED + 1))
+  CITY_OUT="$ROOT/city-$SERVED.jsonl"
+  case " $* " in *" --city "*) CITY_OUT='' ;; esac
+  if [ -n "$CITY_OUT" ]; then
+    bash "$WALL" --runs "$runs" --host 127.0.0.1 --port 0 --city "$CITY_OUT" "$@" \
+      > "$log" 2>&1 &
+  else
+    bash "$WALL" --runs "$runs" --host 127.0.0.1 --port 0 "$@" > "$log" 2>&1 &
+  fi
   PIDS="$PIDS $!"
   PORT_OUT=''
   local i=0
@@ -558,10 +574,12 @@ const start = w.weekStartOf(now);
 const monday = new Date(start * 1000);
 const prev = w.weekStartOf(start - 1);
 
-// Which window a finish epoch lands in, straight through the real builder. The
-// run dir does not exist: a building must survive having nothing to read.
-const bucket = (since) => {
-  const built = w.buildCity([{ id: 'EDGE-1', dir: '/no/such/run', since }], now);
+// Which window a finish epoch lands in, straight through the real builder. A
+// ledger line is all it gets: the run dir it came from may have been cleaned up
+// weeks ago, and the building has to stand anyway.
+const line = (id, epoch) => ({ id, epoch, repo: '', owner: '', insertions: 0, deletions: 0 });
+const bucket = (epoch) => {
+  const built = w.buildCity([line('EDGE-1', epoch)], now);
   return built.city.length ? 'city' : built.ghost.length ? 'ghost' : 'gone';
 };
 
@@ -575,17 +593,22 @@ for (const id of ids) {
   depths[plot.depth] += 1;
 }
 
-// A run dispatched with HARNESS_MIRROR lands its dir on the wall's machine under
-// its own id, so the same ship can be seen twice. One building, latest status.
-const deduped = w.dedupe([
-  { id: 'MIR-1', dir: '/local', since: 100 },
-  { id: 'MIR-1', dir: '/mirrored', since: 400 },
-  { id: 'MIR-2', dir: '/local', since: 200 },
-]);
+// The ledger, as text: junk lines are skipped rather than fatal, a line missing
+// either of the two things the city cannot invent is junk, and a run id that
+// appears twice — which is exactly what a mirrored dir discovered beside a local
+// one produces — keeps its FIRST line.
+const ledger = w.parseLedger([
+  JSON.stringify({ id: 'MIR-1', epoch: 100, repo: 'olyxbase', owner: 'angel', insertions: 10, deletions: 2 }),
+  '{ half a line written when the power went',
+  '',
+  JSON.stringify({ id: 'MIR-1', epoch: 400, repo: 'olyxbase', owner: 'emre', insertions: 99, deletions: 9 }),
+  JSON.stringify({ epoch: 200, repo: 'olyxbase' }),
+  JSON.stringify({ id: 'MIR-3', repo: 'olyxbase' }),
+  JSON.stringify({ id: 'MIR-2', epoch: 200, repo: 'olyx-agents', owner: 'bot', insertions: 5, deletions: 0 }),
+].join('\n'));
+const kept = ledger.records.get('MIR-1') || {};
 
-const sample = w.buildCity(
-  [{ id: 'NOW-1', dir: '/no/such/run', since: start + 10 },
-   { id: 'OLD-1', dir: '/no/such/run', since: prev + 10 }], now);
+const sample = w.buildCity([line('NOW-1', start + 10), line('OLD-1', prev + 10)], now);
 const storeys = (n) => w.storeysOf({ insertions: n, deletions: 0 });
 
 console.log(JSON.stringify({
@@ -614,10 +637,12 @@ console.log(JSON.stringify({
   }),
   plotSpread: bands.every((n) => n > 0),
   depthSpread: depths.every((n) => n > 0),
-  dedupedCount: deduped.length,
-  dedupedSince: deduped.filter((s) => s.id === 'MIR-1').map((s) => s.since).join(','),
+  ledgerKept: [...ledger.records.keys()].sort().join(','),
+  ledgerSkipped: ledger.skipped,
+  ledgerFirstWins: kept.epoch + '/' + kept.owner,
+  ledgerFields: Object.keys(kept).sort().join(','),
   ghostKeys: Object.keys(sample.ghost[0] || {}).sort().join(','),
-  ghostEmpty: w.buildCity([{ id: 'NOW-1', dir: '/no/such/run', since: start + 10 }], now).ghost.length,
+  ghostEmpty: w.buildCity([line('NOW-1', start + 10)], now).ghost.length,
   weekShips: sample.week.ships,
   life: [0, 2, 3, 9, 10, 19, 20, 90].map((n) => {
     const plan = w.lifeOf(n);
@@ -651,9 +676,13 @@ check "plot: two runs do not pile onto one"      "$(city_of plotDiffers)" "true"
 check "plot: every building is inside the frame" "$(city_of plotInFrame)" "true"
 check "plot: a ticket range spreads across the district"  "$(city_of plotSpread)" "true"
 check "plot: and across all three depth bands"            "$(city_of depthSpread)" "true"
-check "mirror: one building per run id"          "$(city_of dedupedCount)" "2"
-check "mirror: and the latest status is the one that stands" \
-  "$(city_of dedupedSince)" "400"
+check "ledger: junk lines are skipped, never fatal" "$(city_of ledgerSkipped)" "3"
+check "mirror: one line per run id survives the read" \
+  "$(city_of ledgerKept)" "MIR-1,MIR-2"
+check "mirror: and the first sighting is the one that stands" \
+  "$(city_of ledgerFirstWins)" "100/angel"
+check "ledger: a record carries what a building is made of, and no more" \
+  "$(city_of ledgerFields)" "deletions,epoch,id,insertions,owner,repo"
 check "ghost: last week is a height and a plot, nothing else" \
   "$(city_of ghostKeys)" "storeys,x"
 check "ghost: an empty last week draws no ghost at all" "$(city_of ghostEmpty)" "0"
@@ -662,13 +691,46 @@ check "life: population scales with the week, and the milestones gate" \
   "$(city_of life)" "0:0-- 2:0-- 3:1-- 9:3-- 10:3S- 19:6S- 20:6ST 90:8ST"
 check "sign: a dispatcher's tint lasts about a shift" "$(city_of signHours)" "6"
 
+# --- where the city's memory lives ------------------------------------------------
+# The ledger is the whole point of the amendment: a run dir is not permanent
+# (cleanup.sh promotes a run, mirror_remove() deletes the mirrored copy), so the
+# city cannot be derived from one.
+echo "== wall: the city ledger =="
+city_file() { WALL_RUNS="$1" WALL_CITY="${2:-}" node -e \
+  'process.stdout.write(require(process.argv[1]).CITY_FILE)' "$SRC/wall/server.js"; }
+check "ledger: it lands beside the runs dir by default" \
+  "$(city_file /var/harness/runs)" "/var/harness/wall-city.jsonl"
+check "ledger: a trailing slash on the runs dir does not move it" \
+  "$(city_file /var/harness/runs/)" "/var/harness/wall-city.jsonl"
+check "ledger: and WALL_CITY puts it wherever you want it" \
+  "$(city_file /var/harness/runs /elsewhere/demo.jsonl)" "/elsewhere/demo.jsonl"
+
 # --- the district, end to end ---------------------------------------------------
 echo "== wall: the district accretes =="
 WEEK="$ROOT/week"
+WEEK_CITY="$ROOT/week-city.jsonl"
 mkdir -p "$WEEK"
-serve "$WEEK" "$ROOT/week.log"; WEEK_PORT="$PORT_OUT"
+# Both window edges from the server's own function rather than from a second
+# implementation of "Monday" in shell, which would drift the first time one of
+# them learned something about DST.
+WEEK_EDGES="$(node -e 'const w = require(process.argv[1]);
+  const start = w.weekStartOf(Math.floor(Date.now() / 1000));
+  console.log(start, w.weekStartOf(start - 1));' "$SRC/wall/server.js")"
+MONDAY="${WEEK_EDGES% *}"
+LAST_MONDAY="${WEEK_EDGES#* }"
+# Last week's ledger, as the wall that was running last week left it — plus one
+# entry old enough that Monday's rollover has to prune it, and one line of junk.
+led() {  # $1 = id, $2 = epoch, $3 = repo, $4 = owner, $5 = insertions
+  printf '{"id":"%s","epoch":%s,"repo":"%s","owner":"%s","insertions":%s,"deletions":0}\n' \
+    "$1" "$2" "$3" "$4" "$5" >> "$WEEK_CITY"
+}
+led GHOST-SUN "$((MONDAY - 1))"       olyxbase    emre  300
+led GHOST-MON "$LAST_MONDAY"          olyx-agents angel 90
+led ANCIENT-1 "$((LAST_MONDAY - 1))"  olyxbase    angel 500
+printf 'half a line written when the power went\n' >> "$WEEK_CITY"
 # $1 = id, $2 = finish epoch, $3 = project ('-' = unreadable), $4 = stage,
-# $5 = insertions ('-' = no result.json, 'junk' = caught mid-write)
+# $5 = insertions ('-' = no result.json, 'junk' = caught mid-write, 'flat' = a
+# well-formed result.json that recorded no diff)
 ship_run() {
   mkdir -p "$WEEK/$1"
   printf '%s %s\n' "$2" "$4" > "$WEEK/$1/status"
@@ -677,34 +739,35 @@ ship_run() {
   case "$5" in
     -) ;;
     junk) printf '{"metrics": {"diff": {"inser' > "$WEEK/$1/result.json" ;;
+    flat) printf '{"status":"ready"}\n' > "$WEEK/$1/result.json" ;;
     *) printf '{"metrics":{"diff":{"insertions":%s,"deletions":0}}}\n' "$5" \
          > "$WEEK/$1/result.json" ;;
   esac
 }
+ship_run SHIP-EDGE  "$MONDAY"          olyx-agents          'done: ready' 40
+ship_run SHIP-BIG   "$((MONDAY + 60))" olyxbase             'done: ready' 1800
+ship_run SHIP-SPIRE "$((MONDAY + 70))" valoryx-intelligence 'done: ready' 260
+ship_run SHIP-INFRA "$((MONDAY + 80))" dispatch-harness     'done: ready' 150
+ship_run SHIP-FLAT  "$((MONDAY + 90))" olyxbase             'done: ready' flat
+ship_run SHIP-JUNK  "$((MONDAY + 100))" olyxbase            'done: ready' junk
+ship_run SHIP-BARE  "$((MONDAY + 110))" olyxbase            'done: ready' -
+ship_run LIVE-W     "$(date +%s)"      olyxbase             'implementing — Opus (Claude sub)' -
+ship_run BURNT-W    "$((MONDAY + 200))" olyxbase            'done: rejected' 120
+ship_run SYNCED-W   "$((MONDAY + 210))" olyxbase 'done: PR branch synced with main, gate green, pushed' 120
+printf 'reinier\n' > "$WEEK/SHIP-EDGE/owner"
+serve "$WEEK" "$ROOT/week.log" --city "$WEEK_CITY"; WEEK_PORT="$PORT_OUT"
 if [ -n "$WEEK_PORT" ]; then
-  MONDAY="$(get "$WEEK_PORT" /api/runs | jq -r '.week.start')"
-  ship_run SHIP-EDGE  "$MONDAY"                  olyx-agents      'done: ready' 40
-  ship_run SHIP-BIG   "$((MONDAY + 60))"         olyxbase         'done: ready' 1800
-  ship_run SHIP-JUNK  "$((MONDAY + 90))"         valoryx-intelligence 'done: ready' junk
-  ship_run SHIP-BARE  "$((MONDAY + 120))"        dispatch-harness 'done: ready' -
-  ship_run GHOST-SUN  "$((MONDAY - 1))"          olyxbase         'done: ready' 300
-  ship_run GHOST-MON  "$((MONDAY - 6 * 86400))"  olyx-agents      'done: ready' 90
-  ship_run ANCIENT-1  "$((MONDAY - 9 * 86400))"  olyxbase         'done: ready' 500
-  ship_run LIVE-W     "$(date +%s)"              olyxbase         'implementing — Opus (Claude sub)' -
-  ship_run BURNT-W    "$((MONDAY + 200))"        olyxbase         'done: rejected' 120
-  ship_run SYNCED-W   "$((MONDAY + 210))"        olyxbase         'done: PR branch synced with main, gate green, pushed' 120
-  printf 'reinier\n' > "$WEEK/SHIP-EDGE/owner"
   WEEK_API="$(get "$WEEK_PORT" /api/runs)"
   city_at() { printf '%s' "$WEEK_API" | jq -r --arg id "$1" '.city[] | select(.id==$id) | .'"$2"; }
+  check "district: the window opens where the server says it does" \
+    "$(printf '%s' "$WEEK_API" | jq -r '.week.start')" "$MONDAY"
   check "district: this week's ships are standing" \
     "$(printf '%s' "$WEEK_API" | jq -r '[.city[].id] | sort | join(",")')" \
-    "SHIP-BARE,SHIP-BIG,SHIP-EDGE,SHIP-JUNK"
+    "SHIP-BIG,SHIP-EDGE,SHIP-FLAT,SHIP-INFRA,SHIP-SPIRE"
   check "district: a run finishing on the stroke of Monday is this week's" \
     "$(city_at SHIP-EDGE at)" "$MONDAY"
-  check "district: last week's two stand behind it as ghosts" \
+  check "district: last week's ledger stands behind it as the ghost" \
     "$(printf '%s' "$WEEK_API" | jq '.ghost | length')" "2"
-  check "district: and nothing older than that is anywhere" \
-    "$(printf '%s' "$WEEK_API" | jq '[.ghost[], .city[]] | length')" "6"
   check "district: only a done: ready builds — a rejection does not" \
     "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="BURNT-W")] | length')" "0"
   check "district: nor does sync-pr.sh's prose done line" \
@@ -712,17 +775,24 @@ if [ -n "$WEEK_PORT" ]; then
   check "district: a live run is in the skyline, not in the district" \
     "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="LIVE-W")] | length')" "0"
   check "district: the ship count agrees with what is standing" \
-    "$(printf '%s' "$WEEK_API" | jq '.week.ships')" "4"
+    "$(printf '%s' "$WEEK_API" | jq '.week.ships')" "5"
   check "type: agent work is residential"     "$(city_at SHIP-EDGE kind)" "residential"
   check "type: the data repo is industrial"   "$(city_at SHIP-BIG kind)"  "industrial"
-  check "type: valoryx is a spire"            "$(city_at SHIP-JUNK kind)" "spire"
-  check "type: the harness itself is infrastructure" "$(city_at SHIP-BARE kind)" "infra"
+  check "type: valoryx is a spire"            "$(city_at SHIP-SPIRE kind)" "spire"
+  check "type: the harness itself is infrastructure" "$(city_at SHIP-INFRA kind)" "infra"
   check "height: the big diff is the tall building" \
     "$(printf '%s' "$WEEK_API" | jq '(.city[] | select(.id=="SHIP-BIG") | .storeys) > (.city[] | select(.id=="SHIP-EDGE") | .storeys)')" "true"
-  check "tolerance: a half-written result.json still builds, at minimum height" \
-    "$(city_at SHIP-JUNK storeys)" "3"
-  check "tolerance: so does a run with no result.json at all" \
-    "$(city_at SHIP-BARE storeys)" "3"
+  # A building is a record of a real diff. A result.json that is missing or
+  # caught mid-write is skipped silently and retried; only a file that was
+  # actually readable — and simply recorded nothing — is a minimum-height
+  # building. Inventing a height from a file we could not read is the one thing
+  # that would make the city lie.
+  check "tolerance: a half-written result.json builds nothing, and does not crash" \
+    "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="SHIP-JUNK")] | length')" "0"
+  check "tolerance: neither does a run with no result.json at all" \
+    "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="SHIP-BARE")] | length')" "0"
+  check "tolerance: a readable result.json with no diff is the shortest building" \
+    "$(city_at SHIP-FLAT storeys)" "3"
   check "sign: a building carries its dispatcher, and their kind" \
     "$(city_at SHIP-EDGE owner),$(city_at SHIP-EDGE ownerKind)" "reinier,human"
   check "sign: an unowned ship is not mis-attributed" \
@@ -736,13 +806,32 @@ if [ -n "$WEEK_PORT" ]; then
     "at,depth,id,kind,owner,ownerKind,project,storeys,x"
   check "district: and no per-person aggregate exists anywhere in the snapshot" \
     "$(printf '%s' "$WEEK_API" | jq -r '[paths | map(tostring) | join(".")] | map(select(test("lane|district|byOwner"))) | length')" "0"
+
+  # Monday's rollover, on disk: what has fallen out of both windows is gone from
+  # the file, not merely hidden — and the rewrite drops the junk line with it.
+  check "rollover: the ledger keeps only the two windows it can draw" \
+    "$(jq -r '.id' < "$WEEK_CITY" | sort | tr '\n' ' ')" \
+    "GHOST-MON GHOST-SUN SHIP-BIG SHIP-EDGE SHIP-FLAT SHIP-INFRA SHIP-SPIRE "
+  check "rollover: and the rewrite leaves a file that parses cleanly" \
+    "$(jq -s 'length' < "$WEEK_CITY")" "7"
+  # Discovery only ever records THIS week: the ledger is what the wall witnessed,
+  # not a history it went looking for.
+  check "ledger: a run that finished last week is not backfilled from its dir" \
+    "$(grep -c 'ANCIENT-1' "$WEEK_CITY")" "0"
+
   # A skyline the room can learn: the same week drawn by a second process puts
   # every building on the same plot.
-  serve "$WEEK" "$ROOT/week2.log"; WEEK_TWO="$PORT_OUT"
+  serve "$WEEK" "$ROOT/week2.log" --city "$WEEK_CITY"; WEEK_TWO="$PORT_OUT"
   if [ -n "$WEEK_TWO" ]; then
+    WEEK_TWO_API="$(get "$WEEK_TWO" /api/runs)"
     check "plot: a second wall draws the identical district" \
-      "$(get "$WEEK_TWO" /api/runs | jq -r '[.city[] | "\(.id):\(.x).\(.depth)"] | join(",")')" \
+      "$(printf '%s' "$WEEK_TWO_API" | jq -r '[.city[] | "\(.id):\(.x).\(.depth)"] | join(",")')" \
       "$(printf '%s' "$WEEK_API" | jq -r '[.city[] | "\(.id):\(.x).\(.depth)"] | join(",")')"
+    check "plot: and the identical ghost behind it" \
+      "$(printf '%s' "$WEEK_TWO_API" | jq -r '[.ghost[] | "\(.x).\(.storeys)"] | join(",")')" \
+      "$(printf '%s' "$WEEK_API" | jq -r '[.ghost[] | "\(.x).\(.storeys)"] | join(",")')"
+    check "ledger: a second wall on the same ledger appends nothing new" \
+      "$(jq -s 'length' < "$WEEK_CITY")" "7"
   else
     bad "plot: a second wall starts against the same week"
   fi
@@ -750,19 +839,94 @@ else
   bad "district: server starts against a fresh week"
 fi
 
+# --- a building outlives its run dir ---------------------------------------------
+# The reason the ledger exists. cleanup.sh removes a promoted run's worktree and
+# mirror_remove() deletes the mirrored run dir off this machine — neither is in
+# this feature's scope, and neither may demolish a building.
+echo "== wall: a building outlives the run dir it came from =="
+KEEP="$ROOT/persist"
+KEEP_CITY="$ROOT/persist-city.jsonl"
+mkdir -p "$KEEP/PERSIST-1"
+printf '%s done: ready\n' "$((MONDAY + 400))" > "$KEEP/PERSIST-1/status"
+printf '/tmp/olyxbase-persist-1\n' > "$KEEP/PERSIST-1/worktree"
+printf 'angel\n' > "$KEEP/PERSIST-1/owner"
+printf '{"metrics":{"diff":{"insertions":120,"deletions":30}}}\n' > "$KEEP/PERSIST-1/result.json"
+serve "$KEEP" "$ROOT/persist.log" --city "$KEEP_CITY"; KEEP_PORT="$PORT_OUT"
+if [ -n "$KEEP_PORT" ]; then
+  check "persist: the ship is discovered and stands" \
+    "$(get "$KEEP_PORT" /api/runs | jq -r '[.city[].id] | join(",")')" "PERSIST-1"
+  # Several more polls: the ledger is append-once, not append-per-poll.
+  get "$KEEP_PORT" /api/runs > /dev/null
+  get "$KEEP_PORT" /api/runs > /dev/null
+  check "persist: repeated polls append one line, not one per poll" \
+    "$(grep -c 'PERSIST-1' "$KEEP_CITY")" "1"
+  # cleanup.sh, or mirror_remove(), taking the run dir away.
+  rm -rf "$KEEP/PERSIST-1"
+  KEEP_API="$(get "$KEEP_PORT" /api/runs)"
+  check "persist: the run has left the disk entirely" \
+    "$(printf '%s' "$KEEP_API" | jq '.runs | length')" "0"
+  check "persist: and the building it left behind is still standing" \
+    "$(printf '%s' "$KEEP_API" | jq -r '[.city[].id] | join(",")')" "PERSIST-1"
+  check "persist: with everything it needs to be drawn" \
+    "$(printf '%s' "$KEEP_API" | jq -r '.city[0] | "\(.kind):\(.storeys):\(.owner)"')" \
+    "industrial:10:angel"
+  # A mirrored copy of the same run arriving afterwards, with a later status: one
+  # run id is one building, and the first sighting is the one that stands.
+  mkdir -p "$KEEP/PERSIST-1"
+  printf '%s done: ready\n' "$((MONDAY + 9000))" > "$KEEP/PERSIST-1/status"
+  printf '/tmp/olyx-agents-persist-1\n' > "$KEEP/PERSIST-1/worktree"
+  printf '{"metrics":{"diff":{"insertions":4000,"deletions":0}}}\n' > "$KEEP/PERSIST-1/result.json"
+  MIRROR_API="$(get "$KEEP_PORT" /api/runs)"
+  check "mirror: a duplicate sighting appends no second line" \
+    "$(grep -c 'PERSIST-1' "$KEEP_CITY")" "1"
+  # The second sighting is a taller diff in a different repo, so every field
+  # here would move if the wall had let it overwrite the first.
+  check "mirror: and the building is the one the wall saw first" \
+    "$(printf '%s' "$MIRROR_API" | jq -r '.city[0] | "\(.kind):\(.storeys):\(.at)"')" \
+    "industrial:10:$((MONDAY + 400))"
+  # Reboot: a fresh process with the run dir gone reads the city off the ledger.
+  rm -rf "$KEEP/PERSIST-1"
+  serve "$KEEP" "$ROOT/persist2.log" --city "$KEEP_CITY"; KEEP_TWO="$PORT_OUT"
+  if [ -n "$KEEP_TWO" ]; then
+    check "persist: a restarted wall rebuilds the city from the ledger alone" \
+      "$(get "$KEEP_TWO" /api/runs | jq -r '[.city[].id] | join(",")')" "PERSIST-1"
+  else
+    bad "persist: a restarted wall starts against the same ledger"
+  fi
+else
+  bad "persist: server starts against a run about to be cleaned up"
+fi
+
+# An unreadable ledger is an empty plain and a line on stderr — never a crash,
+# and never a wall that refuses to serve.
+echo "== wall: an unreadable ledger =="
+BUSTED="$ROOT/busted"
+mkdir -p "$BUSTED" "$ROOT/busted-city.jsonl"   # a directory where a file belongs
+serve "$BUSTED" "$ROOT/busted.log" --city "$ROOT/busted-city.jsonl"; BUSTED_PORT="$PORT_OUT"
+if [ -n "$BUSTED_PORT" ]; then
+  ok "ledger: an unreadable ledger still serves the wall"
+  check "ledger: it starts from an empty plain" \
+    "$(get "$BUSTED_PORT" /api/runs | jq '.city | length')" "0"
+  check "ledger: and says so once, rather than dying" \
+    "$(grep -c 'city ledger unreadable' "$ROOT/busted.log")" "1"
+else
+  bad "ledger: an unreadable ledger still serves the wall"
+fi
+
 # A very good week is still a city: the district is not capped by the JSON feed's
 # finished-run cap, the population tops out, and every milestone is lit.
 echo "== wall: a week that shipped thirty things =="
 BUSY_WEEK="$ROOT/busy-week"
 mkdir -p "$BUSY_WEEK"
+for i in $(seq 1 30); do
+  mkdir -p "$BUSY_WEEK/SHIPPED-$i"
+  printf '%s done: ready\n' "$((MONDAY + i))" > "$BUSY_WEEK/SHIPPED-$i/status"
+  printf '/tmp/olyx-agents-shipped-%s\n' "$i" > "$BUSY_WEEK/SHIPPED-$i/worktree"
+  printf '{"metrics":{"diff":{"insertions":%s,"deletions":7}}}\n' "$((i * 13))" \
+    > "$BUSY_WEEK/SHIPPED-$i/result.json"
+done
 serve "$BUSY_WEEK" "$ROOT/busy-week.log"; BUSY_WEEK_PORT="$PORT_OUT"
 if [ -n "$BUSY_WEEK_PORT" ]; then
-  BUSY_MONDAY="$(get "$BUSY_WEEK_PORT" /api/runs | jq -r '.week.start')"
-  for i in $(seq 1 30); do
-    mkdir -p "$BUSY_WEEK/SHIPPED-$i"
-    printf '%s done: ready\n' "$((BUSY_MONDAY + i))" > "$BUSY_WEEK/SHIPPED-$i/status"
-    printf '/tmp/olyx-agents-shipped-%s\n' "$i" > "$BUSY_WEEK/SHIPPED-$i/worktree"
-  done
   BUSY_WEEK_API="$(get "$BUSY_WEEK_PORT" /api/runs)"
   check "district: the JSON feed's history cap never truncates the week" \
     "$(printf '%s' "$BUSY_WEEK_API" | jq '.city | length')" "30"
@@ -1068,6 +1232,14 @@ if [ -n "$FIX" ]; then
     "$(printf '%s' "$FIXAPI" | jq '[.runs[].floor] | unique | length')" "6"
   check "fixtures: the synthetic dispatches some of them" \
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.ownerKind=="synthetic")] | length')" "2"
+  # The ledger is the one thing on this wall that writes. Serving the committed
+  # fixtures must still leave the repo exactly as it found it — hence --city, and
+  # hence this.
+  if [ -e "$SRC/wall/fixtures/wall-city.jsonl" ] || [ -e "$SRC/wall/wall-city.jsonl" ]; then
+    bad "fixtures: serving the repo's fixtures wrote a ledger into the repo"
+  else
+    ok "fixtures: serving the repo's fixtures writes nothing into the repo"
+  fi
 else
   bad "fixtures: server starts against wall/fixtures/runs"
 fi
@@ -1077,10 +1249,29 @@ echo "== wall.sh: flags =="
 HELP="$(bash "$WALL" --help 2>&1)"
 check   "flags: --help exits 0" "$?" "0"
 grep_ok "$HELP" "--runs" "flags: --help documents --runs"
+grep_ok "$HELP" "--city" "flags: --help documents --city"
 grep_ok "$HELP" "WALL_POLL_MS" "flags: --help reaches the end of the header"
 # The header is printed by line range, so growing it and forgetting the range
 # either truncates the help or spills the script into it.
 grep_not "$HELP" "set -u" "flags: --help stops before the code"
+# Losing the city's memory to a shifted argument is exactly the accident worth
+# catching, so an empty --city is a typo rather than "put it back on default".
+if bash "$WALL" --city '' >/dev/null 2>&1; then
+  bad "flags: an empty --city exits non-zero"
+else
+  ok "flags: an empty --city exits non-zero"
+fi
+# A flag with no value at all used to spin the argument loop forever, because
+# `shift 2` on a one-element list shifts nothing. Every flag takes a value, so
+# every flag is checked — with a timeout, since the failure mode is a hang and a
+# hung suite tells you nothing about which flag did it.
+for flag in --port --host --runs --city --crew; do
+  if perl -e 'alarm 5; exec @ARGV' bash "$WALL" "$flag" >/dev/null 2>&1; then
+    bad "flags: a value-less $flag exits instead of looping"
+  else
+    ok "flags: a value-less $flag exits instead of looping"
+  fi
+done
 if bash "$WALL" --nope >/dev/null 2>&1; then
   bad "flags: an unknown option exits non-zero"
 else
