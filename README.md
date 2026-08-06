@@ -166,11 +166,13 @@ your phone):
 - **`tmux`** — `station.sh` runs the session inside it. Nothing else in the
   harness needs tmux.
 
-Optional (only for `schedule.sh`, firing a prepared run at a set time):
+Optional (only for `schedule.sh`, firing a prepared run at a set time, and for
+`quartermaster.sh --install`, its daily 19:00 agent):
 
 - **`launchctl`** — the macOS launchd client. It ships with macOS and exists
-  nowhere else, which is why `schedule.sh` is the one macOS-only script in the
-  harness: everything else runs anywhere.
+  nowhere else, which is why arming a schedule is the one macOS-only flow in
+  the harness: everything else, including `quartermaster.sh --report`, runs
+  anywhere.
 
 Optional (only for [`wall.sh`](#the-wall), the big-screen run dashboard):
 
@@ -197,16 +199,18 @@ Optional (only for the auto-recorded PR demo videos on frontend runs):
 Optional (only for the copyable Postgres preflight example): **`docker`** and
 **`nc`**.
 
-Optional (planner-side only, for [spec attachments](#architecture)): **`npx`**
-with Node 20+ — converts document attachments to markdown via `npx -y
-@firecrawl/anydoc`. Nothing in the pipeline itself invokes it.
+Optional, for [spec attachments](#architecture) (planner-side) and for
+[the Quartermaster](#the-quartermaster)'s capacity estimate: **`npx`** with Node
+20+ — converts document attachments to markdown via `npx -y @firecrawl/anydoc`,
+and reads each station's local token accounting via `npx -y ccusage@latest`.
+Nothing in the pipeline itself invokes it.
 
 Portability notes: the scripts target **bash 3.2** (the macOS default). macOS
 ships no `timeout(1)`, so the harness uses a `perl -e 'alarm ...'` wrapper as a
-process cap. `schedule.sh` is the only macOS-only flow and requires `launchctl`;
-`osascript`, used elsewhere for local desktop notifications, is guarded, so on
-Linux notifications are simply skipped (phone push via [ntfy](https://ntfy.sh)
-still works). CI
+process cap. Arming a launchd agent (`schedule.sh`, `quartermaster.sh --install`)
+is the only macOS-only flow and requires `launchctl`; `osascript`, used
+elsewhere for local desktop notifications, is guarded, so on Linux notifications
+are simply skipped (phone push via [ntfy](https://ntfy.sh) still works). CI
 ([`.github/workflows/gate.yml`](.github/workflows/gate.yml)) runs the gate on
 Linux to keep the shipped scripts portable.
 
@@ -332,6 +336,96 @@ To point the whole harness somewhere other than `~/.claude/harness`, set
 `HARNESS_DIR` (every script honors it) and install with
 `HARNESS_DIR=/path ./install.sh`.
 
+### The Quartermaster
+
+Subscription capacity that is still unused at the end of the day expires
+worthless, while dispatchable work sits in the tracker. `schedule.sh` can fire a
+prepared run at 02:00 — but somebody has to decide, every evening, *which* runs
+and *how many*. `quartermaster.sh` is that decision, made at 19:00:
+
+```bash
+~/.claude/harness/quartermaster.sh              # --report: the plan, arms nothing
+~/.claude/harness/quartermaster.sh --arm        # actually arm it
+~/.claude/harness/quartermaster.sh --install    # a daily 19:00 agent that reports
+~/.claude/harness/quartermaster.sh --uninstall  # remove that agent
+```
+
+**The crew convention is the consent.** A Linear issue labelled `overnight`
+**and assigned to somebody** is a ticket that person is happy to have run
+overnight, under their own identity. The label alone is not enough and the
+assignee alone is not enough — the pair is the handshake. Crew members are
+directories under `~/accounts/` (`QM_ACCOUNTS_DIR`), one per station, each with
+`claude/`, `codex/` and `gh/` inside it; an assignee's email maps to a station
+by its local part up to the first dot, so `angel.sole@olyx.nl` is `~/accounts/angel`.
+An assignee with no station on this machine is reported, never guessed at.
+
+**A brief is still the contract.** A tagged ticket is armable only when
+`runs/<TICKET>/brief.md` already exists — the same human-approved brief
+`schedule.sh` demands. Tagged tickets without one are listed under *needs a
+brief* and left alone; generating briefs from tickets unattended is deliberately
+not something this does. Tickets already armed, already running, or already
+delivered (a `result.json` with a `pr_url`) are skipped with the reason, which
+is what makes a second run at 19:05 arm nothing at all.
+
+**Capacity, honestly estimated.** Per station,
+`CLAUDE_CONFIG_DIR=~/accounts/<name>/claude npx -y ccusage@latest blocks --json
+--offline` reads that station's *own log files* — no endpoint is contacted, by
+anyone, anywhere in this script. Headroom is measured in output tokens, the
+only unit available on both sides of the sum: the ceiling is the busiest
+completed five-hour block ccusage can still see (or `QM_TOKEN_LIMIT` when you
+know your real one), and what is left of it in the current block is the proxy
+for tonight's capacity. One run costs the median
+`metrics.implementer_usage.output_tokens` over the last `QM_HISTORY` runs, so
+the estimate is this machine's own history rather than a guess. Then
+`N = floor(remaining × QM_SAFETY / median cost)`, capped at `QM_MAX_PER_CREW`.
+It is an estimate, and the safety factor is there because it is one — when
+ccusage cannot account for a station at all, the report says so and falls back
+to `QM_FALLBACK_N` rather than inventing a number.
+
+**What `--arm` does.** Eligible tickets take the fire times in `QM_TIMES` in
+queue order (priority first, oldest first within a priority), and each is handed
+to `schedule.sh` with that station's environment exported — `CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `GH_CONFIG_DIR`, `HARNESS_OWNER`, `IMPLEMENTER_EFFORT=high` — so
+the snapshot `schedule.sh` writes carries the right identity to 02:00. A
+`GH_TOKEN` exported in the invoking shell is *unset* for that call: `gh` prefers
+a token over its config dir, and one would quietly make every crew member's PR
+come out of the same account. Each armed ticket then gets a Linear comment
+saying when it was armed; a failed comment is reported and never unarms a run.
+Slots already spent tonight count against `N`, so reruns neither double-arm nor
+hand out a fire time twice.
+
+**The report.** Every run writes `runs/quartermaster/<YYYY-MM-DD>.md` — per crew
+member: estimated headroom, median run cost, `N`, what was armed (or would be),
+what needs a brief, and every skip with its reason — and pushes a compact
+summary to your phone through the same `HARNESS_NTFY_TOPIC` in `notify.conf`
+that stage handoffs use. No topic configured means the report file only.
+`--report` is side-effect-free outside that file: it arms nothing, comments on
+nothing, and exits 0 even when Linear is unreachable or ccusage fails, because
+a partial report at 19:00 is worth more than a crash.
+
+**The trust dial.** `--install` writes a daily launchd agent
+(`com.olyx.quartermaster`, `QM_AT` to move it off 19:00) running `--report`, on
+the same conventions as `schedule.sh`: a mode-600 wrapper carrying an
+environment snapshot, because launchd hands a job almost nothing. It only
+reports until you decide otherwise; `--install --arm` (or editing the mode
+argument in the plist) is the one-line flip to letting it act. macOS only, like
+`schedule.sh` — `--report` itself runs anywhere.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `QM_SAFETY` | Fraction of the estimated headroom to spend | `0.5` |
+| `QM_MAX_PER_CREW` | Hard ceiling on runs per crew member per night | `3` |
+| `QM_FALLBACK_N` | Runs to allow when capacity is unknowable | `1` |
+| `QM_TIMES` | Fire times, handed out in queue order | `"23:30 02:00 04:30"` |
+| `QM_LABEL` | The consent label | `overnight` |
+| `QM_ACCOUNTS_DIR` | Where the crew's stations live | `~/accounts` |
+| `QM_HISTORY` | Runs sampled for the median cost | `20` |
+| `QM_DEFAULT_COST` | Median cost when there is no history yet | `40000` |
+| `QM_TOKEN_LIMIT` | Pin the block ceiling instead of inferring it | unset |
+| `QM_AT` | When `--install` fires | `19:00` |
+| `QM_EFFORT` | `IMPLEMENTER_EFFORT` for armed runs | `high` |
+| `LINEAR_API_KEY_FILE` | The Linear key (mode 600, never echoed anywhere) | `$HARNESS_DIR/linear-api-key` |
+
 ---
 
 ## Configuration
@@ -435,6 +529,11 @@ overwrites an existing copy:
 - **`repos.local.sh`** — per-repo pins (above).
 - **`notify.conf`** — desktop + phone (ntfy) notifications on stage handoffs.
 - **`demo.conf.sh`** — object-storage remote for uploading PR demo videos.
+
+One more file is **not** seeded, because it is a credential and you should
+create it deliberately: `linear-api-key` (mode 600, `LINEAR_API_KEY_FILE` to
+move it), read only by [the Quartermaster](#the-quartermaster). Without it the
+quartermaster still reports capacity and simply says the queue was unreadable.
 
 ### Worker sandbox and MCP denies
 
@@ -754,6 +853,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | --- | --- |
 | `run-task.sh` | The pipeline: worktree → implement → gate → review → PR |
 | `schedule.sh` | [Fire a prepared run at a set time](#scheduling-a-run-for-later) (launchd one-shot; `--list` / `--cancel`) |
+| `quartermaster.sh` | [The Quartermaster](#the-quartermaster): the 19:00 capacity check that fills the night with briefed work |
 | `sync-pr.sh` | Re-merge the latest base into an already-pushed PR branch on conflict |
 | `repos.conf.sh` | Generic per-repo detection + sources your `repos.local.sh` |
 | `mirror.sh` | `HARNESS_MIRROR`: mirror a live run dir to another machine's wall |
@@ -769,7 +869,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `wall`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |
