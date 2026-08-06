@@ -164,12 +164,17 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
 fi
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
+# How the review stage actually went, decided from evidence after it runs (see
+# section 5b): "" until the stage is reached, then skipped | reviewed |
+# no_evidence | failed_silent. Recorded in result.json so nobody has to read
+# logs to find out whether a diff was reviewed.
+REVIEW_CLASS=""
 
 # Gather per-run quantitative metrics from the artefacts on disk. Every field is
 # best-effort: called on EVERY exit path (including early failures), it emits
 # whatever is available and nulls/empties the rest — partial metrics are fine.
 collect_metrics() {
-  local now started wall stage_durations gate_rounds opus_c codex_c
+  local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
   local numstat files ins del impl
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
@@ -195,12 +200,30 @@ collect_metrics() {
     [ -n "$stage_durations" ] || stage_durations='{}'
   fi
 
-  # Gate history for this invocation: "<round> <pass|fail>" per line.
+  # Gate history for this invocation, one line per round:
+  #   "<round> <pass|fail> <seconds>\t<failed step>"
+  # Seconds and the tab-separated step are optional in the pattern so a log left
+  # by a run that predates the telemetry still parses (both come out null), and
+  # so does the two-field shape any external reader may still write.
   gate_rounds='[]'
   if [ -f "$RUN_DIR/gate-rounds.log" ]; then
-    gate_rounds=$(jq -Rn '[inputs | capture("^(?<round>[^ ]+) (?<result>[^ ]+)$")?]' \
+    gate_rounds=$(jq -Rn '[inputs
+      | capture("^(?<round>[^ ]+) (?<result>[^ ]+)( (?<seconds>[0-9]+))?(\t(?<failed_step>.*))?$")?
+      | {round, result,
+         seconds: (if .seconds then (.seconds | tonumber) else null end),
+         failed_step: (if (.failed_step // "") == "" then null else .failed_step end)}]' \
       "$RUN_DIR/gate-rounds.log" 2>/dev/null || echo '[]')
     [ -n "$gate_rounds" ] || gate_rounds='[]'
+  fi
+
+  # How often the implementer was resumed instead of started fresh. Counted from
+  # the log rather than from stage_durations, which sums every resume under one
+  # label and so can never say "three times".
+  turn_resumes=0
+  if [ -f "$RUN_DIR/stages.log" ]; then
+    turn_resumes=$(awk '{ sub(/^[0-9]+ /, ""); if ($0 ~ /^resuming/) n++ } END { print n + 0 }' \
+      "$RUN_DIR/stages.log" 2>/dev/null || echo 0)
+    case "$turn_resumes" in ''|*[!0-9]*) turn_resumes=0 ;; esac
   fi
 
   # Commit attribution: base..opus_head is the implementer's, opus_head..HEAD is
@@ -235,6 +258,7 @@ EOF
     --argjson wall "$wall" \
     --argjson stage_durations "$stage_durations" \
     --argjson gate_rounds "$gate_rounds" \
+    --argjson turn_resumes "$turn_resumes" \
     --argjson opus_commits "$opus_c" \
     --argjson codex_commits "$codex_c" \
     --argjson files "${files:-null}" --argjson ins "${ins:-null}" --argjson del "${del:-null}" \
@@ -243,6 +267,7 @@ EOF
       wall_seconds: $wall,
       stage_durations: $stage_durations,
       gate_rounds: $gate_rounds,
+      turn_resumes: $turn_resumes,
       opus_commits: $opus_commits,
       codex_commits: $codex_commits,
       implementer_num_turns: ($impl.num_turns // null),
@@ -256,13 +281,14 @@ write_result() {
   metrics=$(collect_metrics)
   jq -n \
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
-    --arg arm "$ARM" --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
+    --arg arm "$ARM" --arg review "$REVIEW_CLASS" \
+    --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
     --arg rmodel "$REVIEWER_MODEL" --arg reffort "$REVIEWER_EFFORT" \
     --arg worktree "$WORKTREE" --arg branch "$BRANCH" --arg base "$BASE_BRANCH" \
     --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
     > "$RUN_DIR/result.json"
 }
 
@@ -756,13 +782,50 @@ OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)
 echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
 
 # --- 5. Gate + Codex review/fix loop ------------------------------------------
+# Which step of the gate died. Three quarters of runs need a second gate round,
+# and until now the only record was "fail" — never WHICH command failed, so
+# nobody could say what to fix first.
+#
+# The gate's own shell is the exact source: a DEBUG trap records each top-level
+# command right before it runs, so at exit the file holds the command the chain
+# stopped on — and in an `&&` chain, that IS the first failing step. The
+# alternatives are both worse. Splitting GATE_CMD on `&&` and running the
+# segments ourselves changes how the gate runs (a `cd backend && npm test` chain
+# would lose its directory) and cannot be done safely by text (`&&` inside a
+# quoted argument). Scraping "the last command line" out of gate-N.log assumes
+# the gate echoes its commands, which `npm test` and `pytest` do not. This costs
+# one file write per top-level command, leaves the gate log byte-identical, and
+# parses nothing.
+#
+# Redirected to its own file, never to the log, so the reviewer's gate-latest.log
+# is exactly what it always was. `|| :` keeps a failed write from ever being
+# visible to the gate.
+GATE_TRACE_PRELUDE='trap '\''printf "%s\n" "$BASH_COMMAND" > "$HARNESS_GATE_STEP" 2>/dev/null || :'\'' DEBUG'
+
 run_gate() {
+  local rc started secs step script failed_step
   stage "test gate #$1 (deterministic — no model)"
-  (cd "$WORKTREE" && bash -c "$GATE_CMD") > "$RUN_DIR/gate-$1.log" 2>&1
-  local rc=$?
+  step="$RUN_DIR/gate-$1.step"
+  : > "$step"
+  script="$GATE_TRACE_PRELUDE
+$GATE_CMD"
+  started=$(date +%s)
+  (cd "$WORKTREE" && HARNESS_GATE_STEP="$step" bash -c "$script") > "$RUN_DIR/gate-$1.log" 2>&1
+  rc=$?
+  secs=$(( $(date +%s) - started ))
   tail -100 "$RUN_DIR/gate-$1.log" > "$WORKTREE/.harness/gate-latest.log"
   if [ $rc -eq 0 ]; then GATE_STATUS="pass"; else GATE_STATUS="fail"; fi
-  printf '%s %s\n' "$1" "$GATE_STATUS" >> "$RUN_DIR/gate-rounds.log"
+  # Only a failing round has a failing step; a passing round's last command
+  # explains nothing, and recording it would invite exactly that misreading.
+  failed_step=""
+  if [ "$GATE_STATUS" = fail ]; then
+    failed_step=$(tr -d '\t' < "$step" 2>/dev/null | head -1)
+  fi
+  # Additive: the first two fields are byte-for-byte what they were, so every
+  # existing reader (wall/server.js splits on whitespace and takes two) is
+  # unaffected; the step is tab-separated because a command contains spaces.
+  printf '%s %s %s\t%s\n' "$1" "$GATE_STATUS" "$secs" "$failed_step" \
+    >> "$RUN_DIR/gate-rounds.log"
   return $rc
 }
 
@@ -823,6 +886,47 @@ resolve_conflicts() {  # $1 = round label, $2 = prompt
   if [ "$CODEX_AVAILABLE" = 1 ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
 }
 
+# --- Review-stage integrity ---------------------------------------------------
+# Two confirmed runs "reviewed" a large diff in 4 and 19 seconds: no reviewer
+# commits, no review-notes.md — and the run still recorded arm: full, gate pass,
+# ready. Nothing reviewed those diffs and nothing said so; one of them shipped a
+# defect a reviewer would have caught.
+#
+# So the stage is classified from EVIDENCE, never from duration: a genuine
+# "everything is sound" review that writes its notes is a real review, however
+# fast. Duration only decides whether a second pass is worth paying for — a
+# stage that produced no evidence at all in less time than a human could read
+# the diff is the signature of a reviewer that never started (auth prompt, CLI
+# crash, empty context), and that is worth one retry.
+DEFAULT_REVIEW_MIN_SECONDS=60
+DEFAULT_REVIEW_TRIVIAL_LINES=20
+REVIEW_MIN_SECONDS="${HARNESS_REVIEW_MIN_SECONDS:-$DEFAULT_REVIEW_MIN_SECONDS}"
+REVIEW_TRIVIAL_LINES="${HARNESS_REVIEW_TRIVIAL_LINES:-$DEFAULT_REVIEW_TRIVIAL_LINES}"
+case "$REVIEW_MIN_SECONDS"   in ''|*[!0-9]*) REVIEW_MIN_SECONDS=$DEFAULT_REVIEW_MIN_SECONDS ;; esac
+case "$REVIEW_TRIVIAL_LINES" in ''|*[!0-9]*) REVIEW_TRIVIAL_LINES=$DEFAULT_REVIEW_TRIVIAL_LINES ;; esac
+
+# Proof that a review happened: fix commits, notes, or a rejection. Any one of
+# them is enough — the reviewer is told to write notes even when it changes
+# nothing, and a REJECTED.md is the most engaged review there is.
+review_evidence() {
+  [ -f "$WORKTREE/.harness/review-notes.md" ] && return 0
+  [ -f "$WORKTREE/.harness/REJECTED.md" ] && return 0
+  [ "$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null)" != "$OPUS_HEAD" ] && return 0
+  return 1
+}
+
+# The floor only means something on a diff that takes real reading: a two-line
+# change genuinely can be reviewed in seconds, and crying wolf over it would
+# teach everyone to ignore the alarm. An unreadable diff counts as trivial for
+# the same reason.
+review_diff_is_trivial() {
+  local n
+  n=$(git -C "$WORKTREE" diff --numstat "$BASE_REF...HEAD" 2>/dev/null \
+    | awk '{ if ($1 != "-") i += $1; if ($2 != "-") d += $2 } END { print i + d + 0 }')
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$n" -le "$REVIEW_TRIVIAL_LINES" ]
+}
+
 run_gate 1 || true
 
 # --- Codex review + fix rounds ----------------------------------------------
@@ -832,6 +936,7 @@ run_gate 1 || true
 # the deterministic gate above still ran, so a failing gate still yields
 # gate_failed downstream, and the base-sync step below still runs in both arms.
 if [ "$CODEX_AVAILABLE" = 0 ]; then
+  REVIEW_CLASS="skipped"
   stage "review skipped — no codex CLI found (Claude-only mode)"
 elif [ "$ARM" = "full" ]; then
 REVIEW_PROMPT="You are the reviewer stage of an automated pipeline; another agent just implemented a task.
@@ -863,9 +968,48 @@ Boundary: refactor freely within the code this branch introduces or touches; do 
 if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
   mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
 fi
+# Same reasoning for the notes, and for the same reason the integrity check
+# below needs: a previous dispatch's review-notes.md left in the worktree would
+# be read as evidence that THIS review happened. Harvested into the run dir
+# rather than deleted, which is where section 6 would have copied it anyway, so
+# no round's notes are ever lost.
+if [ -f "$WORKTREE/.harness/review-notes.md" ]; then
+  mv "$WORKTREE/.harness/review-notes.md" "$RUN_DIR/review-notes.md"
+fi
 
 stage "review — Codex (ChatGPT sub)"
+REVIEW_STARTED=$(date +%s)
 run_codex 1 "$REVIEW_PROMPT" || true
+REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
+
+# --- 5b. Did the review actually happen? -------------------------------------
+if review_evidence; then
+  REVIEW_CLASS="reviewed"
+elif [ "$REVIEW_SECONDS" -ge "$REVIEW_MIN_SECONDS" ] || review_diff_is_trivial; then
+  # It spent real time on the diff (or there was next to nothing to read) and
+  # simply left no notes behind. Recorded honestly, not retried: a second full
+  # pass is expensive and the signature here is not a stage that never ran.
+  REVIEW_CLASS="no_evidence"
+  echo "[harness] review left no commits and no notes after ${REVIEW_SECONDS}s — recorded as no_evidence"
+else
+  echo "[harness] review produced nothing in ${REVIEW_SECONDS}s (floor ${REVIEW_MIN_SECONDS}s) — retrying once"
+  stage "review retry — Codex (ChatGPT sub)"
+  REVIEW_STARTED=$(date +%s)
+  run_codex 1-retry "$REVIEW_PROMPT" || true
+  REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
+  if review_evidence; then
+    REVIEW_CLASS="reviewed"
+  else
+    # An unreviewed diff is not a failed run: the gate's verdict stands and the
+    # run carries on to whatever outcome it earned — but it carries on saying out
+    # loud that nothing reviewed this diff, and the arm it records is the one the
+    # verdict reader already knows to distrust.
+    REVIEW_CLASS="failed_silent"
+    ARM="no_review"
+    stage "review failed silently — diff is unreviewed"
+    echo "[harness] the review stage produced no commits and no notes twice — this diff is UNREVIEWED"
+  fi
+fi
 
 if [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
   if ! run_gate 2; then
@@ -874,6 +1018,8 @@ if [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
     run_gate 3 || true
   fi
 fi
+else
+  REVIEW_CLASS="skipped"   # the no_review ablation arm (HARNESS_SKIP_REVIEW=1)
 fi   # end: review stage
 
 # --- 6. Outcome ---------------------------------------------------------------

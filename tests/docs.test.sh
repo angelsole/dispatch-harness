@@ -158,6 +158,11 @@ claim SKILL.md    "$SKILL"     '--runs-only'
 claim SKILL.md    "$SKILL"     'status.sh --watch'
 claim README      "$README"    'tests/*.test.sh'
 claim RELEASING.md "$RELEASING" 'tests/*.test.sh'
+claim README      "$README"    'metrics.sh --report'
+# The pipeline's self-report is only useful if its two loud values are documented
+# where a human (and the planner) will look for them.
+claim README      "$README"    'failed_silent'
+claim SKILL.md    "$SKILL"     'failed_silent'
 
 # Every backtick-quoted *.sh name in the docs must resolve to a shipped file.
 # A gitignored local config resolves through its *.example template; code spans
