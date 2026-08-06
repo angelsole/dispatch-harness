@@ -37,19 +37,23 @@ KEYFILE="$HARNESS/linear-api-key"
 SCHED_CALLS="$ROOT/schedule-calls.log"
 SCHED_LIST="$ROOT/schedule-list.txt"
 CURL_LOG="$ROOT/curl.log"
+LINEAR_REQUESTS="$ROOT/linear-requests.log"
 COMMENTS="$ROOT/linear-comments.log"
 NTFY_LOG="$ROOT/ntfy.log"
 NPX_LOG="$ROOT/npx.log"
 LC_LOG="$ROOT/launchctl.log"
 LINEAR_JSON="$ROOT/linear.json"
+LINEAR_NEXT_JSON="$ROOT/linear-next.json"
 LINEAR_FAIL="$ROOT/linear-fail"
+LINEAR_FAIL_AFTER="$ROOT/linear-fail-after"
+COMMENT_FAIL="$ROOT/comment-fail"
 UNAME_STATE="$ROOT/fake-uname"
 CCUSAGE_DIR="$ROOT/ccusage"
 
 mkdir -p "$AGENTS" "$RUNS" "$SRCDIR" "$FAKES" "$CCUSAGE_DIR" \
   "$ACCOUNTS/angel/claude" "$ACCOUNTS/angel/codex" "$ACCOUNTS/angel/gh" \
   "$ACCOUNTS/bea/claude"
-: > "$SCHED_CALLS"; : > "$SCHED_LIST"; : > "$CURL_LOG"; : > "$COMMENTS"
+: > "$SCHED_CALLS"; : > "$SCHED_LIST"; : > "$CURL_LOG"; : > "$LINEAR_REQUESTS"; : > "$COMMENTS"
 : > "$NTFY_LOG"; : > "$NPX_LOG"; : > "$LC_LOG"
 printf 'Darwin\n' > "$UNAME_STATE"
 printf 'lin_api_TESTKEY\n' > "$KEYFILE"; chmod 600 "$KEYFILE"
@@ -108,8 +112,19 @@ case "\$url" in
     case "\$body" in
       *commentCreate*)
         printf '%s\n' "\$body" >> "$COMMENTS"
-        printf '{"data":{"commentCreate":{"success":true}}}\n' ;;
-      *) cat "$LINEAR_JSON" ;;
+        if [ -f "$COMMENT_FAIL" ]; then
+          printf '{"data":{"commentCreate":{"success":false}}}\n'
+        else
+          printf '{"data":{"commentCreate":{"success":true}}}\n'
+        fi ;;
+      *)
+        printf '%s\n' "\$body" >> "$LINEAR_REQUESTS"
+        if printf '%s' "\$body" | jq -e '.variables.after != null' >/dev/null 2>&1; then
+          [ -f "$LINEAR_FAIL_AFTER" ] && exit 7
+          cat "$LINEAR_NEXT_JSON"
+        else
+          cat "$LINEAR_JSON"
+        fi ;;
     esac ;;
   *ntfy*)
     printf '%s\n' "\$*" >> "$NTFY_LOG" ;;
@@ -159,7 +174,7 @@ issue() {  # $1 id, $2 identifier, $3 title, $4 priority, $5 email, $6 state typ
   issue id-a9 OLYX-A9 "Headerless brief"    0 angel.sole@olyx.nl backlog;   printf ','
   issue id-b1 OLYX-B1 "Bea's overnight"     1 bea.torres@olyx.nl backlog;   printf ','
   issue id-z1 OLYX-Z1 "Nobody's station"    1 sam.jones@olyx.nl  backlog
-  printf ']}}}\n'
+  printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
 } > "$LINEAR_JSON"
 
 brief_for() {  # $1 = ticket, $2 = branch ('' writes a brief with no headers)
@@ -253,6 +268,10 @@ check "report: armed nothing" "$(arm_calls)" "0"
 check "report: left no schedule markers" "$(markers)" "0"
 absent "report: wrote no LaunchAgent" "$AGENTS/com.olyx.quartermaster.plist"
 check "report: posted no Linear comment" "$(grep -c '' < "$COMMENTS" | tr -d ' ')" "0"
+file_has "$LINEAR_REQUESTS" 'labels: { name: { eq: $label } }' \
+  "queue: the request uses Linear's documented relationship-filter shape"
+file_has "$LINEAR_REQUESTS" 'pageInfo { hasNextPage endCursor }' \
+  "queue: the request asks for Relay pagination metadata"
 
 file_has "$REPORT" "# Quartermaster — $TODAY"           "report: is titled with tonight's date"
 file_has "$REPORT" "Mode: **report**"                    "report: names its own mode"
@@ -347,12 +366,41 @@ ANGEL=$(section angel)
 has "$ANGEL" "**05:00** \`OLYX-A1\`"           "knobs: QM_TIMES sets the fire times"
 has "$ANGEL" "### Beyond tonight's capacity"   "knobs: running out of fire times caps the plan"
 
+cp "$LINEAR_JSON" "$ROOT/linear-baseline.json"
+{
+  printf '{"data":{"issues":{"nodes":['
+  issue id-a2 OLYX-A2 "Paint the hull" 2 angel.sole@olyx.nl unstarted; printf ','
+  issue id-a3 OLYX-A3 "Sweep the deck" 3 angel.sole@olyx.nl backlog
+  printf '],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}\n'
+} > "$LINEAR_JSON"
+{
+  printf '{"data":{"issues":{"nodes":['
+  issue id-a1 OLYX-A1 "Fix the boiler" 1 angel.sole@olyx.nl backlog
+  printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
+} > "$LINEAR_NEXT_JSON"
 qm "QM_PAGE=2" --report >/dev/null
-file_has "$REPORT" "Linear returned a full page of 2 — there may be more waiting than this." \
-  "queue: a queue longer than one page is said out loud, not silently truncated"
-qm "" --report >/dev/null
-has_not "$(cat "$REPORT")" "there may be more waiting" \
-  "queue: a queue that fits in one page says nothing about truncation"
+file_has "$REPORT" "Queue: 3 tagged issue(s)" \
+  "queue: Relay pagination reads every page instead of truncating at QM_PAGE"
+ANGEL=$(section angel)
+has "$ANGEL" "**23:30** \`OLYX-A1\`" \
+  "queue: priority ordering is global across fetched pages"
+
+: > "$LINEAR_FAIL_AFTER"
+out=$(qm "QM_PAGE=2" --report); rc=$?
+check "queue: a later-page failure still exits 0" "$rc" "0"
+file_has "$REPORT" "Queue: 2 tagged issue(s)" \
+  "queue: a later-page failure preserves the usable first page"
+file_has "$REPORT" "**partial queue** — Linear stopped answering after 1 page(s)" \
+  "queue: a later-page failure is reported honestly"
+before=$(arm_calls)
+out=$(qm "QM_PAGE=2" --arm); rc=$?
+check "queue: --arm with a partial queue still exits 0" "$rc" "0"
+check "queue: --arm refuses to act on a partial queue" "$(arm_calls)" "$before"
+file_has "$REPORT" "Mode: **arm requested, not run**" \
+  "queue: the report explains why a partial queue was not armed"
+rm -f "$LINEAR_FAIL_AFTER"
+mv "$ROOT/linear-baseline.json" "$LINEAR_JSON"
+rm -f "$LINEAR_NEXT_JSON"
 
 # ---------------------------------------------------------------------------
 echo "== degrading without a queue =="
@@ -370,6 +418,16 @@ file_has "$REPORT" "Queue: **unavailable** — Linear did not answer" \
   "degrade: a transport failure is named in the report"
 rm -f "$LINEAR_FAIL"
 
+cp "$LINEAR_JSON" "$ROOT/linear-before-error.json"
+printf '%s\n' \
+  '{"errors":[{"message":"bad filter"}],"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}' \
+  > "$LINEAR_JSON"
+out=$(qm "" --report); rc=$?
+check "degrade: a GraphQL error with partial data still exits 0" "$rc" "0"
+file_has "$REPORT" "Linear returned no usable issue list (bad filter)" \
+  "degrade: GraphQL errors are not mistaken for a successful queue"
+mv "$ROOT/linear-before-error.json" "$LINEAR_JSON"
+
 out=$(qm "QM_ACCOUNTS_DIR=$ROOT/no-such-crew" --report); rc=$?
 check "degrade: no crew directory still exits 0" "$rc" "0"
 file_has "$REPORT" "there is nobody to dispatch for" "degrade: an empty crew is stated plainly"
@@ -381,7 +439,9 @@ check "degrade: no markers appeared" "$(markers)" "0"
 echo "== --arm: hands the plan to schedule.sh =="
 # ---------------------------------------------------------------------------
 : > "$NTFY_LOG"
+: > "$COMMENT_FAIL"
 out=$(qm "" --arm); rc=$?
+rm -f "$COMMENT_FAIL"
 check "arm: exits 0" "$rc" "0"
 check "arm: armed exactly the four runs that fit" "$(arm_calls)" "4"
 file_has "$SCHED_CALLS" "argv:OLYX-A1 $REPO fix/a1 23:30" "arm: ticket, repo, branch and time reach schedule.sh"
@@ -405,6 +465,8 @@ fi
 file_has "$REPORT" "Mode: **arm**"                        "arm: the report names the mode it ran in"
 has "$(section angel)" "### Armed"                        "arm: the report labels what it actually did"
 check "arm: commented on every armed issue" "$(grep -c 'commentCreate' "$COMMENTS" | tr -d ' ')" "4"
+file_has "$REPORT" "the Linear comment failed; the run is armed regardless" \
+  "arm: comment failures never abort or hide an armed run"
 file_has "$COMMENTS" "id-a1"                              "arm: the comment goes to the Linear issue id"
 file_has "$COMMENTS" "Armed for 23:30 by the quartermaster" "arm: the comment says when it was armed"
 file_has "$NTFY_LOG" "armed OLYX-A1 23:30"                "arm: the push reports what was armed"
@@ -433,6 +495,8 @@ printf '{"data":{"issues":{"nodes":[%s]}}}\n' \
 out=$(qm "" --arm); rc=$?
 check "refusal: a schedule.sh failure still exits 0" "$rc" "0"
 file_has "$REPORT" "**schedule.sh refused**" "refusal: the report says the arm did not take"
+file_has "$REPORT" "### Failed to arm" "refusal: a failed attempt has an honest section heading"
+has_not "$(section angel)" "### Armed" "refusal: a failed attempt is never reported as armed"
 absent "refusal: no marker was left behind" "$RUNS/REFUSE-ME/scheduled"
 
 # ---------------------------------------------------------------------------
@@ -461,6 +525,11 @@ else
 fi
 file_has "$NPX_LOG" "ccusage@latest blocks --json --offline" \
   "hard rule: ccusage is asked for local blocks, offline"
+if grep -v -- '--offline' "$NPX_LOG" | grep -q '[^[:space:]]'; then
+  bad "hard rule: a ccusage retry dropped offline mode"
+else
+  ok "hard rule: every ccusage invocation stays offline"
+fi
 if grep -v 'ccusage' "$NPX_LOG" | grep -q '[^[:space:]]'; then
   bad "hard rule: npx was used for something other than ccusage"
 else

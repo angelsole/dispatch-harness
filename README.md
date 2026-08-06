@@ -423,7 +423,10 @@ argument in the plist) is the one-line flip to letting it act. macOS only, like
 | `QM_DEFAULT_COST` | Median cost when there is no history yet | `40000` |
 | `QM_TOKEN_LIMIT` | Pin the block ceiling instead of inferring it | unset |
 | `QM_AT` | When `--install` fires | `19:00` |
-| `QM_PAGE` | Issues fetched per Linear query (a full page is reported, never silently truncated) | `100` |
+| `QM_PAGE` | Issues fetched per Linear request (all pages are followed) | `100` |
+| `QM_CCUSAGE_TIMEOUT` | Seconds allowed for each local ccusage read | `120` |
+| `QM_LINEAR_TIMEOUT` | Seconds allowed for each Linear request | `20` |
+| `QM_NTFY_TIMEOUT` | Seconds allowed for the ntfy report push | `10` |
 | `QM_EFFORT` | `IMPLEMENTER_EFFORT` for armed runs | `high` |
 | `LINEAR_API_KEY_FILE` | The Linear key (mode 600, never echoed anywhere) | `$HARNESS_DIR/linear-api-key` |
 

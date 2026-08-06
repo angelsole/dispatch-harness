@@ -51,6 +51,7 @@ TOKEN_LIMIT="${QM_TOKEN_LIMIT:-}"                  # pin the block ceiling yours
 AT="${QM_AT:-19:00}"                               # when the installed agent fires
 CCUSAGE_TIMEOUT="${QM_CCUSAGE_TIMEOUT:-120}"
 LINEAR_TIMEOUT="${QM_LINEAR_TIMEOUT:-20}"
+NTFY_TIMEOUT="${QM_NTFY_TIMEOUT:-10}"
 EFFORT="${QM_EFFORT:-high}"                        # IMPLEMENTER_EFFORT for armed runs
 
 usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -76,17 +77,17 @@ capped() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 # ---------------------------------------------------------------------------
 LINEAR_HDR=""    # header file, mode 600 — keeps the key out of every argv
 LINEAR_NOTE=""   # what the report says when the queue could not be read
-LINEAR_PAGE="${QM_PAGE:-100}"  # one page is all we ask for; a full one is reported, not hidden
+LINEAR_PARTIAL_NOTE=""  # what the report says when later pages could not be read
+LINEAR_PAGE="${QM_PAGE:-100}"  # page size; Relay cursors fetch the complete queue
 case "$LINEAR_PAGE" in ''|*[!0-9]*|0) LINEAR_PAGE=100 ;; esac
-LINEAR_FULL=0
 
 # Deliberately plain. Every extra argument is one more chance for a schema
 # mismatch to turn the whole evening into "Linear unreachable", so the queue is
 # ordered here instead of server-side: priority ascending with 0 ("no
 # priority") last, oldest first within a priority.
-LINEAR_QUERY='query Overnight($label: String!, $page: Int!) {
-  issues(first: $page, filter: {
-    labels: { some: { name: { eq: $label } } },
+LINEAR_QUERY='query Overnight($label: String!, $page: Int!, $after: String) {
+  issues(first: $page, after: $after, filter: {
+    labels: { name: { eq: $label } },
     state: { type: { in: ["backlog", "unstarted"] } },
     assignee: { null: false }
   }) {
@@ -95,6 +96,7 @@ LINEAR_QUERY='query Overnight($label: String!, $page: Int!) {
       assignee { email }
       state { type }
     }
+    pageInfo { hasNextPage endCursor }
   }
 }'
 
@@ -135,33 +137,62 @@ linear_errors() {  # $1 = response body
   return 0
 }
 
-# One TSV row per tagged issue: id, identifier, assignee email, title.
+# One TSV row per tagged issue: id, identifier, assignee email, title. Linear
+# connections use Relay pagination; collect every page before sorting so queue
+# priority is global rather than merely correct within each page.
 fetch_issues() {  # prints rows; non-zero when the queue is unusable
-  local body response rows raw
-  body=$(jq -n --arg q "$LINEAR_QUERY" --arg label "$TAG" --argjson page "$LINEAR_PAGE" \
-    '{query: $q, variables: {label: $label, page: $page}}') || return 1
-  response=$(linear_post "$body") || {
-    LINEAR_NOTE="Linear did not answer (network, timeout, or no curl)"
-    return 1
-  }
-  if [ -z "$response" ] || ! printf '%s' "$response" | jq -e '.data.issues.nodes' >/dev/null 2>&1; then
-    LINEAR_NOTE="Linear returned no usable issue list$(linear_errors "$response")"
-    return 1
-  fi
-  # One page is deliberate — a crew does not tag hundreds of tickets a night —
-  # but a full page means the queue may be longer than what was read, and a
-  # truncated queue is exactly the kind of thing that must not pass silently.
-  raw=$(printf '%s' "$response" | jq -r '.data.issues.nodes | length' 2>/dev/null) || raw=0
-  case "$raw" in ''|*[!0-9]*) raw=0 ;; esac
-  [ "$raw" -lt "$LINEAR_PAGE" ] || LINEAR_FULL=1
-  rows=$(printf '%s' "$response" | jq -r '
-    .data.issues.nodes
-    | map(select(.assignee != null and (.assignee.email // "") != ""))
+  local after="" body response rows has_next cursor pages=0
+  : > "$WORK/linear-nodes"
+  : > "$WORK/linear-cursors"
+  while :; do
+    body=$(jq -n --arg q "$LINEAR_QUERY" --arg label "$TAG" \
+      --argjson page "$LINEAR_PAGE" --arg after "$after" '
+      {query: $q, variables: {
+        label: $label,
+        page: $page,
+        after: (if $after == "" then null else $after end)
+      }}') || return 1
+    response=$(linear_post "$body") || {
+      if [ "$pages" -eq 0 ]; then
+        LINEAR_NOTE="Linear did not answer (network, timeout, or no curl)"
+        return 1
+      fi
+      LINEAR_PARTIAL_NOTE="Linear stopped answering after $pages page(s)"
+      break
+    }
+    if [ -z "$response" ] || ! printf '%s' "$response" | jq -e '
+      ((.errors // []) | length) == 0 and (.data.issues.nodes | type == "array")
+    ' >/dev/null 2>&1; then
+      if [ "$pages" -eq 0 ]; then
+        LINEAR_NOTE="Linear returned no usable issue list$(linear_errors "$response")"
+        return 1
+      fi
+      LINEAR_PARTIAL_NOTE="Linear returned an unusable page after $pages page(s)$(linear_errors "$response")"
+      break
+    fi
+    printf '%s' "$response" | jq -c '.data.issues.nodes[]' >> "$WORK/linear-nodes" \
+      || return 1
+    pages=$((pages + 1))
+    has_next=$(printf '%s' "$response" | jq -r '.data.issues.pageInfo.hasNextPage // false') \
+      || has_next=false
+    [ "$has_next" = true ] || break
+    cursor=$(printf '%s' "$response" | jq -r '.data.issues.pageInfo.endCursor // ""') \
+      || cursor=""
+    if [ -z "$cursor" ] || grep -qxF -- "$cursor" "$WORK/linear-cursors"; then
+      LINEAR_PARTIAL_NOTE="Linear returned an invalid or repeated page cursor after $pages page(s)"
+      break
+    fi
+    printf '%s\n' "$cursor" >> "$WORK/linear-cursors"
+    after="$cursor"
+  done
+
+  rows=$(jq -s -r '
+    map(select(.assignee != null and (.assignee.email // "") != ""))
     | map(select((.state.type // "") | . == "backlog" or . == "unstarted"))
     | sort_by([(if (.priority // 0) == 0 then 5 else .priority end), (.createdAt // "")])
     | .[]
     | [.id, .identifier, .assignee.email, (.title // "")]
-    | @tsv' 2>/dev/null) || {
+    | @tsv' "$WORK/linear-nodes" 2>/dev/null) || {
     LINEAR_NOTE="Linear's answer did not have the shape of an issue list"
     return 1
   }
@@ -213,19 +244,15 @@ median_cost() {
 
 # Read one station's own Claude logs. ccusage is a local-file accountant: it
 # parses the JSONL under CLAUDE_CONFIG_DIR and talks to no model provider.
-# --offline additionally forbids it fetching a pricing table, so the "nothing
-# leaves this machine" rule holds by construction rather than by trust; an
-# older ccusage that rejects the flag is retried plain rather than silently
-# costing us the whole evening's estimate.
+# --offline additionally forbids it fetching a pricing table, so the local-only
+# rule holds by construction rather than by trust. If the installed ccusage is
+# too old to support that flag, capacity falls back honestly instead of
+# weakening the network boundary.
 ccusage_blocks() {  # $1 = the station's claude config dir
   local out
   command -v npx >/dev/null 2>&1 || return 1
   out=$(CLAUDE_CONFIG_DIR="$1" capped "$CCUSAGE_TIMEOUT" \
     npx -y ccusage@latest blocks --json --offline 2>/dev/null </dev/null) || out=""
-  if ! printf '%s' "$out" | jq -e '.blocks' >/dev/null 2>&1; then
-    out=$(CLAUDE_CONFIG_DIR="$1" capped "$CCUSAGE_TIMEOUT" \
-      npx -y ccusage@latest blocks --json 2>/dev/null </dev/null) || out=""
-  fi
   printf '%s' "$out" | jq -e '.blocks' >/dev/null 2>&1 || return 1
   printf '%s' "$out"
 }
@@ -390,7 +417,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   local dir="$ACCOUNTS_DIR/$2" claude_dir="$ACCOUNTS_DIR/$2/claude"
   local id ident email title reason brief repo branch slot out rc
   local n armed_here fits idx used_slots armed_hdr over_hdr
-  local cap_word arms nobrief_n skipped_n st
+  local cap_word arms nobrief_n skipped_n refused_n st
 
   say "## $station"
   say ""
@@ -410,7 +437,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
 
   # This station's slice of the queue, split into the four things a crew member
   # needs to see. Kept in files rather than arrays: bash 3.2 has no dict.
-  : > "$WORK/eligible"; : > "$WORK/nobrief"; : > "$WORK/skipped"
+  : > "$WORK/eligible"; : > "$WORK/nobrief"; : > "$WORK/skipped"; : > "$WORK/refused"
   armed_here=0
   while IFS="$TAB" read -r id ident email title; do
     [ -n "$ident" ] || continue
@@ -457,12 +484,8 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
       say "- \`$ident\` $title"
       continue
     fi
-    if [ "$armed_hdr" = 0 ]; then
-      if [ "$mode" = arm ]; then say "### Armed"; else say "### Would arm"; fi
-      say ""
-      armed_hdr=1
-    fi
     if [ "$mode" != arm ]; then
+      if [ "$armed_hdr" = 0 ]; then say "### Would arm"; say ""; armed_hdr=1; fi
       say "- **$slot** \`$ident\` $title — $repo ($branch)"
       arms="${arms:+$arms, }$ident $slot"
       idx=$((idx + 1)); used_slots=$((used_slots + 1))
@@ -470,9 +493,11 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
     fi
     out=$(arm_ticket "$ident" "$repo" "$branch" "$slot" "$station" "$dir"); rc=$?
     if [ "$rc" -ne 0 ]; then
-      say "- \`$ident\` $title — **schedule.sh refused**: $(printf '%s' "$out" | tail -1)"
+      printf '%s\t%s\t%s\n' "$ident" "$title" "$(printf '%s' "$out" | tail -1)" \
+        >> "$WORK/refused"
       continue
     fi
+    if [ "$armed_hdr" = 0 ]; then say "### Armed"; say ""; armed_hdr=1; fi
     say "- **$slot** \`$ident\` $title — $repo ($branch)"
     if ! linear_comment "$id" \
       "Armed for $slot by the quartermaster — \`$branch\` in \`$repo\`, on $station's station."; then
@@ -482,12 +507,23 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
     idx=$((idx + 1)); used_slots=$((used_slots + 1))
   done < "$WORK/eligible"
 
-  if [ "$armed_hdr" = 0 ] && [ "$over_hdr" = 0 ]; then
+  refused_n=$(count_of "$WORK/refused")
+  if [ "$armed_hdr" = 0 ] && [ "$over_hdr" = 0 ] && [ "${refused_n:-0}" -eq 0 ]; then
     say "### Nothing to arm"
     say ""
     say "- No briefed, un-armed ticket is waiting for $station."
   fi
   say ""
+
+  if [ "${refused_n:-0}" -gt 0 ]; then
+    say "### Failed to arm"
+    say ""
+    while IFS="$TAB" read -r ident title reason; do
+      [ -n "$ident" ] || continue
+      say "- \`$ident\` $title — **schedule.sh refused**: $reason"
+    done < "$WORK/refused"
+    say ""
+  fi
 
   nobrief_n=$(count_of "$WORK/nobrief")
   if [ "${nobrief_n:-0}" -gt 0 ]; then
@@ -515,17 +551,22 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   if [ -n "$arms" ]; then
     if [ "$mode" = arm ]; then st="$st · armed $arms"; else st="$st · would arm $arms"; fi
   else
-    st="$st · nothing to arm"
+    if [ "$mode" = arm ] && [ "${refused_n:-0}" -gt 0 ]; then
+      st="$st · armed nothing"
+    else
+      st="$st · nothing to arm"
+    fi
   fi
   [ "${nobrief_n:-0}" -gt 0 ] && st="$st · ${nobrief_n} need a brief"
   [ "${skipped_n:-0}" -gt 0 ] && st="$st · ${skipped_n} skipped"
+  [ "${refused_n:-0}" -gt 0 ] && st="$st · ${refused_n} failed to arm"
   line "$st"
   return 0
 }
 
 evening() {  # $1 = arm|report
   local mode="$1" today stamp n_issues stations station cost samples ident email title
-  local row orphan_n
+  local row orphan_n station_mode
 
   today=$(date '+%Y-%m-%d')
   stamp=$(date '+%Y-%m-%d %H:%M:%S')
@@ -552,8 +593,14 @@ EOF
 
   say "# Quartermaster — $today"
   say ""
+  station_mode="$mode"
   if [ "$mode" = arm ]; then
-    say "Mode: **arm** — everything under \`Armed\` below was handed to \`schedule.sh\`."
+    if [ -n "$LINEAR_PARTIAL_NOTE" ]; then
+      station_mode=report
+      say "Mode: **arm requested, not run** — the Linear queue is partial, so nothing was handed to \`schedule.sh\`."
+    else
+      say "Mode: **arm** — everything under \`Armed\` below was handed to \`schedule.sh\`."
+    fi
   else
     say "Mode: **report** — nothing was armed. \`quartermaster.sh --arm\` acts on this."
   fi
@@ -563,9 +610,9 @@ EOF
     say "Queue: **unavailable** — $LINEAR_NOTE. Everything below is capacity only."
   else
     say "Queue: $n_issues tagged issue(s), assigned, in backlog or unstarted."
-    if [ "$LINEAR_FULL" = 1 ]; then
-      say "  (Linear returned a full page of $LINEAR_PAGE — there may be more waiting than this.)"
-      line "queue truncated at $LINEAR_PAGE issues"
+    if [ -n "$LINEAR_PARTIAL_NOTE" ]; then
+      say "  (**partial queue** — $LINEAR_PARTIAL_NOTE.)"
+      line "partial queue: $LINEAR_PARTIAL_NOTE"
     fi
   fi
   say "Run cost: median $cost implementer output tokens over $samples sampled run(s)."
@@ -596,7 +643,7 @@ EOF
   # all inherit further down.
   while IFS= read -r station <&3; do
     [ -n "$station" ] || continue
-    station_pass "$mode" "$station" "$cost"
+    station_pass "$station_mode" "$station" "$cost"
   done 3<<EOF
 $stations
 EOF
@@ -648,7 +695,7 @@ push_summary() {  # $1 = mode, $2 = date
     echo "[quartermaster] no HARNESS_NTFY_TOPIC in notify.conf — report file only"
     return 0
   fi
-  capped 10 curl -s -H "Title: quartermaster $2 ($1)" -d "$body" \
+  capped "$NTFY_TIMEOUT" curl -s -H "Title: quartermaster $2 ($1)" -d "$body" \
     "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$HARNESS_NTFY_TOPIC" >/dev/null 2>&1 \
     || echo "[quartermaster] the ntfy push failed — the report file is still on disk"
   return 0
