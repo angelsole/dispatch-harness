@@ -392,6 +392,59 @@ up as a broken implementer, and no run can reschedule itself forever.
 | `HARNESS_DEFER_BUFFER_SECS` | Clearance added past the block's reset time when arming | `300` |
 | `HARNESS_MAX_DEFERRALS` | Auto-deferrals allowed per run before it fails honestly | `2` |
 
+### Turn ceiling: a run that resumes itself
+
+The implementer is spawned with `--max-turns`, a guard rail against a worker
+that loops forever. Pinned at 120 it killed eight runs — nearly always at the
+finish line, mid-wrap-up, writing the notes or staging the diff. The recovery
+was always the same: a human noticed, re-dispatched, and the resumed session
+finished in minutes. So `run-task.sh` does that itself.
+
+The ceiling is `HARNESS_MAX_TURNS` (default **200**), **pinned at first
+dispatch** into `runs/<TICKET>/max-turns` like the model and effort knobs, so
+every later resume spends the ceiling the run was dispatched with rather than
+whatever the resuming shell exports. A value that is not a positive integer
+falls back to the default with one line on the console — and the fallback is
+re-pinned, so it says it once, not on every resume.
+
+When the implementer stops on turn exhaustion (the CLI's `error_max_turns`
+result — a structured outcome, not a message we parse), the run does **not**
+fail. It re-invokes the same pinned session, in the same worktree, with the same
+ceiling — byte for byte what a re-dispatch does — and says so:
+
+```
+resuming: turn ceiling (1/2)
+```
+
+`HARNESS_MAX_RESUMES` (default **2**) bounds it, counted in
+`runs/<TICKET>/turn-resumes`. Only once that budget is spent does the run
+surface `implementer_failed`.
+
+Two things outrank the turn budget. A **session limit** is classified first, so
+a run whose window emptied mid-flight takes the
+[capacity deferral](#capacity-preflight-a-run-that-defers-itself) instead of
+burning resumes on a session that cannot spawn anyway. And a pending
+`.harness/QUESTIONS.md` still pauses the run as `needs_input`: a worker that
+stopped to ask is never talked over.
+
+**Commit hygiene that survives a resume.** A resumed session carries its
+original instructions far behind it in a long context, and resumes have
+re-added `Co-Authored-By: Claude` trailers their first pass never wrote. So
+every continuation message restates the binding commit rules, and — because a
+prompt is not a guarantee — the implementer stage ends with a deterministic
+backstop on **every** arm, review or not: `base..HEAD` is scanned for AI
+attribution (`Co-Authored-By:`/`Generated with …` naming Claude or Anthropic,
+any `Claude-*:` trailer), and any that is found is stripped mechanically. Only
+commit *messages* are rewritten — each commit is re-created against its
+original tree object, so the diff, the working copy and the commit count are
+untouched, a genuine human `Co-Authored-By:` is left alone, and a range with
+nothing to strip keeps its shas.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_MAX_TURNS` | Turn ceiling for the implementer's session; pinned at first dispatch | `200` |
+| `HARNESS_MAX_RESUMES` | Automatic resumes allowed on turn exhaustion before the run fails (`0` opts out) | `2` |
+
 ### The Quartermaster
 
 Subscription capacity that is still unused at the end of the day expires
