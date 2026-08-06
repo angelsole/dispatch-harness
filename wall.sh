@@ -14,6 +14,12 @@
 # The skyline is live: a finished run gets one short completion moment and then
 # leaves it, and a tower with nothing left standing in it leaves too.
 #
+# The district under it accretes instead. Every run that reaches `done: ready`
+# since Monday 00:00 local is a permanent building — type from the repo family,
+# height from the diff, plot from the run id — so by Friday the city IS the
+# week's shipped work. Last week's stands behind it as a flat ghost, and Monday
+# 00:00 empties the plain again. Nothing is stored for any of it.
+#
 # Usage:
 #   wall.sh                             serve ~/.claude/harness/runs on :4711
 #   wall.sh --port 8080                 listen on another port
@@ -32,7 +38,7 @@
 # only what is already on this machine's disk. Do not port-forward it publicly.
 set -u
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"

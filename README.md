@@ -707,6 +707,37 @@ the only thing worth putting on a wall; yesterday's green ticks are in
 carries the finished runs (it is the honest snapshot of the run dirs) — the
 skyline is the part that is live only.
 
+**The district accretes.** Under the live towers, the week builds up. Monday
+00:00 local the plain is empty; every run that reaches `done: ready` pours one
+**permanent building** into it; by Friday the city *is* the week's shipped work,
+with whatever is still being built rising among it. Last week's city stands
+behind this one as a single flat ghost silhouette — the name finally earning
+itself — and Monday 00:00 empties the plain again.
+
+| In the district | What it means |
+| --- | --- |
+| A building | One run that shipped this week. It never leaves before Monday. |
+| Its shape | The repo family: `olyx-agents` is residential, `olyxbase` / `olyx-dashboard` are industrial blocks, `valoryx-*` is an observatory spire, `dispatch-harness` is infrastructure, anything else is an honest mid-rise. |
+| Its height | The run's diff (insertions + deletions), log-scaled and capped — a monster PR reads big without dwarfing the block. A run with no readable metrics is the shortest building there is, never an invented one. |
+| Where it stands | Hashed from the run id, so the skyline is identical on every screen and after every reload. |
+| A small lit sign | Who dispatched it, in the same crew tint as their runs' cars — cooling to the district's neutral within six hours of landing. That is the whole of the attribution. |
+| Cars, walkers, lit shop windows, a tram | The week's momentum: one mover per three ships, the shop windows at the tenth, a tram line at the twentieth. |
+| A pale flat outline behind | Last week. A height and a plot, nothing else — no windows, no signs, no types. An empty last week draws nothing. |
+
+Nothing is stored for any of this and nothing resets it. `cleanup.sh` removes a
+promoted run's worktree and **keeps its logs**, so the evidence outlives the
+branch, and the wall derives the whole district per poll from the finish epoch
+already on each run's status line. The week is a window, not a counter: no
+files, no schema, no Monday job. A run mirrored from another machine
+([`HARNESS_MIRROR`](#runs-from-any-machine-harness_mirror)) counts exactly like a
+local one, once.
+
+Because a full district is normal on a Thursday evening, "nothing live" no
+longer means "nothing happened": the `SHIFT STANDING BY` plate now appears only
+when the week has **no buildings and no live runs**, and a week that shipped
+work with nothing currently climbing gets one quiet `DISTRICT AT REST` line
+instead. The wall never looks broken on a week that delivered.
+
 Towers cannot carry type you can read from four metres, so two surfaces do:
 a Blade Runner **brief plate** cycling the live runs in big letters (ticket,
 project, stage, actor, dispatcher, the blocking question), and a green-phosphor
@@ -761,12 +792,14 @@ run. Export it wherever you dispatch from:
 export HARNESS_OWNER=angel        # e.g. in the station session's shell
 ```
 
-That name only ever becomes the tint of the light under a run's car, plus the
-name on that run's brief plate and ticker line. There are no lanes, no
-per-person counts and no idle states anywhere on the wall: an empty slot beside
-a colleague's three lit floors is social pressure, not information. `--crew` (or
-`WALL_CREW`) is still accepted so existing launch scripts keep working, but a
-declared roster no longer puts anything on screen.
+That name only ever becomes the tint of the light under a run's car, the small
+sign on the building that run left behind, and the name on that run's brief
+plate and ticker line. There are no lanes, no districts, no per-person counts
+and no idle states anywhere on the wall: an empty slot beside a colleague's
+three lit floors is social pressure, not information. The building sign cools to
+neutral within six hours, so by the next morning the week is simply the week's.
+`--crew` (or `WALL_CREW`) is still accepted so existing launch scripts keep
+working, but a declared roster no longer puts anything on screen.
 
 #### Runs from any machine (`HARNESS_MIRROR`)
 
