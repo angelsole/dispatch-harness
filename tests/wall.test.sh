@@ -658,10 +658,43 @@ console.log(JSON.stringify({
   ghostKeys: Object.keys(sample.ghost[0] || {}).sort().join(','),
   ghostEmpty: w.buildCity([line('NOW-1', start + 10)], now).ghost.length,
   weekShips: sample.week.ships,
-  life: [0, 2, 3, 9, 10, 19, 20, 90].map((n) => {
+  life: [0, 1, 2, 4, 9, 12, 20, 90].map((n) => {
     const plan = w.lifeOf(n);
-    return n + ':' + plan.movers + (plan.shops ? 'S' : '-') + (plan.tram ? 'T' : '-');
+    return n + ':' + plan.walkers + 'w' + plan.vehicles + 'v' + plan.gap + 's'
+      + (plan.mall ? 'M' : '-') + (plan.tram ? 'T' : '-');
   }).join(' '),
+  // Nothing standing is the ONE state with no nightlife. Every other week has
+  // somebody out and something passing, whatever else it has.
+  lifeDead: Object.values(w.lifeOf(0)).filter(Boolean).length,
+  lifeBaseline: (() => {
+    const plan = w.lifeOf(1);
+    return plan.walkers >= 1 && plan.vehicles >= 1 && plan.gap > 0;
+  })(),
+  // Livelier, monotonically: never fewer people out or longer gaps than the week
+  // before, so a ship can only ever add to the night.
+  lifeScales: (() => {
+    let prev = w.lifeOf(1);
+    for (let n = 2; n <= 120; n++) {
+      const plan = w.lifeOf(n);
+      if (plan.walkers < prev.walkers || plan.vehicles < prev.vehicles ||
+          plan.gap > prev.gap) return false;
+      prev = plan;
+    }
+    return w.lifeOf(120).walkers > w.lifeOf(1).walkers
+      && w.lifeOf(120).gap < w.lifeOf(1).gap;
+  })(),
+  // And bounded: a street on a monstrous week is still a street.
+  lifeCapped: (() => {
+    const plan = w.lifeOf(5000);
+    return plan.walkers === w.MAX_WALKERS && plan.vehicles === w.MAX_VEHICLES
+      && plan.gap === w.GAP_BUSY;
+  })(),
+  lifeMilestones: [w.MALL_AT, w.TRAM_AT].map((n) => {
+    const at = w.lifeOf(n);
+    const before = w.lifeOf(n - 1);
+    return (at.mall === true && before.mall === false) ||
+           (at.tram === true && before.tram === false);
+  }).join(','),
   signHours: w.SIGN_S / 3600,
 }));
 JS
@@ -707,8 +740,22 @@ check "ghost: last week is a height and a plot, nothing else" \
   "$(city_of ghostKeys)" "storeys,x"
 check "ghost: an empty last week draws no ghost at all" "$(city_of ghostEmpty)" "0"
 check "week: the ship count is this week's buildings" "$(city_of weekShips)" "1"
-check "life: population scales with the week, and the milestones gate" \
-  "$(city_of life)" "0:0-- 2:0-- 3:1-- 9:3-- 10:3S- 19:6S- 20:6ST 90:8ST"
+# Nightlife is the baseline, not the reward: the first ship of the week puts
+# somebody on the pavement and a car on the road, and everything after it only
+# sets the tempo. The milestones are still here — demoted to extra texture.
+check "life: the week's tempo, from its first ship" \
+  "$(city_of life)" \
+  "0:0w0v0s-- 1:1w1v48s-- 2:1w1v46s-- 4:2w1v43s-- 9:3w2v36s-- 12:4w2v31sM- 20:6w3v19sMT 90:6w3v11sMT"
+check "life: an empty plain is the only week with no nightlife at all" \
+  "$(city_of lifeDead)" "0"
+check "life: one building standing is enough for a living street" \
+  "$(city_of lifeBaseline)" "true"
+check "life: more ships is a livelier night, never a quieter one" \
+  "$(city_of lifeScales)" "true"
+check "life: and a monstrous week is still a street, not a parade" \
+  "$(city_of lifeCapped)" "true"
+check "life: the mall and the tram unlock on their own ship, as bonuses" \
+  "$(city_of lifeMilestones)" "true,true"
 check "sign: a dispatcher's tint lasts about a shift" "$(city_of signHours)" "6"
 
 # --- where the city's memory lives ------------------------------------------------
@@ -989,11 +1036,32 @@ if [ -n "$BUSY_WEEK_PORT" ]; then
     "$(printf '%s' "$BUSY_WEEK_API" | jq '.city | length')" "30"
   check "district: while the run feed stays capped, as it always was" \
     "$(printf '%s' "$BUSY_WEEK_API" | jq '[.runs[] | select(.state=="ready")] | length')" "24"
-  check "life: thirty ships light every milestone" \
-    "$(printf '%s' "$BUSY_WEEK_API" | jq -r '.week.life | "\(.movers),\(.shops),\(.tram)"')" \
-    "8,true,true"
+  check "life: thirty ships is the busiest the street ever gets" \
+    "$(printf '%s' "$BUSY_WEEK_API" | jq -r '.week.life | "\(.walkers),\(.vehicles),\(.gap),\(.mall),\(.tram)"')" \
+    "6,3,11,true,true"
 else
   bad "life: server starts against a very good week"
+fi
+
+# The other end of the same contract, and the one the brief is actually about: a
+# week that has shipped exactly once is a lit, populated street — not a dark
+# plain waiting for a milestone.
+echo "== wall: a week that shipped one thing =="
+LONE="$ROOT/lone-week"
+mkdir -p "$LONE/LONE-1"
+printf '%s done: ready\n' "$((MONDAY + 300))" > "$LONE/LONE-1/status"
+printf '/tmp/olyx-agents-lone-1\n' > "$LONE/LONE-1/worktree"
+printf '{"metrics":{"diff":{"insertions":60,"deletions":4}}}\n' > "$LONE/LONE-1/result.json"
+serve "$LONE" "$ROOT/lone-week.log"; LONE_PORT="$PORT_OUT"
+if [ -n "$LONE_PORT" ]; then
+  LONE_API="$(get "$LONE_PORT" /api/runs)"
+  check "life: one building standing, and the city is already out" \
+    "$(printf '%s' "$LONE_API" | jq -r '.week | "\(.ships):\(.life.walkers)w\(.life.vehicles)v"')" \
+    "1:1w1v"
+  check "life: with no milestone lit — those are the bonuses, not the baseline" \
+    "$(printf '%s' "$LONE_API" | jq -r '.week.life | "\(.mall),\(.tram)"')" "false,false"
+else
+  bad "life: server starts against a week that shipped once"
 fi
 
 # --- what the district looks like -------------------------------------------------
@@ -1034,15 +1102,119 @@ grep_ok "$PAGE_SRC" 'signSeconds' "sign: on the server's clock, not the page's"
 SIGN_CSS="$(sed -n 's/^ *--sign-life: \([0-9]*\)s;.*/\1/p' "$SRC/wall/wall.css" | head -1)"
 check "sign: the page and the server agree on how long a tint lasts" \
   "$SIGN_CSS" "$(printf '%s' "$API" | jq -r '.signSeconds')"
-grep_ok "$CSS_SRC" '.district[data-shops="1"] .block__shop' \
-  "life: the shop windows come on at a milestone, not at random"
-grep_ok "$CSS_SRC" '.life[data-tram="1"] .life__tram' "life: so does the tram line"
+grep_ok "$CSS_SRC" '.life[data-mall="1"] .life__mall' \
+  "life: the mall block is a milestone, on top of a street already living"
+grep_ok "$CSS_SRC" '.life[data-tram="1"] .life__tram' "life: so is the tram line"
 # The ghost is one flat layer. Nothing that says what shipped last week — no
 # window grid, no sign, no repo type — may be attached to it.
 GHOST_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.ghost/, /^}/')"
 for banned in windows sign data-kind; do
   grep_not "$GHOST_CSS" "$banned" "ghost: no [$banned] on last week's silhouette"
 done
+
+# --- the city lives at night ------------------------------------------------------
+# The desk's verdict on the accreting district was that it read as a mausoleum
+# after hours. The fix is that ambient life is no longer milestone-gated: one
+# building standing lights the ground floor, and the week only sets the tempo.
+echo "== wall: the ground floor is lit from the first ship =="
+grep_not "$PAGE_SRC" 'data-shops' \
+  "life: the tenth-ship gate on the shop windows is gone, not left shadowing it"
+grep_ok "$PAGE_SRC" 'life.hidden = blocks.length === 0' \
+  "life: one building standing is the whole condition for a living street"
+grep_ok "$CSS_SRC" '.block__shop {' "life: every building carries a lit shopfront row"
+grep_ok "$CSS_SRC" '.block[data-neon="1"] .block__neon' \
+  "life: and some of them the neon that says which shop it is"
+grep_ok "$CSS_SRC" '.block__occupancy i {' \
+  "life: a few windows per facade keep their own hours"
+grep_ok "$PAGE_SRC" 'life__vent' "life: steam comes off the street vents"
+grep_ok "$PAGE_SRC" 'life__walker' "life: somebody is out walking"
+grep_ok "$PAGE_SRC" 'life__car'    "life: and a car goes past now and then"
+grep_ok "$CSS_SRC" 'animation: prowl var(--gap) linear infinite' \
+  "life: the gap between passes is the week's, not a constant"
+grep_ok "$CSS_SRC" 'body[data-quiet="0"] .life' \
+  "life: and all of it steps back the moment something is climbing"
+grep_ok "$CSS_SRC" '.life__vent, .life__car { display: none; }' \
+  "motion: reduced motion drops the two things that are only motion"
+grep_not "$PAGE_SRC" 'life__mover' \
+  "life: the milestone-gated movers are gone, replaced rather than layered"
+
+# Every animation this pass adds, held to the same rule as the rest of the wall:
+# transform and opacity, nothing that costs the browser a layout on a screen
+# that has to hold 60fps for a month.
+for beat in occupancy neon-hum steam prowl trundle; do
+  BEAT_CSS="$(printf '%s\n' "$CSS_SRC" | awk -v k="@keyframes $beat" 'index($0, k) == 1, /^}/')"
+  if [ -z "$BEAT_CSS" ]; then
+    bad "motion: @keyframes $beat exists"
+    continue
+  fi
+  STRAY="$(printf '%s\n' "$BEAT_CSS" | grep -oE '[a-z-]+:' | grep -vE '^(transform|opacity):' \
+    | sort -u | tr '\n' ' ')"
+  check "motion: @keyframes $beat animates transform and opacity only" "$STRAY" ""
+done
+
+# The population is bounded on BOTH sides of the wire. The server plans a street;
+# the page refuses to draw one bigger than that whatever arrives in a snapshot,
+# because this thing runs unattended for weeks.
+grep_ok "$PAGE_SRC" 'bounded(plan.walkers, MAX_WALKERS)' \
+  "life: the page clamps the crowd it was asked for"
+grep_ok "$PAGE_SRC" 'bounded(plan.vehicles, MAX_VEHICLES)' \
+  "life: and the traffic"
+page_cap() { sed -n "s/^  const $1 = \([0-9]*\);.*/\1/p" "$SRC/wall/wall.js" | head -1; }
+server_cap() { node -e 'process.stdout.write(String(require(process.argv[1])[process.argv[2]]))' \
+  "$SRC/wall/server.js" "$1"; }
+for cap in MAX_WALKERS MAX_VEHICLES; do
+  check "life: the page and the server agree on $cap" "$(page_cap "$cap")" "$(server_cap "$cap")"
+done
+
+# Storefronts are planned the way plots are: a pure function of the run id. The
+# noodle bar is on the same corner after a reload, on the second TV, and on a
+# colleague's laptop — and a whole ticket range does not end up as one long row
+# of arcades.
+NIGHT_SRC="$(awk '/^  \/\/ --- nightlife/,/^  \/\/ --- the street/' "$SRC/wall/wall.js")"
+grep_not "$(printf '%s\n' "$NIGHT_SRC" | grep -v '^ *//')" 'Math.random' \
+  "life: no unseeded randomness anywhere in the plan"
+NIGHT_PROBE="$ROOT/nightlife-probe.js"
+{
+  grep -E '^  const OCCUPIED = ' "$SRC/wall/wall.js"
+  printf '%s\n' "$NIGHT_SRC"
+  cat <<'JS'
+  const ids = [];
+  for (let i = 0; i < 200; i++) ids.push('OLYX-' + (1500 + i));
+  const plans = ids.map(storefrontOf);
+  const kinds = {};
+  for (const plan of plans) kinds[plan.shop] = (kinds[plan.shop] || 0) + 1;
+  const bays = new Set(plans.map((plan) => plan.bay));
+  const neon = plans.filter((plan) => plan.neon).length;
+  console.log(JSON.stringify({
+    stable: JSON.stringify(storefrontOf('OLYX-1598')) === JSON.stringify(storefrontOf('OLYX-1598')),
+    differs: JSON.stringify(storefrontOf('OLYX-1598')) !== JSON.stringify(storefrontOf('OLYX-1599')),
+    everyKind: Object.keys(kinds).sort().join(','),
+    spread: Object.values(kinds).every((n) => n > ids.length / 10),
+    bays: [...bays].sort((a, b) => a - b).join(','),
+    // A sign on every building would be Piccadilly Circus; none would be a
+    // ghost town. Somewhere near a third.
+    someNeon: neon > ids.length / 6 && neon < ids.length / 2,
+    windows: plans.every((plan) => plan.windows.length === OCCUPIED),
+    inFrame: plans.every((plan) => plan.windows.every((w) =>
+      w.col >= 0 && w.col < 7 && w.row >= 0 && w.row < 5 && w.phase >= 0 && w.phase < 8)),
+    // The shop and the hours are separate draws: a facade's windows must not be
+    // predictable from what is selling downstairs.
+    unlinked: new Set(plans.map((plan) => plan.shop + ':' + plan.windows[0].phase)).size > 8,
+  }));
+JS
+} > "$NIGHT_PROBE"
+NIGHT="$(node "$NIGHT_PROBE" 2>&1)"
+night_of() { printf '%s' "$NIGHT" | jq -r ".$1" 2>/dev/null; }
+check "life: the same building keeps the same shop, always" "$(night_of stable)" "true"
+check "life: two buildings do not get the same street twice" "$(night_of differs)" "true"
+check "life: the whole vocabulary of the street gets used" \
+  "$(night_of everyKind)" "arcade,diner,noodle,repair"
+check "life: and a ticket range is not one long row of arcades" "$(night_of spread)" "true"
+check "life: shopfronts spread across every bay of a base" "$(night_of bays)" "0,1,2,3,4"
+check "life: about a third of the buildings carry a sign" "$(night_of someNeon)" "true"
+check "life: every facade gets its fixed handful of lit windows" "$(night_of windows)" "true"
+check "life: and every one of them lands on the building" "$(night_of inFrame)" "true"
+check "life: a facade's hours are not readable off its shop" "$(night_of unlinked)" "true"
 
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
