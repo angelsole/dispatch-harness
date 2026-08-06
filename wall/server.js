@@ -6,6 +6,11 @@
 // short completion moment. The city grows and shrinks with the work, which is
 // the whole point of putting it on a wall.
 //
+// The DISTRICT under it accretes instead: every run that reaches `done: ready`
+// this week is a permanent building, the week resets to an empty plain on Monday
+// 00:00 local, and last week's city stands behind this one as a flat ghost. See
+// "the week's city" below.
+//
 // node:http + node:fs only: no dependencies, no build step, and no runtime
 // request that leaves this origin (the TV may only see the tailnet). Launched
 // by ../wall.sh, which owns the flags and computes the defaults below.
@@ -49,6 +54,12 @@ const CROWNS = 4;         // roof furniture (mast, water tank, sign rig) per bod
 // yesterday's green ticks; they want to see the work move. The page mirrors this
 // number as --completion (shipped in every snapshot) to time the animation.
 const COMPLETION_S = 20;
+
+// How long a landed building carries its dispatcher's crew tint before cooling
+// to the district's own neutral. Long enough that this morning's ships are still
+// attributable across a standup, short enough that by tomorrow the week is just
+// the week's. The page mirrors this number as --sign-life to time the fade.
+const SIGN_S = 6 * 3600;
 
 // A run whose worktree we cannot read still has to stand somewhere, and guessing
 // a repo for it would be a lie. It gets an honest tower of its own instead.
@@ -278,6 +289,11 @@ function ownerOf(dir, result) {
   return String(raw).trim().toLowerCase().slice(0, 24);
 }
 
+function ownerKindOf(owner) {
+  if (owner === '') return 'unowned';
+  return SYNTHETIC.has(owner) ? 'synthetic' : 'human';
+}
+
 function readRun(id, current) {
   const dir = path.join(RUNS, id);
   const { since, stage } = current || currentStage(dir);
@@ -305,7 +321,7 @@ function readRun(id, current) {
     id,
     title: titleOf(dir),
     owner,
-    ownerKind: owner === '' ? 'unowned' : SYNTHETIC.has(owner) ? 'synthetic' : 'human',
+    ownerKind: ownerKindOf(owner),
     project,
     projectLabel: project ? project.toUpperCase() : UNCHARTED,
     stage,
@@ -356,14 +372,27 @@ function listRunIds() {
 
 const ORDER = { alarm: 0, active: 1, failed: 2, ready: 2 };
 
-function snapshot() {
-  const runs = [];
-  let finished = 0;
+// One read of every run's status line per poll, shared by the live skyline and
+// by the week's city below — they ask different questions of the same fact, and
+// reading the file twice would double the wall's disk traffic for nothing.
+function scan() {
+  const seen = [];
   for (const id of listRunIds()) {
     try {
       const dir = path.join(RUNS, id);
       const current = currentStage(dir);
       if (current.since === null && current.stage === '') continue;
+      seen.push({ id, dir, current });
+    } catch { /* one broken run dir never blanks the wall */ }
+  }
+  return seen;
+}
+
+function snapshot(scanned) {
+  const runs = [];
+  let finished = 0;
+  for (const { id, current } of scanned) {
+    try {
       const state = stateOf(current.stage);
       const isFinished = state === 'ready' || state === 'failed';
       if (isFinished && finished >= MAX_FINISHED) continue;
@@ -455,6 +484,181 @@ function buildTowers(runs, at) {
   });
 }
 
+// --- the week's city ------------------------------------------------------------
+// The skyline above shows effort and leaves nothing behind. This is the other
+// half, and it inverts that: the week ACCRETES. Monday 00:00 local the plain is
+// empty; every run that reaches `done: ready` pours one PERMANENT building into
+// it; by Friday the district is the week's shipped work, standing under whatever
+// is still being built. Last week's city stays behind it as a flat ghost — the
+// name finally earning itself.
+//
+// Zero new storage, and no reset job. cleanup.sh removes the worktree and keeps
+// the run's logs, so the evidence outlives the branch, and the week is a pure
+// window over the finish epoch already on the status line: nothing is written,
+// nothing is rolled over, and Monday empties the plain by arithmetic alone.
+
+// Only `done: ready` builds. stateOf() is deliberately broader — sync-pr.sh's
+// prose "done: PR branch synced …" is a success too — but a ship is the
+// pipeline's own word for one, and the wall does not infer it from anything else.
+const DONE_READY = /^done:\s*ready\b/i;
+
+// Monday 00:00 in the server's own timezone. Walked with Date rather than
+// subtracted in seconds so the DST weeks are 23 and 25 hours long, like the
+// week everyone in the room actually had.
+function weekStartOf(epoch) {
+  const d = new Date(epoch * 1000);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return Math.floor(d.getTime() / 1000);
+}
+
+// Building type by repo FAMILY, matched in order — legibility over cuteness. The
+// room should be able to say "that's three agent towers and a valoryx spire"
+// without reading a label. Anything unrecognised is an honest mid-rise rather
+// than a guess at what somebody's repo does.
+const KINDS = [
+  [/^olyx-agents$/, 'residential'],
+  [/^olyxbase$/, 'industrial'],
+  [/^olyx-?dashboard$/, 'industrial'],
+  [/^valoryx(-|$)/, 'spire'],
+  [/^dispatch-harness$/, 'infra'],
+];
+
+function kindOf(project) {
+  for (const [re, kind] of KINDS) if (re.test(project)) return kind;
+  return 'midrise';
+}
+
+// Height is the diff, log-scaled and capped: a 40-line fix is visibly smaller
+// than a 400-line feature, and the 4000-line monster reads as big without
+// dwarfing the block it stands in. A run with no readable metrics is the
+// shortest building there is — never an invented one.
+const STOREYS_MIN = 3;
+const STOREYS_MAX = 14;
+const DIFF_CAP = 2000;
+
+function storeysOf(diff) {
+  const part = (v) => Math.max(0, Number(v) || 0);
+  const lines = part(diff && diff.insertions) + part(diff && diff.deletions);
+  const scale = Math.log1p(Math.min(lines, DIFF_CAP)) / Math.log1p(DIFF_CAP);
+  return STOREYS_MIN + Math.round((STOREYS_MAX - STOREYS_MIN) * scale);
+}
+
+// hash() is a polynomial, which is all a tower silhouette needs — but a run id
+// is OLYX-1631 next to OLYX-1632, and neighbouring inputs come out of that with
+// neighbouring bits. A district planned straight off it piles a whole ticket
+// range onto one plot. This is murmur3's finaliser: it decorrelates the bits so
+// two consecutive tickets land nowhere near each other, and it is still a pure
+// function of the id.
+function mix(h) {
+  let v = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35) >>> 0;
+  return (v ^ (v >>> 16)) >>> 0;
+}
+
+// Where a building stands, from its run id and nothing else: the same ship is on
+// the same plot after a reload, on the second TV, and on a colleague's laptop.
+// An index into the current week would re-plan the whole district every time
+// something shipped.
+function plotOf(id) {
+  const h = mix(hash(id));
+  return { x: (h % 1000) / 1000, depth: (h >>> 22) % 3 };
+}
+
+// A landed building never changes again: same id, same finish epoch, same
+// building. Memoised on that pair so a week of ships costs its file reads once
+// instead of once a second for as long as the wall is up.
+const built = new Map();
+
+function buildingOf(ship) {
+  const cached = built.get(ship.id);
+  if (cached && cached.at === ship.since) return cached;
+  const result = readJSON(path.join(ship.dir, 'result.json')) || {};
+  const project = projectOf(ship.id, ship.dir, result);
+  const owner = ownerOf(ship.dir, result);
+  const plot = plotOf(ship.id);
+  const building = {
+    id: ship.id,
+    project,
+    kind: kindOf(project),
+    storeys: storeysOf((result.metrics || {}).diff),
+    x: plot.x,
+    depth: plot.depth,
+    owner,
+    ownerKind: ownerKindOf(owner),
+    at: ship.since,
+  };
+  built.set(ship.id, building);
+  return building;
+}
+
+// One building per run id. A run dispatched with HARNESS_MIRROR lands its run
+// dir on the wall's own machine under that same id, so the same ship can be seen
+// twice; the later status is the true one, and the city counts it once.
+function dedupe(ships) {
+  const seen = new Map();
+  for (const ship of ships) {
+    const prior = seen.get(ship.id);
+    if (!prior || ship.since > prior.since) seen.set(ship.id, ship);
+  }
+  return [...seen.values()];
+}
+
+function shipsOf(scanned) {
+  return dedupe(scanned
+    .filter((s) => s.current.since !== null && DONE_READY.test(s.current.stage))
+    .map((s) => ({ id: s.id, dir: s.dir, since: s.current.since })));
+}
+
+// Ambient life is the week's momentum, not decoration: a mover per few ships,
+// the shop windows coming on at the tenth, a tram line at the twentieth. Capped
+// so a very good week stays a city rather than a traffic jam in front of the
+// live runs.
+const PER_MOVER = 3;
+const MAX_MOVERS = 8;
+const SHOPS_AT = 10;
+const TRAM_AT = 20;
+
+function lifeOf(ships) {
+  return {
+    movers: Math.min(MAX_MOVERS, Math.floor(ships / PER_MOVER)),
+    shops: ships >= SHOPS_AT,
+    tram: ships >= TRAM_AT,
+  };
+}
+
+// Far buildings first, so the page's DOM order is its painting order and a
+// building landing in the middle of the district does not restack the ones
+// already standing.
+function plotRank(a, b) {
+  return a.depth - b.depth || a.x - b.x || (a.id < b.id ? -1 : 1);
+}
+
+// This week's buildings, and last week's as bare silhouettes: an outline and a
+// height, nothing that could be read as a type, a window or a name. An empty
+// last week yields an empty list, and the page draws no ghost at all.
+function buildCity(ships, at) {
+  const start = weekStartOf(at);
+  const before = weekStartOf(start - 1);
+  const city = [];
+  const ghost = [];
+  for (const ship of ships) {
+    if (ship.since >= start) city.push(buildingOf(ship));
+    else if (ship.since >= before) ghost.push(buildingOf(ship));
+  }
+  city.sort(plotRank);
+  ghost.sort(plotRank);
+  // Everything the memo holds that is no longer in either window is a run that
+  // has aged out of the city; a wall left up for a month must not accumulate it.
+  const standing = new Set([...city, ...ghost].map((b) => b.id));
+  for (const id of built.keys()) if (!standing.has(id)) built.delete(id);
+  return {
+    week: { start, ships: city.length, life: lifeOf(city.length) },
+    city,
+    ghost: ghost.map((b) => ({ x: b.x, storeys: b.storeys })),
+  };
+}
+
 // --- http ---------------------------------------------------------------------
 
 const STATIC = {
@@ -473,13 +677,19 @@ let lastBody = '';
 // compact tail of finished runs); `towers` is the skyline, which is live only.
 function payload() {
   const at = Math.floor(Date.now() / 1000);
-  const runs = snapshot();
+  const scanned = scan();
+  const runs = snapshot(scanned);
+  const { week, city, ghost } = buildCity(shipsOf(scanned), at);
   return {
     at,
     runsDir: RUNS,
     crew: CREW,
     floors: FLOORS,
     completionSeconds: COMPLETION_S,
+    signSeconds: SIGN_S,
+    week,
+    city,
+    ghost,
     towers: buildTowers(runs, at),
     runs,
   };
@@ -488,9 +698,12 @@ function payload() {
 // Everything a viewer can see, and nothing that ticks on its own: `at` moves
 // every second, and pushing a frame for it would repaint an idle wall forever.
 // The skyline is in here because a completion moment ending is a real change
-// even when no run on disk moved.
+// even when no run on disk moved — and so is the week rolling over at Monday
+// 00:00, which empties the district with nothing on disk having changed at all.
+// Buildings carry their finish epoch rather than their age for the same reason:
+// an age would tick, and the wall would never be quiet.
 function fingerprint(frame) {
-  return JSON.stringify([frame.towers, frame.runs]);
+  return JSON.stringify([frame.towers, frame.runs, frame.week, frame.city, frame.ghost]);
 }
 
 // One poll for all viewers; a frame is only pushed when something actually
@@ -567,14 +780,24 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(PORT, HOST, () => {
-  // The bound port, not the requested one: --port 0 asks the OS for a free one,
-  // which is how tests and a second wall on the same box stay collision-free.
-  const bound = server.address().port;
-  console.log(`[wall] serving ${RUNS}`);
-  console.log(`[wall] http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${bound}/  (ctrl-c to stop)`);
-});
+// Required rather than run: the city's rules are arithmetic over a run id, a
+// finish epoch and a diff, so tests/wall.test.sh calls them directly instead of
+// staging a run dir per rule. Nothing listens in that mode.
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    // The bound port, not the requested one: --port 0 asks the OS for a free one,
+    // which is how tests and a second wall on the same box stay collision-free.
+    const bound = server.address().port;
+    console.log(`[wall] serving ${RUNS}`);
+    console.log(`[wall] http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${bound}/  (ctrl-c to stop)`);
+  });
 
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => { server.close(); process.exit(0); });
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => { server.close(); process.exit(0); });
+  }
 }
+
+module.exports = {
+  weekStartOf, kindOf, storeysOf, plotOf, dedupe, lifeOf, buildCity,
+  SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
+};
