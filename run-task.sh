@@ -107,6 +107,7 @@ pin_knob() {  # $1 = file basename, $2 = var name, $3 = default
   fi
   eval "$2=\"\$v\""
 }
+positive_int() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
 pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
 # A first dispatch without codex pins blank reviewer knobs. If codex is
@@ -124,6 +125,30 @@ pin_knob reviewer-effort REVIEWER_EFFORT high
 # re-attribute a run. Station sessions export HARNESS_OWNER; an unset one pins
 # empty and the run is simply unowned.
 pin_knob owner HARNESS_OWNER ""
+
+# The implementer's turn ceiling. `--max-turns` is a runaway-worker guard rail,
+# not a verdict on the task: pinned at 120 it killed eight runs, nearly always at
+# the finish line (writing the notes, `git add`), each recovered by a human
+# re-dispatch that finished in minutes. Pinned like the model knobs, so every
+# resume — including the automatic one below — spends the ceiling the run was
+# dispatched with rather than whatever the resuming shell happens to export.
+DEFAULT_MAX_TURNS=200
+DEFAULT_MAX_RESUMES=2
+pin_knob max-turns HARNESS_MAX_TURNS "$DEFAULT_MAX_TURNS"
+MAX_TURNS="$HARNESS_MAX_TURNS"
+# A garbled ceiling must neither reach the CLI (`--max-turns abc` is a usage
+# error that kills the dispatch on the spot) nor become the run's pinned budget:
+# say so once, fall back, and re-pin what the run actually used.
+if ! positive_int "$MAX_TURNS"; then
+  echo "[harness] HARNESS_MAX_TURNS='$MAX_TURNS' is not a positive integer — using $DEFAULT_MAX_TURNS"
+  MAX_TURNS=$DEFAULT_MAX_TURNS
+  echo "$MAX_TURNS" > "$RUN_DIR/max-turns"
+fi
+# How often turn exhaustion may resume itself before the run fails. Not pinned:
+# like the deferral cap, it bounds this invocation's automation rather than the
+# experimental condition, and 0 switches the self-resume off.
+MAX_RESUMES="${HARNESS_MAX_RESUMES:-$DEFAULT_MAX_RESUMES}"
+case "$MAX_RESUMES" in ''|*[!0-9]*) MAX_RESUMES=$DEFAULT_MAX_RESUMES ;; esac
 
 # A Claude-only run resumed after codex is installed may still need Codex for
 # base-sync conflicts. Use the normal defaults for that mechanical step while
@@ -377,12 +402,25 @@ session_limit_hit() {
     | grep -qiE "$pattern"
 }
 
+# The other way an implementer stops with work still on the bench: it ran out of
+# turns. Structured evidence rather than prose — the CLI's final result event
+# carries subtype "error_max_turns" — with the stderr text as a fallback for a
+# process that never got to write one. opus-stream.jsonl is rewritten by every
+# attempt, so this only ever answers for the attempt that just ended.
+max_turns_hit() {
+  jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
+    "$RUN_DIR/opus-stream.jsonl" >/dev/null 2>&1 && return 0
+  grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
+}
+
 date +%s > "$RUN_DIR/started"
 # Metrics bookkeeping: a per-invocation marker segments stages.log so resume
 # pauses aren't charged to a stage; gate-rounds.log is fresh each invocation
-# (a resumed run re-runs its gates, so stale rounds would double-count).
+# (a resumed run re-runs its gates, so stale rounds would double-count), and so
+# is the turn-resume counter — this invocation starts with a full budget.
 printf '%s __invocation__\n' "$(date +%s)" >> "$RUN_DIR/stages.log"
 : > "$RUN_DIR/gate-rounds.log"
+rm -f "$RUN_DIR/turn-resumes"
 echo "$WORKTREE" > "$RUN_DIR/worktree"
 echo "$BASE_REF" > "$RUN_DIR/base"
 echo "[harness] $TICKET -> $REPO ($BRANCH from $BASE_REF)"
@@ -493,65 +531,124 @@ Rules:
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
 - When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
 
+# Every continuation message restates the commit rules. A resumed session has
+# its original instructions far behind it in a long context, and two resumes in
+# one day re-added `Co-Authored-By: Claude` trailers their first pass had never
+# written — one caught by hand, one by the reviewer, and a no_review arm would
+# have shipped them. This is the cheap half of the fix; the deterministic strip
+# after the stage is the half that does not depend on a model reading it.
+RESUME_RULES="These rules from your original instructions are still binding:
+- Make small conventional commits (type(scope): description).
+- Never mention AI, Claude, or agents in commits — no Co-Authored-By, no Generated-with, no attribution trailer of any kind, in the subject, the body or the footer.
+- Never git add or commit anything under .harness/; never use git add -f.
+- Do NOT push, do NOT create PRs, do NOT switch branches."
+
 # Worker sessions are resumable: we pin the session id so the user can step in
 # interactively at any time (attach.sh), and so a re-dispatch after needs_input
 # continues with the worker's context intact. After each run the id is refreshed
 # from the stream's result event, since --resume forks to a new session id.
 OPUS_SESSION_FILE="$RUN_DIR/opus-session"
-CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns 120)
+CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns "$MAX_TURNS")
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
+
+# One implementer attempt: leaves OPUS_EXIT, the worker's final message and the
+# refreshed session id behind. Stream events go to the statusline and feed.log
+# so a run shows live what the worker is doing (tool by tool); the raw stream is
+# kept for debugging — and, being rewritten per attempt, is also what the
+# failure classifiers read to judge the attempt that has just ended.
+opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
+  local prompt="$1" new_session; shift
+  # Remember where this attempt starts in the append-only live feed so an older
+  # limit message cannot classify a later, unrelated failure as capacity.
+  OPUS_FEED_START_LINE=1
+  if [ -f "$RUN_DIR/feed.log" ]; then
+    OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
+  fi
+  (cd "$WORKTREE" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+      "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
+      --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
+    | tee "$RUN_DIR/opus-stream.jsonl" \
+    | jq --unbuffered -r '
+        if .type == "assistant" then
+          (.message.content[]? |
+            if .type == "tool_use" then
+              "⏺ \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:90])"
+            elif .type == "thinking" then
+              "🧠 \((.thinking // "") | gsub("\\s+"; " ") | .[0:90])"
+            elif .type == "text" then
+              "💬 \((.text // "") | gsub("\\s+"; " ") | .[0:90])"
+            else empty end)
+        elif .type == "result" then "🏁 \(.subtype // "done")"
+        else empty end' \
+    | while IFS= read -r line; do
+        printf '%s %s\n' "$(date '+%H:%M:%S')" "$line" >> "$RUN_DIR/feed.log"
+        printf '%s\n' "$line" > "$RUN_DIR/activity"
+      done
+  OPUS_EXIT=${PIPESTATUS[0]}
+  # Extract the worker's final message and the (possibly forked) session id.
+  jq -r 'select(.type == "result") | .result // empty' "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
+  new_session=$(jq -r 'select(.type == "result") | .session_id // empty' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null | tail -1)
+  if [ -n "$new_session" ]; then
+    OPUS_SESSION="$new_session"
+    echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
+  fi
+}
+
+# The implementer left nothing shippable behind. One predicate for both the
+# turn-ceiling loop below and the failure branch after it, so they can never
+# disagree about what "it did not finish" means.
+opus_incomplete() {
+  [ "$OPUS_EXIT" -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --oneline 2>/dev/null)" ]
+}
+
 if [ -f "$OPUS_SESSION_FILE" ]; then
   OPUS_SESSION=$(cat "$OPUS_SESSION_FILE")
-  OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and, if .harness/specs/ exists, re-read those source documents too before continuing under the same rules as before."
-  CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --resume "$OPUS_SESSION")
+  OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and, if .harness/specs/ exists, re-read those source documents too before continuing under the same rules as before.
+
+$RESUME_RULES"
+  SESSION_ARGS=(--resume "$OPUS_SESSION")
   stage "resuming — Opus (Claude sub)"
 else
   OPUS_SESSION=$(uuidgen | tr '[:upper:]' '[:lower:]')
   echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
   OPUS_PROMPT="$IMPLEMENTER_PROMPT"
-  CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --session-id "$OPUS_SESSION")
+  SESSION_ARGS=(--session-id "$OPUS_SESSION")
   stage "implementing — Opus (Claude sub)"
 fi
-# Remember where this attempt starts in the append-only live feed so an older
-# limit message cannot classify a later, unrelated failure as capacity.
-OPUS_FEED_START_LINE=1
-if [ -f "$RUN_DIR/feed.log" ]; then
-  OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
-fi
-# Stream events so the statusline and feed.log can show live what the worker
-# is doing (tool by tool); raw stream kept for debugging.
-(cd "$WORKTREE" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
-    "$CLAUDE_BIN" -p "$OPUS_PROMPT" "${CLAUDE_ARGS[@]}" \
-    --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
-  | tee "$RUN_DIR/opus-stream.jsonl" \
-  | jq --unbuffered -r '
-      if .type == "assistant" then
-        (.message.content[]? |
-          if .type == "tool_use" then
-            "⏺ \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:90])"
-          elif .type == "thinking" then
-            "🧠 \((.thinking // "") | gsub("\\s+"; " ") | .[0:90])"
-          elif .type == "text" then
-            "💬 \((.text // "") | gsub("\\s+"; " ") | .[0:90])"
-          else empty end)
-      elif .type == "result" then "🏁 \(.subtype // "done")"
-      else empty end' \
-  | while IFS= read -r line; do
-      printf '%s %s\n' "$(date '+%H:%M:%S')" "$line" >> "$RUN_DIR/feed.log"
-      printf '%s\n' "$line" > "$RUN_DIR/activity"
-    done
-OPUS_EXIT=${PIPESTATUS[0]}
-# Extract the worker's final message and the (possibly forked) session id.
-jq -r 'select(.type == "result") | .result // empty' "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
-NEW_SESSION=$(jq -r 'select(.type == "result") | .session_id // empty' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null | tail -1)
-[ -n "$NEW_SESSION" ] && echo "$NEW_SESSION" > "$OPUS_SESSION_FILE"
+opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
+
+# --- 4b. Turn ceiling: resume rather than die at the finish line -------------
+# Turn exhaustion is a budget running out, not a task that failed, and it lands
+# almost exclusively during the wrap-up — so the recovery has always been the
+# same: re-dispatch, which resumes the pinned session and finishes in minutes.
+# Do that here instead of making a person notice. Same session, same worktree,
+# same pinned ceiling; MAX_RESUMES bounds it, and only then is the run failed.
+#
+# ORDERING: the capacity classifier owns any session-limit death — it is checked
+# FIRST, so an empty window defers (below) instead of spending a turn-resume on
+# a session that cannot spawn anyway. A pending QUESTIONS.md wins too: a worker
+# that stopped to ask must not be talked over.
+TURN_RESUME_PROMPT="You stopped because you ran out of turns, not because the work is done. This is the same session, resumed with a fresh turn budget. Check what is already committed (git log, git status) before redoing anything, then finish the task under the same rules as before: leave the tree passing the brief's verify commands and write .harness/implementer-notes.md.
+
+$RESUME_RULES"
+
+TURN_RESUMES=0
+while opus_incomplete && [ "$TURN_RESUMES" -lt "$MAX_RESUMES" ] \
+      && [ ! -f "$WORKTREE/.harness/QUESTIONS.md" ] \
+      && ! session_limit_hit && max_turns_hit; do
+  TURN_RESUMES=$((TURN_RESUMES + 1))
+  echo "$TURN_RESUMES" > "$RUN_DIR/turn-resumes"
+  stage "resuming: turn ceiling ($TURN_RESUMES/$MAX_RESUMES)"
+  opus_attempt "$TURN_RESUME_PROMPT" --resume "$OPUS_SESSION"
+done
+
 if [ -f "$WORKTREE/.harness/QUESTIONS.md" ]; then
   cp "$WORKTREE/.harness/QUESTIONS.md" "$RUN_DIR/QUESTIONS.md"
   STATUS="needs_input"; write_result "$STATUS" ""
   stage "waiting — implementer needs your input (QUESTIONS.md)"
   exit 3
 fi
-if [ $OPUS_EXIT -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --oneline 2>/dev/null)" ]; then
+if opus_incomplete; then
   # A window that emptied mid-run is a capacity event, not a failed implementer.
   # The CLI's message is only the trigger; the reset time comes from ccusage, so
   # nothing here depends on parsing prose that Anthropic is free to reword.
@@ -565,6 +662,63 @@ if [ $OPUS_EXIT -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --on
   stage "done: implementer_failed"
   echo "[harness] implementer failed (exit $OPUS_EXIT, see opus-stderr.log / feed.log in $RUN_DIR)"; exit 1
 fi
+
+# --- 4c. Commit hygiene backstop (script — no model) -------------------------
+# The prompts have always said not to sign commits with the model's name, and
+# resumed sessions have twice done it anyway: one trailer was caught by hand,
+# one by the reviewer, and a no_review arm would have shipped it. So stop hoping
+# and make it true — mechanically, on every arm, before the branch can become a
+# PR. Only the MESSAGES of the offending commits in base..HEAD are rewritten:
+# each new commit reuses the original tree object verbatim, the working copy is
+# never touched, and a range with nothing to strip is left byte-identical.
+#
+# Two shapes, because a trailer can name the model in either half: a `Claude-*:`
+# key goes whatever it carries, while a generic key (`Co-Authored-By:` and kin)
+# goes only when its VALUE names the model — so a genuine human co-author, the
+# one thing here that must never be touched, survives.
+AI_ATTRIBUTION_RE='^[[:space:]]*claude-[a-z-]*[[:space:]]*:|^[[:space:]]*(co-authored-by|assisted-by|session-id|generated-by|generated-with)[[:space:]]*:[[:space:]]*.*(claude|anthropic)|^[[:space:]]*(🤖[[:space:]]*)?generated with .*(claude|anthropic)'
+
+strip_ai_attribution() {
+  local commits c tree parent msg cleaned new prev_old='' prev_new='' n=0
+  local an ae ad cn ce ct pargs
+  git -C "$WORKTREE" log --format='%B' "$BASE_REF..HEAD" 2>/dev/null \
+    | grep -qiE "$AI_ATTRIBUTION_RE" || return 0
+  # Re-parenting a merge needs a parent map this deliberately does not keep. The
+  # implementer's own range is linear and base-sync merges happen further down,
+  # so anything else is left alone rather than rewritten wrongly.
+  if [ -n "$(git -C "$WORKTREE" rev-list --merges "$BASE_REF..HEAD" 2>/dev/null)" ]; then
+    echo "[harness] commit hygiene: AI attribution found, but $BASE_REF..HEAD contains a merge — left as is"
+    return 0
+  fi
+  commits=$(git -C "$WORKTREE" rev-list --reverse "$BASE_REF..HEAD" 2>/dev/null) || return 0
+  for c in $commits; do
+    tree=$(git -C "$WORKTREE" rev-parse "$c^{tree}") || return 0
+    parent=$(git -C "$WORKTREE" rev-parse -q --verify "$c^" 2>/dev/null) || parent=''
+    # Commits before the first offender re-create byte-identically (same tree,
+    # parent, message and identity => same sha), so only the offending tail of
+    # the range actually moves.
+    if [ -n "$prev_new" ] && [ "$parent" = "$prev_old" ]; then parent="$prev_new"; fi
+    msg=$(git -C "$WORKTREE" log -1 --format=%B "$c")
+    cleaned=$(printf '%s\n' "$msg" | grep -ivE "$AI_ATTRIBUTION_RE")
+    if [ -n "$cleaned" ] && [ "$cleaned" != "$msg" ]; then n=$((n + 1)); else cleaned="$msg"; fi
+    IFS=$'\x1f' read -r an ae ad cn ce ct <<EOF
+$(git -C "$WORKTREE" log -1 --format='%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI' "$c")
+EOF
+    pargs=(); [ -n "$parent" ] && pargs=(-p "$parent")
+    new=$(printf '%s\n' "$cleaned" | \
+      GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
+      GIT_COMMITTER_NAME="$cn" GIT_COMMITTER_EMAIL="$ce" GIT_COMMITTER_DATE="$ct" \
+      git -C "$WORKTREE" commit-tree "$tree" ${pargs[@]+"${pargs[@]}"}) || return 0
+    prev_old="$c"; prev_new="$new"
+  done
+  [ "$n" -gt 0 ] && [ -n "$prev_new" ] || return 0
+  # HEAD is symbolic, so this moves the branch and nothing else: identical trees
+  # mean the index and the working copy still match, dirty or not.
+  git -C "$WORKTREE" update-ref -m 'harness: strip AI attribution' HEAD "$prev_new" || return 0
+  echo "[harness] commit hygiene: stripped AI attribution from $n commit message(s) — trees untouched"
+}
+strip_ai_attribution
+
 # Everything up to this commit is Opus's work; later commits are Codex's.
 OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)
 echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
