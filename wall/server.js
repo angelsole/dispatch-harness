@@ -775,38 +775,20 @@ function observe(scanned, weekStart, weekEnd) {
   }
 }
 
-// Nightlife is the city's baseline, not its reward. A city is alive because
-// somebody is eating noodles at one in the morning, not because a crane is
-// moving — so the moment the week has ONE building the ground floor is lit,
-// somebody is out walking and a car goes past. What the week shipped only sets
-// the tempo: more people out, and shorter gaps between vehicles. The milestones
-// that used to BE the ambient life are still here, demoted to what they should
-// always have been — extra texture over a street that is already living.
-//
-// Everything is capped: this runs 24/7 on a TV, and a very good week has to stay
-// a city rather than a parade in front of the runs still climbing.
-const PER_WALKER = 4;      // one more silhouette on the pavement every four ships
-const PER_VEHICLE = 9;
-const MAX_WALKERS = 6;
-const MAX_VEHICLES = 3;
-const GAP_QUIET = 48;      // seconds between passes on the week's first ship
-const GAP_BUSY = 11;       // and on the busiest night the district will ever show
-const BUSY_AT = 25;        // where that curve tops out
-const MALL_AT = 12;        // a big week puts a mall block on the street
-const TRAM_AT = 20;        // a very good one runs a tram through it
+// Ambient life is the week's momentum, not decoration: a mover per few ships,
+// the shop windows coming on at the tenth, a tram line at the twentieth. Capped
+// so a very good week stays a city rather than a traffic jam in front of the
+// live runs.
+const PER_MOVER = 3;
+const MAX_MOVERS = 8;
+const SHOPS_AT = 10;
+const TRAM_AT = 20;
 
 function lifeOf(ships) {
-  const n = Math.max(0, Math.floor(Number(ships) || 0));
-  // Nothing shipped is the one state with no nightlife: an empty plain has no
-  // ground floor to light.
-  if (n === 0) return { walkers: 0, vehicles: 0, gap: 0, mall: false, tram: false };
-  const busy = Math.min(1, (n - 1) / (BUSY_AT - 1));
   return {
-    walkers: Math.min(MAX_WALKERS, 1 + Math.floor(n / PER_WALKER)),
-    vehicles: Math.min(MAX_VEHICLES, 1 + Math.floor(n / PER_VEHICLE)),
-    gap: Math.round(GAP_QUIET - (GAP_QUIET - GAP_BUSY) * busy),
-    mall: n >= MALL_AT,
-    tram: n >= TRAM_AT,
+    movers: Math.min(MAX_MOVERS, Math.floor(ships / PER_MOVER)),
+    shops: ships >= SHOPS_AT,
+    tram: ships >= TRAM_AT,
   };
 }
 
@@ -991,6 +973,5 @@ if (require.main === module) {
 
 module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
-  shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX,
-  MAX_WALKERS, MAX_VEHICLES, GAP_QUIET, GAP_BUSY, MALL_AT, TRAM_AT,
+  shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
 };

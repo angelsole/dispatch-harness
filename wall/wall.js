@@ -33,12 +33,17 @@
   const GHOST_W = 40;
   const GHOST_BASE_H = 31;
   const GHOST_STOREY_H = 17;
-  // The street's ceiling, held on the page as well as on the server: a snapshot
-  // is untrusted input, and a wall that runs for a month must never be one bad
-  // number away from putting ten thousand walkers on a compositor.
+  // The street's ceiling. A wall that runs for a month must never let an
+  // exceptional week put ten thousand walkers on a compositor.
   const MAX_WALKERS = 6;
   const MAX_VEHICLES = 3;
-  const GAP_FLOOR = 8;    // no plan may put cars past this close together
+  const PER_WALKER = 4;    // one more silhouette every four ships
+  const PER_VEHICLE = 9;
+  const GAP_QUIET = 48;    // vehicle-cycle length on the week's first ship
+  const GAP_BUSY = 11;
+  const BUSY_AT = 25;      // where the vehicle tempo tops out
+  const MALL_AT = 12;
+  const TRAM_AT = 20;
   const OCCUPIED = 3;     // windows per building keeping their own hours
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -407,6 +412,22 @@
   const BAYS = 5;            // shopfronts along a building's base
   const FLICKER_SPREAD = 89; // seconds of stagger, so no two neons ever stutter together
 
+  // This is deliberately page-owned. `week.life` is an established API shape;
+  // nightlife is presentation, and the existing ship count is all the page
+  // needs to plan it without changing the server contract.
+  function nightlifeOf(ships) {
+    const n = Math.max(0, Math.floor(Number(ships) || 0));
+    if (n === 0) return { walkers: 0, vehicles: 0, gap: 0, mall: false, tram: false };
+    const busy = Math.min(1, (n - 1) / (BUSY_AT - 1));
+    return {
+      walkers: Math.min(MAX_WALKERS, 1 + Math.floor(n / PER_WALKER)),
+      vehicles: Math.min(MAX_VEHICLES, 1 + Math.floor(n / PER_VEHICLE)),
+      gap: Math.round(GAP_QUIET - (GAP_QUIET - GAP_BUSY) * busy),
+      mall: n >= MALL_AT,
+      tram: n >= TRAM_AT,
+    };
+  }
+
   function seedOf(text) {
     let h = 0;
     for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) >>> 0;
@@ -441,10 +462,10 @@
   }
 
   // --- the street ---------------------------------------------------------------
-  // The population, scaled by the server's plan and clamped again here. Walkers
-  // and cars are created and removed rather than hidden, so a plain with nothing
-  // on it costs the page nothing, and every lane and phase comes from the slot
-  // index alone — two screens standing side by side have the same street.
+  // The population, planned from the week's ship count. Walkers and cars are
+  // created and removed rather than hidden, so a plain with nothing on it costs
+  // the page nothing, and every lane and phase comes from the slot index alone —
+  // two screens standing side by side have the same street.
 
   function populate(parent, cls, want, dress) {
     while (parent.childElementCount > want) parent.lastElementChild.remove();
@@ -457,23 +478,26 @@
     }
   }
 
-  const bounded = (value, cap) => Math.max(0, Math.min(cap, Math.floor(Number(value) || 0)));
-
   function renderLife() {
-    const plan = week.life || {};
-    populate(crowd, 'life__walker', bounded(plan.walkers, MAX_WALKERS), (node, slot) => {
+    const plan = nightlifeOf(week.ships);
+    populate(crowd, 'life__walker', plan.walkers, (node, slot) => {
       // Two in three are people; the rest are the small service robots that do
       // the other half of a night shift. They cross the other way.
       node.dataset.kind = slot % 3 === 2 ? 'robot' : 'person';
       node.style.setProperty('--depth', String(slot % 4));
       node.append(el('i'));
     });
-    populate(road, 'life__car', bounded(plan.vehicles, MAX_VEHICLES), (node, slot) => {
+    populate(road, 'life__car', plan.vehicles, (node, slot) => {
       node.dataset.way = slot % 2 ? 'west' : 'east';
     });
-    // How long the street waits between passes. A car is punctuation on a quiet
-    // week and traffic on a very good one; the page only ever slows it down.
-    life.style.setProperty('--gap', Math.max(GAP_FLOOR, Number(plan.gap) || GAP_FLOOR) + 's');
+    // Each car shares a cycle long enough to keep consecutive pass starts one
+    // planned gap apart. Merely giving every car a `gap`-long loop would turn
+    // three cars at the cap into a pass every few seconds.
+    const vehicleCycle = plan.vehicles ? plan.gap * plan.vehicles : GAP_QUIET;
+    life.style.setProperty('--vehicle-cycle', vehicleCycle + 's');
+    [...road.children].forEach((node, slot) => {
+      node.style.setProperty('--vehicle-delay', (-slot * plan.gap) + 's');
+    });
     life.dataset.tram = plan.tram ? '1' : '0';
     life.dataset.mall = plan.mall ? '1' : '0';
     // The whole point of the pass: nightlife is not gated on a milestone any

@@ -853,9 +853,9 @@ body[data-idle="rest"] .rest { display: block; }
   height: 0.44rem;
   background: linear-gradient(90deg,
     var(--win-a) 0 14%, transparent 14% 30%,
-    rgba(255, 214, 160, 0.42) 30% 52%, transparent 52% 66%,
+    color-mix(in srgb, var(--shop-diner) 42%, transparent) 30% 52%, transparent 52% 66%,
     var(--win-a) 66% 88%, transparent 88% 100%);
-  box-shadow: 0 0.16rem 0.8rem rgba(255, 190, 130, 0.26);
+  box-shadow: 0 0.16rem 0.8rem color-mix(in srgb, var(--shop-diner) 26%, transparent);
   opacity: 0.94;
   transition: opacity var(--spot-in) var(--ease);
 }
@@ -1012,7 +1012,7 @@ body[data-idle="rest"] .rest { display: block; }
    at, and every part of it drops a stop the moment there is work on the skyline:
    the city goes on behind a run climbing, it does not compete with it. */
 .life {
-  --gap: 44s;              /* seconds between vehicle passes; the week sets it */
+  --vehicle-cycle: 48s;    /* one car's loop; the week and car count set it */
   position: fixed;
   left: 0;
   right: 0;
@@ -1038,7 +1038,7 @@ body[data-idle="rest"] .rest { display: block; }
   height: 3.6rem;
   border-radius: 50%;
   background: radial-gradient(58% 46% at 50% 100%,
-    rgba(198, 228, 228, 0.34), rgba(150, 196, 200, 0.09) 56%, transparent 78%);
+    var(--win-b), color-mix(in srgb, var(--edge) 20%, transparent) 56%, transparent 78%);
   opacity: 0;
   transform-origin: 50% 100%;
   animation: steam 11s var(--ease-io) infinite;
@@ -1076,7 +1076,8 @@ body[data-idle="rest"] .rest { display: block; }
   position: absolute;
   inset: 0;
   border-radius: 0.11rem 0.11rem 0 0;
-  background: linear-gradient(90deg, rgba(5, 11, 15, 0.95) 52%, rgba(255, 206, 150, 0.55));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 95%, transparent) 52%,
+    color-mix(in srgb, var(--shop-diner) 55%, transparent));
   animation: trudge 1.1s var(--ease-io) infinite;
 }
 /* The other half of a night shift: the small service robots, squatter and
@@ -1089,12 +1090,13 @@ body[data-idle="rest"] .rest { display: block; }
 }
 .life__walker[data-kind="robot"] i {
   border-radius: 0.08rem;
-  background: linear-gradient(90deg, rgba(7, 15, 19, 0.92), rgba(150, 216, 210, 0.6));
-  box-shadow: 0 0 0.4rem rgba(150, 216, 210, 0.22);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 92%, transparent),
+    color-mix(in srgb, var(--shop-repair) 60%, transparent));
+  box-shadow: 0 0 0.4rem color-mix(in srgb, var(--shop-repair) 22%, transparent);
   animation: trundle 2.3s var(--ease-io) infinite;
 }
 
-/* A car, now and then. The whole pass is a slice at the end of a --gap-long
+/* A car, now and then. The whole pass is a slice at the end of a long
    cycle, so the street is mostly empty street: a vehicle is an event on the week
    that shipped one thing and ordinary traffic on the week that shipped twenty. */
 .life__car {
@@ -1106,16 +1108,18 @@ body[data-idle="rest"] .rest { display: block; }
   height: 0.14rem;
   border-radius: 0.14rem;
   mix-blend-mode: screen;
-  background: linear-gradient(90deg, transparent, rgba(255, 206, 150, 0.2) 42%, #ffe9cd);
-  box-shadow: 0 0 0.6rem rgba(255, 200, 140, 0.5);
+  background: linear-gradient(90deg, transparent,
+    color-mix(in srgb, var(--shop-diner) 20%, transparent) 42%, var(--shop-diner));
+  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop-diner) 50%, transparent);
   opacity: 0;
-  animation: prowl var(--gap) linear infinite;
-  animation-delay: calc(var(--slot) * -7s);
+  animation: prowl var(--vehicle-cycle) linear infinite;
+  animation-delay: var(--vehicle-delay, 0s);
 }
 .life__car[data-way="west"] {
   bottom: 4.3vh;
-  background: linear-gradient(90deg, #cfe8ff, rgba(150, 200, 255, 0.18) 58%, transparent);
-  box-shadow: 0 0 0.6rem rgba(150, 200, 255, 0.4);
+  background: linear-gradient(90deg, var(--shop-arcade),
+    color-mix(in srgb, var(--shop-arcade) 18%, transparent) 58%, transparent);
+  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop-arcade) 40%, transparent);
   animation-direction: reverse;
 }
 
@@ -1130,12 +1134,13 @@ body[data-idle="rest"] .rest { display: block; }
   height: 4vh;
   background:
     repeating-linear-gradient(90deg,
-      rgba(255, 214, 160, 0.5) 0 0.5rem, transparent 0.5rem 1.1rem),
-    linear-gradient(180deg, rgba(14, 27, 34, 0.96), rgba(5, 12, 17, 0.98));
+      color-mix(in srgb, var(--shop-diner) 50%, transparent) 0 0.5rem,
+      transparent 0.5rem 1.1rem),
+    linear-gradient(180deg, var(--stone-lit), var(--stone));
   border-top: 1px solid var(--edge);
-  box-shadow: 0 -0.3rem 1.6rem rgba(255, 196, 132, 0.16);
+  box-shadow: 0 -0.3rem 1.6rem color-mix(in srgb, var(--shop-diner) 16%, transparent);
   opacity: 0;
-  transition: opacity 1600ms var(--ease);
+  transition: opacity var(--spot-in) var(--ease);
 }
 .life[data-mall="1"] .life__mall { opacity: 0.9; }
 
@@ -1774,7 +1779,7 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   0%, 100% { transform: translate3d(0, 0, 0) rotate(-3deg); }
   50% { transform: translate3d(0, -0.04rem, 0) rotate(3deg); }
 }
-/* One car pass, at the end of a --gap-long wait. The wait is the point: on a
+/* One car pass, at the end of a long wait. The wait is the point: on a
    quiet week this is nothing for forty seconds and then somebody drives home. */
 @keyframes prowl {
   0%, 62% { opacity: 0; transform: translate3d(-8vw, 0, 0); }

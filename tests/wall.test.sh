@@ -658,43 +658,11 @@ console.log(JSON.stringify({
   ghostKeys: Object.keys(sample.ghost[0] || {}).sort().join(','),
   ghostEmpty: w.buildCity([line('NOW-1', start + 10)], now).ghost.length,
   weekShips: sample.week.ships,
-  life: [0, 1, 2, 4, 9, 12, 20, 90].map((n) => {
+  lifeKeys: Object.keys(w.lifeOf(1)).sort().join(','),
+  life: [0, 2, 3, 9, 10, 19, 20, 90].map((n) => {
     const plan = w.lifeOf(n);
-    return n + ':' + plan.walkers + 'w' + plan.vehicles + 'v' + plan.gap + 's'
-      + (plan.mall ? 'M' : '-') + (plan.tram ? 'T' : '-');
+    return n + ':' + plan.movers + (plan.shops ? 'S' : '-') + (plan.tram ? 'T' : '-');
   }).join(' '),
-  // Nothing standing is the ONE state with no nightlife. Every other week has
-  // somebody out and something passing, whatever else it has.
-  lifeDead: Object.values(w.lifeOf(0)).filter(Boolean).length,
-  lifeBaseline: (() => {
-    const plan = w.lifeOf(1);
-    return plan.walkers >= 1 && plan.vehicles >= 1 && plan.gap > 0;
-  })(),
-  // Livelier, monotonically: never fewer people out or longer gaps than the week
-  // before, so a ship can only ever add to the night.
-  lifeScales: (() => {
-    let prev = w.lifeOf(1);
-    for (let n = 2; n <= 120; n++) {
-      const plan = w.lifeOf(n);
-      if (plan.walkers < prev.walkers || plan.vehicles < prev.vehicles ||
-          plan.gap > prev.gap) return false;
-      prev = plan;
-    }
-    return w.lifeOf(120).walkers > w.lifeOf(1).walkers
-      && w.lifeOf(120).gap < w.lifeOf(1).gap;
-  })(),
-  // And bounded: a street on a monstrous week is still a street.
-  lifeCapped: (() => {
-    const plan = w.lifeOf(5000);
-    return plan.walkers === w.MAX_WALKERS && plan.vehicles === w.MAX_VEHICLES
-      && plan.gap === w.GAP_BUSY;
-  })(),
-  lifeMilestones: [w.MALL_AT, w.TRAM_AT].map((n) => {
-    const at = w.lifeOf(n);
-    const before = w.lifeOf(n - 1);
-    return (at.mall === true && before.mall === false) ||
-           (at.tram === true && before.tram === false);
-  }).join(','),
   signHours: w.SIGN_S / 3600,
 }));
 JS
@@ -740,22 +708,10 @@ check "ghost: last week is a height and a plot, nothing else" \
   "$(city_of ghostKeys)" "storeys,x"
 check "ghost: an empty last week draws no ghost at all" "$(city_of ghostEmpty)" "0"
 check "week: the ship count is this week's buildings" "$(city_of weekShips)" "1"
-# Nightlife is the baseline, not the reward: the first ship of the week puts
-# somebody on the pavement and a car on the road, and everything after it only
-# sets the tempo. The milestones are still here — demoted to extra texture.
-check "life: the week's tempo, from its first ship" \
-  "$(city_of life)" \
-  "0:0w0v0s-- 1:1w1v48s-- 2:1w1v46s-- 4:2w1v43s-- 9:3w2v36s-- 12:4w2v31sM- 20:6w3v19sMT 90:6w3v11sMT"
-check "life: an empty plain is the only week with no nightlife at all" \
-  "$(city_of lifeDead)" "0"
-check "life: one building standing is enough for a living street" \
-  "$(city_of lifeBaseline)" "true"
-check "life: more ships is a livelier night, never a quieter one" \
-  "$(city_of lifeScales)" "true"
-check "life: and a monstrous week is still a street, not a parade" \
-  "$(city_of lifeCapped)" "true"
-check "life: the mall and the tram unlock on their own ship, as bonuses" \
-  "$(city_of lifeMilestones)" "true,true"
+check "life: the server payload keeps its established keys" \
+  "$(city_of lifeKeys)" "movers,shops,tram"
+check "life: the server's established presentation contract is unchanged" \
+  "$(city_of life)" "0:0-- 2:0-- 3:1-- 9:3-- 10:3S- 19:6S- 20:6ST 90:8ST"
 check "sign: a dispatcher's tint lasts about a shift" "$(city_of signHours)" "6"
 
 # --- where the city's memory lives ------------------------------------------------
@@ -1036,9 +992,9 @@ if [ -n "$BUSY_WEEK_PORT" ]; then
     "$(printf '%s' "$BUSY_WEEK_API" | jq '.city | length')" "30"
   check "district: while the run feed stays capped, as it always was" \
     "$(printf '%s' "$BUSY_WEEK_API" | jq '[.runs[] | select(.state=="ready")] | length')" "24"
-  check "life: thirty ships is the busiest the street ever gets" \
-    "$(printf '%s' "$BUSY_WEEK_API" | jq -r '.week.life | "\(.walkers),\(.vehicles),\(.gap),\(.mall),\(.tram)"')" \
-    "6,3,11,true,true"
+  check "life: thirty ships retain the established server milestones" \
+    "$(printf '%s' "$BUSY_WEEK_API" | jq -r '.week.life | "\(.movers),\(.shops),\(.tram)"')" \
+    "8,true,true"
 else
   bad "life: server starts against a very good week"
 fi
@@ -1055,11 +1011,11 @@ printf '{"metrics":{"diff":{"insertions":60,"deletions":4}}}\n' > "$LONE/LONE-1/
 serve "$LONE" "$ROOT/lone-week.log"; LONE_PORT="$PORT_OUT"
 if [ -n "$LONE_PORT" ]; then
   LONE_API="$(get "$LONE_PORT" /api/runs)"
-  check "life: one building standing, and the city is already out" \
-    "$(printf '%s' "$LONE_API" | jq -r '.week | "\(.ships):\(.life.walkers)w\(.life.vehicles)v"')" \
-    "1:1w1v"
-  check "life: with no milestone lit — those are the bonuses, not the baseline" \
-    "$(printf '%s' "$LONE_API" | jq -r '.week.life | "\(.mall),\(.tram)"')" "false,false"
+  check "life: one shipped building reaches the page as the density input" \
+    "$(printf '%s' "$LONE_API" | jq -r '.week.ships')" "1"
+  check "life: without changing the established server life payload" \
+    "$(printf '%s' "$LONE_API" | jq -r '.week.life | "\(.movers),\(.shops),\(.tram)"')" \
+    "0,false,false"
 else
   bad "life: server starts against a week that shipped once"
 fi
@@ -1119,6 +1075,8 @@ done
 echo "== wall: the ground floor is lit from the first ship =="
 grep_not "$PAGE_SRC" 'data-shops' \
   "life: the tenth-ship gate on the shop windows is gone, not left shadowing it"
+grep_ok "$PAGE_SRC" 'const plan = nightlifeOf(week.ships)' \
+  "life: density is page-owned and reads the established ship count"
 grep_ok "$PAGE_SRC" 'life.hidden = blocks.length === 0' \
   "life: one building standing is the whole condition for a living street"
 grep_ok "$CSS_SRC" '.block__shop {' "life: every building carries a lit shopfront row"
@@ -1129,7 +1087,7 @@ grep_ok "$CSS_SRC" '.block__occupancy i {' \
 grep_ok "$PAGE_SRC" 'life__vent' "life: steam comes off the street vents"
 grep_ok "$PAGE_SRC" 'life__walker' "life: somebody is out walking"
 grep_ok "$PAGE_SRC" 'life__car'    "life: and a car goes past now and then"
-grep_ok "$CSS_SRC" 'animation: prowl var(--gap) linear infinite' \
+grep_ok "$CSS_SRC" 'animation: prowl var(--vehicle-cycle) linear infinite' \
   "life: the gap between passes is the week's, not a constant"
 grep_ok "$CSS_SRC" 'body[data-quiet="0"] .life' \
   "life: and all of it steps back the moment something is climbing"
@@ -1152,19 +1110,12 @@ for beat in occupancy neon-hum steam prowl trundle; do
   check "motion: @keyframes $beat animates transform and opacity only" "$STRAY" ""
 done
 
-# The population is bounded on BOTH sides of the wire. The server plans a street;
-# the page refuses to draw one bigger than that whatever arrives in a snapshot,
-# because this thing runs unattended for weeks.
-grep_ok "$PAGE_SRC" 'bounded(plan.walkers, MAX_WALKERS)' \
-  "life: the page clamps the crowd it was asked for"
-grep_ok "$PAGE_SRC" 'bounded(plan.vehicles, MAX_VEHICLES)' \
-  "life: and the traffic"
-page_cap() { sed -n "s/^  const $1 = \([0-9]*\);.*/\1/p" "$SRC/wall/wall.js" | head -1; }
-server_cap() { node -e 'process.stdout.write(String(require(process.argv[1])[process.argv[2]]))' \
-  "$SRC/wall/server.js" "$1"; }
-for cap in MAX_WALKERS MAX_VEHICLES; do
-  check "life: the page and the server agree on $cap" "$(page_cap "$cap")" "$(server_cap "$cap")"
-done
+# The page owns and bounds the population plan. This is presentation derived
+# from the established ship count, not a reason to change the server payload.
+grep_ok "$PAGE_SRC" 'Math.min(MAX_WALKERS' "life: the page caps the crowd it plans"
+grep_ok "$PAGE_SRC" 'Math.min(MAX_VEHICLES' "life: and the traffic"
+grep_ok "$PAGE_SRC" 'plan.gap * plan.vehicles' \
+  "life: multiple cars preserve the planned gap instead of dividing it"
 
 # Storefronts are planned the way plots are: a pure function of the run id. The
 # noodle bar is on the same corner after a reload, on the second TV, and on a
@@ -1175,7 +1126,8 @@ grep_not "$(printf '%s\n' "$NIGHT_SRC" | grep -v '^ *//')" 'Math.random' \
   "life: no unseeded randomness anywhere in the plan"
 NIGHT_PROBE="$ROOT/nightlife-probe.js"
 {
-  grep -E '^  const OCCUPIED = ' "$SRC/wall/wall.js"
+  grep -E '^  const (MAX_WALKERS|MAX_VEHICLES|PER_WALKER|PER_VEHICLE|GAP_QUIET|GAP_BUSY|BUSY_AT|MALL_AT|TRAM_AT|OCCUPIED) = ' \
+    "$SRC/wall/wall.js"
   printf '%s\n' "$NIGHT_SRC"
   cat <<'JS'
   const ids = [];
@@ -1185,7 +1137,36 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
   for (const plan of plans) kinds[plan.shop] = (kinds[plan.shop] || 0) + 1;
   const bays = new Set(plans.map((plan) => plan.bay));
   const neon = plans.filter((plan) => plan.neon).length;
+  const life = [0, 1, 2, 4, 9, 12, 20, 90].map((n) => {
+    const plan = nightlifeOf(n);
+    return n + ':' + plan.walkers + 'w' + plan.vehicles + 'v' + plan.gap + 's'
+      + (plan.mall ? 'M' : '-') + (plan.tram ? 'T' : '-');
+  }).join(' ');
   console.log(JSON.stringify({
+    life,
+    lifeDead: Object.values(nightlifeOf(0)).filter(Boolean).length,
+    lifeBaseline: (() => {
+      const plan = nightlifeOf(1);
+      return plan.walkers >= 1 && plan.vehicles >= 1 && plan.gap > 0;
+    })(),
+    lifeScales: (() => {
+      let prev = nightlifeOf(1);
+      for (let n = 2; n <= 120; n++) {
+        const plan = nightlifeOf(n);
+        if (plan.walkers < prev.walkers || plan.vehicles < prev.vehicles ||
+            plan.gap > prev.gap) return false;
+        prev = plan;
+      }
+      return nightlifeOf(120).walkers > nightlifeOf(1).walkers
+        && nightlifeOf(120).gap < nightlifeOf(1).gap;
+    })(),
+    lifeCapped: (() => {
+      const plan = nightlifeOf(5000);
+      return plan.walkers === MAX_WALKERS && plan.vehicles === MAX_VEHICLES
+        && plan.gap === GAP_BUSY;
+    })(),
+    mallEdge: !nightlifeOf(MALL_AT - 1).mall && nightlifeOf(MALL_AT).mall,
+    tramEdge: !nightlifeOf(TRAM_AT - 1).tram && nightlifeOf(TRAM_AT).tram,
     stable: JSON.stringify(storefrontOf('OLYX-1598')) === JSON.stringify(storefrontOf('OLYX-1598')),
     differs: JSON.stringify(storefrontOf('OLYX-1598')) !== JSON.stringify(storefrontOf('OLYX-1599')),
     everyKind: Object.keys(kinds).sort().join(','),
@@ -1205,6 +1186,18 @@ JS
 } > "$NIGHT_PROBE"
 NIGHT="$(node "$NIGHT_PROBE" 2>&1)"
 night_of() { printf '%s' "$NIGHT" | jq -r ".$1" 2>/dev/null; }
+check "life: the week's tempo starts with its first ship" \
+  "$(night_of life)" \
+  "0:0w0v0s-- 1:1w1v48s-- 2:1w1v46s-- 4:2w1v43s-- 9:3w2v36s-- 12:4w2v31sM- 20:6w3v19sMT 90:6w3v11sMT"
+check "life: an empty plain is the only plan with no nightlife" "$(night_of lifeDead)" "0"
+check "life: one building standing is enough for a living street" \
+  "$(night_of lifeBaseline)" "true"
+check "life: more ships is a livelier night, never a quieter one" \
+  "$(night_of lifeScales)" "true"
+check "life: and a monstrous week is still a street, not a parade" \
+  "$(night_of lifeCapped)" "true"
+check "life: the mall unlocks on its own ship, as a bonus" "$(night_of mallEdge)" "true"
+check "life: the tram unlocks on its own ship, as a bonus" "$(night_of tramEdge)" "true"
 check "life: the same building keeps the same shop, always" "$(night_of stable)" "true"
 check "life: two buildings do not get the same street twice" "$(night_of differs)" "true"
 check "life: the whole vocabulary of the street gets used" \
