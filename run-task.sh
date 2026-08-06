@@ -276,15 +276,18 @@ stage() {
 # schedule.sh refuses, and HARNESS_PREFLIGHT=off all fall through to a normal
 # dispatch. The cap is what keeps that honest in the other direction — a run
 # reschedules itself at most HARNESS_MAX_DEFERRALS times and then fails saying so.
-MIN_SESSION_TOKENS="${HARNESS_MIN_SESSION_TOKENS:-20000}"  # output tokens one run wants
-DEFER_BUFFER_SECS="${HARNESS_DEFER_BUFFER_SECS:-300}"      # clearance past the reset
-MAX_DEFERRALS="${HARNESS_MAX_DEFERRALS:-2}"                # then fail honestly
+DEFAULT_MIN_SESSION_TOKENS=20000
+DEFAULT_DEFER_BUFFER_SECS=300
+DEFAULT_MAX_DEFERRALS=2
+MIN_SESSION_TOKENS="${HARNESS_MIN_SESSION_TOKENS:-$DEFAULT_MIN_SESSION_TOKENS}"  # output tokens one run wants
+DEFER_BUFFER_SECS="${HARNESS_DEFER_BUFFER_SECS:-$DEFAULT_DEFER_BUFFER_SECS}"      # clearance past the reset
+MAX_DEFERRALS="${HARNESS_MAX_DEFERRALS:-$DEFAULT_MAX_DEFERRALS}"                # then fail honestly
 CLAUDE_LOGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"          # whose window this is
 # A typo in a knob must not take the arithmetic down mid-dispatch, and the
 # advisory default is the safe one to fall back to.
-case "$MIN_SESSION_TOKENS" in ''|*[!0-9]*) MIN_SESSION_TOKENS=20000 ;; esac
-case "$DEFER_BUFFER_SECS"   in ''|*[!0-9]*) DEFER_BUFFER_SECS=300 ;; esac
-case "$MAX_DEFERRALS"       in ''|*[!0-9]*) MAX_DEFERRALS=2 ;; esac
+case "$MIN_SESSION_TOKENS" in ''|*[!0-9]*) MIN_SESSION_TOKENS=$DEFAULT_MIN_SESSION_TOKENS ;; esac
+case "$DEFER_BUFFER_SECS"   in ''|*[!0-9]*) DEFER_BUFFER_SECS=$DEFAULT_DEFER_BUFFER_SECS ;; esac
+case "$MAX_DEFERRALS"       in ''|*[!0-9]*) MAX_DEFERRALS=$DEFAULT_MAX_DEFERRALS ;; esac
 
 capacity_note() {  # the preflight's own paper trail, off the dispatch's stdout
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$RUN_DIR/capacity.log"

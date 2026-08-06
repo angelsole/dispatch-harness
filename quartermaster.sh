@@ -75,8 +75,9 @@ human_time() {  # $1 = epoch
   perl -e 'use POSIX qw(strftime); print strftime("%a %d %b %H:%M", localtime($ARGV[0]))' -- "$1"
 }
 
-# A process cap that exists on macOS, where timeout(1) does not.
-capped() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+# Keep the quartermaster's existing generic name while sharing the identical
+# macOS-safe process cap supplied by capacity.sh.
+capped() { capacity_capped "$@"; }
 
 # ---------------------------------------------------------------------------
 # Linear — the only remote API this touches: read, plus one comment per arm
