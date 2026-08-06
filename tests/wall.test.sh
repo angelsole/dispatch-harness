@@ -542,6 +542,274 @@ else
   bad "expiry: server starts against a run mid-completion"
 fi
 
+# --- the week's city ------------------------------------------------------------
+# The other half of the wall. The skyline above is live and leaves nothing
+# behind; the district accretes — every run that reaches `done: ready` since
+# Monday 00:00 local is a permanent building, and last week's is a flat ghost
+# behind it. All of it is derived per poll from run dirs already on disk, so the
+# rules are arithmetic over a run id, a finish epoch and a diff — exercised out
+# of the real server.js rather than restated here, the same way the weather is.
+echo "== wall: the week's rules =="
+CITY_PROBE="$ROOT/city-probe.js"
+cat > "$CITY_PROBE" <<'JS'
+const w = require(process.argv[2]);
+const now = Number(process.argv[3]);
+const start = w.weekStartOf(now);
+const monday = new Date(start * 1000);
+const prev = w.weekStartOf(start - 1);
+
+// Which window a finish epoch lands in, straight through the real builder. The
+// run dir does not exist: a building must survive having nothing to read.
+const bucket = (since) => {
+  const built = w.buildCity([{ id: 'EDGE-1', dir: '/no/such/run', since }], now);
+  return built.city.length ? 'city' : built.ghost.length ? 'ghost' : 'gone';
+};
+
+const ids = [];
+for (let i = 0; i < 160; i++) ids.push('OLYX-' + (1500 + i));
+const bands = [0, 0, 0, 0, 0];
+const depths = [0, 0, 0];
+for (const id of ids) {
+  const plot = w.plotOf(id);
+  bands[Math.min(4, Math.floor(plot.x * 5))] += 1;
+  depths[plot.depth] += 1;
+}
+
+// A run dispatched with HARNESS_MIRROR lands its dir on the wall's machine under
+// its own id, so the same ship can be seen twice. One building, latest status.
+const deduped = w.dedupe([
+  { id: 'MIR-1', dir: '/local', since: 100 },
+  { id: 'MIR-1', dir: '/mirrored', since: 400 },
+  { id: 'MIR-2', dir: '/local', since: 200 },
+]);
+
+const sample = w.buildCity(
+  [{ id: 'NOW-1', dir: '/no/such/run', since: start + 10 },
+   { id: 'OLD-1', dir: '/no/such/run', since: prev + 10 }], now);
+const storeys = (n) => w.storeysOf({ insertions: n, deletions: 0 });
+
+console.log(JSON.stringify({
+  mondayDay: monday.getDay(),
+  mondayClock: [monday.getHours(), monday.getMinutes(), monday.getSeconds()].join(':'),
+  weekSane: (start - prev) >= 167 * 3600 && (start - prev) <= 169 * 3600,
+  idempotent: w.weekStartOf(start) === start,
+  onTheEdge: bucket(start),
+  oneSecondBefore: bucket(start - 1),
+  lastMonday: bucket(prev),
+  oneSecondBeforeThat: bucket(prev - 1),
+  rightNow: bucket(now),
+  kinds: ['olyx-agents', 'olyxbase', 'olyx-dashboard', 'olyxdashboard',
+          'valoryx-intelligence', 'valoryx-graphql-api', 'dispatch-harness',
+          'somebody-elses-repo', ''].map(w.kindOf).join(','),
+  storeys: [0, 20, 200, 2000].map(storeys).join(','),
+  storeysFloor: w.storeysOf(undefined) === w.STOREYS_MIN
+    && w.storeysOf({ insertions: 'nonsense', deletions: null }) === w.STOREYS_MIN,
+  storeysRise: storeys(20) > storeys(0) && storeys(400) > storeys(20),
+  storeysCapped: storeys(400000) === storeys(2000) && storeys(2000) === w.STOREYS_MAX,
+  plotStable: JSON.stringify(w.plotOf('OLYX-1598')) === JSON.stringify(w.plotOf('OLYX-1598')),
+  plotDiffers: JSON.stringify(w.plotOf('OLYX-1598')) !== JSON.stringify(w.plotOf('OLYX-1599')),
+  plotInFrame: [...ids, 'adhoc-thing'].every((id) => {
+    const plot = w.plotOf(id);
+    return plot.x >= 0 && plot.x < 1 && plot.depth >= 0 && plot.depth < 3;
+  }),
+  plotSpread: bands.every((n) => n > 0),
+  depthSpread: depths.every((n) => n > 0),
+  dedupedCount: deduped.length,
+  dedupedSince: deduped.filter((s) => s.id === 'MIR-1').map((s) => s.since).join(','),
+  ghostKeys: Object.keys(sample.ghost[0] || {}).sort().join(','),
+  ghostEmpty: w.buildCity([{ id: 'NOW-1', dir: '/no/such/run', since: start + 10 }], now).ghost.length,
+  weekShips: sample.week.ships,
+  life: [0, 2, 3, 9, 10, 19, 20, 90].map((n) => {
+    const plan = w.lifeOf(n);
+    return n + ':' + plan.movers + (plan.shops ? 'S' : '-') + (plan.tram ? 'T' : '-');
+  }).join(' '),
+  signHours: w.SIGN_S / 3600,
+}));
+JS
+CITY="$(node "$CITY_PROBE" "$SRC/wall/server.js" "$(date +%s)" 2>&1)"
+city_of() { printf '%s' "$CITY" | jq -r ".$1" 2>/dev/null; }
+check "week: the window opens on a Monday"        "$(city_of mondayDay)" "1"
+check "week: at midnight, local time"             "$(city_of mondayClock)" "0:0:0"
+check "week: the previous window is one week long, DST included" \
+  "$(city_of weekSane)" "true"
+check "week: a Monday is its own week's start"    "$(city_of idempotent)" "true"
+check "week: a run finishing exactly at 00:00 belongs to the new week" \
+  "$(city_of onTheEdge)" "city"
+check "week: one second earlier belongs to the old one"  "$(city_of oneSecondBefore)" "ghost"
+check "week: last Monday 00:00 is still the ghost"       "$(city_of lastMonday)" "ghost"
+check "week: one second before that is gone entirely"    "$(city_of oneSecondBeforeThat)" "gone"
+check "week: something that shipped just now is standing" "$(city_of rightNow)" "city"
+check "type: the repo family names the building" "$(city_of kinds)" \
+  "residential,industrial,industrial,industrial,spire,spire,infra,midrise,midrise"
+check "height: the diff, log-scaled"  "$(city_of storeys)" "3,7,11,14"
+check "height: an unreadable diff is the shortest building, never an invented one" \
+  "$(city_of storeysFloor)" "true"
+check "height: more lines is a taller building" "$(city_of storeysRise)" "true"
+check "height: and a monster PR stops growing"  "$(city_of storeysCapped)" "true"
+check "plot: the same run stands on the same spot, always" "$(city_of plotStable)" "true"
+check "plot: two runs do not pile onto one"      "$(city_of plotDiffers)" "true"
+check "plot: every building is inside the frame" "$(city_of plotInFrame)" "true"
+check "plot: a ticket range spreads across the district"  "$(city_of plotSpread)" "true"
+check "plot: and across all three depth bands"            "$(city_of depthSpread)" "true"
+check "mirror: one building per run id"          "$(city_of dedupedCount)" "2"
+check "mirror: and the latest status is the one that stands" \
+  "$(city_of dedupedSince)" "400"
+check "ghost: last week is a height and a plot, nothing else" \
+  "$(city_of ghostKeys)" "storeys,x"
+check "ghost: an empty last week draws no ghost at all" "$(city_of ghostEmpty)" "0"
+check "week: the ship count is this week's buildings" "$(city_of weekShips)" "1"
+check "life: population scales with the week, and the milestones gate" \
+  "$(city_of life)" "0:0-- 2:0-- 3:1-- 9:3-- 10:3S- 19:6S- 20:6ST 90:8ST"
+check "sign: a dispatcher's tint lasts about a shift" "$(city_of signHours)" "6"
+
+# --- the district, end to end ---------------------------------------------------
+echo "== wall: the district accretes =="
+WEEK="$ROOT/week"
+mkdir -p "$WEEK"
+serve "$WEEK" "$ROOT/week.log"; WEEK_PORT="$PORT_OUT"
+# $1 = id, $2 = finish epoch, $3 = project ('-' = unreadable), $4 = stage,
+# $5 = insertions ('-' = no result.json, 'junk' = caught mid-write)
+ship_run() {
+  mkdir -p "$WEEK/$1"
+  printf '%s %s\n' "$2" "$4" > "$WEEK/$1/status"
+  [ "$3" = '-' ] || printf '/tmp/%s-%s\n' "$3" "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" \
+    > "$WEEK/$1/worktree"
+  case "$5" in
+    -) ;;
+    junk) printf '{"metrics": {"diff": {"inser' > "$WEEK/$1/result.json" ;;
+    *) printf '{"metrics":{"diff":{"insertions":%s,"deletions":0}}}\n' "$5" \
+         > "$WEEK/$1/result.json" ;;
+  esac
+}
+if [ -n "$WEEK_PORT" ]; then
+  MONDAY="$(get "$WEEK_PORT" /api/runs | jq -r '.week.start')"
+  ship_run SHIP-EDGE  "$MONDAY"                  olyx-agents      'done: ready' 40
+  ship_run SHIP-BIG   "$((MONDAY + 60))"         olyxbase         'done: ready' 1800
+  ship_run SHIP-JUNK  "$((MONDAY + 90))"         valoryx-intelligence 'done: ready' junk
+  ship_run SHIP-BARE  "$((MONDAY + 120))"        dispatch-harness 'done: ready' -
+  ship_run GHOST-SUN  "$((MONDAY - 1))"          olyxbase         'done: ready' 300
+  ship_run GHOST-MON  "$((MONDAY - 6 * 86400))"  olyx-agents      'done: ready' 90
+  ship_run ANCIENT-1  "$((MONDAY - 9 * 86400))"  olyxbase         'done: ready' 500
+  ship_run LIVE-W     "$(date +%s)"              olyxbase         'implementing — Opus (Claude sub)' -
+  ship_run BURNT-W    "$((MONDAY + 200))"        olyxbase         'done: rejected' 120
+  ship_run SYNCED-W   "$((MONDAY + 210))"        olyxbase         'done: PR branch synced with main, gate green, pushed' 120
+  printf 'reinier\n' > "$WEEK/SHIP-EDGE/owner"
+  WEEK_API="$(get "$WEEK_PORT" /api/runs)"
+  city_at() { printf '%s' "$WEEK_API" | jq -r --arg id "$1" '.city[] | select(.id==$id) | .'"$2"; }
+  check "district: this week's ships are standing" \
+    "$(printf '%s' "$WEEK_API" | jq -r '[.city[].id] | sort | join(",")')" \
+    "SHIP-BARE,SHIP-BIG,SHIP-EDGE,SHIP-JUNK"
+  check "district: a run finishing on the stroke of Monday is this week's" \
+    "$(city_at SHIP-EDGE at)" "$MONDAY"
+  check "district: last week's two stand behind it as ghosts" \
+    "$(printf '%s' "$WEEK_API" | jq '.ghost | length')" "2"
+  check "district: and nothing older than that is anywhere" \
+    "$(printf '%s' "$WEEK_API" | jq '[.ghost[], .city[]] | length')" "6"
+  check "district: only a done: ready builds — a rejection does not" \
+    "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="BURNT-W")] | length')" "0"
+  check "district: nor does sync-pr.sh's prose done line" \
+    "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="SYNCED-W")] | length')" "0"
+  check "district: a live run is in the skyline, not in the district" \
+    "$(printf '%s' "$WEEK_API" | jq '[.city[] | select(.id=="LIVE-W")] | length')" "0"
+  check "district: the ship count agrees with what is standing" \
+    "$(printf '%s' "$WEEK_API" | jq '.week.ships')" "4"
+  check "type: agent work is residential"     "$(city_at SHIP-EDGE kind)" "residential"
+  check "type: the data repo is industrial"   "$(city_at SHIP-BIG kind)"  "industrial"
+  check "type: valoryx is a spire"            "$(city_at SHIP-JUNK kind)" "spire"
+  check "type: the harness itself is infrastructure" "$(city_at SHIP-BARE kind)" "infra"
+  check "height: the big diff is the tall building" \
+    "$(printf '%s' "$WEEK_API" | jq '(.city[] | select(.id=="SHIP-BIG") | .storeys) > (.city[] | select(.id=="SHIP-EDGE") | .storeys)')" "true"
+  check "tolerance: a half-written result.json still builds, at minimum height" \
+    "$(city_at SHIP-JUNK storeys)" "3"
+  check "tolerance: so does a run with no result.json at all" \
+    "$(city_at SHIP-BARE storeys)" "3"
+  check "sign: a building carries its dispatcher, and their kind" \
+    "$(city_at SHIP-EDGE owner),$(city_at SHIP-EDGE ownerKind)" "reinier,human"
+  check "sign: an unowned ship is not mis-attributed" \
+    "$(city_at SHIP-BIG ownerKind)" "unowned"
+  check "sign: the fade is timed by the server, like the completion moment" \
+    "$(printf '%s' "$WEEK_API" | jq '.signSeconds')" "21600"
+  # No per-person zones, no cumulative anything: a building carries exactly what
+  # it takes to draw one, and the standing anti-blame rule is a shape, not prose.
+  check "district: a building carries nothing but what draws it" \
+    "$(printf '%s' "$WEEK_API" | jq -r '[.city[] | keys] | flatten | unique | join(",")')" \
+    "at,depth,id,kind,owner,ownerKind,project,storeys,x"
+  check "district: and no per-person aggregate exists anywhere in the snapshot" \
+    "$(printf '%s' "$WEEK_API" | jq -r '[paths | map(tostring) | join(".")] | map(select(test("lane|district|byOwner"))) | length')" "0"
+  # A skyline the room can learn: the same week drawn by a second process puts
+  # every building on the same plot.
+  serve "$WEEK" "$ROOT/week2.log"; WEEK_TWO="$PORT_OUT"
+  if [ -n "$WEEK_TWO" ]; then
+    check "plot: a second wall draws the identical district" \
+      "$(get "$WEEK_TWO" /api/runs | jq -r '[.city[] | "\(.id):\(.x).\(.depth)"] | join(",")')" \
+      "$(printf '%s' "$WEEK_API" | jq -r '[.city[] | "\(.id):\(.x).\(.depth)"] | join(",")')"
+  else
+    bad "plot: a second wall starts against the same week"
+  fi
+else
+  bad "district: server starts against a fresh week"
+fi
+
+# A very good week is still a city: the district is not capped by the JSON feed's
+# finished-run cap, the population tops out, and every milestone is lit.
+echo "== wall: a week that shipped thirty things =="
+BUSY_WEEK="$ROOT/busy-week"
+mkdir -p "$BUSY_WEEK"
+serve "$BUSY_WEEK" "$ROOT/busy-week.log"; BUSY_WEEK_PORT="$PORT_OUT"
+if [ -n "$BUSY_WEEK_PORT" ]; then
+  BUSY_MONDAY="$(get "$BUSY_WEEK_PORT" /api/runs | jq -r '.week.start')"
+  for i in $(seq 1 30); do
+    mkdir -p "$BUSY_WEEK/SHIPPED-$i"
+    printf '%s done: ready\n' "$((BUSY_MONDAY + i))" > "$BUSY_WEEK/SHIPPED-$i/status"
+    printf '/tmp/olyx-agents-shipped-%s\n' "$i" > "$BUSY_WEEK/SHIPPED-$i/worktree"
+  done
+  BUSY_WEEK_API="$(get "$BUSY_WEEK_PORT" /api/runs)"
+  check "district: the JSON feed's history cap never truncates the week" \
+    "$(printf '%s' "$BUSY_WEEK_API" | jq '.city | length')" "30"
+  check "district: while the run feed stays capped, as it always was" \
+    "$(printf '%s' "$BUSY_WEEK_API" | jq '[.runs[] | select(.state=="ready")] | length')" "24"
+  check "life: thirty ships light every milestone" \
+    "$(printf '%s' "$BUSY_WEEK_API" | jq -r '.week.life | "\(.movers),\(.shops),\(.tram)"')" \
+    "8,true,true"
+else
+  bad "life: server starts against a very good week"
+fi
+
+# --- what the district looks like -------------------------------------------------
+# The page half of the same contract: the plate that used to fire on an empty
+# skyline must not fire on a full week, buildings land once and then stop, and
+# the only attribution on the layer is one sign that cools.
+echo "== wall: the district on screen =="
+grep_ok "$PAGE_SRC" 'id="district"' "district: the week's buildings have their own layer"
+grep_ok "$PAGE_SRC" 'id="ghost"'    "district: and last week has its own behind it"
+grep_ok "$PAGE_SRC" "towers.length ? 'off' : blocks.length ? 'rest' : 'empty'" \
+  "idle: the plate needs an empty week, not just an empty skyline"
+grep_ok "$CSS_SRC" 'body[data-idle="empty"] .idle' "idle: the full plate is gated on that"
+grep_ok "$CSS_SRC" 'body[data-idle="rest"] .rest' \
+  "idle: a week with buildings and nothing live gets the quiet line"
+grep_ok "$PAGE_SRC" 'DISTRICT AT REST' "idle: and the line says what is actually true"
+grep_not "$PAGE_SRC" 'body:has(.city[data-empty="1"]) .idle' \
+  "idle: the old empty-skyline rule is gone, not left shadowing it"
+grep_ok "$PAGE_SRC" 'if (!B) { B = makeBlock();' \
+  "district: a building is written once, when it lands"
+grep_ok "$CSS_SRC" 'animation: settle var(--settle) var(--ease) backwards' \
+  "district: it arrives with one settle"
+grep_ok "$CSS_SRC" 'animation: sign-cool var(--sign-life) linear forwards' \
+  "sign: and its dispatcher's tint cools out of it"
+grep_ok "$PAGE_SRC" 'signSeconds' "sign: on the server's clock, not the page's"
+SIGN_CSS="$(sed -n 's/^ *--sign-life: \([0-9]*\)s;.*/\1/p' "$SRC/wall/wall.css" | head -1)"
+check "sign: the page and the server agree on how long a tint lasts" \
+  "$SIGN_CSS" "$(printf '%s' "$API" | jq -r '.signSeconds')"
+grep_ok "$CSS_SRC" '.district[data-shops="1"] .block__shop' \
+  "life: the shop windows come on at a milestone, not at random"
+grep_ok "$CSS_SRC" '.life[data-tram="1"] .life__tram' "life: so does the tram line"
+# The ghost is one flat layer. Nothing that says what shipped last week — no
+# window grid, no sign, no repo type — may be attached to it.
+GHOST_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.ghost/, /^}/')"
+for banned in windows sign data-kind; do
+  grep_not "$GHOST_CSS" "$banned" "ghost: no [$banned] on last week's silhouette"
+done
+
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
 check "owner: the synthetic's runs are its own" "$(state_of BOT-2291 owner)" "bot"
@@ -809,6 +1077,10 @@ echo "== wall.sh: flags =="
 HELP="$(bash "$WALL" --help 2>&1)"
 check   "flags: --help exits 0" "$?" "0"
 grep_ok "$HELP" "--runs" "flags: --help documents --runs"
+grep_ok "$HELP" "WALL_POLL_MS" "flags: --help reaches the end of the header"
+# The header is printed by line range, so growing it and forgetting the range
+# either truncates the help or spills the script into it.
+grep_not "$HELP" "set -u" "flags: --help stops before the code"
 if bash "$WALL" --nope >/dev/null 2>&1; then
   bad "flags: an unknown option exits non-zero"
 else
