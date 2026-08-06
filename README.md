@@ -774,7 +774,10 @@ itself — and Monday 00:00 empties the plain again.
 | Its height | The run's diff (insertions + deletions), log-scaled and capped — a monster PR reads big without dwarfing the block. A recorded zero-line diff is the shortest building there is; an unreadable or structurally malformed `result.json` is *not a building*, because a height invented from a result the wall could not trust is the one thing that would make the city lie. |
 | Where it stands | Hashed from the run id, so the skyline is identical on every screen and after every reload. |
 | A small lit sign | Who dispatched it, in the same crew tint as their runs' cars — cooling to the district's neutral within six hours of landing. That is the whole of the attribution. |
-| Cars, walkers, lit shop windows, a tram | The week's momentum: one mover per three ships, the shop windows at the tenth, a tram line at the twentieth. |
+| A lit shopfront row, and sometimes a neon | The ground floor, from the week's **first** ship. Which shop is under a building — a noodle bar, a diner, an arcade, a repair shop — and whether it carries a sign is hashed from the run id, so it is the same on both screens and the same tomorrow. |
+| A few windows fading on and off | Occupancy: three windows per facade keeping their own hours, each on its own loop length and its own seeded phase. Nothing on this street blinks in unison. |
+| Steam, somebody walking, a car going past | Nightlife, present whenever anything is standing. The week only sets the **tempo**: more people out (up to six), more vehicles (up to three), and the gap between passes falling from 48 seconds on the first ship to 11 on the twenty-fifth. |
+| A mall block, a tram | The milestones, and now only that: extra texture at twelve and twenty ships, on top of a street that was already alive. |
 | A pale flat outline behind | Last week. A height and a plot, nothing else — no windows, no signs, no types. An empty last week draws nothing. |
 
 **The ledger is the city's memory.** *Permanent* is the contract, and a run dir
@@ -816,6 +819,12 @@ longer means "nothing happened": the `SHIFT STANDING BY` plate now appears only
 when the week has **no buildings and no live runs**, and a week that shipped
 work with nothing currently climbing gets one quiet `DISTRICT AT REST` line
 instead. The wall never looks broken on a week that delivered.
+
+**Rest is a mood, not a shutdown.** At rest the construction glow is gone and
+the nightlife is not: a city is alive because somebody is eating noodles at one
+in the morning, not because a crane is moving. All of it lives in the
+ground-floor band, and every part of it drops a stop the instant something is
+climbing — the skyline owns the room's eye whenever there is work on it.
 
 Towers cannot carry type you can read from four metres, so two surfaces do:
 a Blade Runner **brief plate** cycling the live runs in big letters (ticket,
