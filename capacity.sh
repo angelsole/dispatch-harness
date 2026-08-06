@@ -76,19 +76,26 @@ capacity_stamp() {  # $1 = epoch, $2 = strftime format; prints local wall clock
 # perfectly good reset time, which is exactly what a deferral needs.
 # Non-zero when the headroom is unknown.
 capacity_for() {  # $1 = the station's claude config dir
-  local json row used seen reset_iso
+  local json row active_n used seen reset_iso
   CAP_USED=0; CAP_LIMIT=0; CAP_REMAINING=0; CAP_PCT=0; CAP_RESET=""
   json=$(capacity_blocks "$1") || return 1
   row=$(printf '%s' "$json" | jq -r '
     [.blocks[]? | select((.isGap // false) | not)] as $b
-    | ([$b[] | select(.isActive == true)] | first) as $active
-    | ([$b[] | select(.isActive == true) | .tokenCounts.outputTokens // 0] | add // 0) as $used
+    | [$b[] | select(.isActive == true)] as $active
+    | ($active | first) as $current
+    | ([$active[] | .tokenCounts.outputTokens // 0] | add // 0) as $used
     | ([$b[] | select((.isActive // false) | not) | .tokenCounts.outputTokens // 0] | max // 0) as $seen
-    | [$used, $seen, ($active.usageLimitResetTime // $active.endTime // "")]
+    | [($active | length), $used, $seen, ($current.usageLimitResetTime // $current.endTime // "")]
     | @tsv' 2>/dev/null) || return 1
-  used=$(printf '%s' "$row" | cut -f1)
-  seen=$(printf '%s' "$row" | cut -f2)
-  reset_iso=$(printf '%s' "$row" | cut -f3)
+  active_n=$(printf '%s' "$row" | cut -f1)
+  used=$(printf '%s' "$row" | cut -f2)
+  seen=$(printf '%s' "$row" | cut -f3)
+  reset_iso=$(printf '%s' "$row" | cut -f4)
+  case "${active_n:-}" in ''|*[!0-9]*) return 1 ;; esac
+  # One active block is the only state with an unambiguous reset. No active
+  # block means no current spend and remains a valid full-headroom reading;
+  # multiple active blocks must fail open rather than combining unlike windows.
+  [ "$active_n" -le 1 ] || return 1
   case "${used:-}" in ''|*[!0-9]*) used=0 ;; esac
   case "${seen:-}" in ''|*[!0-9]*) seen=0 ;; esac
   [ -z "$reset_iso" ] || CAP_RESET=$(capacity_epoch_of "$reset_iso") || CAP_RESET=""

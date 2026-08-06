@@ -367,13 +367,11 @@ was launched with; on disk it is indistinguishable from a human-armed one
 `already armed` skip all just work).
 
 **Belt to the braces.** A window can also empty *during* a run. When the
-implementer exits non-zero and said so on its own stderr or in its final result
-message, the run is classified as capacity rather than `implementer_failed` and
-takes the same path. The message is only the trigger — the reset time always
-comes from ccusage, so nothing here depends on parsing prose Anthropic is free
-to reword. The worker's *transcript* is deliberately not searched: an
-implementer that merely discusses session limits must not reschedule the run it
-is working on.
+implementer exits non-zero and the session-limit message appears in the live
+feed, its stderr, or its final result message, the run is classified as capacity
+rather than `implementer_failed` and takes the same path. The message is only
+the trigger — the reset time always comes from ccusage, so nothing here depends
+on parsing the reset time out of prose Anthropic is free to reword.
 
 **Advisory, never a blocker.** ccusage missing, erroring, or unable to name a
 reset time, and a `schedule.sh` that refuses to arm, all log one line and

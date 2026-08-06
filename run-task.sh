@@ -361,13 +361,17 @@ capacity_preflight() {
   return 0
 }
 
-# Belt to the braces for the window emptying *during* a run. Read only where the
-# CLI itself speaks — its stderr, and the final result message — never the whole
-# transcript: an implementer that merely discusses session limits (this
-# feature's own tests do) must not reschedule the run it is working on.
+# Belt to the braces for the window emptying *during* a run. The brief names the
+# live feed and stderr as evidence; opus.log adds the CLI's final result message,
+# which the feed deliberately reduces to a generic result marker.
 session_limit_hit() {
-  grep -qiE '(session|usage|[0-9]+-hour) limit reached|hit your (session|usage) limit' \
-    "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null
+  local pattern='(session|usage|[0-9]+-hour) limit reached|hit your (session|usage) limit'
+  grep -qiE "$pattern" "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null \
+    && return 0
+  # feed.log spans resumed invocations. Only the lines written by this
+  # implementer attempt are evidence for this attempt's non-zero exit.
+  tail -n "+${OPUS_FEED_START_LINE:-1}" "$RUN_DIR/feed.log" 2>/dev/null \
+    | grep -qiE "$pattern"
 }
 
 date +%s > "$RUN_DIR/started"
@@ -504,6 +508,12 @@ else
   OPUS_PROMPT="$IMPLEMENTER_PROMPT"
   CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --session-id "$OPUS_SESSION")
   stage "implementing — Opus (Claude sub)"
+fi
+# Remember where this attempt starts in the append-only live feed so an older
+# limit message cannot classify a later, unrelated failure as capacity.
+OPUS_FEED_START_LINE=1
+if [ -f "$RUN_DIR/feed.log" ]; then
+  OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
 fi
 # Stream events so the statusline and feed.log can show live what the worker
 # is doing (tool by tool); raw stream kept for debugging.

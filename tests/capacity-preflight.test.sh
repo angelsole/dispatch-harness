@@ -122,11 +122,15 @@ case "\$(cat "$CLAUDE_MODE")" in
     printf '%s\n' '{"type":"result","subtype":"error_during_execution","result":"Claude AI usage limit reached|1754500000"}'
     exit 1
     ;;
-  transcript-mention)
-    # The worker merely *talking* about session limits — this feature's own
-    # tests do — must never reschedule the run it is working on.
+  limit-feed)
+    # Some CLI failures surface as assistant text in the live feed rather than
+    # stderr or the final result payload. The contract explicitly includes it.
     printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"the harness handles: You have hit your session limit"}]}}'
-    echo "boom: the implementer fell over for an ordinary reason" >&2
+    exit 1
+    ;;
+  ordinary-failure)
+    printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"the implementer stopped before committing"}]}}'
+    echo "boom: ordinary implementer failure" >&2
     exit 1
     ;;
 esac
@@ -164,6 +168,17 @@ EOF
 }
 healthy()   { blocks 10000; }     # 390k left — plenty
 exhausted() { blocks 400000; }    # nothing left at all
+ambiguous() {
+  cat > "$CCUSAGE_JSON" <<EOF
+{"blocks":[
+  {"id":"b1","isActive":false,"isGap":false,"tokenCounts":{"outputTokens":400000}},
+  {"id":"b2","isActive":true,"isGap":false,"endTime":"$RESET_ISO",
+   "tokenCounts":{"outputTokens":200000}},
+  {"id":"b3","isActive":true,"isGap":false,"endTime":"$RESET_ISO",
+   "tokenCounts":{"outputTokens":200000}}
+]}
+EOF
+}
 
 # --- the harness under test ---------------------------------------------------
 arm_calls() { grep -c '^argv:' "$SCHED_CALLS" 2>/dev/null | tr -d ' '; }
@@ -268,6 +283,17 @@ check "blind: exactly one preflight line on the console" \
   "$(printf '%s\n' "$OUT" | grep -c '\[harness\] preflight:' | tr -d ' ')" "1"
 has "$OUT" "capacity unknown (ccusage unavailable" "blind: and it says what it could not read"
 
+# Multiple active blocks do not identify one reset window. Even though summing
+# this fixture would appear exhausted, ambiguity must fail open by contract.
+ambiguous
+BEFORE_ARMS=$(arm_calls); BEFORE_IMPL=$(impl_calls)
+dispatch CAP-AMBIGUOUS ""
+check "ambiguous: the implementer still ran" "$(impl_calls)" "$((BEFORE_IMPL + 1))"
+check "ambiguous: no schedule was armed" "$(arm_calls)" "$BEFORE_ARMS"
+check "ambiguous: the run reaches its normal terminal status" "$(stage_now)" "done: gate_failed"
+check "ambiguous: exactly one preflight line on the console" \
+  "$(printf '%s\n' "$OUT" | grep -c '\[harness\] preflight:' | tr -d ' ')" "1"
+
 # ---------------------------------------------------------------------------
 echo "== at most two auto-deferrals, then an honest failure =="
 # ---------------------------------------------------------------------------
@@ -320,16 +346,33 @@ dispatch CAP-MIDRUN2 ""
 check "mid-run: the CLI's own result message triggers it too" \
   "$(stage_now)" "deferred: capacity, armed for $FIRE_HHMM"
 
-# The other half of the contract: an ordinary failure stays an ordinary failure,
-# and the worker's transcript is not evidence.
-printf 'transcript-mention\n' > "$CLAUDE_MODE"
+# The brief explicitly names feed.log as evidence, so a limit reported only in
+# an assistant event must still self-heal.
+printf 'limit-feed\n' > "$CLAUDE_MODE"
+dispatch CAP-MIDRUN3 ""
+check "mid-run: a session-limit message in feed.log triggers it too" \
+  "$(stage_now)" "deferred: capacity, armed for $FIRE_HHMM"
+file_has "$RUN/feed.log" "hit your session limit" \
+  "mid-run: the classifier's feed evidence is present"
+
+# feed.log is append-only across resumes. A genuine limit from the preceding
+# attempt must not taint a later ordinary failure in the same run.
+printf 'ordinary-failure\n' > "$CLAUDE_MODE"
+rm -f "$RUN/scheduled"  # the real one-shot wrapper disarms before it resumes
+BEFORE_ARMS=$(arm_calls)
+dispatch CAP-MIDRUN3 ""
+check "mid-run: stale feed evidence does not classify a later failure" \
+  "$(stage_now)" "done: implementer_failed"
+check "mid-run: the later failure does not arm again" "$(arm_calls)" "$BEFORE_ARMS"
+check "mid-run: the stale phrase does not increment deferrals" "$(cat "$RUN/deferrals")" "1"
+
+# The other half of the classifier contract: an ordinary failure stays an
+# ordinary failure when none of the evidence files contains a limit message.
 BEFORE_ARMS=$(arm_calls)
 dispatch CAP-PLAINFAIL ""
 check "plain: an unrelated implementer failure is still implementer_failed" \
   "$(stage_now)" "done: implementer_failed"
 check "plain: nothing was armed for it" "$(arm_calls)" "$BEFORE_ARMS"
-file_has "$RUN/feed.log" "hit your session limit" \
-  "plain: the phrase really was in the worker's transcript"
 absent "plain: and it did not reschedule the run" "$RUN/deferrals"
 
 printf 'limit-stderr\n' > "$CLAUDE_MODE"
