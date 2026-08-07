@@ -2,8 +2,8 @@
 # Multi-model dispatch pipeline.
 #   Opus (Claude sub) implements in a git worktree
 #   -> deterministic test gate
-#   -> Codex (ChatGPT sub) reviews & fixes (max 2 rounds; optional — skipped
-#      when the codex CLI is not installed)
+#   -> Codex (ChatGPT sub) reviews & fixes (max 2 rounds), with a fresh Claude
+#      reviewer as the last tier when Codex is unavailable
 #   -> draft PR.
 #
 # Usage: run-task.sh <TICKET> <repo-path> <branch-name>
@@ -19,10 +19,10 @@ HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"   # where schedule.sh lives, for deferrals
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo codex)}"
-# The Codex reviewer is optional: a Claude subscription alone runs the same
-# pipeline with the review stage skipped and base-sync conflicts resolved by a
-# Claude worker. Resolved once per invocation so no stage ever shells out to a
-# missing binary and logs a 127.
+# The Codex CLI is optional: a Claude subscription alone runs the same pipeline
+# with a fresh Claude review tier and Claude handling base-sync conflicts.
+# Resolved once per invocation so no stage ever shells out to a missing binary
+# and logs a 127.
 if command -v "$CODEX_BIN" >/dev/null 2>&1; then CODEX_AVAILABLE=1; else CODEX_AVAILABLE=0; fi
 # Labels for the conflict-resolution stage line and the escalation text: they
 # name whichever CLI actually does the work.
@@ -103,7 +103,7 @@ if [ -n "${HARNESS_MIRROR:-}" ] && declare -F mirror_start >/dev/null; then
 fi
 
 # --- Ablation knobs, pinned at first dispatch --------------------------------
-# The arm (full pipeline vs. review-skipped) and the implementer model are
+# The arm (full, Claude-only, or review-skipped) and the implementer model are
 # written into the run dir on the first invocation and reused verbatim on
 # resume, so a re-dispatch whose environment differs can never silently switch
 # a run to a different experimental condition.
@@ -140,9 +140,10 @@ positive_int() {
 }
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
 pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
-# A first dispatch without codex pins blank reviewer knobs. If codex is
-# installed before a later resume, the run remains honestly review-less instead
-# of silently acquiring reviewer metadata for a stage its pinned arm skips.
+# A first dispatch without codex pins blank Codex reviewer knobs. The Claude
+# review tier fills the runtime/result fields from the implementer-model pins;
+# the blank files keep a resumed Claude-only run from silently acquiring Codex
+# settings if the CLI is installed between attempts.
 if [ "$CODEX_AVAILABLE" = 0 ]; then
   [ -f "$RUN_DIR/reviewer-model" ] || : > "$RUN_DIR/reviewer-model"
   [ -f "$RUN_DIR/reviewer-effort" ] || : > "$RUN_DIR/reviewer-effort"
@@ -1404,7 +1405,12 @@ review_diff_is_trivial() {
   local numstat n
   numstat=$(git -C "$WORKTREE" diff --numstat "$BASE_REF...HEAD" 2>/dev/null) || return 1
   n=$(printf '%s\n' "$numstat" \
-    | awk '{ if ($1 != "-") i += $1; if ($2 != "-") d += $2 } END { print i + d + 0 }')
+    | awk '
+        NF == 0 { next }
+        NF < 3 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { unknown = 1; next }
+        { changed += $1 + $2 }
+        END { if (unknown) exit 1; print changed + 0 }
+      ') || return 1
   case "$n" in ''|*[!0-9]*) return 1 ;; esac
   [ "$n" -le "$REVIEW_TRIVIAL_LINES" ]
 }
@@ -1437,7 +1443,6 @@ claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcom
     # must not ship looking reviewed: section 6 turns this into
     # review_failed — no push, no PR, a high-priority phone push.
     REVIEW_CLASS="failed_silent"
-    ARM="no_review"
     REVIEW_OK=0
     stage "review failed silently — diff is unreviewed"
     echo "[harness] the review stage produced no commits and no notes on any backend — this diff is UNREVIEWED and will not ship"

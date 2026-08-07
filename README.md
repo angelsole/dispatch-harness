@@ -1275,8 +1275,8 @@ floor to mean anything) buys no second Codex pass, but the
 [Claude tier](#when-codex-dies-mid-run-out-of-credits) still gets it.
 
 Only when *that* also produces nothing does the run stop, and then it says so
-everywhere it can: `review: failed_silent` in `result.json`, the arm recorded as
-`no_review`, a `review failed silently — diff is unreviewed` stage line, the
+everywhere it can: `review: failed_silent` in `result.json`, the pinned arm left
+unchanged, a `review failed silently — diff is unreviewed` stage line, the
 same words in the macOS/ntfy notification, and the terminal `done: review_failed`
 push naming the last tier to fail. The pinned arm in the run dir is left alone,
 so a re-dispatch still attempts a real review.

@@ -164,6 +164,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       TEST_GATE_CMD="$TEST_GATE_CMD" \
+      HARNESS_REVIEW_NETWORK=0 \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=telemetry-test \
       $overrides \
       bash "$SRCDIR/run-task.sh" "$ticket" "$REPO" "fix/$ticket" \
@@ -183,7 +184,7 @@ dispatch REV-SILENT ""
 check "silent: the review ran twice — one retry, no more" "$(codex_calls)" "2"
 exists "silent: the retry has its own log" "$RUN/codex-1-retry.log"
 check "silent: result.json says the review failed silently" "$(result .review)" "failed_silent"
-check "silent: and records the honest arm" "$(result .arm)" "no_review"
+check "silent: and leaves the pinned experimental arm alone" "$(result .arm)" "full"
 file_has "$RUN/timeline" "review failed silently — diff is unreviewed" \
   "silent: the status line says so in the words the wall and statusline read"
 file_has "$CURL_LOG" "review failed silently — diff is unreviewed" \
@@ -239,7 +240,7 @@ file_has "$RUN/timeline" "review — Codex unavailable (no evidence from the Cod
   "floor: it hands the diff to the Claude tier instead of recording a shippable no_evidence"
 check "floor: which produced nothing here, so nothing reviewed the diff" \
   "$(result .review)" "failed_silent"
-check "floor: and the arm says so" "$(result .arm)" "no_review"
+check "floor: and the failed attempt leaves its pinned arm alone" "$(result .arm)" "full"
 check "floor: a diff no tier read does not ship" "$(result .status)" "review_failed"
 
 # A two-line diff genuinely can be reviewed in seconds: crying wolf over it
@@ -579,7 +580,7 @@ tierrun T-CLAUDE '{"ticket":"T-CLAUDE","status":"ready","arm":"full","review":"r
   "review_account":"claude","worktree":"/w/myapp-t-claude","metrics":{"wall_seconds":600}}'
 tierrun T-ONLY '{"ticket":"T-ONLY","status":"ready","arm":"claude_only","review":"reviewed_claude",
   "review_account":"claude","worktree":"/w/myapp-t-only","metrics":{"wall_seconds":600}}'
-tierrun T-DEAD '{"ticket":"T-DEAD","status":"review_failed","arm":"no_review","review":"failed_silent",
+tierrun T-DEAD '{"ticket":"T-DEAD","status":"review_failed","arm":"full","review":"failed_silent",
   "review_account":"claude","worktree":"/w/myapp-t-dead","metrics":{"wall_seconds":600}}'
 TIER="$(env HARNESS_DIR="$TIERH" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
 has "$TIER" "claude-tier reviews 2 <- the review was not cross-vendor" \
@@ -589,24 +590,20 @@ has "$TIER" "held: review_failed 1 <- no PR opened" \
 has "$TIER" "silent review failures 1" "counters: beside the class it was recorded under"
 has "$TIER" "claude_only 1" "counters: the Claude-only machine's arm is reported under its own name"
 
-# End to end: the report over the runs this suite actually dispatched sees the
-# silent reviews among them, and the runs those held. Counted rather than
-# matched on a literal, because every dead-review shape this suite exercises
-# lands in both lines and pinning the exact number would just be a tally of the
-# fixtures above.
+# End to end: the report over the runs this suite actually dispatched must equal
+# the source result.json corpus exactly. Deriving the expected totals keeps this
+# assertion reorder-safe without weakening it to "at least one".
 LIVE="$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
 LIVE_SILENT=$(printf '%s\n' "$LIVE" | awk '/^silent review failures / { print $4 }')
 LIVE_HELD=$(printf '%s\n' "$LIVE" | awk '/^held: review_failed / { print $3 }')
-if [ "${LIVE_SILENT:-0}" -ge 1 ]; then
-  ok "live: the report finds the silent reviews in real run dirs ($LIVE_SILENT)"
-else
-  bad "live: the report found no silent review among real run dirs"
-fi
-if [ "${LIVE_HELD:-0}" -ge 1 ]; then
-  ok "live: and counts the runs they held before the PR ($LIVE_HELD)"
-else
-  bad "live: the report counted no held run, though this suite produced several"
-fi
+EXPECTED_LIVE_SILENT=$(jq -s 'map(select(.review == "failed_silent")) | length' \
+  "$RUNS"/*/result.json)
+EXPECTED_LIVE_HELD=$(jq -s 'map(select(.status == "review_failed")) | length' \
+  "$RUNS"/*/result.json)
+check "live: the report counts every silent review in real run dirs" \
+  "${LIVE_SILENT:-0}" "$EXPECTED_LIVE_SILENT"
+check "live: and exactly the runs they held before the PR" \
+  "${LIVE_HELD:-0}" "$EXPECTED_LIVE_HELD"
 LIVE_RUNS=$(printf '%s\n' "$LIVE" | awk '/^pipeline vitals/ { print $4 }')
 LIVE_ATTEMPTS=$(printf '%s\n' "$LIVE" | awk '/^attempts total/ { print $3 }')
 if [ "${LIVE_ATTEMPTS:-0}" -gt "${LIVE_RUNS:-0}" ]; then

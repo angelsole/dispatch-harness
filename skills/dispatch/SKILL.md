@@ -225,9 +225,10 @@ holds, and `result.json` records how it actually went in `review`:
   `no_evidence`, which used to ship; it now falls through to the Claude tier.
 
 `arm` names the condition the run was pinned to: `full` (codex installed),
-`claude_only` (no codex CLI — reviewed on the Claude tier), `no_review` (the
-ablation, or a run whose every tier came up empty). Conflict resolution on a
-`claude_only` machine falls back to a Claude worker, logged to `claude-*.log`.
+`claude_only` (no codex CLI — reviewed on the Claude tier), or `no_review` (the
+explicit ablation). A failed review changes `review`/`status`, not this pinned
+condition. Conflict resolution on a `claude_only` machine falls back to a
+Claude worker, logged to `claude-*.log`.
 
 ## Post-PR conflicts
 

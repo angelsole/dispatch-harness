@@ -179,6 +179,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       CLAUDE_CONFIG_DIR="$STATION/claude" \
       LINEAR_API_KEY_FILE="$KEYFILE" \
+      HARNESS_REVIEW_NETWORK=0 \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=rf-test \
       $overrides \
       bash "$SRCDIR/run-task.sh" "$ticket" "$REPO" "fix/$ticket" \
@@ -238,7 +239,8 @@ GH_BEFORE=$(grep -c 'pr create' "$GH_CALLS" 2>/dev/null | tr -d ' ')
 dispatch OLYX-79 ""
 check "dead: status is review_failed" "$(result_field OLYX-79 status)" "review_failed"
 check "dead: the class says nothing reviewed it" "$(result_field OLYX-79 review)" "failed_silent"
-check "dead: and the arm is honest" "$(result_field OLYX-79 arm)" "no_review"
+check "dead: the failed attempt does not rewrite its pinned arm" \
+  "$(result_field OLYX-79 arm)" "full"
 check "dead: no PR was created" "$(grep -c 'pr create' "$GH_CALLS" | tr -d ' ')" "$GH_BEFORE"
 check "dead: result.json carries no pr_url" "$(result_field OLYX-79 pr_url)" ""
 file_has_not "$LINEAR_LOG" "OLYX-79" "dead: the ticket is not touched"
@@ -328,9 +330,9 @@ check "claude-only, dead: nothing reviewed the diff" \
 check "claude-only, dead: the run holds here too" "$(result_field OLYX-84 status)" "review_failed"
 check "claude-only, dead: and opens no PR" \
   "$(grep -c 'pr create' "$GH_CALLS" | tr -d ' ')" "$GH_BEFORE"
-check "claude-only, dead: the arm records that nothing reviewed it" \
-  "$(result_field OLYX-84 arm)" "no_review"
-check "claude-only, dead: while the pin is left alone, so a re-dispatch tries again" \
+check "claude-only, dead: the result keeps the condition it was dispatched under" \
+  "$(result_field OLYX-84 arm)" "claude_only"
+check "claude-only, dead: matching the pin, so a re-dispatch tries the same arm" \
   "$(cat "$RUNS/OLYX-84/arm")" "claude_only"
 printf 'ok\n' > "$CODEX_MODE"; printf 'ok\n' > "$REVIEWER_MODE"
 
@@ -385,6 +387,14 @@ export REVIEW_TRIVIAL_LINES=20 WORKTREE="$TW" BASE_REF=origin/main
 printf 'one\n' >> "$TW/f.txt"
 git -C "$TW" add -A && git -C "$TW" commit -q -m "a one-line change"
 check "trivial: a one-line diff genuinely is trivial" "$(trivial)" "trivial"
+
+# Git successfully reads binary numstat entries as `- - path`, but the line
+# count is unknowable. Coercing those dashes to zero would call a binary-only
+# change trivial even though there is no measured size.
+printf '\0\1\2' > "$TW/binary.dat"
+git -C "$TW" add -A && git -C "$TW" commit -q -m "a binary change"
+check "unreadable: a binary numstat is unknown, not zero lines" \
+  "$(trivial)" "not-trivial"
 
 seq 1 40 >> "$TW/f.txt"
 git -C "$TW" add -A && git -C "$TW" commit -q -m "forty more"
