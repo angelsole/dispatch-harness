@@ -136,7 +136,10 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   worktree and local branch (the PR lives on origin). Summarize for the user,
   stating which model did what. If not: leave the
   PR draft, write a sharper brief (same file — the worktree is reused), and
-  re-dispatch.
+  re-dispatch — a run that already reached `ready` is refused by default (it
+  prints the PR it produced and changes nothing), so that one re-dispatch is
+  `HARNESS_REDISPATCH=1 ~/.claude/harness/run-task.sh <TICKET> <repo> <branch>`.
+  Never re-dispatch a `ready` run you have not read.
 - **needs_input** — the implementer hit a fork the brief didn't cover and
   stopped instead of guessing. Read `QUESTIONS.md` in the run dir. **Triage
   before involving the user**: questions your research already answers
@@ -152,11 +155,14 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 - **rejected** — read `REJECTED.md` in the run dir. The reviewer (or the
   conflict resolver) found a fundamental flaw. Decide: revise the brief and
   re-dispatch, or surface to the user.
-- **deferred_capacity** — nothing failed. The subscription window was empty, so
-  the run armed itself through `schedule.sh` for just after the block resets
-  (`runs/<RUN-ID>/capacity.log` says why, `schedule.sh --list` when). There is
+- **deferred_capacity** — nothing failed. The subscription window was empty (at
+  dispatch, or mid-run when the implementer hit the session limit), so the run
+  armed itself through `schedule.sh` for just after the block resets
+  (`runs/<RUN-ID>/capacity.log` says why, `schedule.sh --list` when). The
+  scheduled dispatch resumes the same worker session by itself. There is
   nothing to do but tell the user when it will fire; `schedule.sh --cancel
-  <RUN-ID>` calls it off.
+  <RUN-ID>` calls it off. Do **not** re-dispatch it by hand — that spends a
+  second one against the same cap.
 - **capacity_failed** — the same thing, twice already (`HARNESS_MAX_DEFERRALS`).
   The run stopped rescheduling itself rather than loop. Re-dispatch it once the
   window is genuinely back.
