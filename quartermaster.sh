@@ -480,12 +480,25 @@ snapshot_briefs() {  # $1 = checkpoint dir
 # direction — both versions survive, only one of them is armable. Records each
 # in $WORK/strays for the report and prints how many there were.
 contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
-  local d="$1" ticket="$2" n b count=0
+  local d="$1" ticket="$2" n b restore count=0
   while IFS="$TAB" read -r n b; do
     [ -n "$n" ] || continue
     cmp -s "$d/$n" "$b" 2>/dev/null && continue
+    # Stage the known-good copy beside its destination before moving anything.
+    # The final rename is then same-filesystem and atomic; if staging fails, the
+    # planner's version is still quarantined and never left armable.
+    restore="$b.quartermaster-restore.$$"
+    if ! cp "$d/$n" "$restore" 2>/dev/null; then
+      reject_brief "$b"
+      echo "could not stage the original $b for restoration; checkpoint remains in $d/$n until exit" >&2
+      printf '%s\t%s\t%s\n' "$ticket" "overwrote (restore failed)" "$b" >> "$WORK/strays"
+      count=$((count + 1))
+      continue
+    fi
     reject_brief "$b"
-    cp "$d/$n" "$b" 2>/dev/null || true
+    if ! mv -f "$restore" "$b" 2>/dev/null; then
+      echo "could not restore $b; the staged original remains at $restore" >&2
+    fi
     printf '%s\t%s\t%s\n' "$ticket" "overwrote" "$b" >> "$WORK/strays"
     count=$((count + 1))
   done < "$d/manifest"
