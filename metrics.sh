@@ -54,7 +54,8 @@ REPORT_FILTER='
     (((.worktree // "") | split("/") | last // "") as $leaf
       | ((.ticket // "") | ascii_downcase) as $t
       | if ($t | length) > 0 and ($leaf | endswith("-" + $t))
-        then $leaf[0:(($leaf | length) - ($t | length) - 1)] else $leaf end)
+        then $leaf[0:(($leaf | length) - ($t | length) - 1)] else $leaf end),
+    (.review_account // "")
   ] | @tsv'
 
 # The failing step of every failed gate round, most frequent first: the whole
@@ -130,6 +131,7 @@ report() {
         if ($6 != "") rturns[$10, ++rtn[$10]] = $6 + 0
         if ($1 == "ready") rready[$10]++
       }
+      if ($11 == "fallback") fallback_reviews++
     }
     END {
       printf "pipeline vitals · %d runs · %s\n%s\n", total, stamp, runs
@@ -150,6 +152,10 @@ report() {
       delete k
       printf "%-22s %6d%s\n", "silent review failures", review["failed_silent"] + 0, \
         (review["failed_silent"] + 0 > 0 ? "   <- these diffs are UNREVIEWED" : "")
+      # Reviews the primary Codex account could not take. Zero is the normal
+      # number, so any other one is the line that says "top the account up".
+      printf "%-22s %6d%s\n", "fallback-account reviews", fallback_reviews + 0, \
+        (fallback_reviews + 0 > 0 ? "   <- the primary Codex account needs topping up" : "")
 
       printf "\n%-16s %10s %9s %6s\n", "PER RUN", "MEDIAN", "P90", "N"
       statline("turns", turns, nturns, 0)
