@@ -271,7 +271,9 @@ printf 'instant\n' > "$CODEX_MODE"
 dispatch PR-REDISPATCH ""
 file_has "$RUN/pr-body.md" "$WARN_DEAD" "re-dispatch: the first run's body warns"
 printf 'notes\n' > "$CODEX_MODE"
-dispatch PR-REDISPATCH ""
+# Main protects a shipped run from accidental re-dispatch. This is the explicit
+# exception the scenario is exercising: regenerate the body from a later review.
+dispatch PR-REDISPATCH "HARNESS_REDISPATCH=1"
 check "re-dispatch: the second run really did review" "$(result .review)" "reviewed"
 if grep -qF -- "$WARN_DEAD" "$RUN/pr-body.md"; then
   bad "re-dispatch: the warning is gone with the regenerated body"

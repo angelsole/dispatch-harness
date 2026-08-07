@@ -161,6 +161,11 @@ check "actor: a gate round that was skipped is not the gate running" \
 check "actor: push -> PR"             "$(actor_of 'push + draft PR (script — no model)')"              "PR"
 check "actor: demo -> demo"           "$(actor_of 'demo — recording (script, no model)')"              "demo"
 check "actor: review skipped is not Codex" "$(actor_of 'review skipped — no codex CLI found (Claude-only mode)')" "skipped"
+# A run that deferred itself — preflight or a mid-run session limit — is neither
+# working nor finished, and the statusline has to keep saying so while it waits
+# for its own one-shot to fire.
+check "actor: a capacity deferral -> deferred" \
+  "$(actor_of 'deferred: capacity, armed for 13:35')" "deferred"
 
 # --- status.sh: one-shot modes unchanged --------------------------------------
 echo "== status.sh: one-shot modes =="

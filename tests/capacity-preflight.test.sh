@@ -341,10 +341,105 @@ check "mid-run: result.json agrees" "$(result_status)" "deferred_capacity"
 file_has "$RUN/capacity.log" "mid-run: the implementer stopped on a session limit" \
   "mid-run: the classification is recorded"
 
+file_has "$CURL_LOG" "session limit — self-resuming at $FIRE_HHMM" \
+  "mid-run: the phone push says the run is resuming itself, and when"
+check "mid-run: the self-resume is counted apart from a preflight deferral" \
+  "$(cat "$RUN/self-resumes")" "1"
+check "mid-run: and recorded in result.json" \
+  "$(jq -r '.metrics.self_resumes' "$RUN/result.json")" "1"
+has "$OUT" "the run resumes its own session, nobody has to re-dispatch it" \
+  "mid-run: the console says no human is needed"
+absent "mid-run: a preflight deferral is not a self-resume" "$RUNS/CAP-DEFER/self-resumes"
+
 printf 'limit-result\n' > "$CLAUDE_MODE"
 dispatch CAP-MIDRUN2 ""
 check "mid-run: the CLI's own result message triggers it too" \
   "$(stage_now)" "deferred: capacity, armed for $FIRE_HHMM"
+
+# ---------------------------------------------------------------------------
+echo "== a mid-run limit always knows when it lifts =="
+# ---------------------------------------------------------------------------
+# ccusage is the authority when it can answer at all (asserted above: the fire
+# time is its reset, not the 1:30pm in the message). When it cannot, the message
+# is better than nothing, and nothing at all is still better than dying.
+next_local() {  # $1 = hour, $2 = minute; the next local occurrence, as an epoch
+  perl -e '
+    use POSIX qw(mktime);
+    my $now = time; my @n = localtime($now);
+    for my $d (0, 1) {
+      my $t = mktime(0, $ARGV[1] + 0, $ARGV[0] + 0, $n[3] + $d, $n[4], $n[5]);
+      next unless defined $t;
+      if ($t > $now) { print $t; exit 0 }
+    }
+    exit 1' -- "$1" "$2"
+}
+MSG_FIRE=$(( $(next_local 13 30) + 300 ))
+MSG_WHEN=$(stamp "$MSG_FIRE" '%Y-%m-%d %H:%M')
+MSG_HHMM=$(stamp "$MSG_FIRE" '%H:%M')
+
+: > "$CCUSAGE_BROKEN"
+printf 'limit-stderr\n' > "$CLAUDE_MODE"
+BEFORE_ARMS=$(arm_calls)
+dispatch CAP-MSGTIME ""
+check "message: a blind ccusage still defers instead of failing" \
+  "$(stage_now)" "deferred: capacity, armed for $MSG_HHMM"
+check "message: one schedule armed" "$(arm_calls)" "$((BEFORE_ARMS + 1))"
+file_has "$SCHED_CALLS" "argv:CAP-MSGTIME $REPO fix/CAP-MSGTIME $MSG_WHEN" \
+  "message: armed for the reset the limit message named, plus the buffer"
+file_has "$RUN/capacity.log" "using the one the limit message names" \
+  "message: and the paper trail says where the time came from"
+
+# A limit message that names no time at all: an hour is the honest guess, and it
+# is written down as a guess.
+printf 'limit-result\n' > "$CLAUDE_MODE"
+BEFORE_ARMS=$(arm_calls)
+dispatch CAP-NOTIME ""
+rm -f "$CCUSAGE_BROKEN"
+check "no time: it defers anyway" "$(result_status)" "deferred_capacity"
+check "no time: exactly one schedule armed" "$(arm_calls)" "$((BEFORE_ARMS + 1))"
+file_has "$RUN/capacity.log" "no reset time from ccusage or the message — assuming 60 minutes" \
+  "no time: and says it is assuming an hour"
+ARMED_WHEN=$(grep '^argv:CAP-NOTIME' "$SCHED_CALLS" | tail -1 | cut -d' ' -f4-)
+ARMED_EPOCH=$(perl -e '
+  use POSIX qw(mktime);
+  $ARGV[0] =~ /^(\d+)-(\d+)-(\d+) (\d+):(\d+)$/ or exit 1;
+  print mktime(0, $5, $4, $3, $2 - 1, $1 - 1900)' -- "$ARMED_WHEN")
+DELTA=$(( ${ARMED_EPOCH:-0} - $(date +%s) ))
+if [ "$DELTA" -ge 3600 ] && [ "$DELTA" -le 3960 ]; then
+  ok "no time: armed an hour out plus the usual buffer (${DELTA}s)"
+else
+  bad "no time: expected ~3900s out, armed [$ARMED_WHEN] (${DELTA}s)"
+fi
+
+# What the armed one-shot does when it fires: the same dispatch, which resumes
+# the pinned implementer session exactly as a human re-dispatch would. Nothing
+# in the recovery needs a person — that is the whole point of the deferral.
+printf 'commit\n' > "$CLAUDE_MODE"
+BEFORE_RESUMES=$(grep -c 'The orchestrator updated' "$CLAUDE_CALLS" | tr -d ' ')
+dispatch CAP-MSGTIME ""
+check "self-resume: the scheduled dispatch resumes the worker's own session" \
+  "$(grep -c 'The orchestrator updated' "$CLAUDE_CALLS" | tr -d ' ')" \
+  "$((BEFORE_RESUMES + 1))"
+check "self-resume: and it is the run's second attempt" \
+  "$(jq -r '.attempt' "$RUN/result.json")" "2"
+exists "self-resume: the killed attempt's telemetry survived the recovery" \
+  "$RUN/attempts/1"
+check "self-resume: the run reaches its normal terminal status" "$(stage_now)" "done: gate_failed"
+
+# The cap counts every self-deferral, so a run cannot loop on a limit either.
+printf 'limit-stderr\n' > "$CLAUDE_MODE"
+dispatch CAP-SELFCAP ""
+check "self cap: first self-resume" "$(cat "$RUN/deferrals")" "1"
+dispatch CAP-SELFCAP ""
+check "self cap: second self-resume" "$(cat "$RUN/deferrals")" "2"
+BEFORE_ARMS=$(arm_calls)
+dispatch CAP-SELFCAP ""
+check "self cap: the third attempt fails honestly instead of rescheduling" \
+  "$(stage_now)" "done: capacity_failed"
+check "self cap: nothing further was armed" "$(arm_calls)" "$BEFORE_ARMS"
+check "self cap: the self-resume counter stopped with it" \
+  "$(cat "$RUN/self-resumes")" "2"
+printf 'commit\n' > "$CLAUDE_MODE"
 
 # The brief explicitly names feed.log as evidence, so a limit reported only in
 # an assistant event must still self-heal.
