@@ -150,6 +150,7 @@ const ACTORS = [
   [/^(implementing|resuming)/, 'Opus', 'opus'],
   [/^review skipped/, 'skipped', 'skipped'],
   [/^(review|fix)/, 'Codex', 'codex'],
+  [/^test gate.* skipped/, 'skipped', 'skipped'],
   [/^test gate/, 'gate', 'gate'],
   [/^push/, 'PR', 'pr'],
   [/^demo/, 'demo', 'demo'],

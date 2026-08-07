@@ -280,7 +280,10 @@ check "compat: metrics.sh's gate column still renders" \
   "$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" \
       | awk '$1 == "GATE-FAIL" { print $8 }')" "fail"
 
-printf 'notes\n' > "$CODEX_MODE"
+# A reviewer that commits is what makes this a full three-round loop: round 2 is
+# only run at all when the tree it would verify is not the one round 1 already
+# judged (tests/review-truth.test.sh owns the skip).
+printf 'commits\n' > "$CODEX_MODE"
 dispatch GATE-ROUNDS ""
 check "rounds: a full review loop records all three rounds" \
   "$(result '.metrics.gate_rounds | length')" "3"

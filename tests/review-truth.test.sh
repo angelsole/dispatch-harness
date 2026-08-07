@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Telling the truth about the review stage.
+# Telling the truth about the review stage, in two parts:
 #
-# An unreviewed diff says so on the PR itself. A dead review stage used to leave
-# nothing on the PR but a missing "## Review notes" section — the failure lived
-# in result.json and a notification nobody re-reads. Now the body opens with the
-# warning, worded by cause, and a later dispatch that does get a review
-# regenerates a body without it.
+#   1. An unreviewed diff says so on the PR itself. A dead review stage used to
+#      leave nothing on the PR but a missing "## Review notes" section — the
+#      failure lived in result.json and a notification nobody re-reads. Now the
+#      body opens with the warning, worded by cause, and a later dispatch that
+#      does get a review regenerates a body without it.
+#   2. The post-review gate earns its run. Round 2 on a tree byte-identical to
+#      the one round 1 just judged is recorded as skipped instead of re-run —
+#      and the verdict that stands is still round 1's, so a gate that was
+#      already failing still reaches the fix round.
 #
 # Nothing real is contacted. `claude` (implementer), `codex` (reviewer), `gh`
 # (the PR) and `curl` (ntfy) are fake binaries on PATH driven by mode files, and
@@ -46,10 +50,14 @@ cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
 chmod +x "$SRCDIR/run-task.sh"
 cp "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
 
+# One knob so a dispatch can pick a green gate or a failing one.
 cat > "$HARNESS/repos.local.sh" <<'EOF'
 repo_config_local() {
   case "$2" in
-    greenapp|greenapp-*) INSTALL_CMD=''; GATE_CMD='true' ;;
+    greenapp|greenapp-*)
+      INSTALL_CMD=''
+      GATE_CMD="${TEST_GATE_CMD:-true}"
+      ;;
   esac
 }
 EOF
@@ -85,6 +93,10 @@ done
 case "\$(cat "$CODEX_MODE")" in
   instant) echo "codex: done" ;;
   notes)   printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md" ;;
+  commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
+             && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
+  fix)     ( cd "\$wt" && printf 'ok\n' > fixed.txt && git add -A \
+             && git commit -q -m "fix: make the gate pass" ) ;;
 esac
 EOF
 
@@ -116,9 +128,18 @@ case "\$1 \$2" in
 esac
 EOF
 
-chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/curl" "$FAKES/gh"
+# A gate that fails until the reviewer's fix round creates fixed.txt.
+cat > "$FAKES/gate-needs-fix" <<'EOF'
+#!/usr/bin/env bash
+[ -f fixed.txt ] || { echo "tests: 1 failing"; exit 1; }
+echo "tests: green"
+EOF
+
+chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/curl" "$FAKES/gh" "$FAKES/gate-needs-fix"
 
 # --- the harness under test ---------------------------------------------------
+RUN=""
+TEST_GATE_CMD=true
 dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empty)
   local ticket="$1" overrides="$2"
   RUN="$RUNS/$ticket"
@@ -127,6 +148,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   # shellcheck disable=SC2086
   env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
+      TEST_GATE_CMD="$TEST_GATE_CMD" \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=review-truth-test \
       $overrides \
       bash "$SRCDIR/run-task.sh" "$ticket" "$REPO" "fix/$ticket" \
@@ -134,6 +156,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   return 0
 }
 result()  { jq -r "$1 // \"\"" "$RUN/result.json" 2>/dev/null; }
+rounds()  { awk '{ print $1 $2 }' "$RUN/gate-rounds.log" | paste -sd, - | tr -d ' '; }
 pr_body() { cat "$PR_BODIES/$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
@@ -197,6 +220,64 @@ else
   ok "re-dispatch: the warning is gone with the regenerated body"
 fi
 file_has "$RUN/pr-body.md" "## Review notes" "re-dispatch: replaced by the notes"
+
+# ---------------------------------------------------------------------------
+echo "== gate #2 earns its run =="
+# ---------------------------------------------------------------------------
+printf 'notes\n' > "$CODEX_MODE"
+dispatch GATE-NOCOMMITS ""
+check "no commits: round 2 is recorded as skipped, not run" \
+  "$(rounds)" "1pass,2skipped"
+file_has "$RUN/timeline" "test gate #2 skipped — review committed nothing" \
+  "no commits: the stage line says exactly why"
+check "no commits: the round is in result.json like any other" \
+  "$(result '.metrics.gate_rounds[1].result')" "skipped"
+check "no commits: costing nothing" "$(result '.metrics.gate_rounds[1].seconds')" "0"
+check "no commits: and naming no failing step" \
+  "$(result '.metrics.gate_rounds[1].failed_step')" ""
+check "no commits: the verdict that stands is round 1's" "$(result .gate)" "pass"
+check "no commits: so the run finishes exactly as it did before" \
+  "$(result .status)" "ready"
+check "no commits: reviewer commits are still counted at zero" \
+  "$(result .metrics.codex_commits)" "0"
+if [ -e "$RUN/gate-2.log" ]; then
+  bad "no commits: a skipped round runs no gate"
+else
+  ok "no commits: a skipped round runs no gate"
+fi
+
+printf 'commits\n' > "$CODEX_MODE"
+dispatch GATE-COMMITS ""
+check "commits: a reviewer that committed gets its round, exactly as today" \
+  "$(rounds)" "1pass,2pass"
+if [ -e "$RUN/gate-2.log" ]; then
+  ok "commits: which really ran — it left its log"
+else
+  bad "commits: which really ran — it left its log"
+fi
+check "commits: and result.json carries a verdict, not a skip" \
+  "$(result '.metrics.gate_rounds[1].result')" "pass"
+check "commits: the run is unchanged" "$(result .status)" "ready"
+check "commits: and the commit is attributed" "$(result .metrics.codex_commits)" "1"
+
+# Skipping the round must not skip its consequence: round 1's verdict stands,
+# and a failing one still buys the fix round it always did.
+TEST_GATE_CMD=gate-needs-fix
+printf 'fix\n' > "$CODEX_MODE"
+dispatch GATE-FIXROUND ""
+check "failing gate: the reviewer's own commit means round 2 runs" \
+  "$(rounds)" "1fail,2pass"
+check "failing gate: and the run recovers" "$(result .status)" "ready"
+
+printf 'notes\n' > "$CODEX_MODE"
+dispatch GATE-FAIL-NOCOMMITS ""
+check "failing gate, no commits: round 2 is skipped but the fix round still fires" \
+  "$(rounds)" "1fail,2skipped,3fail"
+file_has "$RUN/timeline" "fix round 2 — Codex (ChatGPT sub)" \
+  "failing gate, no commits: the fix round is reached"
+check "failing gate, no commits: the run parks at gate_failed as before" \
+  "$(result .status)" "gate_failed"
+TEST_GATE_CMD=true
 
 echo
 printf 'review truth: %d passed, %d failed\n' "$pass" "$fail"

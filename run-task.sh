@@ -842,6 +842,23 @@ $GATE_CMD"
   return $rc
 }
 
+# A round the pipeline deliberately did not run, because the tree it would have
+# verified is byte-identical to the one an earlier round already judged. The
+# standing verdict is that earlier round's, so GATE_STATUS is left exactly as it
+# was and the exit status is the one a real round on this tree would have
+# returned — the caller branches identically either way.
+#
+# The row is run_gate's shape with a third result value beside pass/fail: zero
+# seconds (none were spent), no failing step. Every existing reader keeps
+# working — wall/server.js takes the first two whitespace fields, metrics.sh
+# reads .result — and the skip is stated rather than inferred from a gap in the
+# round numbers.
+skip_gate() {  # $1 = round, $2 = why
+  stage "test gate #$1 skipped — $2"
+  printf '%s %s %s\t%s\n' "$1" skipped 0 "" >> "$RUN_DIR/gate-rounds.log"
+  [ "$GATE_STATUS" = pass ]
+}
+
 GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)
 # codex exec must never inherit our stdin: in a background run it is a pipe
 # that never closes, and codex blocks forever on "Reading additional input
@@ -1070,6 +1087,10 @@ fi
 
 stage "review — Codex (ChatGPT sub)"
 REVIEW_STARTED=$(date +%s)
+# The tree the review stage is handed, so the post-review gate below can prove
+# whether anything at all changed under it — across the review attempt, its
+# retry and the fix round alike.
+REVIEW_HEAD=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null || echo "")
 # Read before the attempt, not after: run_codex may move the account for the
 # NEXT attempt, and this records the one that actually ran this review.
 REVIEW_ACCOUNT="$CODEX_ACCOUNT"
@@ -1132,7 +1153,23 @@ if [ -n "$REVIEW_RETRY_REASON" ]; then
 fi
 
 if [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
-  if ! run_gate 2; then
+  # The post-review gate re-ran the whole suite on a byte-identical tree in 16
+  # of 46 runs — the reviewer had committed nothing, so round 2 verified exactly
+  # what round 1 had just verified, at ~2 minutes a run. A gate is a function of
+  # the tree, so an unchanged HEAD makes round 2's verdict knowable without
+  # spending it: skip_gate records the skip and hands back round 1's verdict, so
+  # the fix round below still fires on a gate that was already failing. Any
+  # commit at all — review or a previous dispatch's fix round — and this is the
+  # run it has always been.
+  if [ -n "$REVIEW_HEAD" ] \
+     && [ "$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null)" = "$REVIEW_HEAD" ]; then
+    skip_gate 2 "review committed nothing"
+    GATE2_RC=$?
+  else
+    run_gate 2
+    GATE2_RC=$?
+  fi
+  if [ "$GATE2_RC" -ne 0 ]; then
     stage "fix round 2 — Codex (ChatGPT sub)"
     run_codex 2 "The test gate is still failing after your review. Output is in .harness/gate-latest.log. Fix the failures and commit (no AI attribution; never commit anything under .harness/). If it cannot be fixed without violating .harness/brief.md, write .harness/REJECTED.md instead." || true
     run_gate 3 || true

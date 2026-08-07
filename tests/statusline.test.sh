@@ -156,6 +156,8 @@ check "actor: turn-ceiling resume -> Opus" "$(actor_of 'resuming: turn ceiling (
 check "actor: review -> Codex"        "$(actor_of 'review — Codex (ChatGPT sub)')"                     "Codex"
 check "actor: fix round -> Codex"     "$(actor_of 'fix round 2 — Codex (ChatGPT sub)')"                "Codex"
 check "actor: test gate -> gate"      "$(actor_of 'test gate #1 (deterministic — no model)')"          "gate"
+check "actor: a gate round that was skipped is not the gate running" \
+  "$(actor_of 'test gate #2 skipped — review committed nothing')"                                      "skipped"
 check "actor: push -> PR"             "$(actor_of 'push + draft PR (script — no model)')"              "PR"
 check "actor: demo -> demo"           "$(actor_of 'demo — recording (script, no model)')"              "demo"
 check "actor: review skipped is not Codex" "$(actor_of 'review skipped — no codex CLI found (Claude-only mode)')" "skipped"

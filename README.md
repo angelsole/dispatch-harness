@@ -966,7 +966,7 @@ fields are `null`/empty):
 | `review_account` | Which Codex subscription the review attempt ran on: `primary` \| `fallback`. Absent (not empty) on the arms that never attempt a review. See [A second Codex account](#a-second-codex-account-for-a-dry-primary). |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
-| `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `failed_step` is the command a failing round died on, `null` on a passing round and on rounds recorded before this existed. |
+| `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `result` is `pass` \| `fail` \| `skipped` (see [When the post-review gate is skipped](#when-the-post-review-gate-is-skipped)); a skipped round records `0` seconds. `failed_step` is the command a failing round died on, `null` on a passing or skipped round and on rounds recorded before this existed. |
 | `metrics.turn_resumes` | How many times the implementer was resumed rather than started fresh (counted across invocations). |
 | `metrics.opus_commits` | Commit count `base..opus_head` (the implementer's). |
 | `metrics.codex_commits` | Commit count `opus_head..HEAD` (the reviewer's). |
@@ -1103,6 +1103,29 @@ get a review produces a body with the review notes and no warning.
 
 This is PR-body only: `result.json`, the stage lines and every other contract
 are untouched.
+
+#### When the post-review gate is skipped
+
+Gate #2 re-ran the entire suite on a byte-identical tree in 16 of 46 runs — the
+reviewer had committed nothing, so the round verified exactly what round 1 had
+verified minutes earlier, at a couple of wasted minutes per run. A gate is a
+function of the tree, so that round's verdict is knowable without spending it.
+
+The stage is not going anywhere (it caught its first real reviewer-introduced
+regression the same week). Only the provably-redundant case goes: `HEAD` is
+captured when the review stage starts, and if it is unchanged when the round
+comes due, the round is recorded rather than run —
+
+```
+test gate #2 skipped — review committed nothing
+```
+
+— with a `2 skipped 0` row in `gate-rounds.log` (the same additive shape, a
+third value beside `pass`/`fail`) and `{"round":"2","result":"skipped",...}` in
+`metrics.gate_rounds`. **The verdict that stands is round 1's**, so a gate that
+was already failing still reaches the fix round exactly as before. Any commit at
+all — the review's or an earlier fix round's — and the round runs as it always
+has.
 
 #### A second Codex account for a dry primary
 

@@ -51,6 +51,7 @@ harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
     implementing*|resuming*)   HARNESS_ACTOR='Opus';        HARNESS_ACTOR_COLOR="$C_BLUE" ;;
     'review skipped'*)         HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
     review*|fix*)              HARNESS_ACTOR='Codex';       HARNESS_ACTOR_COLOR="$C_GREEN" ;;
+    'test gate'*' skipped'*)   HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
     'test gate'*)              HARNESS_ACTOR='gate';        HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
     push*)                     HARNESS_ACTOR='PR';          HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;
     demo*)                     HARNESS_ACTOR='demo';        HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;
