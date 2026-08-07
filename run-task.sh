@@ -2,8 +2,8 @@
 # Multi-model dispatch pipeline.
 #   Opus (Claude sub) implements in a git worktree
 #   -> deterministic test gate
-#   -> Codex (ChatGPT sub) reviews & fixes (max 2 rounds; optional — skipped
-#      when the codex CLI is not installed)
+#   -> Codex (ChatGPT sub) reviews & fixes (max 2 rounds), with a fresh Claude
+#      reviewer as the last tier when Codex is unavailable
 #   -> draft PR.
 #
 # Usage: run-task.sh <TICKET> <repo-path> <branch-name>
@@ -19,10 +19,10 @@ HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"   # where schedule.sh lives, for deferrals
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo codex)}"
-# The Codex reviewer is optional: a Claude subscription alone runs the same
-# pipeline with the review stage skipped and base-sync conflicts resolved by a
-# Claude worker. Resolved once per invocation so no stage ever shells out to a
-# missing binary and logs a 127.
+# The Codex CLI is optional: a Claude subscription alone runs the same pipeline
+# with a fresh Claude review tier and Claude handling base-sync conflicts.
+# Resolved once per invocation so no stage ever shells out to a missing binary
+# and logs a 127.
 if command -v "$CODEX_BIN" >/dev/null 2>&1; then CODEX_AVAILABLE=1; else CODEX_AVAILABLE=0; fi
 # Labels for the conflict-resolution stage line and the escalation text: they
 # name whichever CLI actually does the work.
@@ -103,7 +103,7 @@ if [ -n "${HARNESS_MIRROR:-}" ] && declare -F mirror_start >/dev/null; then
 fi
 
 # --- Ablation knobs, pinned at first dispatch --------------------------------
-# The arm (full pipeline vs. review-skipped) and the implementer model are
+# The arm (full, Claude-only, or review-skipped) and the implementer model are
 # written into the run dir on the first invocation and reused verbatim on
 # resume, so a re-dispatch whose environment differs can never silently switch
 # a run to a different experimental condition.
@@ -111,9 +111,14 @@ ARM_FILE="$RUN_DIR/arm"
 if [ -f "$ARM_FILE" ]; then
   ARM=$(cat "$ARM_FILE")
 else
-  # No codex CLI on this machine means no review stage — pin the same arm the
-  # ablation knob does, so status, metrics and result.json all agree.
-  if [ "${HARNESS_SKIP_REVIEW:-0}" = "1" ] || [ "$CODEX_AVAILABLE" = 0 ]; then ARM="no_review"; else ARM="full"; fi
+  # Three conditions, three names. `no_review` is the ablation knob and the ONLY
+  # arm that still ships without a review — an operator asking for the baseline
+  # on purpose. A machine with no codex CLI is not that: it reviews on the
+  # Claude tier (section 5b), so calling it `no_review` mislabelled every one of
+  # those runs as unreviewed.
+  if [ "${HARNESS_SKIP_REVIEW:-0}" = "1" ]; then ARM="no_review"
+  elif [ "$CODEX_AVAILABLE" = 0 ];        then ARM="claude_only"
+  else                                         ARM="full"; fi
   echo "$ARM" > "$ARM_FILE"
 fi
 # Model/effort knobs follow the same pin-at-first-dispatch rule. Defaults are
@@ -135,9 +140,10 @@ positive_int() {
 }
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
 pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
-# A first dispatch without codex pins blank reviewer knobs. If codex is
-# installed before a later resume, the run remains honestly review-less instead
-# of silently acquiring reviewer metadata for a stage its pinned arm skips.
+# A first dispatch without codex pins blank Codex reviewer knobs. The Claude
+# review tier fills the runtime/result fields from the implementer-model pins;
+# the blank files keep a resumed Claude-only run from silently acquiring Codex
+# settings if the CLI is installed between attempts.
 if [ "$CODEX_AVAILABLE" = 0 ]; then
   [ -f "$RUN_DIR/reviewer-model" ] || : > "$RUN_DIR/reviewer-model"
   [ -f "$RUN_DIR/reviewer-effort" ] || : > "$RUN_DIR/reviewer-effort"
@@ -188,8 +194,11 @@ fi
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
 # How the review stage actually went, decided from evidence after it runs (see
 # section 5b): "" until the stage is reached, then skipped | reviewed |
-# reviewed_claude | no_evidence. Recorded in result.json so nobody has to read
-# logs to find out whether a diff was reviewed.
+# reviewed_claude | failed_silent. Recorded in result.json so nobody has to read
+# logs to find out whether a diff was reviewed. `no_evidence` was retired — a
+# Codex review that left nothing behind now falls through to the Claude tier
+# instead of shipping — but older result.json files still carry it, so every
+# reader of this field has to keep tolerating the value.
 REVIEW_CLASS=""
 # Which Codex subscription the review attempt ran on: primary | fallback, empty
 # when no review attempt was made (the skipped arms) — or claude, when both
@@ -1385,29 +1394,45 @@ review_evidence() {
 
 # The floor only means something on a diff that takes real reading: a two-line
 # change genuinely can be reviewed in seconds, and crying wolf over it would
-# teach everyone to ignore the alarm. An unreadable diff counts as trivial for
-# the same reason.
+# teach everyone to ignore the alarm.
+#
+# A diff this cannot READ is a different answer from a diff that is small. git
+# failing here (a base ref that is not there, a worktree that moved) says
+# nothing about how much there is to review, and answering "trivial" to that
+# question is how an unmeasured diff talks its way past the retry. Unknown, not
+# small: say no and let the caller spend the pass.
 review_diff_is_trivial() {
-  local n
-  n=$(git -C "$WORKTREE" diff --numstat "$BASE_REF...HEAD" 2>/dev/null \
-    | awk '{ if ($1 != "-") i += $1; if ($2 != "-") d += $2 } END { print i + d + 0 }')
-  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  local numstat n
+  numstat=$(git -C "$WORKTREE" diff --numstat "$BASE_REF...HEAD" 2>/dev/null) || return 1
+  n=$(printf '%s\n' "$numstat" \
+    | awk '
+        NF == 0 { next }
+        NF < 3 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { unknown = 1; next }
+        { changed += $1 + $2 }
+        END { if (unknown) exit 1; print changed + 0 }
+      ') || return 1
+  case "$n" in ''|*[!0-9]*) return 1 ;; esac
   [ "$n" -le "$REVIEW_TRIVIAL_LINES" ]
 }
 
-# The last review tier. Cross-vendor is the preference; A REVIEW is the
-# requirement: when BOTH Codex accounts have come up empty (the evidence checks
-# above, not exit codes, make that call), the same prompt goes to a FRESH
-# Claude session — never the implementer's own, so it is still a cold read of
-# the diff, just not a cross-vendor one. The switch is recorded loudly: a stage
-# line, the review-fallback marker, review_account/reviewer_model in
-# result.json — and REVIEW_AGENT flips so any later fix round stays on the
-# backend that actually reviewed.
+# The last review tier, and the one EVERY dead-Codex path ends on: both accounts
+# empty, a dry primary with nowhere to go, a sandbox that would not start, a
+# review that left nothing behind, and a machine that never had the codex CLI at
+# all. Cross-vendor is the preference; A REVIEW is the requirement, so the same
+# prompt goes to a FRESH Claude session — never the implementer's own, so it is
+# still a cold read of the diff, just not a cross-vendor one. The switch is
+# recorded loudly: a stage line, the review-fallback marker,
+# review_account/reviewer_model in result.json — and REVIEW_AGENT flips so any
+# later fix round stays on the backend that actually reviewed.
 REVIEW_AGENT="codex"
+# Why this tier was reached, kept for the phone push at the end of the run: the
+# highest-priority notification the pipeline sends used to carry no reason at all.
+CLAUDE_TIER_REASON=""
 claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcome
   stage "review — Codex unavailable ($1) → Claude reviewer (Claude sub)"
   REVIEW_AGENT="claude"
   REVIEW_ACCOUNT="claude"
+  CLAUDE_TIER_REASON="$1"
   REVIEWER_MODEL="$IMPLEMENTER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
   printf 'claude fallback: %s\n' "$1" >> "$RUN_DIR/review-fallback"
   run_claude_worker 1-claude "$REVIEW_PROMPT" || true
@@ -1418,7 +1443,6 @@ claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcom
     # must not ship looking reviewed: section 6 turns this into
     # review_failed — no push, no PR, a high-priority phone push.
     REVIEW_CLASS="failed_silent"
-    ARM="no_review"
     REVIEW_OK=0
     stage "review failed silently — diff is unreviewed"
     echo "[harness] the review stage produced no commits and no notes on any backend — this diff is UNREVIEWED and will not ship"
@@ -1481,22 +1505,21 @@ ticket_sync() {  # uses TICKET, PR_URL, BRANCH; always returns 0
 run_gate 1 || true
 
 # --- Review + fix rounds ------------------------------------------------------
-# The review runs in tiers, and every tier decision is made from EVIDENCE
-# (notes, a rejection, or reviewer commits — section 5b), never exit codes:
+# Every arm reviews or holds. The review runs in tiers, and every tier decision
+# is made from EVIDENCE (notes, a rejection, or reviewer commits — section 5b),
+# never exit codes or durations:
 #   codex primary -> codex fallback account (credits-certain, or one retry on a
 #   silent no-op) -> a fresh Claude session (claude_review_tier) -> and only
 #   when ALL of that produced nothing, review_failed: no push, no PR, high-
 #   priority phone push. Cross-vendor is the preference; a review is the
 #   requirement; an unreviewed diff shipping as reviewed is the worst outcome.
-# The stage is skipped entirely only when the codex CLI is absent (Claude-only
-# mode — a machine-level arm pinned at first dispatch, kept honest as an
-# ablation) or HARNESS_SKIP_REVIEW=1. Either way the deterministic gate above
-# still ran, so a failing gate still yields gate_failed downstream, and the
-# base-sync step below still runs in both arms.
-if [ "$CODEX_AVAILABLE" = 0 ]; then
-  REVIEW_CLASS="skipped"
-  stage "review skipped — no codex CLI found (Claude-only mode)"
-elif [ "$ARM" = "full" ]; then
+# A machine with no codex CLI starts at the last tier instead of skipping the
+# stage: the fresh-cold-read machinery is the same one, and "no reviewer
+# installed" was never a reason to ship a diff nothing read.
+# The stage is skipped entirely by exactly one arm — HARNESS_SKIP_REVIEW=1, an
+# operator asking for the unreviewed baseline on purpose. The deterministic gate
+# above still ran there, so a failing gate still yields gate_failed downstream,
+# and the base-sync step below still runs in every arm.
 REVIEW_PROMPT="You are the reviewer stage of an automated pipeline; another agent just implemented a task.
 Context (all inside .harness/): brief.md (the task contract), specs/ when present (the task's source documents converted to markdown — part of the contract, read them alongside the brief), implementer-notes.md, gate-latest.log (test gate output — current status: $GATE_STATUS).
 implementer-notes.md is the implementer's own account of its work: treat it as claims to verify against the diff, not as facts.
@@ -1519,6 +1542,10 @@ Boundary: refactor freely within the code this branch introduces or touches; do 
 - If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: do not fix it — write your findings to .harness/REJECTED.md and stop.
 - If everything is genuinely sound, say so in review-notes.md and change nothing.$PREPROD_POSTURE_REVIEW"
 
+if [ "$ARM" = "no_review" ]; then
+  REVIEW_CLASS="skipped"   # the ablation arm (HARNESS_SKIP_REVIEW=1)
+  stage "review skipped — HARNESS_SKIP_REVIEW=1 (no_review arm)"
+else
 # A rejection from a previous dispatch must not outlive the revision it judged:
 # the outcome check below keys off this file's existence, so a re-review that
 # approves would still be read as rejected (bit us on OLYX-1497 — approval
@@ -1535,14 +1562,26 @@ if [ -f "$WORKTREE/.harness/review-notes.md" ]; then
   mv "$WORKTREE/.harness/review-notes.md" "$RUN_DIR/review-notes.md"
 fi
 
-stage "review — Codex (ChatGPT sub)"
-REVIEW_STARTED=$(date +%s)
 # The tree the review stage is handed, so the post-review gate below can prove
 # whether anything at all changed under it. Captured before the FIRST tier, so
 # it spans every one of them: the codex attempt, its retry, the Claude reviewer
 # tier and the fix round all move HEAD the same way, and a commit from any of
 # them is a commit.
 REVIEW_HEAD=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null || echo "")
+
+if [ "$CODEX_AVAILABLE" = 0 ]; then
+  # Claude-only mode: there is no Codex side to try, so the run starts at the
+  # tier every other dead-Codex path ends on. Same fresh session, same cold
+  # read, same evidence check — and a dead Claude review holds here exactly as
+  # it does everywhere else.
+  claude_review_tier "no codex CLI on this machine (Claude-only mode)"
+elif [ "$ARM" = claude_only ]; then
+  # Pinned at first dispatch, so installing codex mid-run does not move this run
+  # to a different experimental condition — the same rule the model knobs follow.
+  claude_review_tier "this run is pinned to the Claude-only arm"
+else
+stage "review — Codex (ChatGPT sub)"
+REVIEW_STARTED=$(date +%s)
 # Read before the attempt, not after: run_codex may move the account for the
 # NEXT attempt, and this records the one that actually ran this review.
 REVIEW_ACCOUNT="$CODEX_ACCOUNT"
@@ -1579,10 +1618,13 @@ elif [ "$CODEX_PRIMARY_DRY" = 1 ]; then
   fi
 elif [ "$REVIEW_SECONDS" -ge "$REVIEW_MIN_SECONDS" ] || review_diff_is_trivial; then
   # It spent real time on the diff (or there was next to nothing to read) and
-  # simply left no notes behind. Recorded honestly, not retried: a second full
-  # pass is expensive and the signature here is not a stage that never ran.
-  REVIEW_CLASS="no_evidence"
-  echo "[harness] review left no commits and no notes after ${REVIEW_SECONDS}s — recorded as no_evidence"
+  # simply left no notes behind. That still buys no second Codex pass — a full
+  # one is expensive and the signature here is not a stage that never ran — but
+  # it is not a review either, and this used to ship as `no_evidence` on the
+  # strength of a stopwatch. Duration is not evidence: the Claude tier takes it,
+  # and if that comes up empty too the run holds like any other dead review.
+  echo "[harness] review left no commits and no notes after ${REVIEW_SECONDS}s — no Codex retry, handing to the Claude tier"
+  claude_review_tier "no evidence from the Codex review after ${REVIEW_SECONDS}s"
 else
   # Tier 2 — silent no-op, cause unknown (auth prompt, CLI crash, empty
   # context, or a credits message this build words differently). The retry is
@@ -1615,6 +1657,7 @@ if [ -n "$REVIEW_RETRY_REASON" ]; then
     claude_review_tier "no evidence from either Codex account"
   fi
 fi
+fi   # end: the Codex tiers
 
 if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
   # The post-review gate re-ran the whole suite on a byte-identical tree in 16
@@ -1644,8 +1687,6 @@ if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
     run_gate 3 || true
   fi
 fi
-else
-  REVIEW_CLASS="skipped"   # the no_review ablation arm (HARNESS_SKIP_REVIEW=1)
 fi   # end: review stage
 
 # --- 6. Outcome ---------------------------------------------------------------
@@ -1795,17 +1836,22 @@ else
 fi
 
 write_result "$STATUS" "$PR_URL"
-# A run that fell back reviewed fine, so nothing about its outcome says the
-# primary needs topping up. One sentence on the run's own push is how the
-# operator learns that without reading a log — and it only ever claims the
-# credits error when the log actually carried it.
+# The loudest pushes carried the least information: `done: review_failed` went
+# out Priority: high with no reason at all, and a run that reached ready on the
+# Claude tier said nothing about the Codex side being dry. One sentence each,
+# body only — status, stages.log, timeline and every stage-text contract are
+# untouched — and each of them only ever claims what actually happened.
 DONE_NOTE=""
-if [ "$REVIEW_ACCOUNT" = fallback ]; then
+if [ "$STATUS" = review_failed ]; then
+  DONE_NOTE="last tier to fail: the Claude reviewer — $CLAUDE_TIER_REASON"
+elif [ "$REVIEW_ACCOUNT" = fallback ]; then
   if [ "$CODEX_PRIMARY_DRY" = 1 ]; then
     DONE_NOTE="review ran on the fallback Codex account — primary is out of credits"
   else
     DONE_NOTE="review ran on the fallback Codex account — the primary review produced nothing"
   fi
+elif [ "$REVIEW_CLASS" = reviewed_claude ]; then
+  DONE_NOTE="review ran on the Claude tier — $CLAUDE_TIER_REASON"
 fi
 stage "done: $STATUS" "$DONE_NOTE"
 echo "[harness] DONE status=$STATUS gate=$GATE_STATUS pr=${PR_URL:-none}"

@@ -395,6 +395,40 @@ check "actor: review key"            "$(state_of OLYX-1655 actorKey)" "codex"
 check "actor: waiting -> needs input" "$(state_of OLYX-1642 actor)"   "needs input"
 check "actor: done -> done"          "$(state_of OLYX-1598 actor)"    "done"
 
+# The shell statusline and the wall keep separate prefix tables. Exercise the
+# wall's copy directly so a shell-only fix cannot leave the room display calling
+# an exhausted review "Codex" or parking review_failed on the PUSH roof.
+REVIEW_WALL="$ROOT/review-wall"
+REVIEW_NOW=$(date +%s)
+for id in UNREVIEWED-1 REVIEW-FAILED-1; do
+  mkdir -p "$REVIEW_WALL/$id"
+  printf '%s\n' "$((REVIEW_NOW - 60))" > "$REVIEW_WALL/$id/started"
+  printf '/tmp/review-wall-%s\n' "$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')" \
+    > "$REVIEW_WALL/$id/worktree"
+done
+printf '%s review failed silently — diff is unreviewed\n' "$REVIEW_NOW" \
+  > "$REVIEW_WALL/UNREVIEWED-1/status"
+printf '%s done: review_failed\n' "$REVIEW_NOW" \
+  > "$REVIEW_WALL/REVIEW-FAILED-1/status"
+serve "$REVIEW_WALL" "$ROOT/review-wall.log"; REVIEW_PORT="$PORT_OUT"
+if [ -n "$REVIEW_PORT" ]; then
+  REVIEW_API="$(get "$REVIEW_PORT" /api/runs)"
+  review_state_of() {
+    printf '%s' "$REVIEW_API" | jq -r --arg id "$1" \
+      '.runs[] | select(.id==$id) | .'"$2"
+  }
+  check "actor: a review no tier completed is not attributed to Codex" \
+    "$(review_state_of UNREVIEWED-1 actor)" "unreviewed"
+  check "actor: the wall exposes the matching failure key" \
+    "$(review_state_of UNREVIEWED-1 actorKey)" "unreviewed"
+  check "floor: review_failed parks on REVIEW, not PUSH" \
+    "$(review_state_of REVIEW-FAILED-1 floor)" "3"
+  check "state: review_failed is terminal failure" \
+    "$(review_state_of REVIEW-FAILED-1 state)" "failed"
+else
+  bad "review attribution: server starts against focused fixtures"
+fi
+
 # --- the stage -> floor ladder --------------------------------------------------
 # How high a run's car has climbed IS its pipeline stage: setup at street level,
 # the PR on the roof. This is the wall's second axis and the only one you can

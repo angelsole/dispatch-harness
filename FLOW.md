@@ -54,11 +54,15 @@ sequenceDiagram
 
 ## Claude-only mode (no `codex` CLI)
 
-The review is the one optional stage. When `codex` is not installed the run
-pins the `no_review` arm and says so in a stage line, `result.json` records no
-reviewer model, and every Codex step above is skipped — the deterministic gate
-and everything after it are unchanged. Base-sync merge conflicts (PR mechanics,
-not quality review) are then resolved by a Claude worker instead of Codex.
+Cross-vendor review is the optional part; a review is not. When `codex` is not
+installed the run pins the `claude_only` arm and takes the review straight to
+the last tier: the same review prompt in a fresh Claude session, the same
+evidence check, and the same `review_failed` hold — no PR — if it produces
+nothing. `result.json` records `review: reviewed_claude` and the model that
+reviewed. Base-sync merge conflicts (PR mechanics, not quality review) are then
+resolved by a Claude worker instead of Codex. The only arm that ships without a
+review is `no_review` (`HARNESS_SKIP_REVIEW=1`), which asks for that baseline
+on purpose.
 
 ## Monitoring (ambient — nothing to remember)
 

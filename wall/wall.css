@@ -41,6 +41,7 @@
   --alarm: #ff2f45;
   --done: #3fd984;
   --failed: #ff5a46;
+  --unreviewed: var(--failed);   /* nothing read the diff — that is a failure */
   --unknown: #7a878f;
 
   /* City stock: wet-dark masonry, and the three colours its windows are lit
@@ -1316,6 +1317,7 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
 .shaft[data-actor="deferred"] { --accent: var(--deferred); }
 .shaft[data-actor="done"] { --accent: var(--done); }
 .shaft[data-actor="failed"] { --accent: var(--failed); }
+.shaft[data-actor="unreviewed"] { --accent: var(--unreviewed); }
 .shaft[data-actor="unknown"] { --accent: var(--unknown); }
 
 /* A working car breathes; a blocked one is red whatever was running. */

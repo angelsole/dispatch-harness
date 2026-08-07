@@ -163,6 +163,12 @@ claim README      "$README"    'metrics.sh --report'
 # where a human (and the planner) will look for them.
 claim README      "$README"    'failed_silent'
 claim SKILL.md    "$SKILL"     'failed_silent'
+# The review-integrity guarantee, in the words the code now keeps: no arm opens
+# a PR on a diff nothing read. A README that still promises less than the
+# pipeline delivers sends an operator looking for a skip that no longer exists.
+claim README      "$README"    'every arm reviews or holds'
+claim README      "$README"    'claude_only'
+claim SKILL.md    "$SKILL"     'claude_only'
 # The attempt lifecycle: a run that resumes itself out of a session limit, the
 # guard that stops a shipped run being dispatched again, and where a finished
 # attempt's telemetry now lives. All three change what an operator should expect

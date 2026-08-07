@@ -88,6 +88,7 @@ SH
   CAPTURE_IMPL="$ROOT/impl-$ticket.txt" CAPTURE_REVIEW="$ROOT/review-$ticket.txt" \
   HOME="$FHOME" HARNESS_DIR="$h" \
   CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
+  HARNESS_REVIEW_NETWORK=0 \
   HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC="" \
     bash "$SRC/run-task.sh" "$ticket" "$REPO" "fix/$ticket" > "$ROOT/run-$ticket.log" 2>&1
   return 0   # the fixture run ends in `rejected`, i.e. non-zero, by design
