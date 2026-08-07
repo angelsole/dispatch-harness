@@ -221,47 +221,62 @@ setups — there is no separate install variant or flag:
 
 - **codex present** — nothing changes: full arm, review and fix rounds, Codex
   resolves base-sync conflicts.
-- **codex absent** — the run pins the `no_review` arm, emits a
-  `review skipped — no codex CLI found (Claude-only mode)` stage line (visible
-  in the statusline, timeline and notifications), and leaves `reviewer_model` /
-  `reviewer_effort` empty in `result.json` rather than claiming a review that
-  never ran. The review is skipped, not reassigned to a second Claude worker —
-  no model grades its own homework. Base-sync conflict resolution (PR
-  mechanics, not quality review) falls back to a Claude worker on your
-  subscription — same prompt, fresh session, logged to `claude-<label>.log`.
+- **codex absent** — the run pins the `claude_only` arm and reviews on the
+  [Claude tier](#when-codex-dies-mid-run-out-of-credits): the same review
+  prompt, a fresh Claude session (never the implementer's own, so it is still a
+  cold read of the diff), the same evidence check, and the same hold if it
+  produces nothing — `review_failed`, no PR. `result.json` records
+  `review: reviewed_claude` and `review_account: claude`, and `reviewer_model` /
+  `reviewer_effort` name the model that actually reviewed. Base-sync conflict
+  resolution (PR mechanics, not quality review) falls back to a Claude worker on
+  your subscription — same prompt, fresh session, logged to
+  `claude-<label>.log`.
+
+This arm used to skip the stage and ship every PR unreviewed by design. Same
+vendor as the implementer is a real cost — it is why the Claude tier comes last
+everywhere else and is recorded apart — but it is a smaller one than nothing
+reading the diff at all, and the session is fresh, so no model grades its own
+homework either way. The only arm that still ships without a review is the
+`no_review` ablation (`HARNESS_SKIP_REVIEW=1`), which is an operator asking for
+that baseline on purpose.
 
 Everything else is identical: worktree, deterministic gate, `needs_input`
-escalation, PR, demo recording. Install `codex` later and the next dispatch
-gets the review stage back; runs already pinned to an arm keep it — a
+escalation, PR, demo recording. Install `codex` later and the next dispatch gets
+the cross-vendor review back; runs already pinned to an arm keep it — a
 Claude-only run resumed on a machine that now has `codex` keeps its blank
-reviewer fields (its review is not retro-fitted) and uses codex only for the
-mechanical base-sync conflict step.
+*pinned* reviewer knobs (the experimental condition is not retro-fitted) and
+uses codex only for the mechanical base-sync conflict step.
 
 ### When Codex dies mid-run (out of credits)
 
-Different from a machine that never had codex: a machine WITH codex whose
-review produced no evidence — a ChatGPT workspace out of credits is the shape
-that actually happened, ten runs shipping unreviewed overnight — must not
-treat the failure as a clean review. Cross-vendor is the preference; **a
-review is the requirement**. The stage runs in tiers, every decision made from
-evidence (notes, a rejection, or reviewer commits), never exit codes:
+A review that produced no evidence — a ChatGPT workspace out of credits is the
+shape that actually happened, ten runs shipping unreviewed overnight — must not
+be treated as a clean review. Cross-vendor is the preference; **a review is the
+requirement**. The guarantee this stage carries is that
+**every arm reviews or holds**: no path in `run-task.sh` opens a PR when
+nothing produced review evidence. The stage runs in tiers, every decision made
+from evidence (notes, a rejection, or reviewer commits), never exit codes and
+never durations:
 
 1. the **primary Codex account** reviews;
 2. on a credits-certain death (or one silent no-op below the review floor) the
    **fallback Codex account** takes a retry, when
    `HARNESS_CODEX_HOME_FALLBACK` is configured — still cross-vendor;
-3. when the Codex side is done — both accounts empty, or a dry primary with no
+3. when the Codex side is done — both accounts empty, a dry primary with no
    fallback configured (a retry on a certainly-dry account buys nothing, and
-   credits outrank the trivial-diff shortcut) — the same review prompt runs in
-   a **fresh Claude session** (never the implementer's own — still a cold read
-   of the diff, just not cross-vendor). Recorded loudly: the stage line
+   credits outrank the trivial-diff shortcut), a sandbox that would not start, a
+   review that spent real time and left nothing behind, or [no `codex` CLI on
+   the machine at all](#claude-only-mode) — the same review prompt runs in a
+   **fresh Claude session** (never the implementer's own — still a cold read of
+   the diff, just not cross-vendor). Recorded loudly: the stage line
    (`review — Codex unavailable (…) → Claude reviewer`), a `review-fallback`
-   marker in the run dir, `review: reviewed_claude` and
-   `review_account: claude` in `result.json`;
+   marker in the run dir naming the reason, `review: reviewed_claude` and
+   `review_account: claude` in `result.json`, and one sentence on the run's own
+   phone push saying the review was not cross-vendor and why;
 4. if even that produces no evidence, the run ends **`review_failed`** and
    pushes nothing — an unreviewed diff never ships looking reviewed — and the
-   phone push goes out at high priority, since only a human can top up the
-   credits.
+   phone push goes out at high priority naming the last tier to fail and what
+   sent the run to it, since only a human can top up the credits.
 
 The pipeline never marks a PR ready and never merges, in any arm; opening a
 draft PR is as far as automation goes.
@@ -1080,7 +1095,7 @@ with a *different* implementer model — so you can measure what each stage buys
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `xhigh` is Anthropic's recommended starting point for agentic coding on Opus 5; drop it where your own runs show quality holds. | `xhigh` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
-| `HARNESS_SKIP_REVIEW` | `1` skips the Codex review stage **and** its fix rounds — the `no_review` arm. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review — on codex when it is installed, otherwise on a Claude worker). A machine with no `codex` CLI pins the same arm automatically, with the reviewer fields left empty: see [Claude-only mode](#claude-only-mode). | unset (`full` arm) |
+| `HARNESS_SKIP_REVIEW` | `1` skips the review stage **and** its fix rounds — the `no_review` arm, and the only arm that ships without a review. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review — on codex when it is installed, otherwise on a Claude worker). A machine with no `codex` CLI pins `claude_only` instead and reviews on the Claude tier: see [Claude-only mode](#claude-only-mode). | unset (`full` arm) |
 
 All are **pinned at first dispatch**: the chosen arm, models, and efforts are
 written into the run dir on the first invocation and reused verbatim on resume,
@@ -1097,16 +1112,17 @@ HARNESS_SKIP_REVIEW=1 IMPLEMENTER_MODEL=sonnet \
 ### Metrics schema (in `result.json`)
 
 Alongside the existing fields, each run now records `arm`
-(`full` | `no_review`), `implementer_model`, `implementer_effort`,
-`reviewer_model`, `reviewer_effort` (both empty when no `codex` CLI was
-available — see [Claude-only mode](#claude-only-mode)), and a `metrics`
+(`full` | `claude_only` | `no_review`), `implementer_model`,
+`implementer_effort`, `reviewer_model`, `reviewer_effort` (the last two name
+whichever backend actually reviewed — see
+[Claude-only mode](#claude-only-mode)), and a `metrics`
 object — populated on **every** exit path, partial on early failures (missing
 fields are `null`/empty):
 
 | Field | Meaning |
 | --- | --- |
-| `review` | How the review stage actually went: `reviewed` \| `no_evidence` \| `failed_silent` \| `skipped`, empty when the run never reached it. See [Reading the pipeline's own vitals](#reading-the-pipelines-own-vitals). |
-| `review_account` | Which Codex subscription the review attempt ran on: `primary` \| `fallback`. Absent (not empty) on the arms that never attempt a review. See [A second Codex account](#a-second-codex-account-for-a-dry-primary). |
+| `review` | How the review stage actually went: `reviewed` \| `reviewed_claude` \| `failed_silent` \| `skipped`, empty when the run never reached it. Runs recorded before this ticket may also carry the retired `no_evidence` — an empty Codex review now falls through to the Claude tier instead of shipping. See [Reading the pipeline's own vitals](#reading-the-pipelines-own-vitals). |
+| `review_account` | Which backend the review attempt ran on: `primary` \| `fallback` \| `claude`. Absent (not empty) on the arm that never attempts a review. Set the moment a tier is entered, so it names the attempt, not the outcome — `review` is what says a diff was read. See [A second Codex account](#a-second-codex-account-for-a-dry-primary). |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
 | `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `result` is `pass` \| `fail` \| `skipped` (see [When the post-review gate is skipped](#when-the-post-review-gate-is-skipped)); a skipped round records `0` seconds. `failed_step` is the command a failing round died on, `null` on a passing or skipped round and on rounds recorded before this existed. |
@@ -1158,11 +1174,13 @@ runs reaching ready (last attempt)   120   67.0
 REVIEW                   RUNS      %
 reviewed                  140   78.2
 skipped                    30   16.8
-no_evidence                 7    3.9
+reviewed_claude             7    3.9
 failed_silent               2    1.1
 pre-telemetry              28   15.6
 silent review failures      2   <- these diffs are UNREVIEWED
 fallback-account reviews    3   <- the primary Codex account needs topping up
+claude-tier reviews         7   <- the review was not cross-vendor
+held: review_failed         2   <- no PR opened; re-dispatch once a reviewer works
 
 ATTEMPTS                COUNT      %
 attempts total            240
@@ -1247,24 +1265,26 @@ gate. It is documented here because it is the one `HARNESS_*` name in
 **When the review stage doesn't happen.** A review that leaves *no* fix
 commits, *no* `review-notes.md` and *no* `REJECTED.md` has proven nothing about
 the diff. Evidence decides, never duration: a fast "everything is sound" review
-that writes its notes is a real review. Duration only decides whether a retry is
-worth paying for — a stage that produced no evidence at all in less time than
-the diff takes to read is the signature of a reviewer that never started (auth
-prompt, CLI crash, empty context), so the review is run **once more**. If the
-second pass also produces nothing, the run continues (the gate has passed) but
-says so everywhere it can: `review: failed_silent` in `result.json`, the arm
-recorded as `no_review`, a `review failed silently — diff is unreviewed` stage
-line, and the same words in the macOS/ntfy notification. The pinned arm in the
-run dir is left alone, so a re-dispatch still attempts a real review.
+that writes its notes is a real review. Duration only decides whether a *Codex
+retry* is worth paying for — a stage that produced no evidence at all in less
+time than the diff takes to read is the signature of a reviewer that never
+started (auth prompt, CLI crash, empty context), so the review is run **once
+more** on the Codex side. What duration never decides is whether the diff ships:
+an empty review that spent real time (or that ran on a diff too small for the
+floor to mean anything) buys no second Codex pass, but the
+[Claude tier](#when-codex-dies-mid-run-out-of-credits) still gets it.
+
+Only when *that* also produces nothing does the run stop, and then it says so
+everywhere it can: `review: failed_silent` in `result.json`, the arm recorded as
+`no_review`, a `review failed silently — diff is unreviewed` stage line, the
+same words in the macOS/ntfy notification, and the terminal `done: review_failed`
+push naming the last tier to fail. The pinned arm in the run dir is left alone,
+so a re-dispatch still attempts a real review.
 
 | Env var | Effect | Default |
 | --- | --- | --- |
-| `HARNESS_REVIEW_MIN_SECONDS` | Floor below which a review that produced no evidence is treated as a stage that never ran (and retried once). | `60` |
-| `HARNESS_REVIEW_TRIVIAL_LINES` | Changed lines vs. base at or below which the floor does not apply — a two-line diff genuinely can be reviewed in seconds. | `20` |
-
-A review that took real time and still left nothing behind is recorded as
-`no_evidence` and *not* retried: it is worth knowing about, but it is not the
-failure signature above, and a second full pass is expensive.
+| `HARNESS_REVIEW_MIN_SECONDS` | Floor below which a review that produced no evidence is treated as a stage that never ran (and retried once on the Codex side). | `60` |
+| `HARNESS_REVIEW_TRIVIAL_LINES` | Changed lines vs. base at or below which the floor does not apply — a two-line diff genuinely can be reviewed in seconds. A diff whose size cannot be *read* (a base ref that is not there, a worktree that moved) is unknown rather than small, and gets the retry. | `20` |
 
 #### When the post-review gate is skipped
 

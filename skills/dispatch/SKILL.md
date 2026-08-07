@@ -204,24 +204,30 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   environment issue and re-dispatch, or escalate to the user with a one-paragraph
   diagnosis.
 
-The Codex review stage is optional: on a machine without the `codex` CLI the run
-pins `arm: no_review` with empty `reviewer_model`/`reviewer_effort` and a
-`review skipped` stage line (conflict resolution falls back to a Claude worker,
-logged to `claude-*.log`). When you see that arm, nothing reviewed the diff —
-scrutinize it yourself before promoting, and say so in your verdict.
+The CROSS-VENDOR review is optional; a review is not. Every arm reviews or
+holds, and `result.json` records how it actually went in `review`:
 
-On a machine WITH codex, the review runs in tiers and `result.json` records
-how it actually went in `review`: `reviewed` means Codex (the `review_account`
-field says which subscription — `fallback` means the primary is out of credits
-and needs topping up; the review itself is as trustworthy as any other).
-`reviewed_claude` means both Codex accounts came up empty and a fresh Claude
-session took the same prompt — `review-fallback` in the run dir and
-`reviewer_model` record the switch; the diff WAS reviewed, just not
-cross-vendor, so weigh that in your verdict. `no_evidence` means the reviewer
-spent real time and left nothing behind — not retried, so read the diff more
-closely than usual. `failed_silent` no longer reaches a PR at all: it becomes
-the `review_failed` status above. `skipped` means what it says, and an empty
-value means the run never got that far.
+- `reviewed` — Codex read the diff. `review_account` says which subscription;
+  `fallback` means the primary is out of credits and needs topping up, and the
+  review itself is as trustworthy as any other.
+- `reviewed_claude` — the Codex side produced nothing (both accounts empty, a
+  dry account, a sandbox that would not start, a review that left nothing
+  behind) or the machine has no `codex` CLI at all, so a fresh Claude session
+  took the same prompt. `review-fallback` in the run dir names the reason and
+  `reviewer_model` records the switch. The diff WAS reviewed, just not
+  cross-vendor — weigh that in your verdict.
+- `failed_silent` — no tier produced evidence. This never reaches a PR: it
+  becomes the `review_failed` status above.
+- `skipped` — the `no_review` ablation arm (`HARNESS_SKIP_REVIEW=1`) and the
+  only arm that ships unreviewed. Scrutinize the diff yourself before
+  promoting, and say so in your verdict.
+- empty — the run never got that far. Older runs may also carry the retired
+  `no_evidence`, which used to ship; it now falls through to the Claude tier.
+
+`arm` names the condition the run was pinned to: `full` (codex installed),
+`claude_only` (no codex CLI — reviewed on the Claude tier), `no_review` (the
+ablation, or a run whose every tier came up empty). Conflict resolution on a
+`claude_only` machine falls back to a Claude worker, logged to `claude-*.log`.
 
 ## Post-PR conflicts
 
