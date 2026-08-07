@@ -82,10 +82,16 @@ git -C "$REPO" push -q -u origin main
 
 # --- fakes -------------------------------------------------------------------
 # Implementer stand-in. `commit` leaves a diff too big to review in a blink (the
-# floor only applies to those); `tiny` leaves a two-line one.
+# floor only applies to those); `tiny` leaves a two-line one. A reviewer prompt
+# (the Claude tier) deliberately does NOTHING here: this suite is about the
+# Codex stage's telemetry, and an inert last tier is what lets the silent
+# failure below stay silent all the way to review_failed.
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
 printf 'claude\n' >> "$CLAUDE_CALLS"
+prompt=""; prev=""
+for a in "\$@"; do [ "\$prev" = "-p" ] && prompt="\$a"; prev="\$a"; done
+case "\$prompt" in *"reviewer stage"*) exit 0 ;; esac
 case "\$(cat "$CLAUDE_MODE")" in
   commit) seq 1 30 >> impl.txt ;;
   tiny)   printf 'one\ntwo\n' >> impl.txt ;;
@@ -183,9 +189,11 @@ file_has "$RUN/timeline" "review failed silently — diff is unreviewed" \
 file_has "$CURL_LOG" "review failed silently — diff is unreviewed" \
   "silent: and it goes out over the existing ntfy mechanics"
 has "$OUT" "this diff is UNREVIEWED" "silent: the console is blunt about it"
-check "silent: the run still finishes — the gate passed, the PR is real" \
-  "$(result .status)" "ready"
-check "silent: and exits 0, because nothing about the run failed" "$RC" "0"
+check "silent: a diff nothing reviewed does not ship — review_failed, no PR" \
+  "$(result .status)" "review_failed"
+check "silent: so there is no pr_url to mistake for a reviewed one" \
+  "$(result .pr_url)" ""
+check "silent: and the exit code says not-ready" "$RC" "1"
 check "silent: the pinned arm is untouched, so a re-dispatch still tries to review" \
   "$(cat "$RUN/arm")" "full"
 

@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Dispatch work through the multi-model harness — the orchestrator (you) researches and writes a task brief, then Opus (Claude subscription) implements in a git worktree, a deterministic test gate runs, Codex (ChatGPT subscription) optionally reviews and fixes when the codex CLI is installed, and a draft PR opens. Takes either an existing ticket ID or a free-form description of what to build (optionally creating a ticket in your issue tracker). Use when the user says /dispatch <ticket-or-description>, "dispatch this", or asks to run the planner/implementer/reviewer pipeline.
+description: Dispatch work through the multi-model harness — the orchestrator (you) researches and writes a task brief, then Opus (Claude subscription) implements in a git worktree, a deterministic test gate runs, Codex (ChatGPT subscription) optionally reviews and fixes when the codex CLI is installed, and a draft PR opens. A ticket that spans repos (frontend + backend) fans out into one run per repo, dispatched together; when every PR is ready the ticket gets the PR links and moves to In Review. Takes either an existing ticket ID or a free-form description of what to build (optionally creating a ticket in your issue tracker). Use when the user says /dispatch <ticket-or-description>, "dispatch this", or asks to run the planner/implementer/reviewer pipeline.
 ---
 
 # Dispatch pipeline
@@ -21,8 +21,14 @@ The argument is either an **existing ticket ID** or a **free-form description**.
   repo. The run ID is decided at approval time (step 3): if a ticket gets
   created, its ID; otherwise `adhoc-<short-slug>`.
 
-Either way, resolve the target repo to an absolute path. If it's ambiguous
-(e.g. frontend vs backend), ask the user — one question, recommendation first.
+Either way, resolve **every repo the change touches** to an absolute path. A
+ticket that spans repos (an API change plus the screen that consumes it) is one
+dispatch producing one run — and one PR — per repo: never dispatch one repo and
+come back later to ask about the other. Run IDs: single repo → the ticket ID;
+multiple repos → `<TICKET>-<suffix>` per repo (e.g. `PROJ-123-api`,
+`PROJ-123-web`; letters, digits, dot, dash, underscore only — the ID becomes a
+run-dir name). Ask the user only when research genuinely cannot settle which
+repo(s) are in scope — one question, recommendation first.
 
 If the target repo has no pinned entry in `repos.local.sh` (it will fall back to
 bare lockfile detection, often a weak `GATE_CMD`), suggest the user run
@@ -59,8 +65,11 @@ unmounts nothing.
 
 ## 3. Brief
 
-Write the brief to `~/.claude/harness/runs/<RUN-ID>/brief.md` following
-`~/.claude/harness/brief-template.md`. All sections are mandatory except two
+Write one brief per run to `~/.claude/harness/runs/<RUN-ID>/brief.md` following
+`~/.claude/harness/brief-template.md`. When runs span repos, the workers never
+meet — the briefs are their only handshake: decide the cross-repo interface
+yourself (routes, payload shapes, field names, error semantics) and write the
+*identical* contract section into every brief that touches it. All sections are mandatory except two
 delete-if-unused ones: **Attached specs**, which you keep only when you
 converted document attachments above (one line per file in `.harness/specs/`
 saying what the implementer should take from it), and the **Demo storyboard**,
@@ -73,7 +82,10 @@ The first
 (`<type>/<TICKET>-<slug>` when a ticket exists, `<type>/<slug>` for ad-hoc work;
 base per repo — usually `staging`).
 
-**Show the brief to the user and get explicit approval before dispatching.**
+**Show the brief(s) to the user and get explicit approval before dispatching.**
+For a multi-repo ticket that is one approval covering the whole set — approved
+means every run launches together (parallel worktrees), not one now and a
+question later.
 
 For free-form requests, the approval question also settles tracking: if an
 issue-tracker MCP is configured, offer to create the ticket (description from
@@ -131,15 +143,28 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   (frontend), also offer a live preview BEFORE
   approving: `~/.claude/harness/preview.sh <RUN-ID>` starts the dev server
   inside the worktree (deps and .env are already there). If it satisfies the
-  brief: `gh pr ready <pr_url>`, comment on the ticket if an issue-tracker MCP
-  is available, then run `~/.claude/harness/cleanup.sh <RUN-ID>` — it removes the
-  worktree and local branch (the PR lives on origin). Summarize for the user,
-  stating which model did what. If not: leave the
-  PR draft, write a sharper brief (same file — the worktree is reused), and
+  brief: `gh pr ready <pr_url>`, then run `~/.claude/harness/cleanup.sh
+  <RUN-ID>` — it removes the worktree and local branch (the PR lives on
+  origin). Summarize for the user, stating which model did what. If not: leave
+  the PR draft, write a sharper brief (same file — the worktree is reused), and
   re-dispatch — a run that already reached `ready` is refused by default (it
   prints the PR it produced and changes nothing), so that one re-dispatch is
   `HARNESS_REDISPATCH=1 ~/.claude/harness/run-task.sh <TICKET> <repo> <branch>`.
   Never re-dispatch a `ready` run you have not read.
+
+  **Close the loop on the ticket.** The pipeline itself already does the
+  routine version when a Linear key file is configured: on `ready` it comments
+  the PR link on the ticket and moves it to the team's In Review state
+  (`runs/<RUN-ID>/ticket-sync.log` records what it did; `HARNESS_TICKET_SYNC=0`
+  disables). Check that log before acting so you never duplicate its comment.
+  What remains yours: when a ticket spans several runs, verify every PR is
+  ready before treating the ticket as In Review; put any missing links on the
+  ticket — attachments if the MCP supports them, otherwise one comment listing
+  `repo — PR URL` per run, never with AI attribution — and if some runs are
+  still failing or waiting, comment the finished PRs with a note naming what
+  is missing and move the ticket BACK out of In Review if the pipeline's sync
+  jumped early — In Review with half its PRs is a lie the reviewer discovers
+  later.
 - **needs_input** — the implementer hit a fork the brief didn't cover and
   stopped instead of guessing. Read `QUESTIONS.md` in the run dir. **Triage
   before involving the user**: questions your research already answers
@@ -166,6 +191,13 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 - **capacity_failed** — the same thing, twice already (`HARNESS_MAX_DEFERRALS`).
   The run stopped rescheduling itself rather than loop. Re-dispatch it once the
   window is genuinely back.
+- **review_failed** — the gate is green but NO tier of the review produced
+  evidence: not the primary Codex account, not the fallback account, not the
+  Claude reviewer (`codex-*.log`, `claude-1-claude.log`, `review-fallback` in
+  the run dir say what happened at each tier). Nothing was pushed,
+  deliberately — an unreviewed diff must never ship looking reviewed. Tell the
+  user to top up credits (a browser login you cannot do) or fix whatever
+  killed the Claude tier, then re-dispatch the same command.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
   read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
   or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the
@@ -178,18 +210,18 @@ pins `arm: no_review` with empty `reviewer_model`/`reviewer_effort` and a
 logged to `claude-*.log`). When you see that arm, nothing reviewed the diff —
 scrutinize it yourself before promoting, and say so in your verdict.
 
-`result.json` also records how the review actually went in `review`. Treat
-`failed_silent` exactly like the arm above — the stage produced no commits, no
-notes and no rejection twice in a row, so the diff is unreviewed however green
-the gate is; review it yourself and say so. `no_evidence` is the softer version
-(it spent real time and still left nothing behind): read the diff more closely
-than usual. `reviewed` and `skipped` mean what they say, and an empty value means
-the run never got that far.
-
-`review_account` says which Codex subscription reviewed: `fallback` means the
-primary workspace could not take it (out of credits, or it came up empty), so
-the review itself is as trustworthy as any other — but tell the user the primary
-account needs topping up.
+On a machine WITH codex, the review runs in tiers and `result.json` records
+how it actually went in `review`: `reviewed` means Codex (the `review_account`
+field says which subscription — `fallback` means the primary is out of credits
+and needs topping up; the review itself is as trustworthy as any other).
+`reviewed_claude` means both Codex accounts came up empty and a fresh Claude
+session took the same prompt — `review-fallback` in the run dir and
+`reviewer_model` record the switch; the diff WAS reviewed, just not
+cross-vendor, so weigh that in your verdict. `no_evidence` means the reviewer
+spent real time and left nothing behind — not retried, so read the diff more
+closely than usual. `failed_silent` no longer reaches a PR at all: it becomes
+the `review_failed` status above. `skipped` means what it says, and an empty
+value means the run never got that far.
 
 ## Post-PR conflicts
 

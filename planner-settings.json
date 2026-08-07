@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Tool policy for the self-briefing planner quartermaster.sh runs unattended.",
+    "The planner's prompt embeds a Linear ticket description — text any",
+    "workspace member can edit — and runs with nobody watching, so the policy",
+    "is deny-by-default and the allow list is deliberately tiny: everything",
+    "absent from `allow` fails immediately rather than prompting, so nothing",
+    "blocks waiting for a human who is asleep.",
+    "",
+    "No Bash at all. Permission patterns match the head of a command line and",
+    "cannot see what it goes on to execute or write: an allow-listed find can",
+    "-exec anything, rg can --pre anything, and cat/jq can redirect anywhere,",
+    "which would hand a poisoned description exactly the shell a deny list",
+    "pretends to close. Research is Read/Grep/Glob; nothing more is needed to",
+    "write a brief.",
+    "",
+    "Write is scoped to the runs directory under the default HARNESS_DIR — the",
+    "one mutation the planner exists to make. A non-default HARNESS_DIR makes",
+    "self-briefing fail visibly (reported as could-not-self-brief) rather than",
+    "widen this file. The deny list is belt to those braces: a rule added to",
+    "allow later cannot re-open the shell, editor, or network paths without",
+    "also deleting a deny."
+  ],
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Task",
+      "TodoWrite",
+      "Write(~/.claude/harness/runs/**)"
+    ],
+    "deny": [
+      "Bash",
+      "Edit",
+      "MultiEdit",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}

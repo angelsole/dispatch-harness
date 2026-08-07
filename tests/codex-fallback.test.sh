@@ -75,12 +75,25 @@ git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
 
 # --- fakes -------------------------------------------------------------------
-# Implementer stand-in: a diff big enough that the review floor applies to it.
+# One claude stand-in, two jobs, told apart by the prompt: the implementer
+# writes a diff big enough that the review floor applies to it; the Claude
+# review tier (prompt says "reviewer stage") leaves notes — the evidence the
+# classifier reads.
 cat > "$FAKES/claude" <<'EOF'
 #!/usr/bin/env bash
-seq 1 30 >> impl.txt
-git add -A
-git commit -q -m "feat: fixture change"
+prompt=""; prev=""
+for a in "$@"; do [ "$prev" = "-p" ] && prompt="$a"; prev="$a"; done
+case "$prompt" in
+  *"reviewer stage"*)
+    mkdir -p .harness
+    echo "claude tier: sound" > .harness/review-notes.md
+    ;;
+  *)
+    seq 1 30 >> impl.txt
+    git add -A
+    git commit -q -m "feat: fixture change"
+    ;;
+esac
 EOF
 
 # Reviewer stand-in. Which account it is on comes from CODEX_HOME and nothing
@@ -201,8 +214,9 @@ check "floor: which produced a real review" "$(result .review)" "reviewed"
 check "floor: on the fallback" "$(result .review_account)" "fallback"
 
 dispatch FB-FLOOR-NOKNOB "HARNESS_REVIEW_MIN_SECONDS=0"
-check "floor: with no fallback configured the floor still rules" "$(accounts)" "primary"
-check "floor: recorded as no_evidence, exactly as before" "$(result .review)" "no_evidence"
+check "floor: with no fallback configured there is still only one Codex attempt" "$(accounts)" "primary"
+check "floor: but certainty about credits outranks the floor here too — the Claude tier reviews" \
+  "$(result .review)" "reviewed_claude"
 
 # ---------------------------------------------------------------------------
 echo "== tier 2: a silent no-op spends its one retry on the fallback =="
@@ -219,39 +233,42 @@ has_not "$(cat "$CURL_LOG")" "primary is out of credits" \
   "silent: but never claims a credits error the log never carried"
 
 # ---------------------------------------------------------------------------
-echo "== a fallback that is also dry downgrades exactly as today =="
+echo "== a fallback that is also dry hands the review to the Claude tier =="
 # ---------------------------------------------------------------------------
 printf 'credits-both\n' > "$CODEX_MODE"
 dispatch FB-BOTHDEAD "$FB"
-check "both dry: two attempts, one per account — never a third" \
+check "both dry: two attempts, one per account — never a third Codex call" \
   "$(accounts)" "primary,fallback"
-check "both dry: recorded as the silent failure it is" "$(result .review)" "failed_silent"
-check "both dry: with the honest arm" "$(result .arm)" "no_review"
-file_has "$RUN/timeline" "review failed silently — diff is unreviewed" \
-  "both dry: in the same words the wall and statusline already read"
-check "both dry: the run still finishes on its gate" "$(result .status)" "ready"
-check "both dry: the pinned arm is untouched, so a re-dispatch tries again" \
+check "both dry: the Claude tier takes the review" "$(result .review)" "reviewed_claude"
+check "both dry: and review_account says which backend" "$(result .review_account)" "claude"
+file_has "$RUN/timeline" "review — Codex unavailable (no evidence from either Codex account) → Claude reviewer (Claude sub)" \
+  "both dry: the handoff is a visible stage line"
+file_has "$RUN/review-fallback" "no evidence from either Codex account" \
+  "both dry: the run dir records why"
+file_has "$RUN/review-notes.md" "claude tier: sound" \
+  "both dry: the notes are the Claude reviewer's"
+check "both dry: the run finishes on its gate" "$(result .status)" "ready"
+check "both dry: the pinned arm is untouched, so a re-dispatch tries codex again" \
   "$(cat "$RUN/arm")" "full"
 
 # ---------------------------------------------------------------------------
-echo "== knob unset: the run is the run it always was =="
+echo "== knob unset: a dry primary goes straight to the Claude tier =="
 # ---------------------------------------------------------------------------
 printf 'credits\n' > "$CODEX_MODE"
 dispatch NOFB-CREDITS ""
-check "unset: both attempts run on the primary" "$(accounts)" "primary,primary"
+check "unset: exactly one Codex attempt — a retry on the same dry account is certain to repeat" \
+  "$(accounts)" "primary"
 check "unset: no attempt is handed a different CODEX_HOME" "$(homes)" "$PRIMARY_HOME"
-check "unset: a dry account twice is a silent review failure" "$(result .review)" "failed_silent"
-check "unset: and the arm says so" "$(result .arm)" "no_review"
-has "$OUT" "review produced nothing in" "unset: for the reason it always gave"
-has "$OUT" "retrying once" "unset: the retry line is the one it always printed"
+check "unset: the Claude tier takes the review" "$(result .review)" "reviewed_claude"
+check "unset: and review_account says which backend" "$(result .review_account)" "claude"
+file_has "$RUN/timeline" "review — Codex unavailable (the Codex account is out of credits) → Claude reviewer (Claude sub)" \
+  "unset: the handoff names the credits cause"
 # The temp fixture path has the word "fallback" in it, so these assert the
 # phrases the feature introduces rather than the substring.
 has_not "$OUT" "fallback Codex account"  "unset: no fallback account is ever mentioned"
 has_not "$OUT" "(fallback account)"      "unset: and no stage line carries the suffix"
 has_not "$(cat "$RUN/timeline")" "(fallback account)" "unset: nor does the timeline"
 has_not "$(cat "$CURL_LOG")" "fallback Codex account" "unset: nor any notification"
-check "unset: the account is still recorded — the review did run" \
-  "$(result .review_account)" "primary"
 
 printf 'notes\n' > "$CODEX_MODE"
 dispatch NOFB-NOTES ""
