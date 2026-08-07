@@ -53,6 +53,28 @@ fail() { echo "FATAL: $*" >&2; write_result "$1" ""; stage "done: $1"; exit 1; }
 [ -f "$BRIEF" ] || { echo "FATAL: no brief at $BRIEF" >&2; exit 1; }
 [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || { echo "FATAL: $REPO is not a git repo" >&2; exit 1; }
 
+# --- Guard: a run that already shipped ---------------------------------------
+# Five runs in one corpus were re-armed AFTER they reached `done: ready`, burning
+# 3.9 hours of machine time on work that was already in a PR — and one of them
+# came back as push_failed, turning a finished run into a broken one. There is no
+# legitimate automatic reason to start a ready run again, so refuse before
+# anything is touched: no worktree, no marker, no result.json rewrite, and the
+# run's own record is left exactly as it was. Every other status keeps today's
+# behaviour, because re-dispatching after a failure is the normal path.
+# HARNESS_REDISPATCH=1 is the deliberate override (a revised brief on a shipped
+# branch, a PR closed by hand).
+if [ "${HARNESS_REDISPATCH:-0}" != 1 ] && [ -f "$RUN_DIR/status" ]; then
+  PREV_STAGE=$(cut -d' ' -f2- < "$RUN_DIR/status" 2>/dev/null || echo "")
+  if [ "$PREV_STAGE" = "done: ready" ]; then
+    PREV_PR=$(jq -r '.pr_url // ""' "$RUN_DIR/result.json" 2>/dev/null || echo "")
+    echo "[harness] $TICKET already finished as 'done: ready' — not dispatching it again"
+    [ -n "$PREV_PR" ] && echo "[harness]   PR: $PREV_PR"
+    echo "[harness]   result: $RUN_DIR/result.json"
+    echo "[harness] to run it anyway: HARNESS_REDISPATCH=1 $0 $TICKET $REPO $BRANCH"
+    exit 0
+  fi
+fi
+
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
 repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD
@@ -178,7 +200,7 @@ REVIEW_ACCOUNT=""
 # whatever is available and nulls/empties the rest — partial metrics are fine.
 collect_metrics() {
   local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
-  local numstat files ins del impl
+  local numstat files ins del impl attempts self_resumes
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
   if [ -n "$started" ]; then wall=$((now - started)); else wall=null; fi
@@ -222,12 +244,39 @@ collect_metrics() {
   # How often the implementer was resumed instead of started fresh. Counted from
   # the log rather than from stage_durations, which sums every resume under one
   # label and so can never say "three times".
+  #
+  # THIS INVOCATION'S resumes only: stages.log is append-only across every
+  # attempt, so counting the whole file reported a run's lifetime total under a
+  # per-invocation name (OLYX-1582 said 2 where this attempt resumed once). The
+  # `__invocation__` marker is the segment boundary, so the counter resets at
+  # each one and what survives is the last segment's.
   turn_resumes=0
   if [ -f "$RUN_DIR/stages.log" ]; then
-    turn_resumes=$(awk '{ sub(/^[0-9]+ /, ""); if ($0 ~ /^resuming/) n++ } END { print n + 0 }' \
-      "$RUN_DIR/stages.log" 2>/dev/null || echo 0)
+    turn_resumes=$(awk '
+      { label = $0; sub(/^[0-9]+ /, "", label) }
+      label == "__invocation__" { n = 0; next }
+      label ~ /^resuming/       { n++ }
+      END { print n + 0 }' "$RUN_DIR/stages.log" 2>/dev/null || echo 0)
     case "$turn_resumes" in ''|*[!0-9]*) turn_resumes=0 ;; esac
   fi
+
+  # The attempt ledger: one row per invocation of this run, with the status it
+  # ended on and when. Written by record_attempt below, so a re-dispatch adds to
+  # it instead of overwriting the history — which is what makes attempt-level
+  # success rates and the idle gaps between attempts computable from
+  # result.json alone (metrics.sh --report reads nothing else).
+  attempts='[]'
+  if [ -f "$RUN_DIR/attempts.log" ]; then
+    attempts=$(jq -Rn '[inputs
+      | capture("^(?<n>[0-9]+) (?<status>[^ ]+) (?<started>[0-9]+) (?<ended>[0-9]+)$")?
+      | {n: (.n | tonumber), status,
+         started: (.started | tonumber), ended: (.ended | tonumber)}]
+      | sort_by(.n)' "$RUN_DIR/attempts.log" 2>/dev/null || echo '[]')
+    [ -n "$attempts" ] || attempts='[]'
+  fi
+  # Mid-run session limits this run recovered from by rescheduling itself.
+  self_resumes=$(cat "$RUN_DIR/self-resumes" 2>/dev/null || echo 0)
+  case "$self_resumes" in ''|*[!0-9]*) self_resumes=0 ;; esac
 
   # Commit attribution: base..opus_head is the implementer's, opus_head..HEAD is
   # the reviewer's. Null until opus_head exists (i.e. the implementer committed).
@@ -262,6 +311,9 @@ EOF
     --argjson stage_durations "$stage_durations" \
     --argjson gate_rounds "$gate_rounds" \
     --argjson turn_resumes "$turn_resumes" \
+    --argjson attempts "$attempts" \
+    --argjson self_resumes "$self_resumes" \
+    --argjson max_turns "${MAX_TURNS:-null}" \
     --argjson opus_commits "$opus_c" \
     --argjson codex_commits "$codex_c" \
     --argjson files "${files:-null}" --argjson ins "${ins:-null}" --argjson del "${del:-null}" \
@@ -271,18 +323,34 @@ EOF
       stage_durations: $stage_durations,
       gate_rounds: $gate_rounds,
       turn_resumes: $turn_resumes,
+      attempts: $attempts,
+      self_resumes: $self_resumes,
       opus_commits: $opus_commits,
       codex_commits: $codex_commits,
       implementer_num_turns: ($impl.num_turns // null),
+      implementer_max_turns: $max_turns,
       implementer_usage: ($impl.usage // null),
       diff: {files_changed: $files, insertions: $ins, deletions: $del}
     }'
 }
 
+# One row per attempt, rewritten in place for the attempt that is ending now, so
+# calling it twice in one invocation can never double-count. `<n> <status>
+# <started> <ended>`, append-only across re-dispatches.
+record_attempt() {  # $1 = the status this attempt is ending on
+  local log="$RUN_DIR/attempts.log" tmp="$RUN_DIR/attempts.log.tmp"
+  { [ ! -f "$log" ] || grep -v "^${ATTEMPT:-1} " "$log" || true
+    printf '%s %s %s %s\n' "${ATTEMPT:-1}" "$1" "${ATTEMPT_STARTED:-0}" "$(date +%s)"
+  } > "$tmp" 2>/dev/null && mv "$tmp" "$log"
+}
+
 write_result() {
   local metrics
+  # Before the metrics, so this attempt's own row is in the ledger they read.
+  record_attempt "$1"
   metrics=$(collect_metrics)
   jq -n \
+    --argjson attempt "${ATTEMPT:-1}" --argjson attempts_total "${ATTEMPT:-1}" \
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
     --arg arm "$ARM" --arg review "$REVIEW_CLASS" --arg raccount "$REVIEW_ACCOUNT" \
     --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
@@ -291,7 +359,7 @@ write_result() {
     --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,attempt:$attempt,attempts_total:$attempts_total,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}
      # The account label belongs to a review that happened: the arms that never
      # attempt one carry no field at all rather than an empty string nobody can
      # tell apart from "primary".
@@ -374,7 +442,7 @@ defer_arm() {  # $1 = <when> for schedule.sh
 # or when the cap is spent; RETURNS when it could not defer, and the caller then
 # carries on exactly as it would have without this feature.
 defer_for_capacity() {  # $1 = which path we came in on
-  local n now target when hhmm
+  local n now target when hhmm selfn note=""
   n=$(cat "$RUN_DIR/deferrals" 2>/dev/null || echo 0)
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
 
@@ -405,10 +473,21 @@ defer_for_capacity() {  # $1 = which path we came in on
     return 0
   fi
   echo "$((n + 1))" > "$RUN_DIR/deferrals"
+  # A mid-run deferral is a self-resume: the attempt died on a limit and the run
+  # put itself back in the queue. Counted separately from the preflight's "there
+  # was nothing to spend in the first place", and said out loud on the phone
+  # push — the whole point is that nobody has to notice and re-dispatch.
+  if [ "$1" = mid-run ]; then
+    selfn=$(cat "$RUN_DIR/self-resumes" 2>/dev/null || echo 0)
+    case "$selfn" in ''|*[!0-9]*) selfn=0 ;; esac
+    echo "$((selfn + 1))" > "$RUN_DIR/self-resumes"
+    note="session limit — self-resuming at $hhmm"
+  fi
   capacity_note "$1: deferred to $when (deferral $((n + 1)) of $MAX_DEFERRALS)"
   STATUS="deferred_capacity"; write_result "$STATUS" ""
-  stage "deferred: capacity, armed for $hhmm"
+  stage "deferred: capacity, armed for $hhmm" "$note"
   echo "[harness] session capacity is spent — armed for $when (deferral $((n + 1)) of $MAX_DEFERRALS)"
+  [ -z "$note" ] || echo "[harness] $note — the run resumes its own session, nobody has to re-dispatch it"
   exit 0
 }
 
@@ -444,6 +523,45 @@ session_limit_hit() {
     | grep -qiE "$pattern"
 }
 
+# When the window lifts, according to the CLI's own message. ccusage is still
+# the first source and the authoritative one — this is the fallback for the case
+# ccusage cannot account for the block at all, which would otherwise dispatch
+# straight back into the wall. Reads the same three files as the classifier
+# above; parses only the operator's local wall clock out of "resets 1:30pm", and
+# nothing else about the message. No endpoint is involved here either.
+DEFAULT_LIMIT_RESET_SECS=3600   # when even the message does not say
+session_limit_reset() {  # prints the epoch the limit message names, or fails
+  local phrase
+  phrase=$( { cat "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null
+              tail -n "+${OPUS_FEED_START_LINE:-1}" "$RUN_DIR/feed.log" 2>/dev/null
+            } | grep -oiE 'resets?[[:space:]]+[0-9]{1,2}(:[0-9]{2})?[[:space:]]*([ap]\.?m\.?)?' \
+              | head -1 )
+  [ -n "$phrase" ] || return 1
+  # perl for the same reason capacity.sh uses it: BSD and GNU date(1) disagree
+  # on every flag this needs. The next occurrence of that wall-clock time —
+  # today when it is still ahead, tomorrow otherwise.
+  perl -e '
+    use strict; use warnings; use POSIX qw(mktime);
+    my $s = lc $ARGV[0];
+    $s =~ /resets?\s+(\d{1,2})(?::(\d{2}))?\s*(a|p)?/ or exit 1;
+    my ($h, $mi, $ap) = ($1 + 0, defined $2 ? $2 + 0 : 0, $3);
+    if (defined $ap) {
+      exit 1 if $h < 1 || $h > 12;
+      $h = $h % 12;
+      $h += 12 if $ap eq "p";
+    }
+    exit 1 if $h > 23 || $mi > 59;
+    my $now = time;
+    my @n = localtime($now);
+    for my $day (0, 1) {
+      my $t = mktime(0, $mi, $h, $n[3] + $day, $n[4], $n[5]);
+      next unless defined $t;
+      if ($t > $now) { print $t; exit 0 }
+    }
+    exit 1;
+  ' -- "$phrase"
+}
+
 # The other way an implementer stops with work still on the bench: it ran out of
 # turns. Structured evidence rather than prose — the CLI's final result event
 # carries subtype "error_max_turns" — with the stderr text as a fallback for a
@@ -455,13 +573,45 @@ max_turns_hit() {
   grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
 }
 
-date +%s > "$RUN_DIR/started"
+ATTEMPT_STARTED=$(date +%s)
+echo "$ATTEMPT_STARTED" > "$RUN_DIR/started"
+# --- Per-attempt telemetry ---------------------------------------------------
+# An attempt is one invocation of this script against this run dir, and until
+# now each new one destroyed the last one's evidence: opus-stream.jsonl,
+# gate-rounds.log and opus.log were truncated on the way in, so the turn counts
+# and gate detail of every failed attempt died with the re-dispatch that
+# followed it. Rotate them into attempts/<n>/ instead — same files, same
+# format, one directory per attempt that has ended.
+#
+# The LIVE filenames do not move: everything that reads the current attempt
+# (the classifiers above, collect_metrics, wall/server.js, the reviewer) reads
+# exactly what it always read, and a fresh invocation still starts with no
+# stale rounds and a full turn-resume budget — the freshness now comes from the
+# rotation rather than from a truncation.
+#
+# The attempt number is the count of `__invocation__` markers in the
+# append-only stages.log, so it survives everything except deleting the run dir.
+ATTEMPT_FILES="opus-stream.jsonl gate-rounds.log opus.log"
+invocations_so_far() {
+  local n=0
+  [ -f "$RUN_DIR/stages.log" ] && n=$(awk '$2 == "__invocation__" { n++ } END { print n + 0 }' \
+    "$RUN_DIR/stages.log" 2>/dev/null)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  printf '%s' "$n"
+}
+PREV_ATTEMPT=$(invocations_so_far)
+if [ "$PREV_ATTEMPT" -gt 0 ]; then
+  mkdir -p "$RUN_DIR/attempts/$PREV_ATTEMPT"
+  for f in $ATTEMPT_FILES; do
+    [ -f "$RUN_DIR/$f" ] || continue
+    mv "$RUN_DIR/$f" "$RUN_DIR/attempts/$PREV_ATTEMPT/$f" 2>/dev/null || true
+  done
+fi
+ATTEMPT=$((PREV_ATTEMPT + 1))
 # Metrics bookkeeping: a per-invocation marker segments stages.log so resume
-# pauses aren't charged to a stage; gate-rounds.log is fresh each invocation
-# (a resumed run re-runs its gates, so stale rounds would double-count), and so
-# is the turn-resume counter — this invocation starts with a full budget.
+# pauses aren't charged to a stage — and so the turn-resume count below is this
+# invocation's, not the whole history's.
 printf '%s __invocation__\n' "$(date +%s)" >> "$RUN_DIR/stages.log"
-: > "$RUN_DIR/gate-rounds.log"
 rm -f "$RUN_DIR/turn-resumes"
 echo "$WORKTREE" > "$RUN_DIR/worktree"
 echo "$BASE_REF" > "$RUN_DIR/base"
@@ -698,6 +848,18 @@ if opus_incomplete; then
      && declare -F capacity_for >/dev/null 2>&1 && session_limit_hit; then
     capacity_note "mid-run: the implementer stopped on a session limit"
     capacity_for "$CLAUDE_LOGS" || true   # the headroom is moot; CAP_RESET is not
+    # A mid-run limit always knows roughly when it lifts, so it always defers:
+    # ccusage first, then the time the message itself names, and failing both an
+    # hour — the alternative is dying as implementer_failed and waiting for a
+    # human, which cost this corpus a 216-minute P90 re-arm gap.
+    if [ -z "${CAP_RESET:-}" ]; then
+      if CAP_RESET=$(session_limit_reset); then
+        capacity_note "mid-run: no reset time from ccusage — using the one the limit message names ($(capacity_stamp "$CAP_RESET" '%H:%M'))"
+      else
+        CAP_RESET=$(( $(date +%s) + DEFAULT_LIMIT_RESET_SECS ))
+        capacity_note "mid-run: no reset time from ccusage or the message — assuming $((DEFAULT_LIMIT_RESET_SECS / 60)) minutes"
+      fi
+    fi
     defer_for_capacity mid-run            # returns only when it could not defer
   fi
   STATUS="implementer_failed"; write_result "$STATUS" ""
@@ -810,10 +972,26 @@ echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
 # one file write per top-level command, leaves the gate log byte-identical, and
 # parses nothing.
 #
+# The DEBUG trap alone records only TOP-LEVEL commands: bash does not inherit it
+# into functions, subshells or command substitutions without `set -T`, and a
+# gate whose failing command hides in one of those recorded its neighbour
+# instead (OLYX-1601 recorded `npm test` for a round `flutter test` failed in,
+# because the flutter step sat inside a subshell). `set -T` is the wrong cure —
+# it would also record every command substitution bash runs while EXPANDING the
+# real step, so a `--define=$(git rev-parse HEAD)` argument would name git as
+# the failed step. The ERR trap is the right one: with `set -E` it IS inherited
+# everywhere, and it fires on the command that actually returned nonzero. The
+# two are complementary and both write the same file, last writer winning —
+# ERR does not fire for a non-final element of an `&&` chain, which is exactly
+# the case DEBUG already gets right.
+#
 # Redirected to its own file, never to the log, so the reviewer's gate-latest.log
 # is exactly what it always was. `|| :` keeps a failed write from ever being
 # visible to the gate.
-GATE_TRACE_PRELUDE='trap '\''printf "%s\n" "$BASH_COMMAND" > "$HARNESS_GATE_STEP" 2>/dev/null || :'\'' DEBUG'
+GATE_TRACE_WRITE='printf "%s\n" "$BASH_COMMAND" > "$HARNESS_GATE_STEP" 2>/dev/null || :'
+GATE_TRACE_PRELUDE="trap '$GATE_TRACE_WRITE' DEBUG
+set -E
+trap '$GATE_TRACE_WRITE' ERR"
 
 run_gate() {
   local rc started secs step script failed_step
