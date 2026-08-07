@@ -994,6 +994,30 @@ review_diff_is_trivial() {
   [ "$n" -le "$REVIEW_TRIVIAL_LINES" ]
 }
 
+# The classification above lived only in result.json and a notification that
+# scrolls past: thirteen unreviewed diffs opened draft PRs a human could not
+# tell apart from reviewed ones, because a dead review stage simply *omits* the
+# "## Review notes" section. So the PR itself carries the warning, above
+# everything else, in the words of whichever cause produced it.
+#
+# Fires for every outcome that is not a real review in an arm that was meant to
+# have one: failed_silent and no_evidence (both mean no fix commits, no notes,
+# no rejection — nothing was proven about this diff), and the review-less arm a
+# machine without the codex CLI pins. The HARNESS_SKIP_REVIEW ablation arm is
+# deliberately silent: it is an experimental condition its operator chose, not
+# a stage that died. Empty output on a reviewed run leaves the body byte-for-
+# byte the one it has always been.
+unreviewed_warning() {
+  local why=""
+  case "$REVIEW_CLASS" in
+    failed_silent|no_evidence) why="produced no evidence" ;;
+    skipped)
+      if [ "$CODEX_AVAILABLE" = 0 ]; then why="is not installed on this machine"; fi ;;
+  esac
+  [ -n "$why" ] || return 0
+  printf '> ⚠️ **This diff is unreviewed.** The Codex review stage %s. A human review is required before merge.\n\n' "$why"
+}
+
 run_gate 1 || true
 
 # --- Codex review + fix rounds ----------------------------------------------
@@ -1179,7 +1203,8 @@ else
   git -C "$WORKTREE" push -u origin "$BRANCH" > "$RUN_DIR/push.log" 2>&1 || STATUS="push_failed"
   if [ "$STATUS" = "ready" ]; then
     TITLE=$(sed -n 's/^# //p' "$BRIEF" | head -1); [ -n "$TITLE" ] || TITLE="$TICKET"
-    { echo "Ref: $TICKET"; echo
+    { unreviewed_warning
+      echo "Ref: $TICKET"; echo
       if [ -f "$WORKTREE/.harness/implementer-notes.md" ]; then cat "$WORKTREE/.harness/implementer-notes.md"; fi
       if [ -f "$WORKTREE/.harness/review-notes.md" ]; then echo; echo "## Review notes"; cat "$WORKTREE/.harness/review-notes.md"; fi
     } > "$RUN_DIR/pr-body.md"

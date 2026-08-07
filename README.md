@@ -1081,6 +1081,29 @@ A review that took real time and still left nothing behind is recorded as
 `no_evidence` and *not* retried: it is worth knowing about, but it is not the
 failure signature above, and a second full pass is expensive.
 
+#### An unreviewed diff says so on the PR
+
+All of the above lived in `result.json` and in a notification that scrolls past.
+The PR — the artefact a human actually opens — showed nothing but a *missing*
+`## Review notes` section, so thirteen unreviewed diffs in one 46-run window
+opened draft PRs indistinguishable from reviewed ones. Now the body leads with
+the warning, above everything else:
+
+> ⚠️ **This diff is unreviewed.** The Codex review stage produced no evidence. A human review is required before merge.
+
+The wording names the cause, because the fix differs: *produced no evidence*
+for `failed_silent` and `no_evidence` (the stage ran and proved nothing about
+the diff), *is not installed on this machine* for the review-less arm a machine
+without the `codex` CLI pins. The `HARNESS_SKIP_REVIEW=1`
+[ablation arm](#ablation-knobs-set-on-the-run-tasksh-invocation) is deliberately
+silent — that is an experimental condition its operator chose, not a stage that
+died. A real review leaves the body byte-for-byte the one it has always been,
+and because the body is regenerated from the latest run, a re-dispatch that does
+get a review produces a body with the review notes and no warning.
+
+This is PR-body only: `result.json`, the stage lines and every other contract
+are untouched.
+
 #### A second Codex account for a dry primary
 
 The day the primary ChatGPT workspace ran out of credits, every review for six

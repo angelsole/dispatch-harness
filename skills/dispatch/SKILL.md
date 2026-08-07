@@ -180,6 +180,12 @@ the gate is; review it yourself and say so. `no_evidence` is the softer version
 than usual. `reviewed` and `skipped` mean what they say, and an empty value means
 the run never got that far.
 
+The PR says it too, so a human who never opens `result.json` still finds out:
+`failed_silent`, `no_evidence`, and the review-less arm of a machine with no
+`codex` CLI all open a PR whose body **leads** with a ⚠ *This diff is
+unreviewed* quote block naming the cause. Leave it there. It disappears on its
+own when a later dispatch gets a real review and the body is regenerated.
+
 `review_account` says which Codex subscription reviewed: `fallback` means the
 primary workspace could not take it (out of credits, or it came up empty), so
 the review itself is as trustworthy as any other — but tell the user the primary
