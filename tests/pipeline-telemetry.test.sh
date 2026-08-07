@@ -297,6 +297,12 @@ check "fail: and names the SECOND step of the chain, not the first or the whole 
 check "fail: seconds are recorded" \
   "$(result '.metrics.gate_rounds[0].seconds | type')" "number"
 check "fail: the run parks at gate_failed as before" "$(result .status)" "gate_failed"
+# Entering the Claude tier sets review_account even when that attempt produces
+# nothing. A gate failure wins the terminal status, but its push must not turn
+# that dead attempt into the success claim used by reviewed_claude runs.
+has_not "$(grep -A1 -F 'Title: dispatch GATE-FAIL' "$CURL_LOG")" \
+  "review ran on the Claude tier" \
+  "fail: a dead Claude attempt is not described as a completed review"
 # The gate log is what the reviewer reads: the tracer must be invisible in it.
 check "fail: the gate log is exactly the gate's own output" \
   "$(cat "$RUN/gate-1.log")" "linting: clean

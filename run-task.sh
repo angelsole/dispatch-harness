@@ -1850,7 +1850,7 @@ elif [ "$REVIEW_ACCOUNT" = fallback ]; then
   else
     DONE_NOTE="review ran on the fallback Codex account — the primary review produced nothing"
   fi
-elif [ "$REVIEW_ACCOUNT" = claude ]; then
+elif [ "$REVIEW_CLASS" = reviewed_claude ]; then
   DONE_NOTE="review ran on the Claude tier — $CLAUDE_TIER_REASON"
 fi
 stage "done: $STATUS" "$DONE_NOTE"
