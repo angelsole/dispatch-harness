@@ -50,9 +50,12 @@ harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
     waiting*)                  HARNESS_ACTOR='needs input'; HARNESS_ACTOR_COLOR="$C_RED" ;;
     implementing*|resuming*)   HARNESS_ACTOR='Opus';        HARNESS_ACTOR_COLOR="$C_BLUE" ;;
     'review skipped'*)         HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
+    'review — Codex unavailable'*|*'— Claude reviewer'*) \
+                               HARNESS_ACTOR='Claude';      HARNESS_ACTOR_COLOR="$C_BLUE" ;;
     review*|fix*)              HARNESS_ACTOR='Codex';       HARNESS_ACTOR_COLOR="$C_GREEN" ;;
     'test gate'*' skipped'*)   HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
     'test gate'*)              HARNESS_ACTOR='gate';        HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
+    'ticket sync'*)            HARNESS_ACTOR='ticket';      HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;
     push*)                     HARNESS_ACTOR='PR';          HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;
     demo*)                     HARNESS_ACTOR='demo';        HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;
     setup*|installing*)        HARNESS_ACTOR='setup';       HARNESS_ACTOR_COLOR="$C_CYAN" ;;

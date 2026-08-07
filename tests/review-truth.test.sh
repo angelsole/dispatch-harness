@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
-# Telling the truth about the review stage, in three parts:
+# Telling the truth about the review stage, in two parts:
 #
-#   1. An unreviewed diff says so on the PR itself. A dead review stage used to
-#      leave nothing on the PR but a missing "## Review notes" section — the
-#      failure lived in result.json and a notification nobody re-reads. Now the
-#      body opens with the warning, worded by cause, and a later dispatch that
-#      does get a review regenerates a body without it.
-#   2. The post-review gate earns its run. Round 2 on a tree byte-identical to
+#   1. The post-review gate earns its run. Round 2 on a tree byte-identical to
 #      the one round 1 just judged is recorded as skipped instead of re-run —
 #      and the verdict that stands is still round 1's, so a gate that was
-#      already failing still reaches the fix round.
-#   3. The reviewer may measure instead of argue — on loopback and nothing
+#      already failing still reaches the fix round. The comparison is against
+#      the tree the review STAGE was handed, so a commit from any tier (Codex,
+#      its retry, or the Claude reviewer) counts the same.
+#   2. The reviewer may measure instead of argue — on loopback and nothing
 #      else, out of a harness-owned CODEX_HOME that inherits none of the
 #      operator's rules, plugins or MCP servers. HARNESS_REVIEW_NETWORK=0
 #      restores the old command line AND environment byte-for-byte, in
@@ -40,11 +37,6 @@ has()      { if printf '%s' "$1" | grep -qF -- "$2"; then ok "$3"; else bad "$3 
 has_not()  { if printf '%s' "$1" | grep -qF -- "$2"; then bad "$3 (found [$2])"; else ok "$3"; fi; }
 file_has() { if grep -qF -- "$2" "$1" 2>/dev/null; then ok "$3"; else bad "$3 (missing [$2] in $1)"; fi; }
 
-# The warning, verbatim. Anything that rewords it has to reword it here too —
-# which is the point: the two causes read differently and both are pinned.
-WARN_DEAD='> ⚠️ **This diff is unreviewed.** The Codex review stage produced no evidence. A human review is required before merge.'
-WARN_NOCODEX='> ⚠️ **This diff is unreviewed.** The Codex review stage is not installed on this machine. A human review is required before merge.'
-
 # --- fixture -----------------------------------------------------------------
 FHOME="$ROOT/home"
 HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"
@@ -53,7 +45,7 @@ CODEX_ARGV="$ROOT/codex-argv.log"
 CODEX_ARGS="$ROOT/codex-args.nul"
 CODEX_HOMES="$ROOT/codex-homes.log"
 CODEX_MODE="$ROOT/codex-mode"
-PR_BODIES="$ROOT/pr-bodies"
+CLAUDE_MODE="$ROOT/claude-mode"
 # The operator's own Codex home, exactly as a developer machine has it: an
 # auth token, a rules file recording every command they ever approved (`git
 # push` and `gh` among them), an MCP server and a plugin. None of it is the
@@ -64,10 +56,11 @@ FAKE_TOKEN='fake-oauth-token-do-not-log'
 OPERATOR_RULES='prefix_rule(pattern = ["git", "push"], decision = "allow")
 prefix_rule(pattern = ["gh"], decision = "allow")'
 
-mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$PR_BODIES" \
+mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" \
   "$OPHOME/rules" "$OPHOME/plugins" "$FBHOME"
 : > "$CODEX_ARGV"; : > "$CODEX_ARGS"; : > "$CODEX_HOMES"
 printf 'notes\n' > "$CODEX_MODE"
+printf 'notes\n' > "$CLAUDE_MODE"
 printf '%s\n' "$FAKE_TOKEN" > "$OPHOME/auth.json"
 printf '%s\n' "$OPERATOR_RULES" > "$OPHOME/rules/default.rules"
 printf 'enabled = true\n' > "$OPHOME/plugins/some-plugin.toml"
@@ -103,12 +96,30 @@ git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
 
 # --- fakes -------------------------------------------------------------------
-# Implementer stand-in: a diff big enough that the review floor applies to it.
-cat > "$FAKES/claude" <<'EOF'
+# One claude stand-in, two jobs, told apart by the prompt: the implementer
+# writes a diff big enough that the review floor applies to it, and the Claude
+# review tier — the last one, reached when both Codex accounts came up empty —
+# either leaves notes or leaves a commit, which is exactly the distinction the
+# gate-#2 skip has to make for a non-Codex reviewer.
+cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
-seq 1 30 >> impl.txt
-git add -A
-git commit -q -m "feat: fixture change"
+prompt=""; prev=""
+for a in "\$@"; do [ "\$prev" = "-p" ] && prompt="\$a"; prev="\$a"; done
+case "\$prompt" in
+  *"reviewer stage"*)
+    mkdir -p .harness
+    echo "claude tier: sound" > .harness/review-notes.md
+    if [ "\$(cat "$CLAUDE_MODE")" = commits ]; then
+      printf 'claude reviewer touched this\n' >> impl.txt
+      git add -A && git commit -q -m "refactor: claude reviewer change"
+    fi
+    ;;
+  *)
+    seq 1 30 >> impl.txt
+    git add -A
+    git commit -q -m "feat: fixture change"
+    ;;
+esac
 EOF
 
 # Reviewer stand-in. Every invocation records its whole argv, because the
@@ -148,26 +159,11 @@ cat > "$FAKES/curl" <<'EOF'
 exit 0
 EOF
 
-# The PR step. `pr create` keeps the body it was handed, so the assertions can
-# read what GitHub would actually have received rather than the file behind it.
-cat > "$FAKES/gh" <<EOF
+cat > "$FAKES/gh" <<'EOF'
 #!/usr/bin/env bash
-case "\$1 \$2" in
-  "pr create")
-    body=""; prev=""
-    for a in "\$@"; do
-      if [ "\$prev" = "--body-file" ]; then body="\$a"; break; fi
-      prev="\$a"
-    done
-    branch=""; prev=""
-    for a in "\$@"; do
-      if [ "\$prev" = "--head" ]; then branch="\$a"; break; fi
-      prev="\$a"
-    done
-    [ -n "\$body" ] && cp "\$body" "$PR_BODIES/\$(basename "\$branch")"
-    echo "https://example.invalid/pr/1"
-    ;;
-  *) exit 1 ;;
+case "$1 $2" in
+  "pr create") echo "https://example.invalid/pr/1" ;;
+  *)           exit 1 ;;
 esac
 EOF
 
@@ -201,7 +197,6 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
 }
 result()  { jq -r "$1 // \"\"" "$RUN/result.json" 2>/dev/null; }
 rounds()  { awk '{ print $1 $2 }' "$RUN/gate-rounds.log" | paste -sd, - | tr -d ' '; }
-pr_body() { cat "$PR_BODIES/$1" 2>/dev/null; }
 argv_arg() {  # $1 = one-based position in the most recent codex invocation
   local want="$1" i=0 a
   while IFS= read -r -d '' a; do
@@ -217,70 +212,6 @@ argv_count() {
 review_home_for() {  # $1 = account home, $2 = ticket
   printf '%s/harness-review/%s' "$1" "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
 }
-
-# ---------------------------------------------------------------------------
-echo "== an unreviewed diff says so on the PR itself =="
-# ---------------------------------------------------------------------------
-printf 'instant\n' > "$CODEX_MODE"
-dispatch PR-DEAD ""
-check "dead review: the run still ships, as it always did" "$(result .status)" "ready"
-check "dead review: and is recorded as the silent failure it is" \
-  "$(result .review)" "failed_silent"
-check "dead review: the PR body LEADS with the warning — above the Ref line" \
-  "$(pr_body PR-DEAD | sed -n 1p)" "$WARN_DEAD"
-has "$(pr_body PR-DEAD)" "Ref: PR-DEAD" "dead review: the body it always had follows"
-file_has "$RUN/pr-body.md" "$WARN_DEAD" "dead review: and the body file on disk agrees"
-
-# A review that took real time and left nothing is no_evidence rather than
-# failed_silent — a different classification, the same unreviewed diff.
-dispatch PR-NOEVIDENCE "HARNESS_REVIEW_MIN_SECONDS=0"
-check "no_evidence: recorded as before" "$(result .review)" "no_evidence"
-check "no_evidence: nothing proved anything about this diff either" \
-  "$(pr_body PR-NOEVIDENCE | sed -n 1p)" "$WARN_DEAD"
-
-# A machine with no codex CLI reviews nothing — for a reason worth wording
-# differently, because the fix is installing something, not reading a log.
-dispatch PR-NOCODEX "CODEX_BIN=$ROOT/no-such-codex"
-check "no codex: the arm says review-less" "$(result .arm)" "no_review"
-check "no codex: the warning names the cause" \
-  "$(pr_body PR-NOCODEX | sed -n 1p)" "$WARN_NOCODEX"
-
-# ---------------------------------------------------------------------------
-echo "== a reviewed diff's PR is exactly the PR it was before =="
-# ---------------------------------------------------------------------------
-printf 'notes\n' > "$CODEX_MODE"
-dispatch PR-REVIEWED ""
-check "reviewed: recorded as a real review" "$(result .review)" "reviewed"
-check "reviewed: the body still opens on the Ref line" \
-  "$(pr_body PR-REVIEWED | sed -n 1p)" "Ref: PR-REVIEWED"
-has_not "$(pr_body PR-REVIEWED)" "This diff is unreviewed" \
-  "reviewed: no warning anywhere in the body"
-has "$(pr_body PR-REVIEWED)" "## Review notes" "reviewed: the review notes are there"
-
-# The ablation arm is an experimental condition its operator chose, not a stage
-# that died — it is measured, not warned about.
-dispatch PR-SKIPARM "HARNESS_SKIP_REVIEW=1"
-check "skip arm: review recorded as skipped" "$(result .review)" "skipped"
-has_not "$(pr_body PR-SKIPARM)" "This diff is unreviewed" \
-  "skip arm: the deliberate no-review arm carries no warning"
-
-# ---------------------------------------------------------------------------
-echo "== a later dispatch that gets a review regenerates a body without it =="
-# ---------------------------------------------------------------------------
-printf 'instant\n' > "$CODEX_MODE"
-dispatch PR-REDISPATCH ""
-file_has "$RUN/pr-body.md" "$WARN_DEAD" "re-dispatch: the first run's body warns"
-printf 'notes\n' > "$CODEX_MODE"
-# Main protects a shipped run from accidental re-dispatch. This is the explicit
-# exception the scenario is exercising: regenerate the body from a later review.
-dispatch PR-REDISPATCH "HARNESS_REDISPATCH=1"
-check "re-dispatch: the second run really did review" "$(result .review)" "reviewed"
-if grep -qF -- "$WARN_DEAD" "$RUN/pr-body.md"; then
-  bad "re-dispatch: the warning is gone with the regenerated body"
-else
-  ok "re-dispatch: the warning is gone with the regenerated body"
-fi
-file_has "$RUN/pr-body.md" "## Review notes" "re-dispatch: replaced by the notes"
 
 # ---------------------------------------------------------------------------
 echo "== gate #2 earns its run =="
@@ -339,6 +270,27 @@ file_has "$RUN/timeline" "fix round 2 — Codex (ChatGPT sub)" \
 check "failing gate, no commits: the run parks at gate_failed as before" \
   "$(result .status)" "gate_failed"
 TEST_GATE_CMD=true
+
+# The reviewer is not always Codex. When both Codex accounts come up empty the
+# Claude tier takes the review, and its commits are commits: the comparison is
+# against the tree the review STAGE was handed, so which backend moved HEAD
+# never enters into it.
+printf 'instant\n' > "$CODEX_MODE"   # nothing from Codex on either attempt
+printf 'notes\n'   > "$CLAUDE_MODE"
+dispatch GATE-CLAUDE-NOCOMMITS ""
+check "claude tier: it really was the Claude reviewer that reviewed" \
+  "$(result .review)" "reviewed_claude"
+check "claude tier: leaving notes and no commits, round 2 is skipped" \
+  "$(rounds)" "1pass,2skipped"
+check "claude tier: and the run ships as it would have" "$(result .status)" "ready"
+
+printf 'commits\n' > "$CLAUDE_MODE"
+dispatch GATE-CLAUDE-COMMITS ""
+check "claude tier: the same tier committing earns the round" \
+  "$(rounds)" "1pass,2pass"
+check "claude tier: which is attributed to the reviewer like any other" \
+  "$(result .metrics.codex_commits)" "1"
+printf 'notes\n' > "$CLAUDE_MODE"
 
 # ---------------------------------------------------------------------------
 echo "== the reviewer measures on loopback and reaches nothing else =="

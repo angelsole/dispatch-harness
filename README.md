@@ -237,6 +237,47 @@ Claude-only run resumed on a machine that now has `codex` keeps its blank
 reviewer fields (its review is not retro-fitted) and uses codex only for the
 mechanical base-sync conflict step.
 
+### When Codex dies mid-run (out of credits)
+
+Different from a machine that never had codex: a machine WITH codex whose
+review produced no evidence — a ChatGPT workspace out of credits is the shape
+that actually happened, ten runs shipping unreviewed overnight — must not
+treat the failure as a clean review. Cross-vendor is the preference; **a
+review is the requirement**. The stage runs in tiers, every decision made from
+evidence (notes, a rejection, or reviewer commits), never exit codes:
+
+1. the **primary Codex account** reviews;
+2. on a credits-certain death (or one silent no-op below the review floor) the
+   **fallback Codex account** takes a retry, when
+   `HARNESS_CODEX_HOME_FALLBACK` is configured — still cross-vendor;
+3. when the Codex side is done — both accounts empty, or a dry primary with no
+   fallback configured (a retry on a certainly-dry account buys nothing, and
+   credits outrank the trivial-diff shortcut) — the same review prompt runs in
+   a **fresh Claude session** (never the implementer's own — still a cold read
+   of the diff, just not cross-vendor). Recorded loudly: the stage line
+   (`review — Codex unavailable (…) → Claude reviewer`), a `review-fallback`
+   marker in the run dir, `review: reviewed_claude` and
+   `review_account: claude` in `result.json`;
+4. if even that produces no evidence, the run ends **`review_failed`** and
+   pushes nothing — an unreviewed diff never ships looking reviewed — and the
+   phone push goes out at high priority, since only a human can top up the
+   credits.
+
+The pipeline never marks a PR ready and never merges, in any arm; opening a
+draft PR is as far as automation goes.
+
+### Ticket sync — the PR lands on the ticket by itself
+
+An overnight run has no orchestrator watching for its result. When a run
+reaches `ready` and its run id starts with a `TEAM-123` identifier, the
+pipeline comments the draft-PR link on the Linear ticket and moves the ticket
+to its team's **In Review** state (matched against the team's real state
+names, "In Review" by name first, else the `started`-type state mentioning
+"review"). It reads the same `linear-api-key` file the quartermaster uses,
+logs everything to `runs/<RUN-ID>/ticket-sync.log`, and is strictly
+best-effort — a Linear hiccup never fails a run. `HARNESS_TICKET_SYNC=0`
+disables it. Ad-hoc runs (no ticket-shaped id) are skipped automatically.
+
 ---
 
 ## Quickstart
@@ -274,9 +315,27 @@ approval. On approval it launches the run in the background:
 ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
 ```
 
-When the run finishes you get a verdict and, if it's `ready`, a draft PR. See
+When the run finishes you get a verdict and, if it's `ready`, a draft PR. A
+ticket that spans repos (an API change plus the screen that consumes it) fans
+out into one run — and one PR — per repo, dispatched together; when every PR is
+ready the planner puts the links on the ticket and moves it to In Review. See
 [`skills/dispatch/SKILL.md`](skills/dispatch/SKILL.md) for the full planner
 protocol.
+
+For a ticket that is already written well enough to build from, skip the
+approval pause entirely:
+
+```
+/briefed-dispatch <TICKET>
+```
+
+The ticket is treated as the approved artefact: the planner researches every
+repo it touches, writes the briefs (recording the decisions it took), launches
+all runs immediately, answers worker questions itself where the ticket or the
+codebase answers them, and involves you only for genuine product forks. See
+[`skills/briefed-dispatch/SKILL.md`](skills/briefed-dispatch/SKILL.md). Thin
+tickets and free-form work stay with `/dispatch` — its approval step is the
+safety net this skill deliberately removes.
 
 ### Scheduling a run for later
 
@@ -523,13 +582,26 @@ directories under `~/accounts/` (`QM_ACCOUNTS_DIR`), one per station, each with
 by its local part up to the first dot, so `angel.sole@olyx.nl` is `~/accounts/angel`.
 An assignee with no station on this machine is reported, never guessed at.
 
-**A brief is still the contract.** A tagged ticket is armable only when
-`runs/<TICKET>/brief.md` already exists — the same human-approved brief
-`schedule.sh` demands. Tagged tickets without one are listed under *needs a
-brief* and left alone; generating briefs from tickets unattended is deliberately
-not something this does. Tickets already armed, already running, or already
-delivered (a `result.json` with a `pr_url`) are skipped with the reason, which
-is what makes a second run at 19:05 arm nothing at all.
+**A brief is still the contract — and the evening can now write one.** A
+tagged ticket is armable only when `runs/<TICKET>/brief.md` exists — the same
+brief `schedule.sh` demands. By default (`QM_AUTOBRIEF=1`) an `--arm` run
+self-briefs the tagged tickets that lack one, in queue order and only up to
+the night's remaining headroom: a planner session on the owning station's own
+subscription, confined by `planner-settings.json` (read-only research plus one
+`Write` into `runs/` — no Bash, no network, no git writes), turns the ticket
+text into the brief; the repo it names is verified against what actually
+exists under `QM_REPO_ROOTS`, the branch must be a valid git ref, and anything
+else is rejected and quarantined rather than armed. The report lists these
+under *Self-briefed* — no human has read those plans, which is the trade the
+default makes; set `QM_AUTOBRIEF=0` to restore the stricter contract where
+unbriefed tickets are listed under *needs a brief* and left alone. `--report`
+never briefs. Knobs: `QM_AUTOBRIEF_TIMEOUT` (planner seconds, default 1200),
+`QM_AUTOBRIEF_MODEL` (empty = the station's default), `QM_AUTOBRIEF_MAX_BODY`
+(ticket-description bytes fed to the planner), and `QM_REPO_ROOTS` /
+`QM_REPO_DEPTH` (where repos may be discovered). Tickets already armed,
+already running, or already delivered (a `result.json` with a `pr_url`) are
+skipped with the reason, which is what makes a second run at 19:05 arm nothing
+at all.
 
 **Capacity, honestly estimated.** Per station,
 `CLAUDE_CONFIG_DIR=~/accounts/<name>/claude npx -y ccusage@latest blocks --json
@@ -712,8 +784,8 @@ utilities) and **denies the ones that could do damage**: `git push`,
 `git checkout`, `git switch`, and `gh`. The harness itself owns pushing and PR
 creation; the worker must never touch remotes or switch branches.
 
-**This file governs the Claude worker and nothing else.** It is a Claude
-settings file, passed to the implementer and to the Claude conflict resolver; no
+**This file governs the Claude-side workers only** — the implementer, the Claude
+conflict resolver, and the Claude review tier. It is a Claude settings file; no
 `codex` invocation consumes it, and none ever has. What bounds the Codex
 reviewer is its own sandbox plus the harness-owned `CODEX_HOME` described under
 [What the reviewer is allowed to reach](#what-the-reviewer-is-allowed-to-reach)
@@ -773,6 +845,11 @@ and `status.sh --watch` gives you the same picture on demand.
   redrawn in place every 2s (`HARNESS_WATCH_INTERVAL` to retune).
 - **Notifications** — a desktop banner (macOS `osascript`) and/or a phone push
   (ntfy) on every stage handoff. Silence the desktop ones with `HARNESS_NOTIFY=0`.
+  The two stages you have to act on carry more than the stage text: a terminal
+  `done:` push appends the PR URL and makes the notification tappable (plus an
+  **Open PR** button), and `waiting — implementer needs your input` goes out at
+  high priority with a warning tag so it survives a silenced phone. Every other
+  stage stays a quiet tick.
 - **`HARNESS_MIRROR`** — mirror this machine's run dirs onto another machine
   while they run, so its wall shows them too:
   [Runs from any machine](#runs-from-any-machine-harness_mirror).
@@ -1189,29 +1266,6 @@ A review that took real time and still left nothing behind is recorded as
 `no_evidence` and *not* retried: it is worth knowing about, but it is not the
 failure signature above, and a second full pass is expensive.
 
-#### An unreviewed diff says so on the PR
-
-All of the above lived in `result.json` and in a notification that scrolls past.
-The PR — the artefact a human actually opens — showed nothing but a *missing*
-`## Review notes` section, so thirteen unreviewed diffs in one 46-run window
-opened draft PRs indistinguishable from reviewed ones. Now the body leads with
-the warning, above everything else:
-
-> ⚠️ **This diff is unreviewed.** The Codex review stage produced no evidence. A human review is required before merge.
-
-The wording names the cause, because the fix differs: *produced no evidence*
-for `failed_silent` and `no_evidence` (the stage ran and proved nothing about
-the diff), *is not installed on this machine* for the review-less arm a machine
-without the `codex` CLI pins. The `HARNESS_SKIP_REVIEW=1`
-[ablation arm](#ablation-knobs-set-on-the-run-tasksh-invocation) is deliberately
-silent — that is an experimental condition its operator chose, not a stage that
-died. A real review leaves the body byte-for-byte the one it has always been,
-and because the body is regenerated from the latest run, a re-dispatch that does
-get a review produces a body with the review notes and no warning.
-
-This is PR-body only: `result.json`, the stage lines and every other contract
-are untouched.
-
 #### When the post-review gate is skipped
 
 Gate #2 re-ran the entire suite on a byte-identical tree in 16 of 46 runs — the
@@ -1221,8 +1275,9 @@ function of the tree, so that round's verdict is knowable without spending it.
 
 The stage is not going anywhere (it caught its first real reviewer-introduced
 regression the same week). Only the provably-redundant case goes: `HEAD` is
-captured when the review stage starts, and if it is unchanged when the round
-comes due, the round is recorded rather than run —
+captured when the review stage starts — before the *first* tier, so it counts a
+commit from Codex, its retry or the Claude reviewer alike — and if it is
+unchanged when the round comes due, the round is recorded rather than run:
 
 ```
 test gate #2 skipped — review committed nothing
@@ -1232,18 +1287,18 @@ test gate #2 skipped — review committed nothing
 third value beside `pass`/`fail`) and `{"round":"2","result":"skipped",...}` in
 `metrics.gate_rounds`. **The verdict that stands is round 1's**, so a gate that
 was already failing still reaches the fix round exactly as before. Any commit at
-all — the review's or an earlier fix round's — and the round runs as it always
+all — any tier's, or an earlier fix round's — and the round runs as it always
 has.
 
 #### What the reviewer is allowed to reach
 
-`codex` ordinarily runs under its `workspace-write` sandbox, which denies network — and
+`codex` runs under its `workspace-write` sandbox, which denies network — and
 denies **loopback** with it. That is not academic: Flutter's test harness could
 not bind its socket and DB-backed jest suites could not reach a local Postgres,
 so on those repos the reviewer argued about the code instead of running it, on a
 pipeline whose review is the only defect detection after the implementer.
 
-The reviewer gets loopback, and nothing else. Two things, together:
+The Codex reviewer gets loopback, and nothing else. Two things, together:
 
 **Sandboxed networking, scoped to the loopback destinations.** Not
 `sandbox_workspace_write.network_access`, which is all-or-nothing and would hand
@@ -1254,28 +1309,23 @@ nothing allows it — there is no `"*"` entry, and an absent allow rule already
 denies. `allow_local_binding` is on because allowlisting a loopback target is
 [not sufficient on its own](https://github.com/openai/codex/issues/33227) and
 Flutter's runner has to *bind* a socket rather than merely reach one; that
-widens the sandbox to local and private ranges and no further.
+widens the sandbox to local and private ranges and no further. The enabled arm
+drops the explicit `-s workspace-write` selector, which codex 0.145 treats as
+authoritative and which would otherwise silently override the profile.
 
-In the enabled arm that named profile replaces the explicit `-s
-workspace-write` argument. This is required: Codex CLI 0.145 gives an explicit
-sandbox selector precedence over `default_permissions`, which would otherwise
-leave the loopback policy configured but inactive. The off knob restores the
-legacy selector and writable-root override together.
-
-**A harness-owned `CODEX_HOME` for the attempt.** `codex` reads rules, plugins
-and MCP servers out of `CODEX_HOME`, and a developer's `rules/default.rules`
-records every command they ever approved — `git push` and `gh` among them.
-Note what that means: `worker-settings.json` is a *Claude* settings file and no
-`codex` invocation consumes it, so the deny list below has never been the
-reviewer's boundary. So each run uses a directory the harness writes,
-`<account home>/harness-review/<run-id>/`: the policy above and nothing else.
-Per-run directories matter because tickets can review in parallel and their
-writable git roots differ; no run can replace another's policy while Codex is
-starting. There are no rules, plugins, or MCP servers.
-Auth is the one thing inherited, through a symlink to that account's own
-`auth.json` — nothing is copied, nothing leaves the account's tree, nothing is
-logged, and a token the attempt refreshes is moved back to the account's own
-file. Each account gets its own tree, so this composes with
+**A harness-owned `CODEX_HOME` per account and run.** `codex` reads rules,
+plugins and MCP servers out of `CODEX_HOME`, and a developer's
+`rules/default.rules` records every command they ever approved — `git push` and
+`gh` among them. Note what that means: `worker-settings.json` is a *Claude*
+settings file and no `codex` invocation consumes it, so the deny list below has
+never been the Codex reviewer's boundary. So each attempt runs out of
+`<account home>/harness-review/<run-id>/`, a directory the harness writes: the
+policy above and nothing else. No rules, no plugins, no MCP servers. Per run, so
+parallel tickets never overwrite each other's filesystem policy while a `codex`
+process is starting. Auth is the one thing inherited, through a symlink to that
+account's own `auth.json` — nothing is copied, nothing leaves the account's
+tree, nothing is logged, and a token the attempt refreshes is moved back to the
+account's own file. Per account, so this composes with
 [`HARNESS_CODEX_HOME_FALLBACK`](#a-second-codex-account-for-a-dry-primary).
 
 The cost of that isolation is the thing to know before you turn it on: the
@@ -1288,6 +1338,9 @@ itself, so a stock ChatGPT-subscription setup needs nothing else; if yours does,
 sets `network_access`. A `codex` build that ignores the profile therefore leaves
 the reviewer with today's sandbox rather than an open one.
 
+None of this touches the [Claude reviewer tier](#reading-the-pipelines-own-vitals):
+that one runs under `worker-settings.json`, which confines it already.
+
 | Env var | Effect | Default |
 | --- | --- | --- |
 | `HARNESS_REVIEW_NETWORK` | `0` restores the old sandbox exactly: no loopback, no isolated config dir, and a `codex` command line and environment byte-identical to what they were before this existed. Anything else (or unset) enables both. | `1` |
@@ -1298,12 +1351,12 @@ relevant to the conflicted files, and it had the same problem — and the same
 inherited `git push` rule.
 
 What is *not* pinned here: whether your `codex` build enforces the profile it is
-handed. `tests/review-truth.test.sh` pins the policy the harness assembles, and
-then probes a real `codex sandbox` when one is on the machine — binding loopback
-under the profile, refusing a public host, and running the same bind under a
-bare `CODEX_HOME` as a control so a build that allowed loopback all along cannot
-read as this feature working. Where the CLI is absent or will not run the probe,
-the suite prints `skip` rather than a pass.
+handed. `tests/review-truth.test.sh` pins the policy the harness assembles and
+the argv that selects it, then probes a real `codex sandbox` when one is on the
+machine — binding loopback under the profile, refusing a public host, and
+running the same bind under a bare `CODEX_HOME` as a control so a build that
+allowed loopback all along cannot read as this feature working. Where the CLI is
+absent or will not run the probe, the suite prints `skip` rather than a pass.
 
 #### A second Codex account for a dry primary
 
@@ -1329,9 +1382,13 @@ Two things send the retry to the fallback:
    the harness already buys runs on the fallback when one is configured, on the
    primary when none is.
 
-If the fallback attempt also produces no evidence, the run downgrades exactly
-as it did before: `review: failed_silent`, arm `no_review`, and the diff
-declared unreviewed. A fallback is a second chance, never a second opinion.
+If the fallback attempt also produces no evidence, the review does not
+downgrade and ship anymore — the Claude tier takes the same prompt, and only
+when that too leaves no evidence does the run end `review_failed` (see
+[When Codex dies mid-run](#when-codex-dies-mid-run-out-of-credits)). A
+fallback account is a second chance, never a second opinion; the Claude tier
+is the last resort — same vendor as the implementer, which is exactly why it
+comes last and is recorded apart (`reviewed_claude`).
 
 **One attempt, one account.** `CODEX_HOME` is chosen before an attempt starts
 and never changes while it runs. The switch is sticky and only ever moves the
@@ -1396,14 +1453,15 @@ code**, against your repositories. Be clear-eyed about what that means.
   machine.
 - **Prompt-injection surface.** Workers are allowed `WebFetch` and `WebSearch`,
   and they read repository contents and dependency code. Any of that text can
-  contain instructions crafted to subvert the agent. For the Claude worker the
-  deny list (`git push`/`checkout`/`switch`, `gh`, plus any destructive MCP
-  tools you add) is the containment boundary: even a fully hijacked worker
-  cannot push, switch branches, open/merge PRs, or hit a denied MCP tool. For
-  the Codex reviewer that file does not apply at all — its boundary is the
-  sandbox it runs in and the harness-owned `CODEX_HOME` that gives it no rules,
-  plugins or MCP servers of yours, and no route off loopback. Either way the
-  harness — not the model — owns every outward-facing action.
+  contain instructions crafted to subvert the agent. For the Claude-side
+  workers the deny list (`git push`/`checkout`/`switch`, `gh`, plus any
+  destructive MCP tools you add) is the containment boundary: even a fully
+  hijacked worker cannot push, switch branches, open/merge PRs, or hit a denied
+  MCP tool. For the Codex reviewer that file does not apply at all — its
+  boundary is the sandbox it runs in and the harness-owned `CODEX_HOME` that
+  gives it no rules, plugins or MCP servers of yours, and no route off
+  loopback. Either way the harness — not the model — owns every outward-facing
+  action.
 - **Deny-list philosophy.** Allow the worker the minimum it needs to implement
   and self-check; deny anything that reaches outside the worktree or is
   irreversible. When in doubt, deny — a blocked tool call surfaces as a prompt,

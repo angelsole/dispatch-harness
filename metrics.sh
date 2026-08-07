@@ -160,6 +160,7 @@ report() {
         if ($1 == "ready") rready[$10]++
       }
       if ($11 == "fallback") fallback_reviews++
+      if ($11 == "claude")   claude_reviews++
       # Which rounds ran, and which of them failed.
       if ($12 != "") {
         nv = split($12, vs, ",")
@@ -210,6 +211,10 @@ report() {
       # number, so any other one is the line that says "top the account up".
       printf "%-22s %6d%s\n", "fallback-account reviews", fallback_reviews + 0, \
         (fallback_reviews + 0 > 0 ? "   <- the primary Codex account needs topping up" : "")
+      # The tier past both Codex accounts: still a review, but same-vendor as
+      # the implementer — any number here says the Codex side needs attention.
+      printf "%-22s %6d%s\n", "claude-tier reviews", claude_reviews + 0, \
+        (claude_reviews + 0 > 0 ? "   <- both Codex accounts came up empty" : "")
 
       # --- Attempts: what the machine actually spent ------------------------
       # A run is a ticket; an attempt is one dispatch of it. Run-level success
