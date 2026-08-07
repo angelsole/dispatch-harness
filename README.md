@@ -587,13 +587,21 @@ tagged ticket is armable only when `runs/<TICKET>/brief.md` exists — the same
 brief `schedule.sh` demands. By default (`QM_AUTOBRIEF=1`) an `--arm` run
 self-briefs the tagged tickets that lack one, in queue order and only up to
 the night's remaining headroom: a planner session on the owning station's own
-subscription, confined by `planner-settings.json` (read-only research plus one
-`Write` into `runs/` — no Bash, no network, no git writes), turns the ticket
-text into the brief; the repo it names is verified against what actually
-exists under `QM_REPO_ROOTS`, the branch must be a valid git ref, and anything
-else is rejected and quarantined rather than armed. The report lists these
-under *Self-briefed* — no human has read those plans, which is the trade the
-default makes; set `QM_AUTOBRIEF=0` to restore the stricter contract where
+subscription, confined by `planner-settings.json` (read-only research minus the
+harness's own secrets, plus one `Write` into `runs/` — no Bash, no network, no
+subagents, no git writes), turns the ticket text into the brief. The ticket
+text reaches that planner inside a fence whose marker is minted per call, so a
+description that types its own `END` marker and then gives orders is still just
+quoted data. The planner writes a uniquely named, non-armable candidate; after
+validation, the quartermaster publishes it as `brief.md` with an atomic
+no-clobber link, so a brief that appeared meanwhile is never replaced. Every
+existing `brief.md` under `runs/` is also checkpointed before the planner
+starts: anything it wrote elsewhere is put back byte for byte, the planner's
+version quarantined beside it, and the ticket left unarmed — a steered planner
+cannot plant an armable brief in a sibling ticket's directory or overwrite one
+a human approved. The report lists self-written
+briefs under *Self-briefed* — no human has read those plans, which is the trade
+the default makes; set `QM_AUTOBRIEF=0` to restore the stricter contract where
 unbriefed tickets are listed under *needs a brief* and left alone. `--report`
 never briefs. Knobs: `QM_AUTOBRIEF_TIMEOUT` (planner seconds, default 1200),
 `QM_AUTOBRIEF_MODEL` (empty = the station's default), `QM_AUTOBRIEF_MAX_BODY`
@@ -617,6 +625,18 @@ the estimate is this machine's own history rather than a guess. Then
 It is an estimate, and the safety factor is there because it is one — when
 ccusage cannot account for a station at all, the report says so and falls back
 to `QM_FALLBACK_N` rather than inventing a number.
+
+**No brief arms unchecked.** Before a brief is handed to `schedule.sh` —
+self-written or hand-written, it makes no difference — its `Repo` must be one
+of the repos actually discovered under `QM_REPO_ROOTS`, verbatim, and its
+`Branch` must be a ref `git check-ref-format` accepts. `feat/x (suggested)` arms fine
+and then burns a 02:00 run on `setup_failed` with nobody awake to see it, and a
+repo this machine does not have does the same. A brief that fails is listed
+under *Rejected briefs* and moved aside to `brief.rejected.md` — never deleted,
+never armed, and never left at the path tomorrow's pass would read as approved.
+`--report` names the same briefs and moves nothing. When no repo can be
+discovered at all the roots are wrong rather than the briefs, so nothing is
+quarantined and nothing is armed.
 
 **What `--arm` does.** Eligible tickets take the fire times in `QM_TIMES` in
 queue order (priority first, oldest first within a priority), and each is handed
