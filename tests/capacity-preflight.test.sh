@@ -101,8 +101,14 @@ EOF
 
 # Implementer stand-in. `commit` moves the pipeline along; the other modes are
 # the failure shapes the classifier has to tell apart.
+#
+# These dispatches run without a codex CLI, which is now the Claude review tier's
+# arm rather than a skipped stage: the same binary is asked to review. That call
+# is neither an implementer spawn nor a session-limit rehearsal, so it returns
+# before anything is recorded or any mode is replayed.
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
+for a in "\$@"; do case "\$a" in *"You are the reviewer stage"*) exit 0 ;; esac; done
 prev=""
 for a in "\$@"; do
   if [ "\$prev" = "-p" ]; then printf '%s\n---\n' "\$a" >> "$CLAUDE_CALLS"; break; fi

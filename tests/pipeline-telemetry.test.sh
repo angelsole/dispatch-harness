@@ -226,37 +226,56 @@ check "reject: a rejection is the most engaged review there is" \
   "$(result .review)" "reviewed"
 check "reject: and the run is rejected as before" "$(result .status)" "rejected"
 
-# The floor is what buys the retry; without it, a no-evidence review is recorded
-# but never paid for twice.
+# The floor is what buys the CODEX retry; without it, a no-evidence review is
+# never paid for twice on an account that already came up empty. It is not,
+# however, a reason to ship: a stopwatch is not evidence, so the last tier gets
+# the diff — and this suite's Claude tier is inert, so the run holds.
 printf 'instant\n' > "$CODEX_MODE"
 BEFORE=$(codex_calls)
 dispatch REV-NOFLOOR "HARNESS_REVIEW_MIN_SECONDS=0"
-check "floor: a review above the floor is not retried" "$(codex_calls)" "$((BEFORE + 1))"
-check "floor: it is recorded as no_evidence, not as a failure" \
-  "$(result .review)" "no_evidence"
-check "floor: so the arm is left alone" "$(result .arm)" "full"
+check "floor: a review above the floor is not retried on Codex" \
+  "$(codex_calls)" "$((BEFORE + 1))"
+file_has "$RUN/timeline" "review — Codex unavailable (no evidence from the Codex review after" \
+  "floor: it hands the diff to the Claude tier instead of recording a shippable no_evidence"
+check "floor: which produced nothing here, so nothing reviewed the diff" \
+  "$(result .review)" "failed_silent"
+check "floor: and the arm says so" "$(result .arm)" "no_review"
+check "floor: a diff no tier read does not ship" "$(result .status)" "review_failed"
 
 # A two-line diff genuinely can be reviewed in seconds: crying wolf over it
-# would teach everyone to ignore the alarm.
+# would teach everyone to ignore the alarm. "Trivial" excuses a fast review,
+# never an absent one — the Claude tier gets it like any other empty stage.
 printf 'tiny\n' > "$CLAUDE_MODE"
 BEFORE=$(codex_calls)
 dispatch REV-TRIVIAL ""
 printf 'commit\n' > "$CLAUDE_MODE"
-check "trivial: a trivial diff never triggers the retry" "$(codex_calls)" "$((BEFORE + 1))"
-check "trivial: and is recorded as no_evidence" "$(result .review)" "no_evidence"
+check "trivial: a trivial diff never triggers the Codex retry" "$(codex_calls)" "$((BEFORE + 1))"
+check "trivial: but it is still handed on rather than shipped" \
+  "$(result .review)" "failed_silent"
+check "trivial: so it holds too" "$(result .status)" "review_failed"
 
 # ---------------------------------------------------------------------------
-echo "== the arms that have no review say so =="
+echo "== the one arm that still has no review says so =="
 # ---------------------------------------------------------------------------
 printf 'notes\n' > "$CODEX_MODE"
 dispatch REV-SKIPARM "HARNESS_SKIP_REVIEW=1"
 check "skip arm: review is recorded as skipped" "$(result .review)" "skipped"
 check "skip arm: with the no_review arm" "$(result .arm)" "no_review"
+file_has "$RUN/timeline" "review skipped — HARNESS_SKIP_REVIEW=1 (no_review arm)" \
+  "skip arm: and a stage line naming the knob that asked for it"
 
+# A machine without the codex CLI is NOT that arm: it reviews on the Claude
+# tier. tests/review-fallback.test.sh owns the working version; here the tier is
+# inert, which is what proves the arm holds rather than shipping.
 BEFORE=$(codex_calls)
 dispatch REV-NOCODEX "CODEX_BIN=$ROOT/no-such-codex"
-check "no codex: review is recorded as skipped" "$(result .review)" "skipped"
-check "no codex: and nothing was asked to review" "$(codex_calls)" "$BEFORE"
+check "no codex: nothing on the Codex side is ever asked" "$(codex_calls)" "$BEFORE"
+check "no codex: the pinned arm names the machine, not an ablation" \
+  "$(cat "$RUN/arm")" "claude_only"
+file_has "$RUN/timeline" "review — Codex unavailable (no codex CLI on this machine (Claude-only mode)) → Claude reviewer (Claude sub)" \
+  "no codex: the Claude tier takes the review instead of the stage being skipped"
+check "no codex: and a dead Claude tier holds the run like any other dead review" \
+  "$(result .status)" "review_failed"
 
 # ---------------------------------------------------------------------------
 echo "== gate rounds record what failed and what it cost =="
@@ -548,11 +567,46 @@ fi
 has "$(env HARNESS_DIR="$REPORTH" bash "$HARNESS/metrics.sh")" "A-1" "report: the per-run table is untouched"
 has "$(env HARNESS_DIR="$REPORTH" bash "$HARNESS/metrics.sh" --csv)" "A-1,full," "report: and so is --csv"
 
+# --- the two review counters, on a corpus built to tell them apart -----------
+# `review_account` is set the moment the Claude tier is ENTERED, so counting it
+# credited a tier that produced nothing with a review. Only the classification
+# says a Claude session actually read the diff. Its own runs dir, so the shares
+# above stay the hand-computable ones.
+TIERH="$ROOT/tier-harness"; TRUNS="$TIERH/runs"
+mkdir -p "$TRUNS"
+tierrun() { mkdir -p "$TRUNS/$1"; printf '%s\n' "$2" > "$TRUNS/$1/result.json"; }
+tierrun T-CLAUDE '{"ticket":"T-CLAUDE","status":"ready","arm":"full","review":"reviewed_claude",
+  "review_account":"claude","worktree":"/w/myapp-t-claude","metrics":{"wall_seconds":600}}'
+tierrun T-ONLY '{"ticket":"T-ONLY","status":"ready","arm":"claude_only","review":"reviewed_claude",
+  "review_account":"claude","worktree":"/w/myapp-t-only","metrics":{"wall_seconds":600}}'
+tierrun T-DEAD '{"ticket":"T-DEAD","status":"review_failed","arm":"no_review","review":"failed_silent",
+  "review_account":"claude","worktree":"/w/myapp-t-dead","metrics":{"wall_seconds":600}}'
+TIER="$(env HARNESS_DIR="$TIERH" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
+has "$TIER" "claude-tier reviews 2 <- the review was not cross-vendor" \
+  "counters: only the runs a Claude session actually reviewed count as claude-tier reviews"
+has "$TIER" "held: review_failed 1 <- no PR opened" \
+  "counters: and the attempt that produced nothing is counted as the hold it is"
+has "$TIER" "silent review failures 1" "counters: beside the class it was recorded under"
+has "$TIER" "claude_only 1" "counters: the Claude-only machine's arm is reported under its own name"
+
 # End to end: the report over the runs this suite actually dispatched sees the
-# one silent review among them.
+# silent reviews among them, and the runs those held. Counted rather than
+# matched on a literal, because every dead-review shape this suite exercises
+# lands in both lines and pinning the exact number would just be a tally of the
+# fixtures above.
 LIVE="$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
-has "$LIVE" "silent review failures 1" \
-  "live: the report finds the silent review in real run dirs"
+LIVE_SILENT=$(printf '%s\n' "$LIVE" | awk '/^silent review failures / { print $4 }')
+LIVE_HELD=$(printf '%s\n' "$LIVE" | awk '/^held: review_failed / { print $3 }')
+if [ "${LIVE_SILENT:-0}" -ge 1 ]; then
+  ok "live: the report finds the silent reviews in real run dirs ($LIVE_SILENT)"
+else
+  bad "live: the report found no silent review among real run dirs"
+fi
+if [ "${LIVE_HELD:-0}" -ge 1 ]; then
+  ok "live: and counts the runs they held before the PR ($LIVE_HELD)"
+else
+  bad "live: the report counted no held run, though this suite produced several"
+fi
 LIVE_RUNS=$(printf '%s\n' "$LIVE" | awk '/^pipeline vitals/ { print $4 }')
 LIVE_ATTEMPTS=$(printf '%s\n' "$LIVE" | awk '/^attempts total/ { print $3 }')
 if [ "${LIVE_ATTEMPTS:-0}" -gt "${LIVE_RUNS:-0}" ]; then

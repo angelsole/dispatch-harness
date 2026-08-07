@@ -88,8 +88,15 @@ EOF
 # separate records, because the prompt is many lines and the flags must stay one
 # greppable line — and counts attempts within a dispatch, so one fake can exhaust
 # its turns once and then succeed on the resume.
+#
+# These dispatches run without a codex CLI, which is now the Claude review tier's
+# arm rather than a skipped stage: the same binary is asked to review. That call
+# is not an implementer spawn and must not be counted as one (nor may it replay
+# whichever commit scenario is loaded), so it returns before anything is
+# recorded. What the tier does with an empty review is tests/review-fallback's.
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
+for a in "\$@"; do case "\$a" in *"You are the reviewer stage"*) exit 0 ;; esac; done
 flags=""; skip=0
 for a in "\$@"; do
   if [ "\$skip" = 1 ]; then skip=0; continue; fi
