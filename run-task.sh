@@ -169,6 +169,9 @@ STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESS
 # no_evidence | failed_silent. Recorded in result.json so nobody has to read
 # logs to find out whether a diff was reviewed.
 REVIEW_CLASS=""
+# Which Codex subscription the review attempt ran on: primary | fallback, empty
+# when no review attempt was made (the skipped arms). A label, never a path.
+REVIEW_ACCOUNT=""
 
 # Gather per-run quantitative metrics from the artefacts on disk. Every field is
 # best-effort: called on EVERY exit path (including early failures), it emits
@@ -281,14 +284,18 @@ write_result() {
   metrics=$(collect_metrics)
   jq -n \
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
-    --arg arm "$ARM" --arg review "$REVIEW_CLASS" \
+    --arg arm "$ARM" --arg review "$REVIEW_CLASS" --arg raccount "$REVIEW_ACCOUNT" \
     --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
     --arg rmodel "$REVIEWER_MODEL" --arg reffort "$REVIEWER_EFFORT" \
     --arg worktree "$WORKTREE" --arg branch "$BRANCH" --arg base "$BASE_BRANCH" \
     --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}
+     # The account label belongs to a review that happened: the arms that never
+     # attempt one carry no field at all rather than an empty string nobody can
+     # tell apart from "primary".
+     | if .review_account == "" then del(.review_account) else . end' \
     > "$RUN_DIR/result.json"
 }
 
@@ -302,7 +309,7 @@ write_result() {
 # statusline; add or update the mapping in the same commit.
 # tests/statusline.test.sh asserts every literal maps to a known actor.
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
-stage() {
+stage() {  # $1 = stage text, $2 = optional extra line for the phone push only
   echo "$(date +%s) $1" > "$RUN_DIR/status"
   printf '%s %s\n' "$(date +%s)" "$1" >> "$RUN_DIR/stages.log"   # epoch history for metrics
   echo "$(date '+%H:%M:%S') $1" >> "$RUN_DIR/timeline"
@@ -312,7 +319,13 @@ stage() {
     osascript -e "display notification \"$1\" with title \"dispatch $TICKET\"" 2>/dev/null || true
   fi
   if [ -n "${HARNESS_NTFY_TOPIC:-}" ]; then
-    curl -s -m 5 -H "Title: dispatch $TICKET" -d "$1" \
+    # The extra line is the push body's alone: status, stages.log, timeline and
+    # activity stay byte-identical, so every stage-text contract (statusline,
+    # wall, metrics) is untouched by anything said here.
+    local body="$1"
+    [ -n "${2:-}" ] && body="$1
+$2"
+    curl -s -m 5 -H "Title: dispatch $TICKET" -d "$body" \
       "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$HARNESS_NTFY_TOPIC" >/dev/null 2>&1 || true
   fi
 }
@@ -836,6 +849,30 @@ GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-di
 # with_timeout is the backstop cap (timeout(1), or a perl-alarm fallback).
 CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
 
+# --- Which Codex subscription an attempt runs on ------------------------------
+# A dry primary workspace turned six hours of reviews into honestly-flagged
+# no-ops. codex auth is entirely CODEX_HOME-directory-scoped, so a second
+# account is one more config dir (`CODEX_HOME=<dir> codex login`) plus a rule
+# about when to reach for it. Unset knob: nothing below ever fires and the run
+# is byte-for-byte the run it always was.
+#
+# ONE ATTEMPT, ONE ACCOUNT. CODEX_HOME is chosen before an attempt starts and
+# never changed while it runs. The switch is sticky and only ever moves the
+# NEXT attempt, so the review retry, the fix round and base-sync conflict
+# resolution all follow wherever the review ended up.
+CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
+CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
+CODEX_PRIMARY_DRY=0       # the primary answered "out of credits" at least once
+
+# The workspace-credits error is certainty rather than a guess: retrying the
+# same account cannot possibly work. Matched case-insensitively on
+# whitespace-flattened output, so a message the CLI wrapped across lines (or
+# indented inside a box) still counts.
+codex_out_of_credits() {  # $1 = an attempt's log
+  [ -f "$1" ] || return 1
+  tr -s '[:space:]' ' ' < "$1" | grep -qiE 'out of credits'
+}
+
 # Live feed for the second half of the pipeline. The implementer's stream-json
 # events are appended to feed.log below as "HH:MM:SS <emoji> …"; without this the
 # feed went dark the moment the implementer stopped, even though the reviewer
@@ -846,19 +883,38 @@ feed() {  # $1 = marker + model, $2 = line
 }
 
 run_codex() {  # $1 = round label, $2 = prompt
+  local log="$RUN_DIR/codex-$1.log" rc
+  # env(1) sits between the timeout and the CLI because with_timeout is a shell
+  # function: env cannot exec one. Empty on the primary, so the command line is
+  # exactly what it has always been.
+  local home=()
+  [ "$CODEX_ACCOUNT" = fallback ] && home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  # The attempt's log opens with the account LABEL — which subscription ran it,
+  # and nothing else about it. tee appends from here; the truncation above keeps
+  # a re-dispatch's log as fresh as it was before.
+  printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"
   with_timeout "$CODEX_TIMEOUT" \
+    ${home[@]+"${home[@]}"} \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
     -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\",\"/opt/homebrew/share/flutter/bin/cache\",\"$HOME/.pub-cache\",\"$HOME/.config/flutter\",\"$HOME/.dart-tool\"]" \
     -c "model=\"$CODEX_MODEL\"" \
     -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
     "$2" </dev/null 2>&1 \
-    | tee "$RUN_DIR/codex-$1.log" \
+    | tee -a "$log" \
     | while IFS= read -r l; do
         [ -n "$l" ] || continue
         printf '%.100s\n' "$l" > "$RUN_DIR/activity"
         feed '◆ codex' "$l"
       done
-  return "${PIPESTATUS[0]}"
+  rc="${PIPESTATUS[0]}"
+  if [ "$CODEX_ACCOUNT" = primary ] && codex_out_of_credits "$log"; then
+    CODEX_PRIMARY_DRY=1
+    if [ -n "$CODEX_HOME_FALLBACK" ]; then
+      CODEX_ACCOUNT="fallback"
+      echo "[harness] codex round $1 hit the workspace-credits error — the fallback account takes the next attempt"
+    fi
+  fi
+  return "$rc"
 }
 
 # Same job on a Claude subscription, for machines without the codex CLI: fresh
@@ -883,7 +939,18 @@ run_claude_worker() {  # $1 = round label, $2 = prompt
 # Merge-conflict resolution is PR mechanics, not quality review, so it runs in
 # BOTH arms — on codex when it is installed (unchanged), on Claude otherwise.
 resolve_conflicts() {  # $1 = round label, $2 = prompt
-  if [ "$CODEX_AVAILABLE" = 1 ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
+  local before
+  [ "$CODEX_AVAILABLE" = 1 ] || { run_claude_worker "$1" "$2"; return; }
+  before="$CODEX_ACCOUNT"
+  run_codex "$1" "$2" || true
+  # A primary that answered "out of credits" resolved nothing, and the merge is
+  # still stopped. run_codex moves the account only on that exact evidence, so
+  # this pair of conditions is the credits case and nothing else — one more
+  # attempt on the fallback before the caller escalates to a human.
+  if [ "$before" = primary ] && [ "$CODEX_ACCOUNT" = fallback ]; then
+    stage "base sync — conflict resolution ($CONFLICT_AGENT, fallback account)"
+    run_codex "$1-fallback" "$2"
+  fi
 }
 
 # --- Review-stage integrity ---------------------------------------------------
@@ -979,12 +1046,24 @@ fi
 
 stage "review — Codex (ChatGPT sub)"
 REVIEW_STARTED=$(date +%s)
+# Read before the attempt, not after: run_codex may move the account for the
+# NEXT attempt, and this records the one that actually ran this review.
+REVIEW_ACCOUNT="$CODEX_ACCOUNT"
 run_codex 1 "$REVIEW_PROMPT" || true
 REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
 
 # --- 5b. Did the review actually happen? -------------------------------------
+# Two things can buy the single retry, and the second one is why the fallback
+# account exists: a credits-dead attempt is *certain* to repeat itself on the
+# same account, so it never spends the retry there.
+REVIEW_RETRY_REASON=""
 if review_evidence; then
   REVIEW_CLASS="reviewed"
+elif [ "$CODEX_PRIMARY_DRY" = 1 ] && [ -n "$CODEX_HOME_FALLBACK" ]; then
+  # Tier 1 — credits-certain. Takes precedence over the floor below: the floor
+  # asks "is a second pass worth paying for?", and here the second pass is on a
+  # different account, so the answer is yes however long the first one took.
+  REVIEW_RETRY_REASON="the primary Codex account is out of credits"
 elif [ "$REVIEW_SECONDS" -ge "$REVIEW_MIN_SECONDS" ] || review_diff_is_trivial; then
   # It spent real time on the diff (or there was next to nothing to read) and
   # simply left no notes behind. Recorded honestly, not retried: a second full
@@ -992,9 +1071,25 @@ elif [ "$REVIEW_SECONDS" -ge "$REVIEW_MIN_SECONDS" ] || review_diff_is_trivial; 
   REVIEW_CLASS="no_evidence"
   echo "[harness] review left no commits and no notes after ${REVIEW_SECONDS}s — recorded as no_evidence"
 else
-  echo "[harness] review produced nothing in ${REVIEW_SECONDS}s (floor ${REVIEW_MIN_SECONDS}s) — retrying once"
-  stage "review retry — Codex (ChatGPT sub)"
+  # Tier 2 — silent no-op, cause unknown (auth prompt, CLI crash, empty
+  # context, or a credits message this build words differently). The retry is
+  # bought either way; a configured fallback just means it is not spent on the
+  # account that already came up empty.
+  REVIEW_RETRY_REASON="review produced nothing in ${REVIEW_SECONDS}s (floor ${REVIEW_MIN_SECONDS}s)"
+fi
+
+if [ -n "$REVIEW_RETRY_REASON" ]; then
+  REVIEW_RETRY_SUFFIX=""
+  if [ -n "$CODEX_HOME_FALLBACK" ]; then
+    CODEX_ACCOUNT="fallback"
+    REVIEW_RETRY_SUFFIX=" (fallback account)"
+    echo "[harness] $REVIEW_RETRY_REASON — retrying once on the fallback Codex account"
+  else
+    echo "[harness] $REVIEW_RETRY_REASON — retrying once"
+  fi
+  stage "review retry — Codex (ChatGPT sub)$REVIEW_RETRY_SUFFIX"
   REVIEW_STARTED=$(date +%s)
+  REVIEW_ACCOUNT="$CODEX_ACCOUNT"
   run_codex 1-retry "$REVIEW_PROMPT" || true
   REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
   if review_evidence; then
@@ -1003,7 +1098,8 @@ else
     # An unreviewed diff is not a failed run: the gate's verdict stands and the
     # run carries on to whatever outcome it earned — but it carries on saying out
     # loud that nothing reviewed this diff, and the arm it records is the one the
-    # verdict reader already knows to distrust.
+    # verdict reader already knows to distrust. A fallback that also came up
+    # empty downgrades exactly like a primary that did.
     REVIEW_CLASS="failed_silent"
     ARM="no_review"
     stage "review failed silently — diff is unreviewed"
@@ -1162,7 +1258,19 @@ else
 fi
 
 write_result "$STATUS" "$PR_URL"
-stage "done: $STATUS"
+# A run that fell back reviewed fine, so nothing about its outcome says the
+# primary needs topping up. One sentence on the run's own push is how the
+# operator learns that without reading a log — and it only ever claims the
+# credits error when the log actually carried it.
+DONE_NOTE=""
+if [ "$REVIEW_ACCOUNT" = fallback ]; then
+  if [ "$CODEX_PRIMARY_DRY" = 1 ]; then
+    DONE_NOTE="review ran on the fallback Codex account — primary is out of credits"
+  else
+    DONE_NOTE="review ran on the fallback Codex account — the primary review produced nothing"
+  fi
+fi
+stage "done: $STATUS" "$DONE_NOTE"
 echo "[harness] DONE status=$STATUS gate=$GATE_STATUS pr=${PR_URL:-none}"
 echo "[harness] worktree=$WORKTREE logs=$RUN_DIR"
 [ "$STATUS" = "ready" ]
