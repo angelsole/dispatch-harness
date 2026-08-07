@@ -1336,7 +1336,9 @@ itself, so a stock ChatGPT-subscription setup needs nothing else; if yours does,
 
 **It fails closed.** The network can only ever come from the profile; nothing
 sets `network_access`. A `codex` build that ignores the profile therefore leaves
-the reviewer with today's sandbox rather than an open one.
+the reviewer with today's sandbox rather than an open one. If the isolated home
+cannot be built, Codex is not started on the operator's ambient config: the
+isolated fallback account gets its attempt, or the Claude review tier takes it.
 
 None of this touches the [Claude reviewer tier](#reading-the-pipelines-own-vitals):
 that one runs under `worker-settings.json`, which confines it already.

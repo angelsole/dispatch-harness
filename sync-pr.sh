@@ -155,7 +155,7 @@ review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
   local base="$1" home="$1/harness-review/$TICKET_LC" r
   [ -n "$base" ] || return 1
   mkdir -p "$home" 2>/dev/null || return 1
-  reconcile_review_auth "$base" "$home"
+  reconcile_review_auth "$base" "$home" || return 1
   [ -e "$base/auth.json" ] && { ln -sfn ../../auth.json "$home/auth.json" || return 1; }
   {
     echo "# Written by dispatch-harness sync-pr.sh before every codex attempt."
@@ -205,6 +205,7 @@ review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
 CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
 CODEX_HOME_PRIMARY="${CODEX_HOME:-$HOME/.codex}"
 CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
+CODEX_START_FAILED=0      # the isolated home could not be built; codex did not run
 codex_out_of_credits() {  # $1 = an attempt's log
   [ -f "$1" ] || return 1
   tr -s '[:space:]' ' ' < "$1" | grep -qiE 'out of credits'
@@ -216,17 +217,29 @@ run_codex() {  # $1 = label, $2 = prompt
   local home=() sandbox=(-s workspace-write \
     -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)")
   local acct_home rhome=""
+  CODEX_START_FAILED=0
   acct_home="$CODEX_HOME_PRIMARY"
   [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
-  if [ "$REVIEW_NETWORK" != 0 ] && rhome=$(review_home "$acct_home"); then
-    home=(env "CODEX_HOME=$rhome")
-    # An explicit -s wins over default_permissions in codex 0.145. Omit the
-    # legacy sandbox only when the isolated permission profile was built.
-    sandbox=()
+  if [ "$REVIEW_NETWORK" != 0 ]; then
+    if rhome=$(review_home "$acct_home"); then
+      home=(env "CODEX_HOME=$rhome")
+      # An explicit -s wins over default_permissions in codex 0.145. Omit the
+      # legacy sandbox only when the isolated permission profile was built.
+      sandbox=()
+    else
+      # Network and isolation are one capability. Never recover from a failed
+      # isolated-home build by starting codex on the operator's ambient config.
+      CODEX_START_FAILED=1
+    fi
   elif [ "$CODEX_ACCOUNT" = fallback ]; then
     home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
   fi
   printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"   # the label, nothing more
+  if [ "$CODEX_START_FAILED" = 1 ]; then
+    echo "[sync-pr] resolver isolation setup failed — codex attempt not started" \
+      | tee -a "$log"
+    return 1
+  fi
   with_timeout "$CODEX_TIMEOUT" \
     ${home[@]+"${home[@]}"} \
     "$CODEX_BIN" exec -C "$WORKTREE" \
@@ -271,10 +284,12 @@ resolve_conflicts() {  # $1 = label, $2 = prompt
   [ "$CODEX_AVAILABLE" = 1 ] || { run_claude_worker "$1" "$2"; return; }
   before="$CODEX_ACCOUNT"
   run_codex "$1" "$2" || true
-  # run_codex moves the account only on the workspace-credits error, so this is
-  # the credits case and nothing else: the merge is still stopped and the same
-  # account cannot help. One more attempt on the fallback before we give up.
-  if [ "$before" = primary ] && [ "$CODEX_ACCOUNT" = fallback ]; then
+  # A primary that answered "out of credits" or could not be started inside the
+  # isolated resolver home left the merge stopped. Give the fallback one attempt
+  # before we give up.
+  if [ "$before" = primary ] && [ -n "$CODEX_HOME_FALLBACK" ] \
+     && { [ "$CODEX_ACCOUNT" = fallback ] || [ "$CODEX_START_FAILED" = 1 ]; }; then
+    CODEX_ACCOUNT="fallback"
     stage "base sync — conflict resolution ($CONFLICT_AGENT, fallback account)"
     run_codex "$1-fallback" "$2"
   fi

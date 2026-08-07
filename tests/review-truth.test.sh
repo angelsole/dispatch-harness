@@ -433,6 +433,26 @@ check "fallback: and the fallback account's own auth, not the primary's" \
   "$(readlink "$FBHOME/harness-review/net-fallback/auth.json")" "../../auth.json"
 printf 'notes\n' > "$CODEX_MODE"
 
+echo "-- isolation setup failure never falls back to the operator config --"
+BROKEN_HOME="$ROOT/codex-home-is-a-file"
+printf 'not a directory\n' > "$BROKEN_HOME"
+dispatch NET-SETUP-FAIL \
+  "CODEX_HOME=$BROKEN_HOME HARNESS_CODEX_HOME_FALLBACK=$FBHOME"
+check "fail closed: the primary Codex process is never started on ambient config" \
+  "$(cat "$CODEX_HOMES")" "$FBHOME/harness-review/net-setup-fail"
+file_has "$RUN/codex-1.log" \
+  "reviewer isolation setup failed — codex attempt not started" \
+  "fail closed: the skipped primary attempt records why it did not start"
+check "fail closed: the isolated fallback still completes the review" \
+  "$(result .review)" "reviewed"
+check "fail closed: result.json attributes that review to the fallback" \
+  "$(result .review_account)" "fallback"
+dispatch NET-SETUP-CLAUDE "CODEX_HOME=$BROKEN_HOME"
+check "fail closed: without another account, no Codex process starts" \
+  "$(cat "$CODEX_HOMES")" ""
+check "fail closed: the existing Claude tier takes the review instead" \
+  "$(result .review)" "reviewed_claude"
+
 # ---------------------------------------------------------------------------
 echo "== does the policy actually hold? (real codex sandbox, when available) =="
 # ---------------------------------------------------------------------------
@@ -545,6 +565,15 @@ check "sync-pr: the resolver really ran" \
   "$(printf '%s' "$SYNC_ON_ARGV" | grep -c 'exec -C' | tr -d ' ')" "1"
 has_not "$SYNC_ON_ARGV" "-s workspace-write" \
   "sync-pr: enabled exec leaves its permission profile authoritative"
+
+mk_sync_case SYNC-SETUP-FAIL
+sync_pr SYNC-SETUP-FAIL \
+  "CODEX_HOME=$BROKEN_HOME HARNESS_CODEX_HOME_FALLBACK=$FBHOME"
+check "sync-pr: a broken primary home starts only the isolated fallback" \
+  "$(cat "$CODEX_HOMES")" "$FBHOME/harness-review/sync-setup-fail"
+file_has "$RUNS/SYNC-SETUP-FAIL/codex-post-sync.log" \
+  "resolver isolation setup failed — codex attempt not started" \
+  "sync-pr: the primary resolver records the fail-closed decision"
 
 mk_sync_case SYNC-OFF
 OFF_HOME="$(review_home_for "$OPHOME" SYNC-OFF)"

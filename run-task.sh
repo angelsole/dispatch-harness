@@ -1162,13 +1162,14 @@ reconcile_review_auth() {  # $1 = account CODEX_HOME, $2 = isolated run home
 # Per account and run, so it composes with HARNESS_CODEX_HOME_FALLBACK without
 # letting parallel tickets share policy: whichever subscription takes the
 # attempt gets its own isolated home and its own auth.
-# Echoes the home on success; a failure to build one is silent and total (the
-# caller then runs exactly as it did before, network included, i.e. without).
+# Echoes the home on success; a failure to build one is silent and total. The
+# caller does not start codex on the ambient config: another isolated account or
+# the Claude tier must take the work instead.
 review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
   local base="$1" home="$1/harness-review/$TICKET_LC" r
   [ -n "$base" ] || return 1
   mkdir -p "$home" 2>/dev/null || return 1
-  reconcile_review_auth "$base" "$home"
+  reconcile_review_auth "$base" "$home" || return 1
   # A dangling link would be worse than none: only link what is there.
   [ -e "$base/auth.json" ] && { ln -sfn ../../auth.json "$home/auth.json" || return 1; }
   {
@@ -1232,6 +1233,7 @@ CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
 CODEX_HOME_PRIMARY="${CODEX_HOME:-$HOME/.codex}"
 CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
 CODEX_PRIMARY_DRY=0       # the primary answered "out of credits" at least once
+CODEX_START_FAILED=0      # the isolated home could not be built; codex did not run
 
 # The workspace-credits error is certainty rather than a guess: retrying the
 # same account cannot possibly work. Matched case-insensitively on
@@ -1260,14 +1262,21 @@ run_codex() {  # $1 = round label, $2 = prompt
   local home=() sandbox=(-s workspace-write \
     -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)")
   local acct_home rhome=""
+  CODEX_START_FAILED=0
   acct_home="$CODEX_HOME_PRIMARY"
   [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
-  if [ "$REVIEW_NETWORK" != 0 ] && rhome=$(review_home "$acct_home"); then
-    home=(env "CODEX_HOME=$rhome")
-    # default_permissions in the isolated config must select the profile.
-    # codex 0.145 treats an explicit -s as authoritative, so retaining the old
-    # workspace-write flag here would silently disable the loopback policy.
-    sandbox=()
+  if [ "$REVIEW_NETWORK" != 0 ]; then
+    if rhome=$(review_home "$acct_home"); then
+      home=(env "CODEX_HOME=$rhome")
+      # default_permissions in the isolated config must select the profile.
+      # codex 0.145 treats an explicit -s as authoritative, so retaining the old
+      # workspace-write flag here would silently disable the loopback policy.
+      sandbox=()
+    else
+      # Network and isolation are one capability. Never recover from a failed
+      # isolated-home build by starting codex on the operator's ambient config.
+      CODEX_START_FAILED=1
+    fi
   elif [ "$CODEX_ACCOUNT" = fallback ]; then
     home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
   fi
@@ -1275,6 +1284,11 @@ run_codex() {  # $1 = round label, $2 = prompt
   # and nothing else about it. tee appends from here; the truncation above keeps
   # a re-dispatch's log as fresh as it was before.
   printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"
+  if [ "$CODEX_START_FAILED" = 1 ]; then
+    echo "[harness] reviewer isolation setup failed — codex attempt not started" \
+      | tee -a "$log"
+    return 1
+  fi
   with_timeout "$CODEX_TIMEOUT" \
     ${home[@]+"${home[@]}"} \
     "$CODEX_BIN" exec -C "$WORKTREE" \
@@ -1329,11 +1343,12 @@ resolve_conflicts() {  # $1 = round label, $2 = prompt
   [ "$CODEX_AVAILABLE" = 1 ] || { run_claude_worker "$1" "$2"; return; }
   before="$CODEX_ACCOUNT"
   run_codex "$1" "$2" || true
-  # A primary that answered "out of credits" resolved nothing, and the merge is
-  # still stopped. run_codex moves the account only on that exact evidence, so
-  # this pair of conditions is the credits case and nothing else — one more
-  # attempt on the fallback before the caller escalates to a human.
-  if [ "$before" = primary ] && [ "$CODEX_ACCOUNT" = fallback ]; then
+  # A primary that answered "out of credits" or could not be started inside the
+  # isolated review home resolved nothing, and the merge is still stopped. Give
+  # the fallback one attempt before the caller escalates to a human.
+  if [ "$before" = primary ] && [ -n "$CODEX_HOME_FALLBACK" ] \
+     && { [ "$CODEX_ACCOUNT" = fallback ] || [ "$CODEX_START_FAILED" = 1 ]; }; then
+    CODEX_ACCOUNT="fallback"
     stage "base sync — conflict resolution ($CONFLICT_AGENT, fallback account)"
     run_codex "$1-fallback" "$2"
   fi
@@ -1541,6 +1556,12 @@ REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
 REVIEW_RETRY_REASON=""
 if review_evidence; then
   REVIEW_CLASS="reviewed"
+elif [ "$CODEX_START_FAILED" = 1 ]; then
+  if [ -n "$CODEX_HOME_FALLBACK" ]; then
+    REVIEW_RETRY_REASON="the primary Codex review sandbox could not be prepared"
+  else
+    claude_review_tier "the Codex review sandbox could not be prepared"
+  fi
 elif [ "$CODEX_PRIMARY_DRY" = 1 ]; then
   if [ -n "$CODEX_HOME_FALLBACK" ]; then
     # Tier 1 — credits-certain. Takes precedence over the floor below: the
