@@ -180,6 +180,11 @@ the gate is; review it yourself and say so. `no_evidence` is the softer version
 than usual. `reviewed` and `skipped` mean what they say, and an empty value means
 the run never got that far.
 
+`review_account` says which Codex subscription reviewed: `fallback` means the
+primary workspace could not take it (out of credits, or it came up empty), so
+the review itself is as trustworthy as any other — but tell the user the primary
+account needs topping up.
+
 ## Post-PR conflicts
 
 If GitHub later marks a run's PR **CONFLICTING** (base moved after the PR

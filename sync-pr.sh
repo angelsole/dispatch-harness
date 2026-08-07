@@ -121,17 +121,41 @@ run_gate() {
 
 GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)
 CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
+
+# Same two-account rule as run-task.sh's run_codex, for the same reason: a
+# primary workspace that is out of credits resolves nothing, and codex auth is
+# CODEX_HOME-scoped, so a second account is a directory. One attempt, one
+# account; the switch is sticky and only moves the NEXT attempt.
+CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
+CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
+codex_out_of_credits() {  # $1 = an attempt's log
+  [ -f "$1" ] || return 1
+  tr -s '[:space:]' ' ' < "$1" | grep -qiE 'out of credits'
+}
+
 run_codex() {  # $1 = label, $2 = prompt
+  local log="$RUN_DIR/codex-$1.log" rc
+  # env(1) goes after with_timeout, which is a shell function env cannot exec.
+  local home=()
+  [ "$CODEX_ACCOUNT" = fallback ] && home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"   # the label, nothing more
   with_timeout "$CODEX_TIMEOUT" \
+    ${home[@]+"${home[@]}"} \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
     -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\"]" \
     -c 'model_reasoning_effort="high"' \
     "$2" </dev/null 2>&1 \
-    | tee "$RUN_DIR/codex-$1.log" \
+    | tee -a "$log" \
     | while IFS= read -r l; do
         [ -n "$l" ] && printf '%.100s\n' "$l" > "$RUN_DIR/activity"
       done
-  return "${PIPESTATUS[0]}"
+  rc="${PIPESTATUS[0]}"
+  if [ "$CODEX_ACCOUNT" = primary ] && [ -n "$CODEX_HOME_FALLBACK" ] \
+     && codex_out_of_credits "$log"; then
+    CODEX_ACCOUNT="fallback"
+    echo "[sync-pr] codex hit the workspace-credits error — the fallback account takes the next attempt"
+  fi
+  return "$rc"
 }
 
 # Claude fallback, mirroring run-task.sh: fresh session, ANTHROPIC_API_KEY unset
@@ -153,7 +177,17 @@ run_claude_worker() {  # $1 = label, $2 = prompt
 }
 
 resolve_conflicts() {  # $1 = label, $2 = prompt
-  if [ "$CODEX_AVAILABLE" = 1 ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
+  local before
+  [ "$CODEX_AVAILABLE" = 1 ] || { run_claude_worker "$1" "$2"; return; }
+  before="$CODEX_ACCOUNT"
+  run_codex "$1" "$2" || true
+  # run_codex moves the account only on the workspace-credits error, so this is
+  # the credits case and nothing else: the merge is still stopped and the same
+  # account cannot help. One more attempt on the fallback before we give up.
+  if [ "$before" = primary ] && [ "$CODEX_ACCOUNT" = fallback ]; then
+    stage "base sync — conflict resolution ($CONFLICT_AGENT, fallback account)"
+    run_codex "$1-fallback" "$2"
+  fi
 }
 
 # --- 2. Merge latest base; a model only on conflict ----------------------------

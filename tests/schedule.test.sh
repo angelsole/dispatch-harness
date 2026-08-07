@@ -87,6 +87,7 @@ cat > "$SRCDIR/run-task.sh" <<EOF
   printf 'canary:%s\n'     "\${HARNESS_CANARY-<unset>}"
   printf 'owner:%s\n'      "\${HARNESS_OWNER-<unset>}"
   printf 'ghtoken:%s\n'    "\${GH_TOKEN-<unset>}"
+  printf 'codexfb:%s\n'    "\${HARNESS_CODEX_HOME_FALLBACK-<unset>}"
   printf 'effort:%s\n'     "\${IMPLEMENTER_EFFORT-<unset>}"
   printf 'harnessdir:%s\n' "\${HARNESS_DIR-<unset>}"
   printf 'unrelated:%s\n'  "\${SCHEDULE_UNRELATED-<unset>}"
@@ -318,7 +319,8 @@ CANARY="it is 08:10 and Angel's shell said so"
 : > "$CALLS"
 (
   export HARNESS_CANARY="$CANARY" HARNESS_OWNER=angel TEST_GH_TOKEN=gho_fixture \
-         IMPLEMENTER_EFFORT=max SCHEDULE_UNRELATED=must-not-travel
+         IMPLEMENTER_EFFORT=max SCHEDULE_UNRELATED=must-not-travel \
+         HARNESS_CODEX_HOME_FALLBACK="$ROOT/codex-fallback"
   sched FIRE "$REPO" fix/fire "$AHEAD_HHMM" > /dev/null
 )
 W=$(wrapper_of FIRE)
@@ -337,6 +339,11 @@ check "fire: HARNESS_* travelled verbatim (quotes and all)" \
 check "fire: the dispatching owner travelled"  "$(grep '^owner:' "$CALLS" | sed 's/^owner://')" "angel"
 check "fire: the gh token travelled"           "$(grep '^ghtoken:' "$CALLS" | sed 's/^ghtoken://')" "gho_fixture"
 check "fire: the effort knob travelled"        "$(grep '^effort:' "$CALLS" | sed 's/^effort://')" "max"
+# The HARNESS_* sweep is what makes new knobs compose for free: the second Codex
+# account has to reach the 02:00 run or a scheduled review still dies on a dry
+# primary. Asserted by name, because that is the promise a knob makes.
+check "fire: the fallback Codex account knob travelled" \
+  "$(grep '^codexfb:' "$CALLS" | sed 's/^codexfb://')" "$ROOT/codex-fallback"
 check "fire: HARNESS_DIR travelled"            "$(grep '^harnessdir:' "$CALLS" | sed 's/^harnessdir://')" "$HARNESS"
 check "fire: unrelated environment stayed home" \
   "$(grep '^unrelated:' "$CALLS" | sed 's/^unrelated://')" "<unset>"
