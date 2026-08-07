@@ -449,7 +449,7 @@ mkrun A-2 '{"ticket":"A-2","status":"ready","arm":"full","review":"reviewed",
     "attempts":[{"n":1,"status":"needs_input","started":100,"ended":700},
                 {"n":2,"status":"ready","started":1000,"ended":2200}],
     "gate_rounds":[{"round":"1","result":"fail","seconds":10,"failed_step":"npm run lint"},
-                   {"round":"2","result":"pass","seconds":10,"failed_step":null}]}}'
+                   {"round":"2","result":"skipped","seconds":0,"failed_step":null}]}}'
 # Three attempts, one of them a session limit the run recovered from by itself.
 mkrun A-3 '{"ticket":"A-3","status":"gate_failed","arm":"full","review":"failed_silent",
   "attempt":3,"attempts_total":3,
@@ -522,7 +522,7 @@ has "$FLAT" "idle gap mins 5.0 60.0 3" \
 
 has "$FLAT" "GATE FAILURES FAILED %"   "report: rounds are reported by failure, not as retries"
 has "$FLAT" "round 1 4 66.7"           "report: how often the first round fails"
-has "$FLAT" "round 2 1 25.0"           "report: and the second, over the runs that ran one"
+has "$FLAT" "round 2 1 33.3"           "report: skipped rounds stay out of the execution denominator"
 has "$FLAT" "round 3 1 100.0"          "report: and the tail"
 has_not "$FLAT" "2 rounds 3 50.0" \
   "report: the by-design second pass is no longer presented as a retry rate"

@@ -167,7 +167,11 @@ report() {
         for (v = 1; v <= nv; v++) {
           split(vs[v], rv, ":")
           r = rv[1] + 0
-          if (r <= 0) continue
+          # A skipped row records an honest pipeline decision, not a gate
+          # execution. Keep it in result.json/the per-run table, but leave it
+          # out of this report denominator, which is explicitly the runs
+          # that actually ran round N.
+          if (r <= 0 || rv[2] == "skipped") continue
           ran[r]++
           if (rv[2] == "fail") gfail[r]++
           if (r > maxround) maxround = r
