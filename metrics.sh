@@ -160,7 +160,12 @@ report() {
         if ($1 == "ready") rready[$10]++
       }
       if ($11 == "fallback") fallback_reviews++
-      if ($11 == "claude")   claude_reviews++
+      # The classification, not the account label: review_account is set the
+      # moment the Claude tier is ENTERED, so keying off it counted an attempt
+      # that produced nothing (review_failed) as a claude-tier review. Only
+      # `reviewed_claude` means a Claude session actually reviewed the diff.
+      if ($3 == "reviewed_claude") claude_reviews++
+      if ($1 == "review_failed")   held_unreviewed++
       # Which rounds ran, and which of them failed.
       if ($12 != "") {
         nv = split($12, vs, ",")
@@ -215,10 +220,15 @@ report() {
       # number, so any other one is the line that says "top the account up".
       printf "%-22s %6d%s\n", "fallback-account reviews", fallback_reviews + 0, \
         (fallback_reviews + 0 > 0 ? "   <- the primary Codex account needs topping up" : "")
-      # The tier past both Codex accounts: still a review, but same-vendor as
-      # the implementer — any number here says the Codex side needs attention.
+      # The tier past the Codex side: still a review, but same-vendor as the
+      # implementer — any number here says the Codex side needs attention (or
+      # that these runs were dispatched from a machine without the codex CLI).
       printf "%-22s %6d%s\n", "claude-tier reviews", claude_reviews + 0, \
-        (claude_reviews + 0 > 0 ? "   <- both Codex accounts came up empty" : "")
+        (claude_reviews + 0 > 0 ? "   <- the review was not cross-vendor" : "")
+      # And the runs where no tier produced anything: held before the PR, which
+      # is the whole point — but held work is work nobody is looking at.
+      printf "%-22s %6d%s\n", "held: review_failed", held_unreviewed + 0, \
+        (held_unreviewed + 0 > 0 ? "   <- no PR opened; re-dispatch once a reviewer works" : "")
 
       # --- Attempts: what the machine actually spent ------------------------
       # A run is a ticket; an attempt is one dispatch of it. Run-level success
