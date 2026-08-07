@@ -136,6 +136,8 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
 fi
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
+REVIEW_OK=1           # 0 = the review stage ran and NO reviewer completed it
+REVIEW_AGENT="codex"  # which backend is reviewing; flips to claude on fallback
 
 # Gather per-run quantitative metrics from the artefacts on disk. Every field is
 # best-effort: called on EVERY exit path (including early failures), it emits
@@ -265,11 +267,11 @@ stage() {
     # Everything else stays a low-priority background tick.
     local body="$1"; local -a extra=()
     case "$1" in
-      "done: needs_input")
-        # The other way a run stops on a question: base-sync conflicts the
-        # resolver could not finish. It never passes the waiting stage below,
-        # and the contract is the same — a stage that blocks the run must
-        # survive a silenced phone.
+      "done: needs_input"|"done: review_failed")
+        # The other ways a run stops on a human: base-sync conflicts the
+        # resolver could not finish (never passes the waiting stage below),
+        # and a review no backend could run (out of credits). The contract is
+        # the same — a stage that blocks the run must survive a silenced phone.
         extra+=(-H "Priority: high" -H "Tags: warning")
         ;;
       done:*)
@@ -664,14 +666,98 @@ resolve_conflicts() {  # $1 = round label, $2 = prompt
   if [ "$CODEX_AVAILABLE" = 1 ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
 }
 
+# One short phrase for why codex died, read from its own log. "Out of credits"
+# is the shape that actually happened in production — the ChatGPT workspace ran
+# dry at 17:00 and, before this existed, ten runs shipped looking reviewed.
+reviewer_fail_reason() {  # $1 = codex log path, $2 = exit code
+  if grep -qiE 'out of credits|insufficient[_ ]?quota|usage limit|rate.?limit|billing|429' "$1" 2>/dev/null; then
+    echo "out of credits / usage limit"
+  else
+    echo "codex exited $2"
+  fi
+}
+
+# The review dispatcher. Cross-vendor is the preference; A REVIEW is the
+# requirement. When codex dies mid-run (credits, network, timeout) the same
+# prompt goes to a FRESH Claude session — never the implementer's own session,
+# so it is still a cold read of the diff, just not a cross-vendor one — and
+# the switch is recorded loudly: a stage line, a run-dir marker, and
+# reviewer_model in result.json. A reviewer failure is never a silent green.
+run_reviewer() {  # $1 = round label, $2 = prompt
+  local rc=0 why
+  if [ "$REVIEW_AGENT" = codex ]; then
+    if run_codex "$1" "$2"; then return 0; fi
+    rc=$?
+    why=$(reviewer_fail_reason "$RUN_DIR/codex-$1.log" "$rc")
+    stage "review — Codex unavailable ($why) → Claude reviewer (Claude sub)"
+    REVIEW_AGENT="claude"
+    REVIEWER_MODEL="$IMPLEMENTER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
+    printf 'claude fallback after round %s: %s\n' "$1" "$why" >> "$RUN_DIR/review-fallback"
+  fi
+  run_claude_worker "$1" "$2"
+}
+
+# --- Ticket sync (script — no model, best-effort) ------------------------------
+# An overnight run has no orchestrator session watching for its result: when
+# the draft PR opens, the ticket itself has to say so. If the run id starts
+# with a TEAM-123 identifier and the same Linear key file the quartermaster
+# reads is present, the PR link is commented on the ticket and the ticket moves
+# to its team's "In Review" state. The pipeline still never marks a PR ready
+# and never merges — review stays a human act; this only routes the artifact.
+# Everything is best-effort: failures land in ticket-sync.log and never touch
+# the run's status. HARNESS_TICKET_SYNC=0 turns it off.
+LINEAR_URL="https://api.linear.app/graphql"
+LINEAR_KEY_FILE="${LINEAR_API_KEY_FILE:-$HARNESS_DIR/linear-api-key}"
+ticket_sync() {  # uses TICKET, PR_URL, BRANCH; always returns 0
+  [ "${HARNESS_TICKET_SYNC:-1}" = 1 ] || return 0
+  [ -r "$LINEAR_KEY_FILE" ] || return 0
+  local ident hdr gql issue iid sid
+  ident=$(printf '%s' "$TICKET" | grep -oE '^[A-Za-z][A-Za-z0-9]*-[0-9]+') || return 0
+  # Key travels in a 600 header file, never in argv — same trick as the
+  # quartermaster, same reason: ps must never show it.
+  hdr="$RUN_DIR/.linear-hdr"
+  ( umask 077; printf 'Authorization: %s\n' "$(cat "$LINEAR_KEY_FILE")" > "$hdr" ) || return 0
+  stage "ticket sync — PR link + In Review (script — no model)"
+  {
+    gql=$(jq -n --arg id "$ident" '{query:"query($id: String!){ issue(id: $id){ id identifier team { states(first: 50){ nodes { id name type } } } } }",variables:{id:$id}}')
+    issue=$(curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL")
+    printf 'issue lookup: %s\n' "$issue"
+    iid=$(printf '%s' "$issue" | jq -r '.data.issue.id // empty')
+    if [ -z "$iid" ]; then echo "no Linear issue named $ident — nothing to sync"; rm -f "$hdr"; return 0; fi
+    gql=$(jq -n --arg id "$iid" --arg c "Draft PR ready for review: $PR_URL (\`$BRANCH\`)" \
+      '{query:"mutation($id: String!, $c: String!){ commentCreate(input: {issueId: $id, body: $c}){ success } }",variables:{id:$id,c:$c}}')
+    printf 'comment: '; curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL"; echo
+    # The team's own state names are the truth: "In Review" by name first,
+    # else the started-type state that mentions review. No match = comment only.
+    sid=$(printf '%s' "$issue" | jq -r '.data.issue.team.states.nodes // []
+      | (map(select((.name | ascii_downcase) == "in review")) | first)
+        // (map(select(.type == "started" and (.name | test("review"; "i")))) | first)
+        // empty | .id // empty')
+    if [ -n "$sid" ]; then
+      gql=$(jq -n --arg id "$iid" --arg sid "$sid" \
+        '{query:"mutation($id: String!, $sid: String!){ issueUpdate(id: $id, input: {stateId: $sid}){ success } }",variables:{id:$id,sid:$sid}}')
+      printf 'state -> In Review: '; curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL"; echo
+    else
+      echo "no In Review state on this team — commented only"
+    fi
+  } >> "$RUN_DIR/ticket-sync.log" 2>&1
+  rm -f "$hdr"
+  return 0
+}
+
 run_gate 1 || true
 
-# --- Codex review + fix rounds ----------------------------------------------
-# Skipped when the codex CLI is absent (Claude-only mode — the review is skipped
-# honestly, never reassigned to a second Claude worker: no model grades its own
-# homework) and in the no_review ablation arm (HARNESS_SKIP_REVIEW=1). Either way
-# the deterministic gate above still ran, so a failing gate still yields
-# gate_failed downstream, and the base-sync step below still runs in both arms.
+# --- Review + fix rounds ------------------------------------------------------
+# Codex reviews; a mid-run codex death (out of credits, network) falls back to
+# a fresh Claude session via run_reviewer — an unreviewed diff shipping as
+# reviewed is the worse failure, and the switch is recorded in the stage line,
+# review-fallback in the run dir, and reviewer_model in result.json. If BOTH
+# backends fail, the run ends review_failed and pushes nothing. The stage is
+# skipped entirely only when the codex CLI is absent (Claude-only mode — a
+# machine-level arm pinned at first dispatch, kept honest as an ablation) or
+# HARNESS_SKIP_REVIEW=1. Either way the deterministic gate above still ran, so
+# a failing gate still yields gate_failed downstream, and the base-sync step
+# below still runs in both arms.
 if [ "$CODEX_AVAILABLE" = 0 ]; then
   stage "review skipped — no codex CLI found (Claude-only mode)"
 elif [ "$ARM" = "full" ]; then
@@ -706,12 +792,16 @@ if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
 fi
 
 stage "review — Codex (ChatGPT sub)"
-run_codex 1 "$REVIEW_PROMPT" || true
+run_reviewer 1 "$REVIEW_PROMPT" || REVIEW_OK=0
 
-if [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
+if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
   if ! run_gate 2; then
-    stage "fix round 2 — Codex (ChatGPT sub)"
-    run_codex 2 "The test gate is still failing after your review. Output is in .harness/gate-latest.log. Fix the failures and commit (no AI attribution; never commit anything under .harness/). If it cannot be fixed without violating .harness/brief.md, write .harness/REJECTED.md instead." || true
+    if [ "$REVIEW_AGENT" = codex ]; then
+      stage "fix round 2 — Codex (ChatGPT sub)"
+    else
+      stage "fix round 2 — Claude reviewer (Claude sub)"
+    fi
+    run_reviewer 2 "The test gate is still failing after your review. Output is in .harness/gate-latest.log. Fix the failures and commit (no AI attribution; never commit anything under .harness/). If it cannot be fixed without violating .harness/brief.md, write .harness/REJECTED.md instead." || REVIEW_OK=0
     run_gate 3 || true
   fi
 fi
@@ -724,6 +814,12 @@ if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
   cp "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.md"
 elif [ "$GATE_STATUS" != "pass" ]; then
   STATUS="gate_failed"
+elif [ "$REVIEW_OK" = 0 ]; then
+  # The gate is green but nothing reviewed the diff — neither codex nor the
+  # Claude fallback completed. This must never ship looking reviewed: no push,
+  # no PR. Top up credits (or fix whatever killed both) and re-dispatch; the
+  # worker session resumes.
+  STATUS="review_failed"
 else
   STATUS="ready"
 
@@ -792,6 +888,7 @@ else
       echo "[harness] reusing existing PR: $PR_URL" >> "$RUN_DIR/push.log"
     fi
   fi
+  if [ "$STATUS" = "ready" ] && [ -n "$PR_URL" ]; then ticket_sync; fi
   fi
 
   # --- 6b. Demo recording (frontend runs only; a demo failure never fails the run)

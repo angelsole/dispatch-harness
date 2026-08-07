@@ -237,6 +237,37 @@ Claude-only run resumed on a machine that now has `codex` keeps its blank
 reviewer fields (its review is not retro-fitted) and uses codex only for the
 mechanical base-sync conflict step.
 
+### When Codex dies mid-run (out of credits)
+
+Different from a machine that never had codex: a machine WITH codex whose
+review call fails — a ChatGPT workspace out of credits is the shape that
+actually happened, ten runs shipping unreviewed overnight — must not treat the
+failure as a clean review. Cross-vendor is the preference; **a review is the
+requirement**:
+
+- the same review prompt re-runs in a **fresh Claude session** (never the
+  implementer's own — still a cold read of the diff, just not cross-vendor),
+  with the switch recorded in the stage line (`review — Codex unavailable
+  (out of credits / usage limit) → Claude reviewer`), a `review-fallback`
+  marker in the run dir, and `reviewer_model` in `result.json`;
+- if the fallback fails too, the run ends **`review_failed`** and pushes
+  nothing — an unreviewed diff never ships looking reviewed — and the phone
+  push goes out at high priority, since only a human can top up the credits;
+- the pipeline never marks a PR ready and never merges, in any arm; opening a
+  draft PR is as far as automation goes.
+
+### Ticket sync — the PR lands on the ticket by itself
+
+An overnight run has no orchestrator watching for its result. When a run
+reaches `ready` and its run id starts with a `TEAM-123` identifier, the
+pipeline comments the draft-PR link on the Linear ticket and moves the ticket
+to its team's **In Review** state (matched against the team's real state
+names, "In Review" by name first, else the `started`-type state mentioning
+"review"). It reads the same `linear-api-key` file the quartermaster uses,
+logs everything to `runs/<RUN-ID>/ticket-sync.log`, and is strictly
+best-effort — a Linear hiccup never fails a run. `HARNESS_TICKET_SYNC=0`
+disables it. Ad-hoc runs (no ticket-shaped id) are skipped automatically.
+
 ---
 
 ## Quickstart

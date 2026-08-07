@@ -149,15 +149,19 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   the PR draft, write a sharper brief (same file — the worktree is reused), and
   re-dispatch.
 
-  **Close the loop on the ticket.** When every run for the ticket has its PR
-  ready (a single-repo ticket: that one PR), and an issue-tracker MCP is
-  available: put the PR links on the ticket — attachments if the MCP supports
-  them, otherwise one comment listing `repo — PR URL` per run, never with AI
-  attribution — and move the ticket to the team's **In Review** state (fetch
-  the team's actual status names rather than assuming the label). If some runs
-  are still failing or waiting, comment the finished PRs with a note naming
-  what is missing but leave the ticket state alone — In Review with half its
-  PRs is a lie the reviewer discovers later.
+  **Close the loop on the ticket.** The pipeline itself already does the
+  routine version when a Linear key file is configured: on `ready` it comments
+  the PR link on the ticket and moves it to the team's In Review state
+  (`runs/<RUN-ID>/ticket-sync.log` records what it did; `HARNESS_TICKET_SYNC=0`
+  disables). Check that log before acting so you never duplicate its comment.
+  What remains yours: when a ticket spans several runs, verify every PR is
+  ready before treating the ticket as In Review; put any missing links on the
+  ticket — attachments if the MCP supports them, otherwise one comment listing
+  `repo — PR URL` per run, never with AI attribution — and if some runs are
+  still failing or waiting, comment the finished PRs with a note naming what
+  is missing and move the ticket BACK out of In Review if the pipeline's sync
+  jumped early — In Review with half its PRs is a lie the reviewer discovers
+  later.
 - **needs_input** — the implementer hit a fork the brief didn't cover and
   stopped instead of guessing. Read `QUESTIONS.md` in the run dir. **Triage
   before involving the user**: questions your research already answers
@@ -181,6 +185,12 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 - **capacity_failed** — the same thing, twice already (`HARNESS_MAX_DEFERRALS`).
   The run stopped rescheduling itself rather than loop. Re-dispatch it once the
   window is genuinely back.
+- **review_failed** — the gate is green but NO reviewer completed: Codex died
+  (usually out of ChatGPT credits — `codex-*.log` tail says) and the Claude
+  fallback also failed (`claude-*.log`). Nothing was pushed, deliberately — an
+  unreviewed diff must never ship looking reviewed. Tell the user to top up
+  credits (a browser login you cannot do) or fix the fallback failure, then
+  re-dispatch the same command.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
   read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
   or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the
@@ -191,7 +201,12 @@ The Codex review stage is optional: on a machine without the `codex` CLI the run
 pins `arm: no_review` with empty `reviewer_model`/`reviewer_effort` and a
 `review skipped` stage line (conflict resolution falls back to a Claude worker,
 logged to `claude-*.log`). When you see that arm, nothing reviewed the diff —
-scrutinize it yourself before promoting, and say so in your verdict.
+scrutinize it yourself before promoting, and say so in your verdict. Different
+from that: on a machine WITH codex where codex died mid-run (out of credits),
+the same review prompt ran in a fresh Claude session instead —
+`review-fallback` in the run dir and `reviewer_model` in result.json record
+the switch. The diff WAS reviewed, just not cross-vendor; weigh that in your
+verdict.
 
 ## Post-PR conflicts
 
