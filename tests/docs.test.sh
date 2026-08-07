@@ -163,6 +163,15 @@ claim README      "$README"    'metrics.sh --report'
 # where a human (and the planner) will look for them.
 claim README      "$README"    'failed_silent'
 claim SKILL.md    "$SKILL"     'failed_silent'
+# The attempt lifecycle: a run that resumes itself out of a session limit, the
+# guard that stops a shipped run being dispatched again, and where a finished
+# attempt's telemetry now lives. All three change what an operator should expect
+# to see, so none of them may live only in the code.
+claim README      "$README"    'self-resuming at'
+claim README      "$README"    'HARNESS_REDISPATCH=1'
+claim README      "$README"    'attempts/<n>/'
+claim README      "$README"    'attempts.log'
+claim SKILL.md    "$SKILL"     'HARNESS_REDISPATCH=1'
 
 # Every backtick-quoted *.sh name in the docs must resolve to a shipped file.
 # A gitignored local config resolves through its *.example template; code spans
