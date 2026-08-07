@@ -160,7 +160,13 @@ check "actor: a gate round that was skipped is not the gate running" \
   "$(actor_of 'test gate #2 skipped — review committed nothing')"                                      "skipped"
 check "actor: push -> PR"             "$(actor_of 'push + draft PR (script — no model)')"              "PR"
 check "actor: demo -> demo"           "$(actor_of 'demo — recording (script, no model)')"              "demo"
-check "actor: review skipped is not Codex" "$(actor_of 'review skipped — no codex CLI found (Claude-only mode)')" "skipped"
+check "actor: review skipped is not Codex" "$(actor_of 'review skipped — HARNESS_SKIP_REVIEW=1 (no_review arm)')" "skipped"
+check "actor: the Claude tier is Claude, not Codex" \
+  "$(actor_of 'review — Codex unavailable (no codex CLI on this machine (Claude-only mode)) → Claude reviewer (Claude sub)')" "Claude"
+# The last tier gave up: nobody is working, and the greedy review*|fix* arm below
+# it used to put Codex's name on a failure Codex may never have been part of.
+check "actor: a review no tier completed is nobody's work in progress" \
+  "$(actor_of 'review failed silently — diff is unreviewed')" "unreviewed"
 # A run that deferred itself — preflight or a mid-run session limit — is neither
 # working nor finished, and the statusline has to keep saying so while it waits
 # for its own one-shot to fire.

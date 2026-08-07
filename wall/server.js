@@ -150,6 +150,7 @@ const ACTORS = [
   [/^(implementing|resuming)/, 'Opus', 'opus'],
   [/^review skipped/, 'skipped', 'skipped'],
   [/Claude reviewer/, 'Claude', 'opus'],
+  [/^review failed silently/, 'unreviewed', 'unreviewed'],
   [/^(review|fix)/, 'Codex', 'codex'],
   [/^test gate.* skipped/, 'skipped', 'skipped'],
   [/^test gate/, 'gate', 'gate'],
@@ -191,7 +192,7 @@ const FLOOR_OF = {
   setup: 0, sync: 0, failed: 0, unknown: 0,
   opus: 1, alarm: 1, deferred: 1,
   gate: 2,
-  codex: 3, skipped: 3,
+  codex: 3, skipped: 3, unreviewed: 3,
   demo: 4,
   pr: 5,
 };
@@ -204,7 +205,7 @@ const DONE_FLOOR = [
   [/setup_failed/, 0],
   [/implementer_failed|capacity_failed/, 1],
   [/gate_failed/, 2],
-  [/rejected/, 3],
+  [/rejected|review_failed/, 3],
 ];
 
 function floorOf(stage, actorKey) {

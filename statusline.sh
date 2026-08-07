@@ -52,6 +52,10 @@ harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
     'review skipped'*)         HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
     'review — Codex unavailable'*|*'— Claude reviewer'*) \
                                HARNESS_ACTOR='Claude';      HARNESS_ACTOR_COLOR="$C_BLUE" ;;
+    # Written after the LAST tier gave up, so it is nobody's work in progress —
+    # and it sits above the greedy arm below, which used to catch it and put
+    # Codex's name on a failure Codex may never have been part of.
+    'review failed silently'*) HARNESS_ACTOR='unreviewed';  HARNESS_ACTOR_COLOR="$C_RED" ;;
     review*|fix*)              HARNESS_ACTOR='Codex';       HARNESS_ACTOR_COLOR="$C_GREEN" ;;
     'test gate'*' skipped'*)   HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
     'test gate'*)              HARNESS_ACTOR='gate';        HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
