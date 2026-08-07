@@ -185,12 +185,13 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 - **capacity_failed** — the same thing, twice already (`HARNESS_MAX_DEFERRALS`).
   The run stopped rescheduling itself rather than loop. Re-dispatch it once the
   window is genuinely back.
-- **review_failed** — the gate is green but NO reviewer completed: Codex died
-  (usually out of ChatGPT credits — `codex-*.log` tail says) and the Claude
-  fallback also failed (`claude-*.log`). Nothing was pushed, deliberately — an
-  unreviewed diff must never ship looking reviewed. Tell the user to top up
-  credits (a browser login you cannot do) or fix the fallback failure, then
-  re-dispatch the same command.
+- **review_failed** — the gate is green but NO tier of the review produced
+  evidence: not the primary Codex account, not the fallback account, not the
+  Claude reviewer (`codex-*.log`, `claude-1-claude.log`, `review-fallback` in
+  the run dir say what happened at each tier). Nothing was pushed,
+  deliberately — an unreviewed diff must never ship looking reviewed. Tell the
+  user to top up credits (a browser login you cannot do) or fix whatever
+  killed the Claude tier, then re-dispatch the same command.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
   read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
   or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the
@@ -201,12 +202,20 @@ The Codex review stage is optional: on a machine without the `codex` CLI the run
 pins `arm: no_review` with empty `reviewer_model`/`reviewer_effort` and a
 `review skipped` stage line (conflict resolution falls back to a Claude worker,
 logged to `claude-*.log`). When you see that arm, nothing reviewed the diff —
-scrutinize it yourself before promoting, and say so in your verdict. Different
-from that: on a machine WITH codex where codex died mid-run (out of credits),
-the same review prompt ran in a fresh Claude session instead —
-`review-fallback` in the run dir and `reviewer_model` in result.json record
-the switch. The diff WAS reviewed, just not cross-vendor; weigh that in your
-verdict.
+scrutinize it yourself before promoting, and say so in your verdict.
+
+On a machine WITH codex, the review runs in tiers and `result.json` records
+how it actually went in `review`: `reviewed` means Codex (the `review_account`
+field says which subscription — `fallback` means the primary is out of credits
+and needs topping up; the review itself is as trustworthy as any other).
+`reviewed_claude` means both Codex accounts came up empty and a fresh Claude
+session took the same prompt — `review-fallback` in the run dir and
+`reviewer_model` record the switch; the diff WAS reviewed, just not
+cross-vendor, so weigh that in your verdict. `no_evidence` means the reviewer
+spent real time and left nothing behind — not retried, so read the diff more
+closely than usual. `failed_silent` no longer reaches a PR at all: it becomes
+the `review_failed` status above. `skipped` means what it says, and an empty
+value means the run never got that far.
 
 ## Post-PR conflicts
 

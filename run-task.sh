@@ -107,6 +107,10 @@ pin_knob() {  # $1 = file basename, $2 = var name, $3 = default
   fi
   eval "$2=\"\$v\""
 }
+positive_int() {
+  case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$1" -gt 0 ] 2>/dev/null
+}
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
 pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
 # A first dispatch without codex pins blank reviewer knobs. If codex is
@@ -125,6 +129,30 @@ pin_knob reviewer-effort REVIEWER_EFFORT high
 # empty and the run is simply unowned.
 pin_knob owner HARNESS_OWNER ""
 
+# The implementer's turn ceiling. `--max-turns` is a runaway-worker guard rail,
+# not a verdict on the task: pinned at 120 it killed eight runs, nearly always at
+# the finish line (writing the notes, `git add`), each recovered by a human
+# re-dispatch that finished in minutes. Pinned like the model knobs, so every
+# resume — including the automatic one below — spends the ceiling the run was
+# dispatched with rather than whatever the resuming shell happens to export.
+DEFAULT_MAX_TURNS=200
+DEFAULT_MAX_RESUMES=2
+pin_knob max-turns HARNESS_MAX_TURNS "$DEFAULT_MAX_TURNS"
+MAX_TURNS="$HARNESS_MAX_TURNS"
+# A garbled ceiling must neither reach the CLI (`--max-turns abc` is a usage
+# error that kills the dispatch on the spot) nor become the run's pinned budget:
+# say so once, fall back, and re-pin what the run actually used.
+if ! positive_int "$MAX_TURNS"; then
+  echo "[harness] HARNESS_MAX_TURNS='$MAX_TURNS' is not a positive integer — using $DEFAULT_MAX_TURNS"
+  MAX_TURNS=$DEFAULT_MAX_TURNS
+  echo "$MAX_TURNS" > "$RUN_DIR/max-turns"
+fi
+# How often turn exhaustion may resume itself before the run fails. Not pinned:
+# like the deferral cap, it bounds this invocation's automation rather than the
+# experimental condition, and 0 switches the self-resume off.
+MAX_RESUMES="${HARNESS_MAX_RESUMES:-$DEFAULT_MAX_RESUMES}"
+case "$MAX_RESUMES" in ''|*[!0-9]*) MAX_RESUMES=$DEFAULT_MAX_RESUMES ;; esac
+
 # A Claude-only run resumed after codex is installed may still need Codex for
 # base-sync conflicts. Use the normal defaults for that mechanical step while
 # keeping the run's reviewer fields blank.
@@ -136,14 +164,23 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
 fi
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
-REVIEW_OK=1           # 0 = the review stage ran and NO reviewer completed it
-REVIEW_AGENT="codex"  # which backend is reviewing; flips to claude on fallback
+# How the review stage actually went, decided from evidence after it runs (see
+# section 5b): "" until the stage is reached, then skipped | reviewed |
+# reviewed_claude | no_evidence. Recorded in result.json so nobody has to read
+# logs to find out whether a diff was reviewed.
+REVIEW_CLASS=""
+# Which Codex subscription the review attempt ran on: primary | fallback, empty
+# when no review attempt was made (the skipped arms) — or claude, when both
+# Codex accounts came up empty and a fresh Claude session took the review. A
+# label, never a path.
+REVIEW_ACCOUNT=""
+REVIEW_OK=1  # 0 = the stage ran and NO backend left review evidence: review_failed
 
 # Gather per-run quantitative metrics from the artefacts on disk. Every field is
 # best-effort: called on EVERY exit path (including early failures), it emits
 # whatever is available and nulls/empties the rest — partial metrics are fine.
 collect_metrics() {
-  local now started wall stage_durations gate_rounds opus_c codex_c
+  local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
   local numstat files ins del impl
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
@@ -169,12 +206,30 @@ collect_metrics() {
     [ -n "$stage_durations" ] || stage_durations='{}'
   fi
 
-  # Gate history for this invocation: "<round> <pass|fail>" per line.
+  # Gate history for this invocation, one line per round:
+  #   "<round> <pass|fail> <seconds>\t<failed step>"
+  # Seconds and the tab-separated step are optional in the pattern so a log left
+  # by a run that predates the telemetry still parses (both come out null), and
+  # so does the two-field shape any external reader may still write.
   gate_rounds='[]'
   if [ -f "$RUN_DIR/gate-rounds.log" ]; then
-    gate_rounds=$(jq -Rn '[inputs | capture("^(?<round>[^ ]+) (?<result>[^ ]+)$")?]' \
+    gate_rounds=$(jq -Rn '[inputs
+      | capture("^(?<round>[^ ]+) (?<result>[^ ]+)( (?<seconds>[0-9]+))?(\t(?<failed_step>.*))?$")?
+      | {round, result,
+         seconds: (if .seconds then (.seconds | tonumber) else null end),
+         failed_step: (if (.failed_step // "") == "" then null else .failed_step end)}]' \
       "$RUN_DIR/gate-rounds.log" 2>/dev/null || echo '[]')
     [ -n "$gate_rounds" ] || gate_rounds='[]'
+  fi
+
+  # How often the implementer was resumed instead of started fresh. Counted from
+  # the log rather than from stage_durations, which sums every resume under one
+  # label and so can never say "three times".
+  turn_resumes=0
+  if [ -f "$RUN_DIR/stages.log" ]; then
+    turn_resumes=$(awk '{ sub(/^[0-9]+ /, ""); if ($0 ~ /^resuming/) n++ } END { print n + 0 }' \
+      "$RUN_DIR/stages.log" 2>/dev/null || echo 0)
+    case "$turn_resumes" in ''|*[!0-9]*) turn_resumes=0 ;; esac
   fi
 
   # Commit attribution: base..opus_head is the implementer's, opus_head..HEAD is
@@ -209,6 +264,7 @@ EOF
     --argjson wall "$wall" \
     --argjson stage_durations "$stage_durations" \
     --argjson gate_rounds "$gate_rounds" \
+    --argjson turn_resumes "$turn_resumes" \
     --argjson opus_commits "$opus_c" \
     --argjson codex_commits "$codex_c" \
     --argjson files "${files:-null}" --argjson ins "${ins:-null}" --argjson del "${del:-null}" \
@@ -217,6 +273,7 @@ EOF
       wall_seconds: $wall,
       stage_durations: $stage_durations,
       gate_rounds: $gate_rounds,
+      turn_resumes: $turn_resumes,
       opus_commits: $opus_commits,
       codex_commits: $codex_commits,
       implementer_num_turns: ($impl.num_turns // null),
@@ -230,13 +287,18 @@ write_result() {
   metrics=$(collect_metrics)
   jq -n \
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
-    --arg arm "$ARM" --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
+    --arg arm "$ARM" --arg review "$REVIEW_CLASS" --arg raccount "$REVIEW_ACCOUNT" \
+    --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
     --arg rmodel "$REVIEWER_MODEL" --arg reffort "$REVIEWER_EFFORT" \
     --arg worktree "$WORKTREE" --arg branch "$BRANCH" --arg base "$BASE_BRANCH" \
     --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}' \
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}
+     # The account label belongs to a review that happened: the arms that never
+     # attempt one carry no field at all rather than an empty string nobody can
+     # tell apart from "primary".
+     | if .review_account == "" then del(.review_account) else . end' \
     > "$RUN_DIR/result.json"
 }
 
@@ -250,7 +312,7 @@ write_result() {
 # statusline; add or update the mapping in the same commit.
 # tests/statusline.test.sh asserts every literal maps to a known actor.
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
-stage() {
+stage() {  # $1 = stage text, $2 = optional extra line for the phone push only
   echo "$(date +%s) $1" > "$RUN_DIR/status"
   printf '%s %s\n' "$(date +%s)" "$1" >> "$RUN_DIR/stages.log"   # epoch history for metrics
   echo "$(date '+%H:%M:%S') $1" >> "$RUN_DIR/timeline"
@@ -261,22 +323,28 @@ stage() {
   fi
   if [ -n "${HARNESS_NTFY_TOPIC:-}" ]; then
     # The phone push is the only artifact of an unattended run its owner sees
-    # before sitting back down, so the two stages they must act on carry more
-    # than the stage text: a terminal stage attaches the PR link (body + tap
-    # target), and needs_input escalates so it survives a silenced phone.
-    # Everything else stays a low-priority background tick.
+    # before sitting back down, so the stages they must act on carry more than
+    # the stage text: a terminal stage attaches the PR link (body + tap
+    # target), and the blocked-on-a-human stages escalate so they survive a
+    # silenced phone. Everything else stays a low-priority background tick.
+    # The optional extra line ($2) is the push body's alone: status,
+    # stages.log, timeline and activity stay byte-identical, so every
+    # stage-text contract (statusline, wall, metrics) is untouched.
     local body="$1"; local -a extra=()
+    [ -n "${2:-}" ] && body="$1
+$2"
     case "$1" in
       "done: needs_input"|"done: review_failed")
         # The other ways a run stops on a human: base-sync conflicts the
         # resolver could not finish (never passes the waiting stage below),
-        # and a review no backend could run (out of credits). The contract is
-        # the same — a stage that blocks the run must survive a silenced phone.
+        # and a review no backend could complete (out of credits). The
+        # contract is the same — a stage that blocks the run must survive a
+        # silenced phone.
         extra+=(-H "Priority: high" -H "Tags: warning")
         ;;
       done:*)
         if [ -n "${PR_URL:-}" ]; then
-          body="$1"$'\n'"$PR_URL"
+          body="$body"$'\n'"$PR_URL"
           extra+=(-H "Click: $PR_URL" -H "Actions: view, Open PR, $PR_URL")
         fi
         ;;
@@ -406,12 +474,25 @@ session_limit_hit() {
     | grep -qiE "$pattern"
 }
 
+# The other way an implementer stops with work still on the bench: it ran out of
+# turns. Structured evidence rather than prose — the CLI's final result event
+# carries subtype "error_max_turns" — with the stderr text as a fallback for a
+# process that never got to write one. opus-stream.jsonl is rewritten by every
+# attempt, so this only ever answers for the attempt that just ended.
+max_turns_hit() {
+  jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
+    "$RUN_DIR/opus-stream.jsonl" >/dev/null 2>&1 && return 0
+  grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
+}
+
 date +%s > "$RUN_DIR/started"
 # Metrics bookkeeping: a per-invocation marker segments stages.log so resume
 # pauses aren't charged to a stage; gate-rounds.log is fresh each invocation
-# (a resumed run re-runs its gates, so stale rounds would double-count).
+# (a resumed run re-runs its gates, so stale rounds would double-count), and so
+# is the turn-resume counter — this invocation starts with a full budget.
 printf '%s __invocation__\n' "$(date +%s)" >> "$RUN_DIR/stages.log"
 : > "$RUN_DIR/gate-rounds.log"
+rm -f "$RUN_DIR/turn-resumes"
 echo "$WORKTREE" > "$RUN_DIR/worktree"
 echo "$BASE_REF" > "$RUN_DIR/base"
 echo "[harness] $TICKET -> $REPO ($BRANCH from $BASE_REF)"
@@ -522,69 +603,128 @@ Rules:
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
 - When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
 
+# Every continuation message restates the commit rules. A resumed session has
+# its original instructions far behind it in a long context, and two resumes in
+# one day re-added `Co-Authored-By: Claude` trailers their first pass had never
+# written — one caught by hand, one by the reviewer, and a no_review arm would
+# have shipped them. This is the cheap half of the fix; the deterministic strip
+# after the stage is the half that does not depend on a model reading it.
+RESUME_RULES="These rules from your original instructions are still binding:
+- Make small conventional commits (type(scope): description).
+- Never mention AI, Claude, or agents in commits — no Co-Authored-By, no Generated-with, no attribution trailer of any kind, in the subject, the body or the footer.
+- Never git add or commit anything under .harness/; never use git add -f.
+- Do NOT push, do NOT create PRs, do NOT switch branches."
+
 # Worker sessions are resumable: we pin the session id so the user can step in
 # interactively at any time (attach.sh), and so a re-dispatch after needs_input
 # continues with the worker's context intact. After each run the id is refreshed
 # from the stream's result event, since --resume forks to a new session id.
 OPUS_SESSION_FILE="$RUN_DIR/opus-session"
-CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns 120)
+CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns "$MAX_TURNS")
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
+
+# One implementer attempt: leaves OPUS_EXIT, the worker's final message and the
+# refreshed session id behind. Stream events go to the statusline and feed.log
+# so a run shows live what the worker is doing (tool by tool); the raw stream is
+# kept for debugging — and, being rewritten per attempt, is also what the
+# failure classifiers read to judge the attempt that has just ended.
+opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
+  local prompt="$1" new_session; shift
+  # Remember where this attempt starts in the append-only live feed so an older
+  # limit message cannot classify a later, unrelated failure as capacity.
+  OPUS_FEED_START_LINE=1
+  if [ -f "$RUN_DIR/feed.log" ]; then
+    OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
+  fi
+  (cd "$WORKTREE" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+      "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
+      --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
+    | tee "$RUN_DIR/opus-stream.jsonl" \
+    | jq --unbuffered -r '
+        if .type == "assistant" then
+          (.message.content[]? |
+            if .type == "tool_use" then
+              "⏺ \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:90])"
+            elif .type == "thinking" then
+              "🧠 \((.thinking // "") | gsub("\\s+"; " ") | .[0:90])"
+            elif .type == "text" then
+              "💬 \((.text // "") | gsub("\\s+"; " ") | .[0:90])"
+            else empty end)
+        elif .type == "result" then "🏁 \(.subtype // "done")"
+        else empty end' \
+    | while IFS= read -r line; do
+        printf '%s %s\n' "$(date '+%H:%M:%S')" "$line" >> "$RUN_DIR/feed.log"
+        printf '%s\n' "$line" > "$RUN_DIR/activity"
+      done
+  OPUS_EXIT=${PIPESTATUS[0]}
+  # Extract the worker's final message and the (possibly forked) session id.
+  jq -r 'select(.type == "result") | .result // empty' "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
+  new_session=$(jq -r 'select(.type == "result") | .session_id // empty' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null | tail -1)
+  if [ -n "$new_session" ]; then
+    OPUS_SESSION="$new_session"
+    echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
+  fi
+}
+
+# The implementer left nothing shippable behind. One predicate for both the
+# turn-ceiling loop below and the failure branch after it, so they can never
+# disagree about what "it did not finish" means.
+opus_incomplete() {
+  [ "$OPUS_EXIT" -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --oneline 2>/dev/null)" ]
+}
+
 if [ -f "$OPUS_SESSION_FILE" ]; then
   OPUS_SESSION=$(cat "$OPUS_SESSION_FILE")
-  OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and, if .harness/specs/ exists, re-read those source documents too before continuing under the same rules as before."
-  CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --resume "$OPUS_SESSION")
+  OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and, if .harness/specs/ exists, re-read those source documents too before continuing under the same rules as before.
+
+$RESUME_RULES"
+  SESSION_ARGS=(--resume "$OPUS_SESSION")
   stage "resuming — Opus (Claude sub)"
 else
   OPUS_SESSION=$(uuidgen | tr '[:upper:]' '[:lower:]')
   echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
   OPUS_PROMPT="$IMPLEMENTER_PROMPT"
-  CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --session-id "$OPUS_SESSION")
+  SESSION_ARGS=(--session-id "$OPUS_SESSION")
   stage "implementing — Opus (Claude sub)"
 fi
-# Remember where this attempt starts in the append-only live feed so an older
-# limit message cannot classify a later, unrelated failure as capacity.
-OPUS_FEED_START_LINE=1
-if [ -f "$RUN_DIR/feed.log" ]; then
-  OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
-fi
-# Stream events so the statusline and feed.log can show live what the worker
-# is doing (tool by tool); raw stream kept for debugging.
-(cd "$WORKTREE" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
-    "$CLAUDE_BIN" -p "$OPUS_PROMPT" "${CLAUDE_ARGS[@]}" \
-    --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
-  | tee "$RUN_DIR/opus-stream.jsonl" \
-  | jq --unbuffered -r '
-      if .type == "assistant" then
-        (.message.content[]? |
-          if .type == "tool_use" then
-            "⏺ \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:90])"
-          elif .type == "thinking" then
-            "🧠 \((.thinking // "") | gsub("\\s+"; " ") | .[0:90])"
-          elif .type == "text" then
-            "💬 \((.text // "") | gsub("\\s+"; " ") | .[0:90])"
-          else empty end)
-      elif .type == "result" then "🏁 \(.subtype // "done")"
-      else empty end' \
-  | while IFS= read -r line; do
-      printf '%s %s\n' "$(date '+%H:%M:%S')" "$line" >> "$RUN_DIR/feed.log"
-      printf '%s\n' "$line" > "$RUN_DIR/activity"
-    done
-OPUS_EXIT=${PIPESTATUS[0]}
-# Extract the worker's final message and the (possibly forked) session id.
-jq -r 'select(.type == "result") | .result // empty' "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
-NEW_SESSION=$(jq -r 'select(.type == "result") | .session_id // empty' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null | tail -1)
-[ -n "$NEW_SESSION" ] && echo "$NEW_SESSION" > "$OPUS_SESSION_FILE"
+opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
+
+# --- 4b. Turn ceiling: resume rather than die at the finish line -------------
+# Turn exhaustion is a budget running out, not a task that failed, and it lands
+# almost exclusively during the wrap-up — so the recovery has always been the
+# same: re-dispatch, which resumes the pinned session and finishes in minutes.
+# Do that here instead of making a person notice. Same session, same worktree,
+# same pinned ceiling; MAX_RESUMES bounds it, and only then is the run failed.
+#
+# ORDERING: the capacity classifier owns any session-limit death — it is checked
+# FIRST, so an empty window defers (below) instead of spending a turn-resume on
+# a session that cannot spawn anyway. A pending QUESTIONS.md wins too: a worker
+# that stopped to ask must not be talked over.
+TURN_RESUME_PROMPT="You stopped because you ran out of turns, not because the work is done. This is the same session, resumed with a fresh turn budget. Check what is already committed (git log, git status) before redoing anything, then finish the task under the same rules as before: leave the tree passing the brief's verify commands and write .harness/implementer-notes.md.
+
+$RESUME_RULES"
+
+TURN_RESUMES=0
+while opus_incomplete && [ "$TURN_RESUMES" -lt "$MAX_RESUMES" ] \
+      && [ ! -f "$WORKTREE/.harness/QUESTIONS.md" ] \
+      && ! session_limit_hit && max_turns_hit; do
+  TURN_RESUMES=$((TURN_RESUMES + 1))
+  echo "$TURN_RESUMES" > "$RUN_DIR/turn-resumes"
+  stage "resuming: turn ceiling ($TURN_RESUMES/$MAX_RESUMES)"
+  opus_attempt "$TURN_RESUME_PROMPT" --resume "$OPUS_SESSION"
+done
+
 if [ -f "$WORKTREE/.harness/QUESTIONS.md" ]; then
   cp "$WORKTREE/.harness/QUESTIONS.md" "$RUN_DIR/QUESTIONS.md"
   STATUS="needs_input"; write_result "$STATUS" ""
   stage "waiting — implementer needs your input (QUESTIONS.md)"
   exit 3
 fi
-if [ $OPUS_EXIT -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --oneline 2>/dev/null)" ]; then
+if opus_incomplete; then
   # A window that emptied mid-run is a capacity event, not a failed implementer.
   # The CLI's message is only the trigger; the reset time comes from ccusage, so
   # nothing here depends on parsing prose that Anthropic is free to reword.
-  if [ $OPUS_EXIT -ne 0 ] && [ "${HARNESS_PREFLIGHT:-on}" != off ] \
+  if [ "$OPUS_EXIT" -ne 0 ] && [ "${HARNESS_PREFLIGHT:-on}" != off ] \
      && declare -F capacity_for >/dev/null 2>&1 && session_limit_hit; then
     capacity_note "mid-run: the implementer stopped on a session limit"
     capacity_for "$CLAUDE_LOGS" || true   # the headroom is moot; CAP_RESET is not
@@ -594,18 +734,141 @@ if [ $OPUS_EXIT -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --on
   stage "done: implementer_failed"
   echo "[harness] implementer failed (exit $OPUS_EXIT, see opus-stderr.log / feed.log in $RUN_DIR)"; exit 1
 fi
+
+# --- 4c. Commit hygiene backstop (script — no model) -------------------------
+# The prompts have always said not to sign commits with the model's name, and
+# resumed sessions have twice done it anyway: one trailer was caught by hand,
+# one by the reviewer, and a no_review arm would have shipped it. So stop hoping
+# and make it true — mechanically, on every arm, before the branch can become a
+# PR. Only the MESSAGES of the offending commits in base..HEAD are rewritten:
+# each new commit reuses the original tree object verbatim, the working copy is
+# never touched, and a range with nothing to strip is left byte-identical.
+#
+# Two shapes, because a trailer can name the model in either half: a `Claude-*:`
+# key goes whatever it carries, while a generic key (`Co-Authored-By:` and kin)
+# goes only when its VALUE names the model — so a genuine human co-author, the
+# one thing here that must never be touched, survives.
+AI_ATTRIBUTION_RE='^[[:space:]]*claude-[a-z-]*[[:space:]]*:|^[[:space:]]*(co-authored-by|assisted-by|session-id|generated-by|generated-with)[[:space:]]*:[[:space:]]*.*(claude|anthropic)|^[[:space:]]*(🤖[[:space:]]*)?generated with .*(claude|anthropic)'
+
+strip_ai_attribution() {
+  local all_messages commits c tree parents parent mapped msg cleaned new old_head new_head
+  local an ae ad cn ce ct i parent_changed n=0
+  local -a old_commits=() new_commits=() pargs=()
+  all_messages=$(git -C "$WORKTREE" log --format='%B' "$BASE_REF..HEAD" 2>/dev/null) \
+    || return 1
+  printf '%s\n' "$all_messages" | grep -qiE "$AI_ATTRIBUTION_RE" || return 0
+  old_head=$(git -C "$WORKTREE" rev-parse HEAD) || return 1
+  # Parents precede their children, including across merges. Keep an old -> new
+  # map so each changed parent can be substituted without flattening the DAG.
+  # Commits whose message and parents are unchanged are reused verbatim; among
+  # other things, that preserves signatures and nonstandard headers on clean
+  # commits before or beside the first offender.
+  commits=$(git -C "$WORKTREE" rev-list --reverse --topo-order "$BASE_REF..HEAD" 2>/dev/null) \
+    || return 1
+  for c in $commits; do
+    tree=$(git -C "$WORKTREE" rev-parse "$c^{tree}") || return 1
+    parents=$(git -C "$WORKTREE" show -s --format=%P "$c") || return 1
+    pargs=(); parent_changed=0
+    for parent in $parents; do
+      mapped="$parent"
+      for ((i=0; i<${#old_commits[@]}; i++)); do
+        if [ "${old_commits[$i]}" = "$parent" ]; then
+          mapped="${new_commits[$i]}"
+          break
+        fi
+      done
+      [ "$mapped" = "$parent" ] || parent_changed=1
+      pargs+=(-p "$mapped")
+    done
+    msg=$(git -C "$WORKTREE" log -1 --format=%B "$c") || return 1
+    cleaned=$(printf '%s\n' "$msg" | grep -ivE "$AI_ATTRIBUTION_RE")
+    if [ "$cleaned" != "$msg" ]; then n=$((n + 1)); else cleaned="$msg"; fi
+    if [ "$cleaned" = "$msg" ] && [ "$parent_changed" = 0 ]; then
+      new="$c"
+      old_commits+=("$c"); new_commits+=("$new")
+      continue
+    fi
+    IFS=$'\x1f' read -r an ae ad cn ce ct <<EOF
+$(git -C "$WORKTREE" log -1 --format='%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI' "$c")
+EOF
+    new=$(printf '%s\n' "$cleaned" | \
+      GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
+      GIT_COMMITTER_NAME="$cn" GIT_COMMITTER_EMAIL="$ce" GIT_COMMITTER_DATE="$ct" \
+      git -C "$WORKTREE" commit-tree "$tree" "${pargs[@]}") || return 1
+    old_commits+=("$c"); new_commits+=("$new")
+  done
+  [ "$n" -gt 0 ] || return 1
+  new_head=''
+  for ((i=0; i<${#old_commits[@]}; i++)); do
+    if [ "${old_commits[$i]}" = "$old_head" ]; then
+      new_head="${new_commits[$i]}"
+      break
+    fi
+  done
+  [ -n "$new_head" ] || return 1
+  # HEAD is symbolic, so this moves the branch and nothing else: identical trees
+  # mean the index and the working copy still match, dirty or not.
+  git -C "$WORKTREE" update-ref -m 'harness: strip AI attribution' HEAD "$new_head" "$old_head" \
+    || return 1
+  all_messages=$(git -C "$WORKTREE" log --format='%B' "$BASE_REF..HEAD" 2>/dev/null) \
+    || return 1
+  printf '%s\n' "$all_messages" | grep -qiE "$AI_ATTRIBUTION_RE" && return 1
+  echo "[harness] commit hygiene: stripped AI attribution from $n commit message(s) — trees untouched"
+}
+strip_ai_attribution
+HYGIENE_EXIT=$?
+[ "$HYGIENE_EXIT" -eq 0 ] \
+  || fail implementer_failed "commit hygiene could not remove AI attribution from $BASE_REF..HEAD"
+
 # Everything up to this commit is Opus's work; later commits are Codex's.
 OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)
 echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
 
 # --- 5. Gate + Codex review/fix loop ------------------------------------------
+# Which step of the gate died. Three quarters of runs need a second gate round,
+# and until now the only record was "fail" — never WHICH command failed, so
+# nobody could say what to fix first.
+#
+# The gate's own shell is the exact source: a DEBUG trap records each top-level
+# command right before it runs, so at exit the file holds the command the chain
+# stopped on — and in an `&&` chain, that IS the first failing step. The
+# alternatives are both worse. Splitting GATE_CMD on `&&` and running the
+# segments ourselves changes how the gate runs (a `cd backend && npm test` chain
+# would lose its directory) and cannot be done safely by text (`&&` inside a
+# quoted argument). Scraping "the last command line" out of gate-N.log assumes
+# the gate echoes its commands, which `npm test` and `pytest` do not. This costs
+# one file write per top-level command, leaves the gate log byte-identical, and
+# parses nothing.
+#
+# Redirected to its own file, never to the log, so the reviewer's gate-latest.log
+# is exactly what it always was. `|| :` keeps a failed write from ever being
+# visible to the gate.
+GATE_TRACE_PRELUDE='trap '\''printf "%s\n" "$BASH_COMMAND" > "$HARNESS_GATE_STEP" 2>/dev/null || :'\'' DEBUG'
+
 run_gate() {
+  local rc started secs step script failed_step
   stage "test gate #$1 (deterministic — no model)"
-  (cd "$WORKTREE" && bash -c "$GATE_CMD") > "$RUN_DIR/gate-$1.log" 2>&1
-  local rc=$?
+  step="$RUN_DIR/gate-$1.step"
+  : > "$step"
+  script="$GATE_TRACE_PRELUDE
+$GATE_CMD"
+  started=$(date +%s)
+  (cd "$WORKTREE" && HARNESS_GATE_STEP="$step" bash -c "$script") > "$RUN_DIR/gate-$1.log" 2>&1
+  rc=$?
+  secs=$(( $(date +%s) - started ))
   tail -100 "$RUN_DIR/gate-$1.log" > "$WORKTREE/.harness/gate-latest.log"
   if [ $rc -eq 0 ]; then GATE_STATUS="pass"; else GATE_STATUS="fail"; fi
-  printf '%s %s\n' "$1" "$GATE_STATUS" >> "$RUN_DIR/gate-rounds.log"
+  # Only a failing round has a failing step; a passing round's last command
+  # explains nothing, and recording it would invite exactly that misreading.
+  failed_step=""
+  if [ "$GATE_STATUS" = fail ]; then
+    failed_step=$(tr -d '\t' < "$step" 2>/dev/null | head -1)
+  fi
+  # Additive: the first two fields are byte-for-byte what they were, so every
+  # existing reader (wall/server.js splits on whitespace and takes two) is
+  # unaffected; the step is tab-separated because a command contains spaces.
+  printf '%s %s %s\t%s\n' "$1" "$GATE_STATUS" "$secs" "$failed_step" \
+    >> "$RUN_DIR/gate-rounds.log"
   return $rc
 }
 
@@ -615,6 +878,30 @@ GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-di
 # from stdin..." (bit us in production). </dev/null fixes the cause;
 # with_timeout is the backstop cap (timeout(1), or a perl-alarm fallback).
 CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
+
+# --- Which Codex subscription an attempt runs on ------------------------------
+# A dry primary workspace turned six hours of reviews into honestly-flagged
+# no-ops. codex auth is entirely CODEX_HOME-directory-scoped, so a second
+# account is one more config dir (`CODEX_HOME=<dir> codex login`) plus a rule
+# about when to reach for it. Unset knob: nothing below ever fires and the run
+# is byte-for-byte the run it always was.
+#
+# ONE ATTEMPT, ONE ACCOUNT. CODEX_HOME is chosen before an attempt starts and
+# never changed while it runs. The switch is sticky and only ever moves the
+# NEXT attempt, so the review retry, the fix round and base-sync conflict
+# resolution all follow wherever the review ended up.
+CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
+CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
+CODEX_PRIMARY_DRY=0       # the primary answered "out of credits" at least once
+
+# The workspace-credits error is certainty rather than a guess: retrying the
+# same account cannot possibly work. Matched case-insensitively on
+# whitespace-flattened output, so a message the CLI wrapped across lines (or
+# indented inside a box) still counts.
+codex_out_of_credits() {  # $1 = an attempt's log
+  [ -f "$1" ] || return 1
+  tr -s '[:space:]' ' ' < "$1" | grep -qiE 'out of credits'
+}
 
 # Live feed for the second half of the pipeline. The implementer's stream-json
 # events are appended to feed.log below as "HH:MM:SS <emoji> …"; without this the
@@ -626,19 +913,38 @@ feed() {  # $1 = marker + model, $2 = line
 }
 
 run_codex() {  # $1 = round label, $2 = prompt
+  local log="$RUN_DIR/codex-$1.log" rc
+  # env(1) sits between the timeout and the CLI because with_timeout is a shell
+  # function: env cannot exec one. Empty on the primary, so the command line is
+  # exactly what it has always been.
+  local home=()
+  [ "$CODEX_ACCOUNT" = fallback ] && home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  # The attempt's log opens with the account LABEL — which subscription ran it,
+  # and nothing else about it. tee appends from here; the truncation above keeps
+  # a re-dispatch's log as fresh as it was before.
+  printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"
   with_timeout "$CODEX_TIMEOUT" \
+    ${home[@]+"${home[@]}"} \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
     -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\",\"/opt/homebrew/share/flutter/bin/cache\",\"$HOME/.pub-cache\",\"$HOME/.config/flutter\",\"$HOME/.dart-tool\"]" \
     -c "model=\"$CODEX_MODEL\"" \
     -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
     "$2" </dev/null 2>&1 \
-    | tee "$RUN_DIR/codex-$1.log" \
+    | tee -a "$log" \
     | while IFS= read -r l; do
         [ -n "$l" ] || continue
         printf '%.100s\n' "$l" > "$RUN_DIR/activity"
         feed '◆ codex' "$l"
       done
-  return "${PIPESTATUS[0]}"
+  rc="${PIPESTATUS[0]}"
+  if [ "$CODEX_ACCOUNT" = primary ] && codex_out_of_credits "$log"; then
+    CODEX_PRIMARY_DRY=1
+    if [ -n "$CODEX_HOME_FALLBACK" ]; then
+      CODEX_ACCOUNT="fallback"
+      echo "[harness] codex round $1 hit the workspace-credits error — the fallback account takes the next attempt"
+    fi
+  fi
+  return "$rc"
 }
 
 # Same job on a Claude subscription, for machines without the codex CLI: fresh
@@ -663,38 +969,94 @@ run_claude_worker() {  # $1 = round label, $2 = prompt
 # Merge-conflict resolution is PR mechanics, not quality review, so it runs in
 # BOTH arms — on codex when it is installed (unchanged), on Claude otherwise.
 resolve_conflicts() {  # $1 = round label, $2 = prompt
-  if [ "$CODEX_AVAILABLE" = 1 ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
+  local before
+  [ "$CODEX_AVAILABLE" = 1 ] || { run_claude_worker "$1" "$2"; return; }
+  before="$CODEX_ACCOUNT"
+  run_codex "$1" "$2" || true
+  # A primary that answered "out of credits" resolved nothing, and the merge is
+  # still stopped. run_codex moves the account only on that exact evidence, so
+  # this pair of conditions is the credits case and nothing else — one more
+  # attempt on the fallback before the caller escalates to a human.
+  if [ "$before" = primary ] && [ "$CODEX_ACCOUNT" = fallback ]; then
+    stage "base sync — conflict resolution ($CONFLICT_AGENT, fallback account)"
+    run_codex "$1-fallback" "$2"
+  fi
 }
 
-# One short phrase for why codex died, read from its own log. "Out of credits"
-# is the shape that actually happened in production — the ChatGPT workspace ran
-# dry at 17:00 and, before this existed, ten runs shipped looking reviewed.
-reviewer_fail_reason() {  # $1 = codex log path, $2 = exit code
-  if grep -qiE 'out of credits|insufficient[_ ]?quota|usage limit|rate.?limit|billing|429' "$1" 2>/dev/null; then
-    echo "out of credits / usage limit"
+# --- Review-stage integrity ---------------------------------------------------
+# Two confirmed runs "reviewed" a large diff in 4 and 19 seconds: no reviewer
+# commits, no review-notes.md — and the run still recorded arm: full, gate pass,
+# ready. Nothing reviewed those diffs and nothing said so; one of them shipped a
+# defect a reviewer would have caught.
+#
+# So the stage is classified from EVIDENCE, never from duration: a genuine
+# "everything is sound" review that writes its notes is a real review, however
+# fast. Duration only decides whether a second pass is worth paying for — a
+# stage that produced no evidence at all in less time than a human could read
+# the diff is the signature of a reviewer that never started (auth prompt, CLI
+# crash, empty context), and that is worth one retry.
+DEFAULT_REVIEW_MIN_SECONDS=60
+DEFAULT_REVIEW_TRIVIAL_LINES=20
+REVIEW_MIN_SECONDS="${HARNESS_REVIEW_MIN_SECONDS:-$DEFAULT_REVIEW_MIN_SECONDS}"
+REVIEW_TRIVIAL_LINES="${HARNESS_REVIEW_TRIVIAL_LINES:-$DEFAULT_REVIEW_TRIVIAL_LINES}"
+case "$REVIEW_MIN_SECONDS"   in ''|*[!0-9]*) REVIEW_MIN_SECONDS=$DEFAULT_REVIEW_MIN_SECONDS ;; esac
+case "$REVIEW_TRIVIAL_LINES" in ''|*[!0-9]*) REVIEW_TRIVIAL_LINES=$DEFAULT_REVIEW_TRIVIAL_LINES ;; esac
+
+# Proof that a review happened: fix commits, notes, or a rejection. Any one of
+# them is enough — the reviewer is told to write notes even when it changes
+# nothing, and a REJECTED.md is the most engaged review there is.
+review_evidence() {
+  [ -f "$WORKTREE/.harness/review-notes.md" ] && return 0
+  [ -f "$WORKTREE/.harness/REJECTED.md" ] && return 0
+  [ "$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null)" != "$OPUS_HEAD" ] && return 0
+  return 1
+}
+
+# The floor only means something on a diff that takes real reading: a two-line
+# change genuinely can be reviewed in seconds, and crying wolf over it would
+# teach everyone to ignore the alarm. An unreadable diff counts as trivial for
+# the same reason.
+review_diff_is_trivial() {
+  local n
+  n=$(git -C "$WORKTREE" diff --numstat "$BASE_REF...HEAD" 2>/dev/null \
+    | awk '{ if ($1 != "-") i += $1; if ($2 != "-") d += $2 } END { print i + d + 0 }')
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$n" -le "$REVIEW_TRIVIAL_LINES" ]
+}
+
+# The last review tier. Cross-vendor is the preference; A REVIEW is the
+# requirement: when BOTH Codex accounts have come up empty (the evidence checks
+# above, not exit codes, make that call), the same prompt goes to a FRESH
+# Claude session — never the implementer's own, so it is still a cold read of
+# the diff, just not a cross-vendor one. The switch is recorded loudly: a stage
+# line, the review-fallback marker, review_account/reviewer_model in
+# result.json — and REVIEW_AGENT flips so any later fix round stays on the
+# backend that actually reviewed.
+REVIEW_AGENT="codex"
+claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcome
+  stage "review — Codex unavailable ($1) → Claude reviewer (Claude sub)"
+  REVIEW_AGENT="claude"
+  REVIEW_ACCOUNT="claude"
+  REVIEWER_MODEL="$IMPLEMENTER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
+  printf 'claude fallback: %s\n' "$1" >> "$RUN_DIR/review-fallback"
+  run_claude_worker 1-claude "$REVIEW_PROMPT" || true
+  if review_evidence; then
+    REVIEW_CLASS="reviewed_claude"
   else
-    echo "codex exited $2"
+    # Nothing reviewed this diff — not the Codex side, not Claude. The run
+    # must not ship looking reviewed: section 6 turns this into
+    # review_failed — no push, no PR, a high-priority phone push.
+    REVIEW_CLASS="failed_silent"
+    ARM="no_review"
+    REVIEW_OK=0
+    stage "review failed silently — diff is unreviewed"
+    echo "[harness] the review stage produced no commits and no notes on any backend — this diff is UNREVIEWED and will not ship"
   fi
 }
 
-# The review dispatcher. Cross-vendor is the preference; A REVIEW is the
-# requirement. When codex dies mid-run (credits, network, timeout) the same
-# prompt goes to a FRESH Claude session — never the implementer's own session,
-# so it is still a cold read of the diff, just not a cross-vendor one — and
-# the switch is recorded loudly: a stage line, a run-dir marker, and
-# reviewer_model in result.json. A reviewer failure is never a silent green.
-run_reviewer() {  # $1 = round label, $2 = prompt
-  local rc=0 why
-  if [ "$REVIEW_AGENT" = codex ]; then
-    if run_codex "$1" "$2"; then return 0; fi
-    rc=$?
-    why=$(reviewer_fail_reason "$RUN_DIR/codex-$1.log" "$rc")
-    stage "review — Codex unavailable ($why) → Claude reviewer (Claude sub)"
-    REVIEW_AGENT="claude"
-    REVIEWER_MODEL="$IMPLEMENTER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
-    printf 'claude fallback after round %s: %s\n' "$1" "$why" >> "$RUN_DIR/review-fallback"
-  fi
-  run_claude_worker "$1" "$2"
+# Fix rounds go to whichever backend actually reviewed this run.
+run_fix_round() {  # $1 = round label, $2 = prompt
+  if [ "$REVIEW_AGENT" = codex ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
 }
 
 # --- Ticket sync (script — no model, best-effort) ------------------------------
@@ -748,17 +1110,20 @@ ticket_sync() {  # uses TICKET, PR_URL, BRANCH; always returns 0
 run_gate 1 || true
 
 # --- Review + fix rounds ------------------------------------------------------
-# Codex reviews; a mid-run codex death (out of credits, network) falls back to
-# a fresh Claude session via run_reviewer — an unreviewed diff shipping as
-# reviewed is the worse failure, and the switch is recorded in the stage line,
-# review-fallback in the run dir, and reviewer_model in result.json. If BOTH
-# backends fail, the run ends review_failed and pushes nothing. The stage is
-# skipped entirely only when the codex CLI is absent (Claude-only mode — a
-# machine-level arm pinned at first dispatch, kept honest as an ablation) or
-# HARNESS_SKIP_REVIEW=1. Either way the deterministic gate above still ran, so
-# a failing gate still yields gate_failed downstream, and the base-sync step
-# below still runs in both arms.
+# The review runs in tiers, and every tier decision is made from EVIDENCE
+# (notes, a rejection, or reviewer commits — section 5b), never exit codes:
+#   codex primary -> codex fallback account (credits-certain, or one retry on a
+#   silent no-op) -> a fresh Claude session (claude_review_tier) -> and only
+#   when ALL of that produced nothing, review_failed: no push, no PR, high-
+#   priority phone push. Cross-vendor is the preference; a review is the
+#   requirement; an unreviewed diff shipping as reviewed is the worst outcome.
+# The stage is skipped entirely only when the codex CLI is absent (Claude-only
+# mode — a machine-level arm pinned at first dispatch, kept honest as an
+# ablation) or HARNESS_SKIP_REVIEW=1. Either way the deterministic gate above
+# still ran, so a failing gate still yields gate_failed downstream, and the
+# base-sync step below still runs in both arms.
 if [ "$CODEX_AVAILABLE" = 0 ]; then
+  REVIEW_CLASS="skipped"
   stage "review skipped — no codex CLI found (Claude-only mode)"
 elif [ "$ARM" = "full" ]; then
 REVIEW_PROMPT="You are the reviewer stage of an automated pipeline; another agent just implemented a task.
@@ -790,9 +1155,83 @@ Boundary: refactor freely within the code this branch introduces or touches; do 
 if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
   mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
 fi
+# Same reasoning for the notes, and for the same reason the integrity check
+# below needs: a previous dispatch's review-notes.md left in the worktree would
+# be read as evidence that THIS review happened. Harvested into the run dir
+# rather than deleted, which is where section 6 would have copied it anyway, so
+# no round's notes are ever lost.
+if [ -f "$WORKTREE/.harness/review-notes.md" ]; then
+  mv "$WORKTREE/.harness/review-notes.md" "$RUN_DIR/review-notes.md"
+fi
 
 stage "review — Codex (ChatGPT sub)"
-run_reviewer 1 "$REVIEW_PROMPT" || REVIEW_OK=0
+REVIEW_STARTED=$(date +%s)
+# Read before the attempt, not after: run_codex may move the account for the
+# NEXT attempt, and this records the one that actually ran this review.
+REVIEW_ACCOUNT="$CODEX_ACCOUNT"
+run_codex 1 "$REVIEW_PROMPT" || true
+REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
+
+# --- 5b. Did the review actually happen? -------------------------------------
+# Two things can buy the single retry, and the second one is why the fallback
+# account exists: a credits-dead attempt is *certain* to repeat itself on the
+# same account, so it never spends the retry there.
+REVIEW_RETRY_REASON=""
+if review_evidence; then
+  REVIEW_CLASS="reviewed"
+elif [ "$CODEX_PRIMARY_DRY" = 1 ]; then
+  if [ -n "$CODEX_HOME_FALLBACK" ]; then
+    # Tier 1 — credits-certain. Takes precedence over the floor below: the
+    # floor asks "is a second pass worth paying for?", and here the second
+    # pass is on a different account, so the answer is yes however long the
+    # first one took.
+    REVIEW_RETRY_REASON="the primary Codex account is out of credits"
+  else
+    # Credits-certain with nowhere else to go on the Codex side: a retry on
+    # the same dry account is certain to repeat itself (the very reason tier 1
+    # never spends the retry there), so the Claude tier takes it directly —
+    # even on a trivial diff, because "trivial" excuses an empty review, not
+    # an absent one.
+    claude_review_tier "the Codex account is out of credits"
+  fi
+elif [ "$REVIEW_SECONDS" -ge "$REVIEW_MIN_SECONDS" ] || review_diff_is_trivial; then
+  # It spent real time on the diff (or there was next to nothing to read) and
+  # simply left no notes behind. Recorded honestly, not retried: a second full
+  # pass is expensive and the signature here is not a stage that never ran.
+  REVIEW_CLASS="no_evidence"
+  echo "[harness] review left no commits and no notes after ${REVIEW_SECONDS}s — recorded as no_evidence"
+else
+  # Tier 2 — silent no-op, cause unknown (auth prompt, CLI crash, empty
+  # context, or a credits message this build words differently). The retry is
+  # bought either way; a configured fallback just means it is not spent on the
+  # account that already came up empty.
+  REVIEW_RETRY_REASON="review produced nothing in ${REVIEW_SECONDS}s (floor ${REVIEW_MIN_SECONDS}s)"
+fi
+
+if [ -n "$REVIEW_RETRY_REASON" ]; then
+  REVIEW_RETRY_SUFFIX=""
+  if [ -n "$CODEX_HOME_FALLBACK" ]; then
+    CODEX_ACCOUNT="fallback"
+    REVIEW_RETRY_SUFFIX=" (fallback account)"
+    echo "[harness] $REVIEW_RETRY_REASON — retrying once on the fallback Codex account"
+  else
+    echo "[harness] $REVIEW_RETRY_REASON — retrying once"
+  fi
+  stage "review retry — Codex (ChatGPT sub)$REVIEW_RETRY_SUFFIX"
+  REVIEW_STARTED=$(date +%s)
+  REVIEW_ACCOUNT="$CODEX_ACCOUNT"
+  run_codex 1-retry "$REVIEW_PROMPT" || true
+  REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
+  if review_evidence; then
+    REVIEW_CLASS="reviewed"
+  else
+    # Both Codex attempts produced nothing. This used to ship as
+    # failed_silent/no_review — visible, but still an unreviewed diff on its
+    # way to a PR. The review requirement outranks the cross-vendor
+    # preference: a fresh Claude session takes the same prompt.
+    claude_review_tier "no evidence from either Codex account"
+  fi
+fi
 
 if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
   if ! run_gate 2; then
@@ -801,10 +1240,12 @@ if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
     else
       stage "fix round 2 — Claude reviewer (Claude sub)"
     fi
-    run_reviewer 2 "The test gate is still failing after your review. Output is in .harness/gate-latest.log. Fix the failures and commit (no AI attribution; never commit anything under .harness/). If it cannot be fixed without violating .harness/brief.md, write .harness/REJECTED.md instead." || REVIEW_OK=0
+    run_fix_round 2 "The test gate is still failing after your review. Output is in .harness/gate-latest.log. Fix the failures and commit (no AI attribution; never commit anything under .harness/). If it cannot be fixed without violating .harness/brief.md, write .harness/REJECTED.md instead." || true
     run_gate 3 || true
   fi
 fi
+else
+  REVIEW_CLASS="skipped"   # the no_review ablation arm (HARNESS_SKIP_REVIEW=1)
 fi   # end: review stage
 
 # --- 6. Outcome ---------------------------------------------------------------
@@ -954,7 +1395,19 @@ else
 fi
 
 write_result "$STATUS" "$PR_URL"
-stage "done: $STATUS"
+# A run that fell back reviewed fine, so nothing about its outcome says the
+# primary needs topping up. One sentence on the run's own push is how the
+# operator learns that without reading a log — and it only ever claims the
+# credits error when the log actually carried it.
+DONE_NOTE=""
+if [ "$REVIEW_ACCOUNT" = fallback ]; then
+  if [ "$CODEX_PRIMARY_DRY" = 1 ]; then
+    DONE_NOTE="review ran on the fallback Codex account — primary is out of credits"
+  else
+    DONE_NOTE="review ran on the fallback Codex account — the primary review produced nothing"
+  fi
+fi
+stage "done: $STATUS" "$DONE_NOTE"
 echo "[harness] DONE status=$STATUS gate=$GATE_STATUS pr=${PR_URL:-none}"
 echo "[harness] worktree=$WORKTREE logs=$RUN_DIR"
 [ "$STATUS" = "ready" ]

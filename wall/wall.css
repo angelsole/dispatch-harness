@@ -52,6 +52,15 @@
   --win-c: rgba(122, 214, 236, 0.34);
   --edge: rgba(150, 195, 200, 0.45);
 
+  /* The ground floor after dark. Four signs are the whole vocabulary of this
+     street — a noodle bar, a diner, an arcade, a repair shop — and they are the
+     window colours turned up rather than a second palette: warm first, cold
+     second, nothing pink, nothing brighter than an alarm. */
+  --shop-noodle: #ff9a5e;
+  --shop-diner: #ffc27d;
+  --shop-arcade: #7fd4ec;
+  --shop-repair: #9fe8b8;
+
   --accent: var(--codex);
   --ground: 9vh;         /* how far above the bottom edge the towers stand */
 
@@ -62,7 +71,9 @@
   --spot-in: 800ms;                             /* the searchbeam finding it */
   --completion: 0s;     /* set from the snapshot before any tower is rendered */
   --ceremony: 6s;       /* the shipping beat, inside the completion moment */
+  --sign-life: 21600s;  /* how long a building keeps its dispatcher's tint */
   --weather-blend: 2s;  /* smooth the one-second ambient samples */
+  --settle: 900ms;      /* a shipped run landing in the district */
 }
 
 * { box-sizing: border-box; }
@@ -354,9 +365,9 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
    the whole point. Nothing renders an empty state. */
 .city[data-empty="1"] { display: none; }
 
-/* The standby plate: only exists while the skyline is empty. Dim phosphor —
-   present enough to say "alive and waiting", never loud enough to compete
-   with the night. */
+/* The standby plate: only for a genuinely empty week — nothing climbing AND
+   nothing shipped since Monday. Dim phosphor — present enough to say "alive and
+   waiting", never loud enough to compete with the night. */
 .idle {
   position: fixed;
   left: 50%;
@@ -368,7 +379,7 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   letter-spacing: 0.3em;
   z-index: 3;
 }
-body:has(.city[data-empty="1"]) .idle { display: block; }
+body[data-idle="empty"] .idle { display: block; }
 .idle__label { font-size: 0.66rem; opacity: 0.7; }
 .idle__title {
   margin-top: 0.5rem;
@@ -389,6 +400,30 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
 /* A phosphor cursor decays rather than switches — and the motion rule the
    gate enforces (nothing snaps) holds even here. */
 @keyframes idle-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.08; } }
+
+/* Nothing climbing, but the week is standing behind it. One line, low and
+   quiet, over the district it is describing — the wall must never look broken
+   on an evening that shipped nine things. */
+.rest {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--ground) + 1.2rem);
+  transform: translateX(-50%);
+  display: none;
+  z-index: 13;
+  padding: 0.3rem 0.9rem;
+  /* It sits over a lit district, so it carries its own night behind it — the
+     one line on the wall in this state has to be readable from the far side of
+     the room, not merely present. */
+  background: linear-gradient(90deg, transparent, rgba(1, 5, 8, 0.82) 12%,
+    rgba(1, 5, 8, 0.82) 88%, transparent);
+  font-size: 0.7rem;
+  letter-spacing: 0.28em;
+  color: var(--phosphor-dim);
+  text-shadow: 0 0 0.9rem rgba(44, 154, 97, 0.35);
+  white-space: nowrap;
+}
+body[data-idle="rest"] .rest { display: block; }
 
 .tower {
   /* Storey pitch and bay width, a fact about the building rather than about one
@@ -709,6 +744,438 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   text-shadow: none;
   animation: klaxon-text 1s var(--ease-io) infinite;
 }
+
+/* --- the week's district: what has already shipped, standing ----------------
+   The skyline in front of this is live and leaves nothing behind. This layer is
+   the opposite: one permanent building per run that reached `done: ready` since
+   Monday 00:00, so by Friday the city IS the week's shipped work. A building
+   lands with one settle and is furniture after that — the only thing on the wall
+   that moves is the work still in progress above it.
+
+   Type is the repo family, height is the diff, the plot is the run id, and the
+   only attribution anywhere in here is a small sign that cools to neutral within
+   six hours. No zones, no lanes, no per-person anything. */
+
+.district {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--ground);
+  z-index: 2;
+  height: 56vh;
+  pointer-events: none;
+}
+
+.block {
+  --x: 50%;
+  --storeys: 3;
+  --deep: 0.92;         /* depth band: size and haze */
+  --veil: 0.34;
+  --wide: 1;            /* repo family: footprint and proportion */
+  --tall: 1;
+  --row: 0.3rem;        /* the facade grid, a storey finer than a tower's */
+  --col: 0.2rem;
+  --crew: #e8cfa6;
+  --age: 0;
+  position: absolute;
+  bottom: 0;
+  left: var(--x);
+  width: calc(2.9rem * var(--deep) * var(--wide));
+  height: calc((3.4vh + var(--storeys) * 1.9vh) * var(--deep) * var(--tall));
+  transform: translate3d(-50%, 0, 0);
+  /* Fast-forwarded by --age exactly like the completion moment: a browser
+     opened at four in the afternoon finds this morning's buildings standing,
+     not the whole week landing at once. */
+  animation: settle var(--settle) var(--ease) backwards;
+  animation-delay: calc(var(--age, 0) * -1s);
+}
+
+/* Three depth bands, so the district reads as a city with air in it rather than
+   as a row of bars. Far is smaller, hazier and stacked behind. */
+.block[data-depth="0"] { --deep: 0.74; --veil: 0.62; z-index: 1; }
+.block[data-depth="1"] { --deep: 0.92; --veil: 0.34; z-index: 2; }
+.block[data-depth="2"] { --deep: 1.12; --veil: 0.12; z-index: 3; }
+
+/* Repo family, as a building you can name from the sofa: agent work is
+   residential, the two data repos are industrial blocks, valoryx is an
+   observatory spire, and the harness itself is infrastructure — a low deck on
+   pylons. Anything unrecognised is an honest mid-rise. */
+.block[data-kind="residential"] { --wide: 0.72; --tall: 1.16; }
+.block[data-kind="industrial"]  { --wide: 1.55; --tall: 0.74; }
+.block[data-kind="spire"]       { --wide: 0.58; --tall: 1.1; }
+.block[data-kind="infra"]       { --wide: 1.85; --tall: 0.5; }
+
+.block__mass {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, var(--stone-lit), var(--stone) 46%);
+  border-top: 1px solid var(--edge);
+}
+/* Atmospheric perspective: the wet air between this building and the room. */
+.block__mass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(0deg, rgba(22, 56, 64, 0.6), rgba(16, 42, 50, 0.34));
+  opacity: var(--veil);
+}
+.block[data-kind="residential"] .block__mass {
+  clip-path: polygon(0 9%, 22% 9%, 22% 0, 78% 0, 78% 9%, 100% 9%, 100% 100%, 0 100%);
+}
+.block[data-kind="industrial"] .block__mass {                          /* shed roofline */
+  clip-path: polygon(0 16%, 26% 0, 26% 16%, 63% 0, 63% 16%, 100% 16%, 100% 100%, 0 100%);
+}
+.block[data-kind="spire"] .block__mass {
+  clip-path: polygon(28% 0, 72% 0, 100% 20%, 100% 100%, 0 100%, 0 20%);
+}
+
+/* The facade is the towers' own window grid at the district's pitch, dimmer:
+   these are the backdrop, and a lit shaft in front of them has to win. */
+.block__windows { opacity: 0.46; }
+
+/* --- the ground floor, from the first ship ----------------------------------
+   The district used to stand dark until the week's tenth ship, which made a
+   Tuesday that shipped one thing look like a mausoleum. It does not any more:
+   a building that has landed has a lit ground floor, full stop. Everything in
+   here is a fact about the run id, so it is the same on both screens and it is
+   the same tomorrow. */
+
+/* Shopfronts. A row of small warm bays under every building — counters,
+   doorways, the light spilling out of them — lit the moment the building lands.
+   No milestone, no gate: this is what "the week has shipped something" looks
+   like at street level. */
+.block__shop {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 0;
+  height: 0.44rem;
+  background: linear-gradient(90deg,
+    var(--win-a) 0 14%, transparent 14% 30%,
+    color-mix(in srgb, var(--shop-diner) 42%, transparent) 30% 52%, transparent 52% 66%,
+    var(--win-a) 66% 88%, transparent 88% 100%);
+  box-shadow: 0 0.16rem 0.8rem color-mix(in srgb, var(--shop-diner) 26%, transparent);
+  opacity: 0.94;
+  transition: opacity var(--spot-in) var(--ease);
+}
+
+/* The one sign on the street that says what the shop actually is. A third of the
+   buildings carry one — all of them would be Piccadilly Circus — and which bay
+   it hangs over, and when its tube stumbles, come off the run id. */
+/* Sized off the shopfront row it hangs over rather than in rem: a repair shop
+   under a narrow spire gets a narrow sign, and no sign ever sticks out past the
+   building paying for it. */
+.block__neon {
+  --shop: var(--shop-diner);
+  display: none;
+  position: absolute;
+  left: calc(var(--bay, 0) * 19%);
+  bottom: 0.52rem;
+  width: 20%;
+  height: 0.15rem;
+  background: var(--shop);
+  box-shadow: 0 0 0.45rem var(--shop),
+              0 0 1.2rem color-mix(in srgb, var(--shop) 55%, transparent);
+}
+.block[data-neon="1"] .block__neon {
+  display: block;
+  animation: neon-hum 23s linear infinite;
+  animation-delay: calc(var(--flicker, 0) * -1s);
+}
+.block[data-shop="noodle"] .block__neon { --shop: var(--shop-noodle); }
+.block[data-shop="diner"]  .block__neon { --shop: var(--shop-diner); }
+.block[data-shop="arcade"] .block__neon { --shop: var(--shop-arcade); }
+.block[data-shop="repair"] .block__neon { --shop: var(--shop-repair); }
+
+/* Occupancy. Three windows per facade keeping their own hours: each one fades up
+   and back down over a minute and a half or more, on its own loop length and
+   from its own seeded phase, so nothing on this street ever blinks in unison.
+   Three, fixed — the element count on a wall that runs for a month is a budget. */
+.block__occupancy {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* A low deck on pylons is four storeys shorter than a spire, and the same
+     seeded row would hang a lit window in the air above it. */
+  overflow: hidden;
+  transition: opacity var(--spot-in) var(--ease);
+}
+/* Placed as a fraction of the facade, not in rem: the district spans a 3-storey
+   deck on pylons and a 14-storey slab, and a seeded row in absolute units would
+   hang a lit window in the air over the short one. The floor clears the
+   shopfront on even the smallest building there is. */
+.block__occupancy i {
+  --lamp: var(--win-a);
+  position: absolute;
+  left: calc(8% + var(--wx, 0) * 12%);
+  bottom: calc(30% + var(--wy, 0) * 14%);
+  width: 9%;
+  height: 8%;
+  background: var(--lamp);
+  box-shadow: 0 0 0.4rem color-mix(in srgb, var(--lamp) 60%, transparent);
+  opacity: 0.85;
+  animation: occupancy 97s var(--ease-io) infinite;
+  animation-delay: calc(var(--phase, 0) * -13s);
+}
+.block__occupancy i:nth-child(2) { animation-duration: 131s; }
+.block__occupancy i:nth-child(3) { --lamp: var(--win-c); animation-duration: 173s; }
+
+/* Roof furniture per family — the silhouette is what the room actually reads. */
+.block__crown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 1.5rem;
+  pointer-events: none;
+}
+.block__crown::before,
+.block__crown::after { content: ""; position: absolute; bottom: 0; background: var(--stone); }
+.block[data-kind="residential"] .block__crown::before {
+  left: 18%; width: 42%; height: 0.5rem; border-top: 1px solid var(--edge);
+}
+.block[data-kind="residential"] .block__crown::after { left: 76%; width: 0.1rem; height: 1.2rem; }
+.block[data-kind="industrial"] .block__crown::before {
+  left: 14%; width: 0.3rem; height: 1.3rem; box-shadow: 0.8rem 0 0 0 var(--stone);
+}
+.block[data-kind="industrial"] .block__crown::after {
+  left: 58%; width: 32%; height: 0.3rem; border-top: 1px solid var(--edge);
+}
+.block[data-kind="spire"] .block__crown::before {
+  left: 50%; width: 0.1rem; height: 1.5rem; margin-left: -0.05rem;
+}
+/* The observatory lamp: cold, small and always on — never red, which belongs
+   to an alarm, and never green, which belongs to a run that just shipped. */
+.block[data-kind="spire"] .block__crown::after {
+  left: 50%; bottom: 1.34rem; width: 0.28rem; height: 0.28rem; margin-left: -0.14rem;
+  border-radius: 50%; background: var(--demo); box-shadow: 0 0 0.5rem var(--demo);
+}
+.block[data-kind="infra"] .block__crown::before {
+  left: 10%; right: 10%; height: 1.2rem;
+  background: linear-gradient(90deg,
+    var(--stone) 0 7%, transparent 7% 46%, var(--stone) 46% 54%,
+    transparent 54% 93%, var(--stone) 93% 100%);
+}
+.block[data-kind="infra"] .block__crown::after {
+  left: 4%; right: 4%; bottom: 0.86rem; height: 0.13rem; background: var(--edge);
+}
+.block[data-kind="midrise"] .block__crown::before { left: 6%; right: 6%; height: 0.16rem; }
+
+/* Attribution, and the whole of it: a small neon on the building's shoulder in
+   the dispatcher's own crew tint, cooling to the district's neutral within
+   --sign-life of landing. Nothing else on this layer names anybody, and nothing
+   anywhere counts them. */
+.block__sign {
+  position: absolute;
+  right: -0.13rem;
+  top: 12%;
+  width: 0.24rem;
+  height: 0.76rem;
+  background: rgba(150, 205, 190, 0.26);
+  box-shadow: 0 0 0.4rem rgba(150, 205, 190, 0.18);
+}
+.block__sign::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--crew);
+  box-shadow: 0 0 0.55rem var(--crew);
+  animation: sign-cool var(--sign-life) linear forwards;
+  animation-delay: calc(var(--age, 0) * -1s);
+}
+
+/* Last week, flattened. This SVG group sits before every painted skyline plane,
+   so their silhouettes and parallax pass in front of it: a height and a plot,
+   no windows, no signs, no types. Empty last week renders nothing at all. */
+.ghost {
+  --par: 1.6;
+  pointer-events: none;
+  opacity: 0.14;
+  animation: par-drift 205s var(--ease-io) infinite alternate;
+}
+.ghost__block {
+  fill: #7fb4c0;
+  stroke: #b3d7dc;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* --- nightlife: the street, from the first ship ------------------------------
+   The district behind this is a record of the week; this is the city living in
+   it. One building standing is enough for all of it: steam off the vents,
+   somebody walking home, a car every so often. What the week shipped only sets
+   the tempo — more people out, shorter gaps between cars — and the mall and the
+   tram are what a very good week adds on top.
+
+   All of it sits inside the ground-floor band, under the height the towers stand
+   at, and every part of it drops a stop the moment there is work on the skyline:
+   the city goes on behind a run climbing, it does not compete with it. */
+.life {
+  --vehicle-cycle: 48s;    /* one car's loop; the week and car count set it */
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 12;
+  /* The band the towers stand above, plus the headroom a plume needs: everything
+     that MOVES here is inside the ground floor, and only the steam is allowed to
+     drift up past the buildings' feet. */
+  height: calc(var(--ground) + 5vh);
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity var(--spot-in) var(--ease);
+}
+.life__crowd, .life__road { position: absolute; inset: 0; }
+
+/* Steam. The cheapest possible statement that the city is warm — and the first
+   thing the eye finds on an otherwise still street. Three vents, always. */
+.life__vent {
+  position: absolute;
+  left: 18%;
+  bottom: 0.6vh;
+  width: 2.4rem;
+  height: 3.6rem;
+  border-radius: 50%;
+  background: radial-gradient(58% 46% at 50% 100%,
+    var(--win-b), color-mix(in srgb, var(--edge) 20%, transparent) 56%, transparent 78%);
+  opacity: 0;
+  transform-origin: 50% 100%;
+  animation: steam 11s var(--ease-io) infinite;
+}
+.life__vent--b {
+  left: 53%;
+  width: 1.8rem;
+  height: 2.8rem;
+  animation-duration: 14s;
+  animation-delay: -6s;
+}
+.life__vent--c {
+  left: 79%;
+  width: 2.1rem;
+  height: 3.2rem;
+  animation-duration: 17s;
+  animation-delay: -11s;
+}
+
+/* Somebody out at one in the morning. A silhouette, never a character: a dark
+   body with the street's own warmth down one edge, small enough that the room
+   reads "a person" and moves on. */
+.life__walker {
+  --slot: 0;
+  position: absolute;
+  left: 0;
+  bottom: calc(1.4vh + var(--depth, 0) * 0.9vh);
+  width: 0.3rem;
+  height: 0.72rem;
+  opacity: 0.62;
+  animation: commute 132s linear infinite;
+  animation-delay: calc(var(--slot) * -21s);
+}
+.life__walker i {
+  position: absolute;
+  inset: 0;
+  border-radius: 0.11rem 0.11rem 0 0;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 95%, transparent) 52%,
+    color-mix(in srgb, var(--shop-diner) 55%, transparent));
+  animation: trudge 1.1s var(--ease-io) infinite;
+}
+/* The other half of a night shift: the small service robots, squatter and
+   slower, going the other way and bobbing on their own beat. */
+.life__walker[data-kind="robot"] {
+  width: 0.4rem;
+  height: 0.42rem;
+  animation-duration: 176s;
+  animation-direction: reverse;
+}
+.life__walker[data-kind="robot"] i {
+  border-radius: 0.08rem;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 92%, transparent),
+    color-mix(in srgb, var(--shop-repair) 60%, transparent));
+  box-shadow: 0 0 0.4rem color-mix(in srgb, var(--shop-repair) 22%, transparent);
+  animation: trundle 2.3s var(--ease-io) infinite;
+}
+
+/* A car, now and then. The whole pass is a slice at the end of a long
+   cycle, so the street is mostly empty street: a vehicle is an event on the week
+   that shipped one thing and ordinary traffic on the week that shipped twenty. */
+.life__car {
+  --slot: 0;
+  position: absolute;
+  left: 0;
+  bottom: 3.2vh;
+  width: 3.2rem;
+  height: 0.14rem;
+  border-radius: 0.14rem;
+  mix-blend-mode: screen;
+  background: linear-gradient(90deg, transparent,
+    color-mix(in srgb, var(--shop-diner) 20%, transparent) 42%, var(--shop-diner));
+  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop-diner) 50%, transparent);
+  opacity: 0;
+  animation: prowl var(--vehicle-cycle) linear infinite;
+  animation-delay: var(--vehicle-delay, 0s);
+}
+.life__car[data-way="west"] {
+  bottom: 4.3vh;
+  background: linear-gradient(90deg, var(--shop-arcade),
+    color-mix(in srgb, var(--shop-arcade) 18%, transparent) 58%, transparent);
+  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop-arcade) 40%, transparent);
+  animation-direction: reverse;
+}
+
+/* The mall: a big week puts one wide over-lit block at the end of the street.
+   Extra texture on a city that is already alive — never the thing that tells you
+   it is. */
+.life__mall {
+  position: absolute;
+  right: 3%;
+  bottom: 2.6vh;
+  width: 21vw;
+  height: 4vh;
+  background:
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--shop-diner) 50%, transparent) 0 0.5rem,
+      transparent 0.5rem 1.1rem),
+    linear-gradient(180deg, var(--stone-lit), var(--stone));
+  border-top: 1px solid var(--edge);
+  box-shadow: 0 -0.3rem 1.6rem color-mix(in srgb, var(--shop-diner) 16%, transparent);
+  opacity: 0;
+  transition: opacity var(--spot-in) var(--ease);
+}
+.life[data-mall="1"] .life__mall { opacity: 0.9; }
+
+/* The tram: the twentieth ship of the week puts a line through the district. */
+.life__rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6vh;
+  height: 1px;
+  background: linear-gradient(90deg, transparent,
+    rgba(140, 205, 200, 0.26) 12%, rgba(140, 205, 200, 0.26) 88%, transparent);
+  opacity: 0;
+  transition: opacity var(--spot-in) var(--ease);
+}
+.life[data-tram="1"] .life__rail { opacity: 1; }
+.life__tram {
+  position: absolute;
+  bottom: 6.1vh;
+  left: 0;
+  width: 5.2rem;
+  height: 0.46rem;
+  border-radius: 0.1rem;
+  background: linear-gradient(90deg, rgba(120, 190, 200, 0.45), rgba(200, 240, 240, 0.7));
+  box-shadow: 0 0 0.7rem rgba(140, 210, 215, 0.35);
+  opacity: 0;
+}
+.life[data-tram="1"] .life__tram { animation: tramline 96s linear infinite; }
+
+/* Nightlife never competes with work. The instant anything is climbing, the
+   whole ground floor — street, shopfronts, lit windows — drops a stop, and the
+   skyline keeps the room's eye. The city goes on; it just stops talking. */
+body[data-quiet="0"] .life { opacity: 0.5; }
+body[data-quiet="0"] .block__shop { opacity: 0.45; }
+body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
 
 /* --- one run: a lit car in its shaft --------------------------------------- */
 
@@ -1284,6 +1751,70 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   60% { opacity: 0.88; transform: scale(1.12); }
   100% { opacity: 0; transform: scale(1.4); }
 }
+/* A building landing. One beat, once, and then it is part of the city — the
+   whole point of a district that accretes is that it stops moving. */
+@keyframes settle {
+  from { opacity: 0; transform: translate3d(-50%, 1.4rem, 0); }
+  to { opacity: 1; transform: translate3d(-50%, 0, 0); }
+}
+/* The dispatcher's tint cooling out of a building's sign over six hours. Ends
+   on nothing, so a wall opened tomorrow finds last night's ships anonymous. */
+@keyframes sign-cool {
+  0%, 8% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+/* The district's population, crossing. Long loops: each of these is on screen
+   for a fraction of its cycle, which is what keeps a busy week a street rather
+   than a parade. */
+@keyframes commute {
+  from { transform: translate3d(-108vw, 0, 0); }
+  to { transform: translate3d(108vw, 0, 0); }
+}
+@keyframes trudge {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -0.1rem, 0); }
+}
+/* A machine walks differently: no bob, a slight list either side of level. */
+@keyframes trundle {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(-3deg); }
+  50% { transform: translate3d(0, -0.04rem, 0) rotate(3deg); }
+}
+/* One car pass, at the end of a long wait. The wait is the point: on a
+   quiet week this is nothing for forty seconds and then somebody drives home. */
+@keyframes prowl {
+  0%, 62% { opacity: 0; transform: translate3d(-8vw, 0, 0); }
+  66%, 92% { opacity: 0.7; }
+  100% { opacity: 0; transform: translate3d(114vw, 0, 0); }
+}
+/* Steam off a vent: up, out, and gone. Never a loop you can see repeat, because
+   the three vents run on three different lengths. */
+@keyframes steam {
+  0% { opacity: 0; transform: translate3d(0, 0.4rem, 0) scale(0.5); }
+  24% { opacity: 0.5; }
+  62% { opacity: 0.26; }
+  100% { opacity: 0; transform: translate3d(0.7rem, -2.8rem, 0) scale(1.55); }
+}
+/* A window somebody is still up behind. Minutes on, minutes off, and the ramps
+   at either end are what stop it reading as a blink. */
+@keyframes occupancy {
+  0%, 34% { opacity: 0; }
+  42%, 68% { opacity: 0.85; }
+  78%, 100% { opacity: 0; }
+}
+/* A shop's neon on a wet night: steady, with the odd stumble. Same shape as the
+   tower signs' flicker — a narrow slice of a long loop, staggered per building
+   by its own seed, so no two signs on the street stutter together. */
+@keyframes neon-hum {
+  0%, 61%, 64.6%, 100% { opacity: 1; }
+  62% { opacity: 0.25; }
+  62.8% { opacity: 0.9; }
+  63.6% { opacity: 0.4; }
+}
+@keyframes tramline {
+  0%, 58% { opacity: 0; transform: translate3d(-12vw, 0, 0); }
+  62%, 94% { opacity: 0.62; }
+  100% { opacity: 0; transform: translate3d(116vw, 0, 0); }
+}
 @keyframes sweep {
   from { transform: rotate(-34deg); }
   to { transform: rotate(38deg); }
@@ -1342,8 +1873,9 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   to   { transform: translateX(calc(5px * var(--par, 1))); }
 }
 
-/* The breathing camera: an imperceptible push-in over two minutes, towers
-   moving a touch more than the sky behind them. */
+/* The breathing camera: an imperceptible push-in over two minutes for the live
+   towers. The shipped district is deliberately absent — after its one settle,
+   a permanent building is static. */
 .city { transform-origin: 50% 100%; animation: cam-city 140s var(--ease-io) infinite alternate; }
 .sky  { transform-origin: 50% 100%; animation: cam-sky 140s var(--ease-io) infinite alternate; }
 @keyframes cam-city { from { transform: scale(1); } to { transform: scale(1.035); } }
@@ -1422,6 +1954,18 @@ body:has(.city[data-empty="1"]) .idle { display: block; }
   /* The beam is parked, so the patch it paints is parked where it lands. */
   .tower[data-alarm="1"] .tower__ceiling { transform: translate3d(calc(var(--reach) * -0.27), 0, 0); }
   .tower[data-ready="1"] .tower__beacon { opacity: 1; }
+  /* The district is a record, so it stays legible standing still: the buildings
+     are there, the population is parked mid-street rather than deleted, and the
+     tram sits on its line. JS resolves the sign to its current static age so
+     reduced motion does not make attribution permanent. */
+  .block__sign::before { opacity: var(--sign-static, 0); }
+  .life[data-tram="1"] .life__tram { opacity: 0.62; }
+  /* Nightlife standing still is still nightlife: the shopfronts, the neon and
+     the occupied windows are facts about the week, not motion, so they stay lit.
+     Only the two things that ARE motion go — a plume that cannot rise is a
+     smudge, and a headlight streak that cannot travel is a scratch. */
+  .life__vent, .life__car { display: none; }
+  .life__walker { transform: translate3d(calc(9vw + var(--slot) * 15vw), 0, 0); }
   .comms__marquee { animation: none; }
   /* The weather never drifts here — wall.js leaves --haze and --dawn unwritten,
      so the fallbacks above are the same night this wall has always shown. */

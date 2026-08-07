@@ -158,6 +158,11 @@ claim SKILL.md    "$SKILL"     '--runs-only'
 claim SKILL.md    "$SKILL"     'status.sh --watch'
 claim README      "$README"    'tests/*.test.sh'
 claim RELEASING.md "$RELEASING" 'tests/*.test.sh'
+claim README      "$README"    'metrics.sh --report'
+# The pipeline's self-report is only useful if its two loud values are documented
+# where a human (and the planner) will look for them.
+claim README      "$README"    'failed_silent'
+claim SKILL.md    "$SKILL"     'failed_silent'
 
 # Every backtick-quoted *.sh name in the docs must resolve to a shipped file.
 # A gitignored local config resolves through its *.example template; code spans
@@ -175,6 +180,27 @@ for name in $NAMED; do
 done
 list_ok "$phantom" "claim: every script named in README/SKILL.md ships" \
                    "claim: docs name scripts that do not exist"
+
+# ---------------------------------------------------------------------------
+# Env knobs <-> the docs
+# ---------------------------------------------------------------------------
+# A knob nobody can find is a knob that does not exist. Every HARNESS_* env var
+# run-task.sh honors must be named in README.md — or, for the ones whose home is
+# a config file, in the shipped template that seeds it.
+echo "== env knobs vs. the docs =="
+KNOBS="$(grep -ohE 'HARNESS_[A-Z_]+' "$SRC/run-task.sh" | sort -u)"
+n=$(printf '%s\n' "$KNOBS" | grep -c '' | tr -d ' ')
+if [ "$n" -ge 10 ]; then ok "knobs: run-task.sh reads $n HARNESS_* knobs"; else bad "knobs: only $n HARNESS_* knobs found — extraction broken?"; fi
+
+EXAMPLES="$(cd "$SRC" && git ls-files '*.example' | while IFS= read -r f; do cat "$f"; done)"
+undocumented=''
+for k in $KNOBS; do
+  grep -qF -- "$k" "$README" && continue
+  printf '%s' "$EXAMPLES" | grep -qF -- "$k" && continue
+  undocumented="$undocumented $k"
+done
+list_ok "$undocumented" "knobs: every knob run-task.sh honors is documented" \
+                        "knobs: knobs documented nowhere a user would look"
 
 # ---------------------------------------------------------------------------
 # Run outcomes <-> the planner's triage list

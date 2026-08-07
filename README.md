@@ -240,21 +240,31 @@ mechanical base-sync conflict step.
 ### When Codex dies mid-run (out of credits)
 
 Different from a machine that never had codex: a machine WITH codex whose
-review call fails — a ChatGPT workspace out of credits is the shape that
-actually happened, ten runs shipping unreviewed overnight — must not treat the
-failure as a clean review. Cross-vendor is the preference; **a review is the
-requirement**:
+review produced no evidence — a ChatGPT workspace out of credits is the shape
+that actually happened, ten runs shipping unreviewed overnight — must not
+treat the failure as a clean review. Cross-vendor is the preference; **a
+review is the requirement**. The stage runs in tiers, every decision made from
+evidence (notes, a rejection, or reviewer commits), never exit codes:
 
-- the same review prompt re-runs in a **fresh Claude session** (never the
-  implementer's own — still a cold read of the diff, just not cross-vendor),
-  with the switch recorded in the stage line (`review — Codex unavailable
-  (out of credits / usage limit) → Claude reviewer`), a `review-fallback`
-  marker in the run dir, and `reviewer_model` in `result.json`;
-- if the fallback fails too, the run ends **`review_failed`** and pushes
-  nothing — an unreviewed diff never ships looking reviewed — and the phone
-  push goes out at high priority, since only a human can top up the credits;
-- the pipeline never marks a PR ready and never merges, in any arm; opening a
-  draft PR is as far as automation goes.
+1. the **primary Codex account** reviews;
+2. on a credits-certain death (or one silent no-op below the review floor) the
+   **fallback Codex account** takes a retry, when
+   `HARNESS_CODEX_HOME_FALLBACK` is configured — still cross-vendor;
+3. when the Codex side is done — both accounts empty, or a dry primary with no
+   fallback configured (a retry on a certainly-dry account buys nothing, and
+   credits outrank the trivial-diff shortcut) — the same review prompt runs in
+   a **fresh Claude session** (never the implementer's own — still a cold read
+   of the diff, just not cross-vendor). Recorded loudly: the stage line
+   (`review — Codex unavailable (…) → Claude reviewer`), a `review-fallback`
+   marker in the run dir, `review: reviewed_claude` and
+   `review_account: claude` in `result.json`;
+4. if even that produces no evidence, the run ends **`review_failed`** and
+   pushes nothing — an unreviewed diff never ships looking reviewed — and the
+   phone push goes out at high priority, since only a human can top up the
+   credits.
+
+The pipeline never marks a PR ready and never merges, in any arm; opening a
+draft PR is as far as automation goes.
 
 ### Ticket sync — the PR lands on the ticket by itself
 
@@ -440,6 +450,59 @@ up as a broken implementer, and no run can reschedule itself forever.
 | `HARNESS_MIN_SESSION_TOKENS` | Output-token headroom a dispatch wants before it will spawn | `20000` |
 | `HARNESS_DEFER_BUFFER_SECS` | Clearance added past the block's reset time when arming | `300` |
 | `HARNESS_MAX_DEFERRALS` | Auto-deferrals allowed per run before it fails honestly | `2` |
+
+### Turn ceiling: a run that resumes itself
+
+The implementer is spawned with `--max-turns`, a guard rail against a worker
+that loops forever. Pinned at 120 it killed eight runs — nearly always at the
+finish line, mid-wrap-up, writing the notes or staging the diff. The recovery
+was always the same: a human noticed, re-dispatched, and the resumed session
+finished in minutes. So `run-task.sh` does that itself.
+
+The ceiling is `HARNESS_MAX_TURNS` (default **200**), **pinned at first
+dispatch** into `runs/<TICKET>/max-turns` like the model and effort knobs, so
+every later resume spends the ceiling the run was dispatched with rather than
+whatever the resuming shell exports. A value that is not a positive integer
+falls back to the default with one line on the console — and the fallback is
+re-pinned, so it says it once, not on every resume.
+
+When the implementer stops on turn exhaustion (the CLI's `error_max_turns`
+result — a structured outcome, not a message we parse), the run does **not**
+fail. It re-invokes the same pinned session, in the same worktree, with the same
+ceiling — byte for byte what a re-dispatch does — and says so:
+
+```
+resuming: turn ceiling (1/2)
+```
+
+`HARNESS_MAX_RESUMES` (default **2**) bounds it, counted in
+`runs/<TICKET>/turn-resumes`. Only once that budget is spent does the run
+surface `implementer_failed`.
+
+Two things outrank the turn budget. A **session limit** is classified first, so
+a run whose window emptied mid-flight takes the
+[capacity deferral](#capacity-preflight-a-run-that-defers-itself) instead of
+burning resumes on a session that cannot spawn anyway. And a pending
+`.harness/QUESTIONS.md` still pauses the run as `needs_input`: a worker that
+stopped to ask is never talked over.
+
+**Commit hygiene that survives a resume.** A resumed session carries its
+original instructions far behind it in a long context, and resumes have
+re-added `Co-Authored-By: Claude` trailers their first pass never wrote. So
+every continuation message restates the binding commit rules, and — because a
+prompt is not a guarantee — the implementer stage ends with a deterministic
+backstop on **every** arm, review or not: `base..HEAD` is scanned for AI
+attribution (`Co-Authored-By:`/`Generated with …` naming Claude or Anthropic,
+any `Claude-*:` trailer), and any that is found is stripped mechanically. Only
+commit *messages* are rewritten — each commit is re-created against its
+original tree object, so the diff, the working copy and the commit count are
+untouched, a genuine human `Co-Authored-By:` is left alone, and a range with
+nothing to strip keeps its shas.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_MAX_TURNS` | Turn ceiling for the implementer's session; pinned at first dispatch | `200` |
+| `HARNESS_MAX_RESUMES` | Automatic resumes allowed on turn exhaustion before the run fails (`0` opts out) | `2` |
 
 ### The Quartermaster
 
@@ -774,6 +837,72 @@ the only thing worth putting on a wall; yesterday's green ticks are in
 carries the finished runs (it is the honest snapshot of the run dirs) — the
 skyline is the part that is live only.
 
+**The district accretes.** Under the live towers, the week builds up. Monday
+00:00 local the plain is empty; every run that reaches `done: ready` pours one
+**permanent building** into it; by Friday the city *is* the week's shipped work,
+with whatever is still being built rising among it. Last week's city stands
+behind this one as a single flat ghost silhouette — the name finally earning
+itself — and Monday 00:00 empties the plain again.
+
+| In the district | What it means |
+| --- | --- |
+| A building | One run that shipped this week. It never leaves before Monday. |
+| Its shape | The repo family: `olyx-agents` is residential, `olyxbase` / `olyx-dashboard` are industrial blocks, `valoryx-*` is an observatory spire, `dispatch-harness` is infrastructure, anything else is an honest mid-rise. |
+| Its height | The run's diff (insertions + deletions), log-scaled and capped — a monster PR reads big without dwarfing the block. A recorded zero-line diff is the shortest building there is; an unreadable or structurally malformed `result.json` is *not a building*, because a height invented from a result the wall could not trust is the one thing that would make the city lie. |
+| Where it stands | Hashed from the run id, so the skyline is identical on every screen and after every reload. |
+| A small lit sign | Who dispatched it, in the same crew tint as their runs' cars — cooling to the district's neutral within six hours of landing. That is the whole of the attribution. |
+| A lit shopfront row, and sometimes a neon | The ground floor, from the week's **first** ship. Which shop is under a building — a noodle bar, a diner, an arcade, a repair shop — and whether it carries a sign is hashed from the run id, so it is the same on both screens and the same tomorrow. |
+| A few windows fading on and off | Occupancy: three windows per facade keeping their own hours, each on its own loop length and its own seeded phase. Nothing on this street blinks in unison. |
+| Steam, somebody walking, a car going past | Nightlife, present whenever anything is standing. The week only sets the **tempo**: more people out (up to six), more vehicles (up to three), and the gap between passes falling from 48 seconds on the first ship to 11 on the twenty-fifth. |
+| A mall block, a tram | The milestones, and now only that: extra texture at twelve and twenty ships, on top of a street that was already alive. |
+| A pale flat outline behind | Last week. A height and a plot, nothing else — no windows, no signs, no types. An empty last week draws nothing. |
+
+**The ledger is the city's memory.** *Permanent* is the contract, and a run dir
+is not permanent: `cleanup.sh` promotes a run and mirror removal deletes the
+mirrored copy off the wall's own machine, so a city derived from what happens to
+be on disk would demolish a building the moment somebody tidied up after it. Run
+dirs are therefore how the wall **discovers** a ship; one append-only JSONL file
+is how it **remembers** one:
+
+```bash
+wall.sh --city /var/wall/city.jsonl   # default: beside --runs, as wall-city.jsonl
+export WALL_CITY=/var/wall/city.jsonl # same thing
+```
+
+The first time the server sees a run at `done: ready` with a finish epoch in the
+current week, it appends one line — `{id, epoch, repo, owner, insertions,
+deletions}` — and never writes that run again. Everything a building *looks
+like* is derived from that line at render time, so the mapping above can change
+without rewriting history. One line per run id is also what makes a run mirrored
+from another machine ([`HARNESS_MIRROR`](#runs-from-any-machine-harness_mirror))
+harmless: the same ship discovered twice is still one building, and the first
+sighting is the one that stands.
+
+Monday's rollover prunes anything older than the two windows the wall can draw,
+rewriting the file through a temp file and a rename. A missing or unreadable
+ledger is an empty plain and one line on stderr; a corrupt *line* is skipped
+rather than fatal. Nothing about the city can take the wall down — but
+**deleting the ledger razes the city**, and nothing else does.
+It is the only file the wall writes; it is not a schema, and nothing else in the
+harness reads it.
+
+One consequence worth knowing: the ledger records what the wall *witnessed*. A
+wall started midweek picks up this week's ships whose run dirs are still on disk,
+but a ship that was already cleaned up before the wall came up is not
+backfilled — and last week's ghost is whatever last week's wall recorded.
+
+Because a full district is normal on a Thursday evening, "nothing live" no
+longer means "nothing happened": the `SHIFT STANDING BY` plate now appears only
+when the week has **no buildings and no live runs**, and a week that shipped
+work with nothing currently climbing gets one quiet `DISTRICT AT REST` line
+instead. The wall never looks broken on a week that delivered.
+
+**Rest is a mood, not a shutdown.** At rest the construction glow is gone and
+the nightlife is not: a city is alive because somebody is eating noodles at one
+in the morning, not because a crane is moving. All of it lives in the
+ground-floor band, and every part of it drops a stop the instant something is
+climbing — the skyline owns the room's eye whenever there is work on it.
+
 Towers cannot carry type you can read from four metres, so two surfaces do:
 a Blade Runner **brief plate** cycling the live runs in big letters (ticket,
 project, stage, actor, dispatcher, the blocking question), and a green-phosphor
@@ -788,6 +917,7 @@ contents ease out, and the new ones are not written until the plate is empty.
 wall.sh                             # ~/.claude/harness/runs on http://0.0.0.0:4711
 wall.sh --port 8080 --host 100.x.y.z
 wall.sh --runs wall/fixtures/runs   # staged demo data, no live runs needed
+wall.sh --city /var/wall/city.jsonl # keep the district's memory somewhere else
 ```
 
 Then point a browser on the TV at `http://<this-machine>:4711/` and put it in
@@ -828,12 +958,14 @@ run. Export it wherever you dispatch from:
 export HARNESS_OWNER=angel        # e.g. in the station session's shell
 ```
 
-That name only ever becomes the tint of the light under a run's car, plus the
-name on that run's brief plate and ticker line. There are no lanes, no
-per-person counts and no idle states anywhere on the wall: an empty slot beside
-a colleague's three lit floors is social pressure, not information. `--crew` (or
-`WALL_CREW`) is still accepted so existing launch scripts keep working, but a
-declared roster no longer puts anything on screen.
+That name only ever becomes the tint of the light under a run's car, the small
+sign on the building that run left behind, and the name on that run's brief
+plate and ticker line. There are no lanes, no districts, no per-person counts
+and no idle states anywhere on the wall: an empty slot beside a colleague's
+three lit floors is social pressure, not information. The building sign cools to
+neutral within six hours, so by the next morning the week is simply the week's.
+`--crew` (or `WALL_CREW`) is still accepted so existing launch scripts keep
+working, but a declared roster no longer puts anything on screen.
 
 #### Runs from any machine (`HARNESS_MIRROR`)
 
@@ -907,9 +1039,12 @@ fields are `null`/empty):
 
 | Field | Meaning |
 | --- | --- |
+| `review` | How the review stage actually went: `reviewed` \| `no_evidence` \| `failed_silent` \| `skipped`, empty when the run never reached it. See [Reading the pipeline's own vitals](#reading-the-pipelines-own-vitals). |
+| `review_account` | Which Codex subscription the review attempt ran on: `primary` \| `fallback`. Absent (not empty) on the arms that never attempt a review. See [A second Codex account](#a-second-codex-account-for-a-dry-primary). |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
-| `metrics.gate_rounds` | `[{round, result}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). |
+| `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `failed_step` is the command a failing round died on, `null` on a passing round and on rounds recorded before this existed. |
+| `metrics.turn_resumes` | How many times the implementer was resumed rather than started fresh (counted across invocations). |
 | `metrics.opus_commits` | Commit count `base..opus_head` (the implementer's). |
 | `metrics.codex_commits` | Commit count `opus_head..HEAD` (the reviewer's). |
 | `metrics.diff` | `{files_changed, insertions, deletions}` vs. base. |
@@ -921,6 +1056,7 @@ fields are `null`/empty):
 ```bash
 ~/.claude/harness/metrics.sh          # aligned table across all runs
 ~/.claude/harness/metrics.sh --csv    # same data as CSV for stats tools
+~/.claude/harness/metrics.sh --report # the aggregate health picture (below)
 ```
 
 Columns: run, arm, implementer model and effort, reviewer model and effort,
@@ -928,6 +1064,171 @@ status, gate rounds (e.g. `fail,pass`), implementer/reviewer commit counts,
 ± lines, and wall minutes — so an effort sweep or a reviewer-model ablation
 reads straight off the table. Runs predating a field (no `metrics` object, or
 written before the model/effort knobs) render with blanks, not errors.
+
+### Reading the pipeline's own vitals
+
+The harness reports on itself. Everything below comes out of the `result.json`
+files and nothing else — no logs, no worktrees — so it works on a mirrored runs
+directory and on runs whose worktrees are long cleaned up:
+
+```bash
+~/.claude/harness/metrics.sh --report
+```
+
+```
+pipeline vitals · 179 runs · 2026-08-06 19:04
+/Users/you/.claude/harness/runs
+
+STATUS                   RUNS      %
+ready                     120   67.0
+gate_failed                31   17.3
+…
+
+REVIEW                   RUNS      %
+reviewed                  140   78.2
+skipped                    30   16.8
+no_evidence                 7    3.9
+failed_silent               2    1.1
+silent review failures      2   <- these diffs are UNREVIEWED
+fallback-account reviews    3   <- the primary Codex account needs topping up
+
+PER RUN              MEDIAN       P90      N
+turns                    34        78    147
+wall minutes           22.4      58.1    179
+output tokens         41200     98000    140
+gate seconds            184       402    170
+
+GATE ROUNDS              RUNS      %
+1 round                    45   25.1
+2 rounds                  110   61.5
+3 rounds                   24   13.4
+
+FAILED GATE STEP               ROUNDS
+npm run type-check                 18
+npm test                            7
+
+RESUMES               12 of 179 runs resumed (6.7%) · 15 resumes total
+
+REPO                     RUNS  MED_MIN  MED_TURNS  READY%
+myapp                      80     24.1         36    70.0
+```
+
+Read it in this order: **silent review failures** first (those diffs are
+unreviewed — see below), then **GATE ROUNDS** and **FAILED GATE STEP** (a second
+gate round means a whole extra suite run, and the step names what to fix first),
+then the medians for cost. Medians and p90s are nearest-rank over the runs that
+recorded the field — the `N` column says how many those were, so a partial
+history is visibly partial instead of silently averaged with zeros. Percentages
+in `GATE ROUNDS` are over the runs that ran a numbered gate round; base-sync
+re-gates are recorded in `result.json` but left out of that distribution.
+
+**Which gate step failed.** Each entry in `metrics.gate_rounds` carries
+`seconds` and `failed_step`. The step is captured by the gate's own shell: a
+`DEBUG` trap records each top-level command just before it runs, into a side
+file, so at exit the file holds the command the chain stopped on — which in an
+`&&` chain is the first failing step. Nothing about how your `GATE_CMD` runs
+changes, the gate log is byte-identical (the trap writes nowhere near it), and
+no test output is parsed. Only failing rounds record a step.
+
+`HARNESS_GATE_STEP` is the path of that side file. It is **not a knob you
+set** — `run-task.sh` exports it into the gate subshell for the trap to write
+to, and a failed write is swallowed (`|| :`) so it can never be visible to your
+gate. It is documented here because it is the one `HARNESS_*` name in
+`run-task.sh` that a reader may meet without it being theirs to configure.
+
+**When the review stage doesn't happen.** A review that leaves *no* fix
+commits, *no* `review-notes.md` and *no* `REJECTED.md` has proven nothing about
+the diff. Evidence decides, never duration: a fast "everything is sound" review
+that writes its notes is a real review. Duration only decides whether a retry is
+worth paying for — a stage that produced no evidence at all in less time than
+the diff takes to read is the signature of a reviewer that never started (auth
+prompt, CLI crash, empty context), so the review is run **once more**. If the
+second pass also produces nothing, the run continues (the gate has passed) but
+says so everywhere it can: `review: failed_silent` in `result.json`, the arm
+recorded as `no_review`, a `review failed silently — diff is unreviewed` stage
+line, and the same words in the macOS/ntfy notification. The pinned arm in the
+run dir is left alone, so a re-dispatch still attempts a real review.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_REVIEW_MIN_SECONDS` | Floor below which a review that produced no evidence is treated as a stage that never ran (and retried once). | `60` |
+| `HARNESS_REVIEW_TRIVIAL_LINES` | Changed lines vs. base at or below which the floor does not apply — a two-line diff genuinely can be reviewed in seconds. | `20` |
+
+A review that took real time and still left nothing behind is recorded as
+`no_evidence` and *not* retried: it is worth knowing about, but it is not the
+failure signature above, and a second full pass is expensive.
+
+#### A second Codex account for a dry primary
+
+The day the primary ChatGPT workspace ran out of credits, every review for six
+hours was an honestly-flagged no-op — the detection above working exactly as
+designed, and six hours of unreviewed diffs anyway. `codex` auth is entirely
+`CODEX_HOME`-directory-scoped, so a second account is one more directory plus a
+rule about when to reach for it:
+
+```bash
+export HARNESS_CODEX_HOME_FALLBACK=~/.codex-fallback   # unset = no fallback, ever
+```
+
+Two things send the retry to the fallback:
+
+1. **Credits-certain.** The attempt's log carries the workspace-credits error
+   (`Your workspace is out of credits`, matched case-insensitively on
+   whitespace-flattened output). Retrying the same account cannot possibly
+   work, so the switch happens immediately and *regardless* of
+   `HARNESS_REVIEW_MIN_SECONDS` — the floor asks whether a second pass is worth
+   paying for, and a second pass on a different account always is.
+2. **Silent no-op** (the classification above, cause unknown). The single retry
+   the harness already buys runs on the fallback when one is configured, on the
+   primary when none is.
+
+If the fallback attempt also produces no evidence, the review does not
+downgrade and ship anymore — the Claude tier takes the same prompt, and only
+when that too leaves no evidence does the run end `review_failed` (see
+[When Codex dies mid-run](#when-codex-dies-mid-run-out-of-credits)). A
+fallback account is a second chance, never a second opinion; the Claude tier
+is the last resort — same vendor as the implementer, which is exactly why it
+comes last and is recorded apart (`reviewed_claude`).
+
+**One attempt, one account.** `CODEX_HOME` is chosen before an attempt starts
+and never changes while it runs. The switch is sticky and only ever moves the
+*next* attempt, so the fix round and base-sync conflict resolution follow
+wherever the review ended up — and a base-sync merge whose only Codex attempt
+died on credits gets one more, on the fallback, before it escalates to a human
+(`sync-pr.sh` too). Nothing anywhere records more than the label: each
+attempt's `codex-<round>.log` opens with `codex account: primary|fallback`,
+`result.json` carries `review_account`, and no path, directory or account
+identity is written to any log, report or notification.
+
+What you see when it fires: the retry's stage line reads
+`review retry — Codex (ChatGPT sub) (fallback account)`, `metrics.sh --report`
+counts **fallback-account reviews**, and the run's finishing push to your phone
+appends one sentence — *review ran on the fallback Codex account — primary is
+out of credits* — so the account gets topped up without anyone reading a log.
+Scheduled runs need nothing extra: `schedule.sh` snapshots every `HARNESS_*`
+variable into the wrapper it arms, so the knob travels to 02:00 on its own.
+
+**One-time operator setup.** Log the second account in, in its own directory:
+
+```bash
+CODEX_HOME=~/.codex-fallback codex login
+```
+
+On a headless machine, the login callback lands on `localhost:1455`, so forward
+that port over the ssh session you run the command in (the same tunnel the
+onboarding docs use) and open the printed URL on your laptop:
+
+```bash
+ssh -t -L 1455:localhost:1455 mini
+```
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_CODEX_HOME_FALLBACK` | `CODEX_HOME` of a second Codex account the review retry uses when the primary is out of credits (or came up empty). Unset: behaviour is byte-identical to a single-account harness. | unset |
+
+One global knob, deliberately: with [crew stations](#the-quartermaster) every
+station's runs share the same fallback account, and rotation beyond two accounts
+is not something this does. Two accounts and one rule is the whole feature.
 
 ### The public-benchmark experiment
 
@@ -994,11 +1295,11 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `statusline.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose) |
 | `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Monitoring (`status.sh --watch` is the live dashboard) & lifecycle helpers |
 | `wall.sh` `wall/` | [Ghost Shift](#ghost-shift): the big-screen live dashboard (node server + one static page + fixtures) |
-| `metrics.sh` | Tabulate per-run metrics from `result.json` (table / `--csv`) |
+| `metrics.sh` | Per-run metrics from `result.json` (table / `--csv`) and the [aggregate health report](#reading-the-pipelines-own-vitals) (`--report`) |
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`, `pipeline-telemetry`, `codex-fallback`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |

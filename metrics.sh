@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Tabulate per-run metrics from every result.json under the runs directory.
 #
-# Usage: metrics.sh          aligned table (default)
-#        metrics.sh --csv    CSV for spreadsheets / stats tools
+# Usage: metrics.sh           aligned table, one row per run (default)
+#        metrics.sh --csv     the same data as CSV for spreadsheets / stats tools
+#        metrics.sh --report  aggregate health picture across all runs
 #
 # Columns: run, arm, implementer model/effort, reviewer model/effort, status,
 #          gate rounds (e.g. fail,pass), implementer/reviewer commit counts,
@@ -15,17 +16,207 @@ set -u
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 RUNS="$HARNESS_DIR/runs"
 
-usage() { echo "usage: metrics.sh [--csv]" >&2; }
+usage() { echo "usage: metrics.sh [--csv|--report]" >&2; }
 
-CSV=0
+CSV=0; REPORT=0
 case "${1:-}" in
   --csv)      CSV=1 ;;
+  --report)   REPORT=1 ;;
   -h|--help)  usage; exit 0 ;;
   "")         ;;
   *)          echo "unknown option: $1" >&2; usage; exit 2 ;;
 esac
 
 [ -d "$RUNS" ] || { echo "no runs yet" >&2; exit 0; }
+
+# --- --report: the aggregate picture ------------------------------------------
+# Everything below reads result.json files and nothing else — no logs, no run
+# dirs, no network — so the report works on a mirrored runs directory and on runs
+# whose worktrees are long cleaned up. Numbers a run never recorded are dropped
+# from their statistic (and the N column says how many runs backed it) rather
+# than counted as zero, which is how a partial history stays honest.
+#
+# One field per line again, tab-joined by jq's @tsv: awk does the statistics
+# because medians need sorting and jq cannot align a column.
+REPORT_FILTER='
+  [ (.status // "-"),
+    (.arm // "-"),
+    (.review // ""),
+    ((.metrics.turn_resumes
+      // ((.metrics.stage_durations // {}) | [keys[] | select(startswith("resuming"))] | length)
+      | tostring)),
+    ((.metrics.wall_seconds // "") | tostring),
+    ((.metrics.implementer_num_turns // "") | tostring),
+    ((.metrics.implementer_usage.output_tokens // "") | tostring),
+    (((.metrics.gate_rounds // [])
+      | map(select((.round // "") | tostring | test("^[0-9]+$"))) | length) | tostring),
+    (((.metrics.gate_rounds // []) | map(.seconds // 0) | add // 0) | tostring),
+    (((.worktree // "") | split("/") | last // "") as $leaf
+      | ((.ticket // "") | ascii_downcase) as $t
+      | if ($t | length) > 0 and ($leaf | endswith("-" + $t))
+        then $leaf[0:(($leaf | length) - ($t | length) - 1)] else $leaf end),
+    (.review_account // "")
+  ] | @tsv'
+
+# The failing step of every failed gate round, most frequent first: the whole
+# point of the telemetry is to say what to fix first.
+FAILED_STEP_FILTER='(.metrics.gate_rounds // [])[]
+  | select(.result == "fail") | (.failed_step // "") | select(. != "")'
+
+report() {
+  local files=() f rows steps
+  for f in "$RUNS"/*/result.json; do [ -f "$f" ] && files+=("$f"); done
+  [ "${#files[@]}" -gt 0 ] || { echo "(no result.json files under $RUNS)" >&2; return 0; }
+
+  rows=$(jq -r "$REPORT_FILTER" "${files[@]}" 2>/dev/null)
+  steps=$(jq -r "$FAILED_STEP_FILTER" "${files[@]}" 2>/dev/null \
+    | sort | uniq -c | sort -rn | head -10)
+
+  # ENVIRON, not -v: awk expands escape sequences in a -v value, and a gate
+  # command is free to contain a backslash.
+  STEPS="$steps" awk -F'\t' -v runs="$RUNS" -v stamp="$(date '+%Y-%m-%d %H:%M')" '
+    function isort(a, n,   i, j, v) {
+      for (i = 2; i <= n; i++) {
+        v = a[i]; j = i - 1
+        while (j >= 1 && a[j] > v) { a[j + 1] = a[j]; j-- }
+        a[j + 1] = v
+      }
+    }
+    # Nearest-rank percentile on the sorted values — no interpolation, so every
+    # number printed is a number some run actually recorded.
+    function pctl(a, n, p,   idx) {
+      if (n == 0) return 0
+      isort(a, n)
+      idx = int(p * (n - 1) / 100 + 0.5) + 1
+      if (idx < 1) idx = 1
+      if (idx > n) idx = n
+      return a[idx]
+    }
+    function statline(label, a, n, dec) {
+      if (n == 0) { printf "%-16s %10s %9s %6d\n", label, "-", "-", 0; return }
+      if (dec) printf "%-16s %10.1f %9.1f %6d\n", label, pctl(a, n, 50), pctl(a, n, 90), n
+      else     printf "%-16s %10d %9d %6d\n", label, pctl(a, n, 50), pctl(a, n, 90), n
+    }
+    # Keys of an associative array, by descending count then name.
+    function bycount(a, keys,   n, k, i, j, t) {
+      n = 0
+      for (k in a) keys[++n] = k
+      for (i = 2; i <= n; i++) {
+        t = keys[i]; j = i - 1
+        while (j >= 1 && (a[keys[j]] < a[t] || (a[keys[j]] == a[t] && keys[j] > t))) {
+          keys[j + 1] = keys[j]; j--
+        }
+        keys[j + 1] = t
+      }
+      return n
+    }
+    function share(label, count, total) { printf "%-22s %6d %6.1f\n", label, count, 100 * count / total }
+    {
+      total++
+      status[$1]++
+      arm[$2]++
+      review[$3 == "" ? "(not reached)" : $3]++
+      if ($4 + 0 > 0) { resumed++; resumes += $4 }
+      if ($5 != "") wall[++nwall] = $5 / 60
+      if ($6 != "") turns[++nturns] = $6 + 0
+      if ($7 != "") tok[++ntok] = $7 + 0
+      if ($8 + 0 > 0) {
+        rounds[$8 + 0]++; nrounds++
+        if ($8 + 0 > maxround) maxround = $8 + 0
+      }
+      if ($9 + 0 > 0) gsec[++ngsec] = $9 + 0
+      if ($10 != "") {
+        repo[$10]++
+        if ($5 != "") rwall[$10, ++rwn[$10]] = $5 / 60
+        if ($6 != "") rturns[$10, ++rtn[$10]] = $6 + 0
+        if ($1 == "ready") rready[$10]++
+      }
+      if ($11 == "fallback") fallback_reviews++
+      if ($11 == "claude")   claude_reviews++
+    }
+    END {
+      printf "pipeline vitals · %d runs · %s\n%s\n", total, stamp, runs
+
+      printf "\n%-22s %6s %6s\n", "STATUS", "RUNS", "%"
+      n = bycount(status, k)
+      for (i = 1; i <= n; i++) share(k[i], status[k[i]], total)
+      delete k
+
+      printf "\n%-22s %6s %6s\n", "ARM", "RUNS", "%"
+      n = bycount(arm, k)
+      for (i = 1; i <= n; i++) share(k[i], arm[k[i]], total)
+      delete k
+
+      printf "\n%-22s %6s %6s\n", "REVIEW", "RUNS", "%"
+      n = bycount(review, k)
+      for (i = 1; i <= n; i++) share(k[i], review[k[i]], total)
+      delete k
+      printf "%-22s %6d%s\n", "silent review failures", review["failed_silent"] + 0, \
+        (review["failed_silent"] + 0 > 0 ? "   <- these diffs are UNREVIEWED" : "")
+      # Reviews the primary Codex account could not take. Zero is the normal
+      # number, so any other one is the line that says "top the account up".
+      printf "%-22s %6d%s\n", "fallback-account reviews", fallback_reviews + 0, \
+        (fallback_reviews + 0 > 0 ? "   <- the primary Codex account needs topping up" : "")
+      # The tier past both Codex accounts: still a review, but same-vendor as
+      # the implementer — any number here says the Codex side needs attention.
+      printf "%-22s %6d%s\n", "claude-tier reviews", claude_reviews + 0, \
+        (claude_reviews + 0 > 0 ? "   <- both Codex accounts came up empty" : "")
+
+      printf "\n%-16s %10s %9s %6s\n", "PER RUN", "MEDIAN", "P90", "N"
+      statline("turns", turns, nturns, 0)
+      statline("wall minutes", wall, nwall, 1)
+      statline("output tokens", tok, ntok, 0)
+      statline("gate seconds", gsec, ngsec, 0)
+
+      # Numbered rounds only — base-sync re-gates are recorded in result.json but
+      # are not part of the review loop — and the share is over the runs that ran
+      # at least one.
+      printf "\n%-22s %6s %6s\n", "GATE ROUNDS", "RUNS", "%"
+      if (nrounds == 0) {
+        print "(none recorded yet)"
+      } else {
+        for (r = 1; r <= maxround; r++) {
+          if (!rounds[r]) continue
+          printf "%-22s %6d %6.1f\n", r " round" (r == 1 ? "" : "s"), \
+            rounds[r], 100 * rounds[r] / nrounds
+        }
+      }
+
+      printf "\n%-30s %6s\n", "FAILED GATE STEP", "ROUNDS"
+      ns = split(ENVIRON["STEPS"], sl, "\n")
+      shown = 0
+      for (i = 1; i <= ns; i++) {
+        if (sl[i] !~ /[^ \t]/) continue
+        c = sl[i]; sub(/^[ \t]*/, "", c); sub(/[ \t].*$/, "", c)      # the count
+        s = sl[i]; sub(/^[ \t]*[0-9]+[ \t]/, "", s)                   # the command
+        printf "%-30.30s %6d\n", s, c
+        shown++
+      }
+      if (shown == 0) print "(none recorded yet — pre-telemetry runs record no failed_step)"
+
+      printf "\n%-22s %d of %d runs resumed (%.1f%%) · %d resumes total\n", "RESUMES", \
+        resumed + 0, total, 100 * (resumed + 0) / total, resumes + 0
+
+      printf "\n%-22s %6s %8s %10s %7s\n", "REPO", "RUNS", "MED_MIN", "MED_TURNS", "READY%"
+      n = bycount(repo, k)
+      for (i = 1; i <= n; i++) {
+        r = k[i]
+        delete tw; delete tt
+        for (j = 1; j <= rwn[r] + 0; j++) tw[j] = rwall[r, j]
+        for (j = 1; j <= rtn[r] + 0; j++) tt[j] = rturns[r, j]
+        printf "%-22s %6d %8.1f %10d %7.1f\n", r, repo[r], \
+          pctl(tw, rwn[r] + 0, 50), pctl(tt, rtn[r] + 0, 50), 100 * (rready[r] + 0) / repo[r]
+      }
+    }
+  ' <<EOF
+$rows
+EOF
+}
+
+if [ "$REPORT" = 1 ]; then
+  report
+  exit 0
+fi
 
 # Emit the twelve data fields one per line (blank when absent). Splitting on
 # newlines keeps empty fields intact and needs no delimiter char; every element
