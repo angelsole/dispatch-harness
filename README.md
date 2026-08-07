@@ -963,6 +963,7 @@ fields are `null`/empty):
 | Field | Meaning |
 | --- | --- |
 | `review` | How the review stage actually went: `reviewed` \| `no_evidence` \| `failed_silent` \| `skipped`, empty when the run never reached it. See [Reading the pipeline's own vitals](#reading-the-pipelines-own-vitals). |
+| `review_account` | Which Codex subscription the review attempt ran on: `primary` \| `fallback`. Absent (not empty) on the arms that never attempt a review. See [A second Codex account](#a-second-codex-account-for-a-dry-primary). |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
 | `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `failed_step` is the command a failing round died on, `null` on a passing round and on rounds recorded before this existed. |
@@ -1012,6 +1013,7 @@ skipped                    30   16.8
 no_evidence                 7    3.9
 failed_silent               2    1.1
 silent review failures      2   <- these diffs are UNREVIEWED
+fallback-account reviews    3   <- the primary Codex account needs topping up
 
 PER RUN              MEDIAN       P90      N
 turns                    34        78    147
@@ -1078,6 +1080,74 @@ run dir is left alone, so a re-dispatch still attempts a real review.
 A review that took real time and still left nothing behind is recorded as
 `no_evidence` and *not* retried: it is worth knowing about, but it is not the
 failure signature above, and a second full pass is expensive.
+
+#### A second Codex account for a dry primary
+
+The day the primary ChatGPT workspace ran out of credits, every review for six
+hours was an honestly-flagged no-op — the detection above working exactly as
+designed, and six hours of unreviewed diffs anyway. `codex` auth is entirely
+`CODEX_HOME`-directory-scoped, so a second account is one more directory plus a
+rule about when to reach for it:
+
+```bash
+export HARNESS_CODEX_HOME_FALLBACK=~/.codex-fallback   # unset = no fallback, ever
+```
+
+Two things send the retry to the fallback:
+
+1. **Credits-certain.** The attempt's log carries the workspace-credits error
+   (`Your workspace is out of credits`, matched case-insensitively on
+   whitespace-flattened output). Retrying the same account cannot possibly
+   work, so the switch happens immediately and *regardless* of
+   `HARNESS_REVIEW_MIN_SECONDS` — the floor asks whether a second pass is worth
+   paying for, and a second pass on a different account always is.
+2. **Silent no-op** (the classification above, cause unknown). The single retry
+   the harness already buys runs on the fallback when one is configured, on the
+   primary when none is.
+
+If the fallback attempt also produces no evidence, the run downgrades exactly
+as it did before: `review: failed_silent`, arm `no_review`, and the diff
+declared unreviewed. A fallback is a second chance, never a second opinion.
+
+**One attempt, one account.** `CODEX_HOME` is chosen before an attempt starts
+and never changes while it runs. The switch is sticky and only ever moves the
+*next* attempt, so the fix round and base-sync conflict resolution follow
+wherever the review ended up — and a base-sync merge whose only Codex attempt
+died on credits gets one more, on the fallback, before it escalates to a human
+(`sync-pr.sh` too). Nothing anywhere records more than the label: each
+attempt's `codex-<round>.log` opens with `codex account: primary|fallback`,
+`result.json` carries `review_account`, and no path, directory or account
+identity is written to any log, report or notification.
+
+What you see when it fires: the retry's stage line reads
+`review retry — Codex (ChatGPT sub) (fallback account)`, `metrics.sh --report`
+counts **fallback-account reviews**, and the run's finishing push to your phone
+appends one sentence — *review ran on the fallback Codex account — primary is
+out of credits* — so the account gets topped up without anyone reading a log.
+Scheduled runs need nothing extra: `schedule.sh` snapshots every `HARNESS_*`
+variable into the wrapper it arms, so the knob travels to 02:00 on its own.
+
+**One-time operator setup.** Log the second account in, in its own directory:
+
+```bash
+CODEX_HOME=~/.codex-fallback codex login
+```
+
+On a headless machine, the login callback lands on `localhost:1455`, so forward
+that port over the ssh session you run the command in (the same tunnel the
+onboarding docs use) and open the printed URL on your laptop:
+
+```bash
+ssh -t -L 1455:localhost:1455 mini
+```
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_CODEX_HOME_FALLBACK` | `CODEX_HOME` of a second Codex account the review retry uses when the primary is out of credits (or came up empty). Unset: behaviour is byte-identical to a single-account harness. | unset |
+
+One global knob, deliberately: with [crew stations](#the-quartermaster) every
+station's runs share the same fallback account, and rotation beyond two accounts
+is not something this does. Two accounts and one rule is the whole feature.
 
 ### The public-benchmark experiment
 
@@ -1148,7 +1218,7 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`, `pipeline-telemetry`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`, `pipeline-telemetry`, `codex-fallback`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |
