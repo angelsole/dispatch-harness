@@ -129,6 +129,7 @@ mkharness() {  # $1 = ticket
 dispatch() {  # $1 = ticket, $2 = repo — HARNESS_MIRROR & co. come from the caller
   HOME="$FHOME" HARNESS_DIR="$ROOT/harness-$1" \
   CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
+  HARNESS_REVIEW_NETWORK=0 \
   HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC="" \
     bash "$SRC/run-task.sh" "$1" "$2" "fix/$1" > "$ROOT/run-$1.log" 2>&1
 }

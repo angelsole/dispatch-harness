@@ -186,7 +186,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   printf '# fixture task\n' > "$RUN/brief.md"
   : > "$CODEX_ARGV"; : > "$CODEX_ARGS"; : > "$CODEX_HOMES"
   # shellcheck disable=SC2086
-  env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  env -u CODEX_HOME HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       TEST_GATE_CMD="$TEST_GATE_CMD" \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=review-truth-test \
@@ -543,7 +543,7 @@ mk_sync_case() {  # $1 = ticket -> a pushed branch that conflicts with main
 sync_pr() {  # $1 = ticket, $2 = space-separated VAR=VAL overrides (may be empty)
   : > "$CODEX_ARGV"; : > "$CODEX_ARGS"; : > "$CODEX_HOMES"
   # shellcheck disable=SC2086
-  env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  env -u CODEX_HOME HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CODEX_BIN="$FAKES/codex" HARNESS_NOTIFY=0 $2 \
       bash "$SRCDIR/sync-pr.sh" "$1" > "$ROOT/sync-$1.log" 2>&1
 }
