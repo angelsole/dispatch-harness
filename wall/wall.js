@@ -38,6 +38,8 @@
   const GLYPH = {
     opus: 'g-opus', codex: 'g-codex', gate: 'g-gate', pr: 'g-pr', demo: 'g-demo',
     setup: 'g-setup', sync: 'g-sync', skipped: 'g-skipped', alarm: 'g-alarm',
+    deferred: 'g-skipped',   // parked, not working — the same stood-down mark
+
     done: 'g-done', failed: 'g-failed', unknown: 'g-unknown',
   };
   const STATE_GLYPH = { alarm: 'g-alarm', ready: 'g-done', failed: 'g-failed' };

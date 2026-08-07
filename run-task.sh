@@ -16,6 +16,7 @@ set -u -o pipefail
 main() {
 
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"   # where schedule.sh lives, for deferrals
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo codex)}"
 # The Codex reviewer is optional: a Claude subscription alone runs the same
@@ -60,6 +61,13 @@ repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUB
 if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
   # shellcheck source=mirror.sh
   . "$HARNESS_DIR/mirror.sh"   # HARNESS_MIRROR: mirror_start / mirror_stop
+fi
+# The capacity accountant behind the dispatch preflight below, shared with
+# quartermaster.sh. Optional in exactly the way the preflight is: an install
+# that predates it simply dispatches, like the harness always did.
+if [ "${HARNESS_PREFLIGHT:-on}" != off ] && [ -r "$HARNESS_DIR/capacity.sh" ]; then
+  # shellcheck source=capacity.sh
+  . "$HARNESS_DIR/capacity.sh"   # capacity_for -> CAP_REMAINING / CAP_RESET
 fi
 
 WORKTREE="$(dirname "$REPO")/$(basename "$REPO")-$TICKET_LC"
@@ -282,6 +290,120 @@ stage() {
   fi
 }
 
+# --- Capacity preflight: defer rather than burn a launch on an empty window ---
+# Two dispatches once died instantly on "You've hit your session limit · resets
+# 1:30pm" after paying for a worktree, a deps install and an implementer spawn,
+# and the run recorded `implementer_failed` — indistinguishable from a real
+# failure, and recovered by a human re-arming both. So before the expensive
+# steps, ask the station's own Claude logs (capacity.sh: ccusage, local files,
+# --offline, no endpoint anywhere) whether there is anything left to spend, and
+# if there is not, arm the same run for just after the block resets.
+#
+# Advisory, never a blocker: anything ccusage cannot answer, anything
+# schedule.sh refuses, and HARNESS_PREFLIGHT=off all fall through to a normal
+# dispatch. The cap is what keeps that honest in the other direction — a run
+# reschedules itself at most HARNESS_MAX_DEFERRALS times and then fails saying so.
+DEFAULT_MIN_SESSION_TOKENS=20000
+DEFAULT_DEFER_BUFFER_SECS=300
+DEFAULT_MAX_DEFERRALS=2
+MIN_SESSION_TOKENS="${HARNESS_MIN_SESSION_TOKENS:-$DEFAULT_MIN_SESSION_TOKENS}"  # output tokens one run wants
+DEFER_BUFFER_SECS="${HARNESS_DEFER_BUFFER_SECS:-$DEFAULT_DEFER_BUFFER_SECS}"      # clearance past the reset
+MAX_DEFERRALS="${HARNESS_MAX_DEFERRALS:-$DEFAULT_MAX_DEFERRALS}"                # then fail honestly
+CLAUDE_LOGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"          # whose window this is
+# A typo in a knob must not take the arithmetic down mid-dispatch, and the
+# advisory default is the safe one to fall back to.
+case "$MIN_SESSION_TOKENS" in ''|*[!0-9]*) MIN_SESSION_TOKENS=$DEFAULT_MIN_SESSION_TOKENS ;; esac
+case "$DEFER_BUFFER_SECS"   in ''|*[!0-9]*) DEFER_BUFFER_SECS=$DEFAULT_DEFER_BUFFER_SECS ;; esac
+case "$MAX_DEFERRALS"       in ''|*[!0-9]*) MAX_DEFERRALS=$DEFAULT_MAX_DEFERRALS ;; esac
+
+capacity_note() {  # the preflight's own paper trail, off the dispatch's stdout
+  printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$RUN_DIR/capacity.log"
+}
+
+# Arm this exact dispatch for later. schedule.sh snapshots the environment of
+# the shell that calls it, and that shell is this run — so the deferred run
+# fires with the identity, config dirs and knobs it was launched with, and looks
+# on disk exactly like a human-armed one (marker, --list, quartermaster skip).
+defer_arm() {  # $1 = <when> for schedule.sh
+  ( export HARNESS_DIR
+    exec "$SELF_DIR/schedule.sh" "$TICKET" "$REPO" "$BRANCH" "$1" ) </dev/null 2>&1
+}
+
+# The whole decision, shared by the preflight and the mid-run classifier.
+# Requires CAP_RESET from a preceding capacity_for. Exits the run when it defers
+# or when the cap is spent; RETURNS when it could not defer, and the caller then
+# carries on exactly as it would have without this feature.
+defer_for_capacity() {  # $1 = which path we came in on
+  local n now target when hhmm
+  n=$(cat "$RUN_DIR/deferrals" 2>/dev/null || echo 0)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+
+  if [ -z "${CAP_RESET:-}" ]; then
+    capacity_note "$1: no reset time from ccusage — dispatching anyway"
+    echo "[harness] preflight: capacity is spent but ccusage gave no reset time — dispatching anyway"
+    return 0
+  fi
+  if [ "$n" -ge "$MAX_DEFERRALS" ]; then
+    capacity_note "$1: already deferred $n time(s) — failing instead of rescheduling again"
+    STATUS="capacity_failed"; write_result "$STATUS" ""
+    stage "done: capacity_failed"
+    echo "[harness] session capacity is spent and this run has already been deferred $n time(s)"
+    echo "[harness] not rescheduling again — re-dispatch it yourself once the window is back"
+    exit 1
+  fi
+
+  now=$(date +%s)
+  target=$((CAP_RESET + DEFER_BUFFER_SECS))
+  # A reset already behind us (or a minute away, which schedule.sh rounds into
+  # the past) means the block turned over while we were looking at it.
+  [ "$target" -gt "$((now + 60))" ] || target=$((now + DEFER_BUFFER_SECS))
+  when=$(capacity_stamp "$target" '%Y-%m-%d %H:%M')
+  hhmm=$(capacity_stamp "$target" '%H:%M')
+  if ! defer_arm "$when" > "$RUN_DIR/deferral.log" 2>&1; then
+    capacity_note "$1: schedule.sh refused to arm for $when — dispatching anyway"
+    echo "[harness] preflight: could not arm a deferral (see $RUN_DIR/deferral.log) — dispatching anyway"
+    return 0
+  fi
+  echo "$((n + 1))" > "$RUN_DIR/deferrals"
+  capacity_note "$1: deferred to $when (deferral $((n + 1)) of $MAX_DEFERRALS)"
+  STATUS="deferred_capacity"; write_result "$STATUS" ""
+  stage "deferred: capacity, armed for $hhmm"
+  echo "[harness] session capacity is spent — armed for $when (deferral $((n + 1)) of $MAX_DEFERRALS)"
+  exit 0
+}
+
+# Runs before the worktree, so a deferral costs nothing at all. Returns to
+# proceed; never returns when it defers.
+capacity_preflight() {
+  [ "${HARNESS_PREFLIGHT:-on}" != off ] || return 0
+  declare -F capacity_for >/dev/null 2>&1 || return 0
+  if ! capacity_for "$CLAUDE_LOGS"; then
+    capacity_note "preflight: unknown — ccusage could not account for $CLAUDE_LOGS"
+    echo "[harness] preflight: capacity unknown (ccusage unavailable for $CLAUDE_LOGS) — dispatching"
+    return 0
+  fi
+  if [ "$CAP_REMAINING" -ge "$MIN_SESSION_TOKENS" ]; then
+    capacity_note "preflight: ok — $CAP_REMAINING of $CAP_LIMIT output tokens left (floor $MIN_SESSION_TOKENS)"
+    return 0
+  fi
+  capacity_note "preflight: only $CAP_REMAINING of $CAP_LIMIT output tokens left (floor $MIN_SESSION_TOKENS)"
+  defer_for_capacity preflight
+  return 0
+}
+
+# Belt to the braces for the window emptying *during* a run. The brief names the
+# live feed and stderr as evidence; opus.log adds the CLI's final result message,
+# which the feed deliberately reduces to a generic result marker.
+session_limit_hit() {
+  local pattern='(session|usage|[0-9]+-hour) limit reached|hit your (session|usage) limit'
+  grep -qiE "$pattern" "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null \
+    && return 0
+  # feed.log spans resumed invocations. Only the lines written by this
+  # implementer attempt are evidence for this attempt's non-zero exit.
+  tail -n "+${OPUS_FEED_START_LINE:-1}" "$RUN_DIR/feed.log" 2>/dev/null \
+    | grep -qiE "$pattern"
+}
+
 date +%s > "$RUN_DIR/started"
 # Metrics bookkeeping: a per-invocation marker segments stages.log so resume
 # pauses aren't charged to a stage; gate-rounds.log is fresh each invocation
@@ -291,6 +413,9 @@ printf '%s __invocation__\n' "$(date +%s)" >> "$RUN_DIR/stages.log"
 echo "$WORKTREE" > "$RUN_DIR/worktree"
 echo "$BASE_REF" > "$RUN_DIR/base"
 echo "[harness] $TICKET -> $REPO ($BRANCH from $BASE_REF)"
+
+capacity_preflight
+
 stage "setup: worktree"
 
 # --- 1. Worktree ------------------------------------------------------------
@@ -414,6 +539,12 @@ else
   CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --session-id "$OPUS_SESSION")
   stage "implementing — Opus (Claude sub)"
 fi
+# Remember where this attempt starts in the append-only live feed so an older
+# limit message cannot classify a later, unrelated failure as capacity.
+OPUS_FEED_START_LINE=1
+if [ -f "$RUN_DIR/feed.log" ]; then
+  OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
+fi
 # Stream events so the statusline and feed.log can show live what the worker
 # is doing (tool by tool); raw stream kept for debugging.
 (cd "$WORKTREE" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
@@ -448,6 +579,15 @@ if [ -f "$WORKTREE/.harness/QUESTIONS.md" ]; then
   exit 3
 fi
 if [ $OPUS_EXIT -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --oneline 2>/dev/null)" ]; then
+  # A window that emptied mid-run is a capacity event, not a failed implementer.
+  # The CLI's message is only the trigger; the reset time comes from ccusage, so
+  # nothing here depends on parsing prose that Anthropic is free to reword.
+  if [ $OPUS_EXIT -ne 0 ] && [ "${HARNESS_PREFLIGHT:-on}" != off ] \
+     && declare -F capacity_for >/dev/null 2>&1 && session_limit_hit; then
+    capacity_note "mid-run: the implementer stopped on a session limit"
+    capacity_for "$CLAUDE_LOGS" || true   # the headroom is moot; CAP_RESET is not
+    defer_for_capacity mid-run            # returns only when it could not defer
+  fi
   STATUS="implementer_failed"; write_result "$STATUS" ""
   stage "done: implementer_failed"
   echo "[harness] implementer failed (exit $OPUS_EXIT, see opus-stderr.log / feed.log in $RUN_DIR)"; exit 1

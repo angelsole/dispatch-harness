@@ -53,9 +53,10 @@ FALLBACK_N="${QM_FALLBACK_N:-1}"                   # when capacity is unknowable
 TIMES="${QM_TIMES:-23:30 02:00 04:30}"             # fire times, handed out in queue order
 HISTORY="${QM_HISTORY:-20}"                        # runs sampled for the median cost
 DEFAULT_COST="${QM_DEFAULT_COST:-40000}"           # median cost when history is thin
-TOKEN_LIMIT="${QM_TOKEN_LIMIT:-}"                  # pin the block ceiling yourself
 AT="${QM_AT:-19:00}"                               # when the installed agent fires
-CCUSAGE_TIMEOUT="${QM_CCUSAGE_TIMEOUT:-120}"
+# The two knobs capacity.sh reads, under this script's documented names.
+CAPACITY_TOKEN_LIMIT="${QM_TOKEN_LIMIT:-}"         # pin the block ceiling yourself
+CAPACITY_TIMEOUT="${QM_CCUSAGE_TIMEOUT:-120}"
 LINEAR_TIMEOUT="${QM_LINEAR_TIMEOUT:-20}"
 NTFY_TIMEOUT="${QM_NTFY_TIMEOUT:-10}"
 EFFORT="${QM_EFFORT:-high}"                        # IMPLEMENTER_EFFORT for armed runs
@@ -76,6 +77,11 @@ CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/
 usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 fail()  { echo "FATAL: $*" >&2; exit 1; }
 
+# The capacity accountant, shared with run-task.sh's dispatch preflight so the
+# local-file-only rule is stated and enforced in exactly one place.
+# shellcheck source=capacity.sh
+. "$SELF_DIR/capacity.sh" || fail "cannot read $SELF_DIR/capacity.sh — re-run install.sh"
+
 # ntfy topic and server, read exactly the way run-task.sh reads them.
 # shellcheck source=/dev/null
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
@@ -88,8 +94,9 @@ human_time() {  # $1 = epoch
   perl -e 'use POSIX qw(strftime); print strftime("%a %d %b %H:%M", localtime($ARGV[0]))' -- "$1"
 }
 
-# A process cap that exists on macOS, where timeout(1) does not.
-capped() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+# Keep the quartermaster's existing generic name while sharing the identical
+# macOS-safe process cap supplied by capacity.sh.
+capped() { capacity_capped "$@"; }
 
 # ---------------------------------------------------------------------------
 # Linear — the only remote API this touches: read, plus one comment per arm
@@ -261,56 +268,8 @@ median_cost() {
   return 0
 }
 
-# Read one station's own Claude logs. ccusage is a local-file accountant: it
-# parses the JSONL under CLAUDE_CONFIG_DIR and talks to no model provider.
-# --offline additionally forbids it fetching a pricing table, so the local-only
-# rule holds by construction rather than by trust. If the installed ccusage is
-# too old to support that flag, capacity falls back honestly instead of
-# weakening the network boundary.
-ccusage_blocks() {  # $1 = the station's claude config dir
-  local out
-  command -v npx >/dev/null 2>&1 || return 1
-  out=$(CLAUDE_CONFIG_DIR="$1" capped "$CCUSAGE_TIMEOUT" \
-    npx -y ccusage@latest blocks --json --offline 2>/dev/null </dev/null) || out=""
-  printf '%s' "$out" | jq -e '.blocks' >/dev/null 2>&1 || return 1
-  printf '%s' "$out"
-}
-
-# Output-token headroom left in the station's current five-hour block — the
-# proxy this uses for "capacity that expires tonight". The ceiling is
-# QM_TOKEN_LIMIT when pinned, otherwise the busiest *completed* block ccusage
-# can still see, which is the same "most you have ever managed" heuristic
-# ccusage's own --token-limit max uses. No completed block means no ceiling,
-# and no ceiling means we refuse to guess: the caller falls back to
-# QM_FALLBACK_N and the report says so.
-#
-# Sets CAP_USED / CAP_LIMIT / CAP_REMAINING / CAP_PCT; non-zero when unknown.
-capacity_for() {  # $1 = the station's claude config dir
-  local json row used seen
-  CAP_USED=0; CAP_LIMIT=0; CAP_REMAINING=0; CAP_PCT=0
-  json=$(ccusage_blocks "$1") || return 1
-  row=$(printf '%s' "$json" | jq -r '
-    [.blocks[]? | select((.isGap // false) | not)] as $b
-    | ([$b[] | select(.isActive == true) | .tokenCounts.outputTokens // 0] | add // 0) as $used
-    | ([$b[] | select((.isActive // false) | not) | .tokenCounts.outputTokens // 0] | max // 0) as $seen
-    | [$used, $seen] | @tsv' 2>/dev/null) || return 1
-  used=$(printf '%s' "$row" | cut -f1)
-  seen=$(printf '%s' "$row" | cut -f2)
-  case "${used:-}" in ''|*[!0-9]*) used=0 ;; esac
-  case "${seen:-}" in ''|*[!0-9]*) seen=0 ;; esac
-  if [ -n "$TOKEN_LIMIT" ] && [ -z "${TOKEN_LIMIT//[0-9]/}" ] && [ "$TOKEN_LIMIT" -gt 0 ]; then
-    CAP_LIMIT="$TOKEN_LIMIT"
-  elif [ "$seen" -gt 0 ]; then
-    CAP_LIMIT="$seen"
-  else
-    return 1
-  fi
-  [ "$CAP_LIMIT" -ge "$used" ] || CAP_LIMIT="$used"
-  CAP_USED="$used"
-  CAP_REMAINING=$((CAP_LIMIT - used))
-  CAP_PCT=$((CAP_REMAINING * 100 / CAP_LIMIT))
-  return 0
-}
+# Headroom itself comes from capacity.sh (capacity_for -> CAP_*), which
+# run-task.sh's preflight reads through the same door.
 
 # N = floor(remaining x safety / cost), never above the per-crew ceiling.
 runs_that_fit() {  # $1 = remaining tokens, $2 = median cost
