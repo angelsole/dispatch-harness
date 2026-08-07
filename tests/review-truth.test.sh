@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Telling the truth about the review stage, in two parts:
+# Telling the truth about the review stage, in three parts:
 #
 #   1. An unreviewed diff says so on the PR itself. A dead review stage used to
 #      leave nothing on the PR but a missing "## Review notes" section — the
@@ -10,6 +10,11 @@
 #      the one round 1 just judged is recorded as skipped instead of re-run —
 #      and the verdict that stands is still round 1's, so a gate that was
 #      already failing still reaches the fix round.
+#   3. The reviewer may measure instead of argue — on loopback and nothing
+#      else, out of a harness-owned CODEX_HOME that inherits none of the
+#      operator's rules, plugins or MCP servers. HARNESS_REVIEW_NETWORK=0
+#      restores the old command line AND environment byte-for-byte, in
+#      run-task.sh and its sync-pr.sh mirror.
 #
 # Nothing real is contacted. `claude` (implementer), `codex` (reviewer), `gh`
 # (the PR) and `curl` (ntfy) are fake binaries on PATH driven by mode files, and
@@ -27,6 +32,10 @@ pass=0; fail=0
 ok()   { pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; fi; }
+# A claim this machine genuinely cannot test. Counted apart from ok/FAIL and
+# printed, so a gap in the evidence reads as a gap rather than as a pass.
+skipped=0
+skip() { skipped=$((skipped+1)); printf '  skip %s\n' "$1"; }
 has()      { if printf '%s' "$1" | grep -qF -- "$2"; then ok "$3"; else bad "$3 (missing [$2])"; fi; }
 has_not()  { if printf '%s' "$1" | grep -qF -- "$2"; then bad "$3 (found [$2])"; else ok "$3"; fi; }
 file_has() { if grep -qF -- "$2" "$1" 2>/dev/null; then ok "$3"; else bad "$3 (missing [$2] in $1)"; fi; }
@@ -40,14 +49,34 @@ WARN_NOCODEX='> ⚠️ **This diff is unreviewed.** The Codex review stage is no
 FHOME="$ROOT/home"
 HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"
 SRCDIR="$ROOT/src"; FAKES="$ROOT/bin"
+CODEX_ARGV="$ROOT/codex-argv.log"
+CODEX_HOMES="$ROOT/codex-homes.log"
 CODEX_MODE="$ROOT/codex-mode"
 PR_BODIES="$ROOT/pr-bodies"
+# The operator's own Codex home, exactly as a developer machine has it: an
+# auth token, a rules file recording every command they ever approved (`git
+# push` and `gh` among them), an MCP server and a plugin. None of it is the
+# harness's to hand an unattended reviewer.
+OPHOME="$FHOME/.codex"      # what CODEX_HOME defaults to
+FBHOME="$ROOT/codex-fallback"
+FAKE_TOKEN='fake-oauth-token-do-not-log'
+OPERATOR_RULES='prefix_rule(pattern = ["git", "push"], decision = "allow")
+prefix_rule(pattern = ["gh"], decision = "allow")'
 
-mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$PR_BODIES"
+mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$PR_BODIES" \
+  "$OPHOME/rules" "$OPHOME/plugins" "$FBHOME"
+: > "$CODEX_ARGV"; : > "$CODEX_HOMES"
 printf 'notes\n' > "$CODEX_MODE"
+printf '%s\n' "$FAKE_TOKEN" > "$OPHOME/auth.json"
+printf '%s\n' "$OPERATOR_RULES" > "$OPHOME/rules/default.rules"
+printf 'enabled = true\n' > "$OPHOME/plugins/some-plugin.toml"
+printf '[mcp_servers.prod-db]\ncommand = "prod-db-mcp"\n' > "$OPHOME/config.toml"
+printf '%s\n' "$FAKE_TOKEN-fallback" > "$FBHOME/auth.json"
+printf '%s\n' "$OPERATOR_RULES" > "$FBHOME/default.rules"
 
 cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
-chmod +x "$SRCDIR/run-task.sh"
+cp "$SRC/sync-pr.sh"  "$SRCDIR/sync-pr.sh"
+chmod +x "$SRCDIR/run-task.sh" "$SRCDIR/sync-pr.sh"
 cp "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
 
 # One knob so a dispatch can pick a green gate or a failing one.
@@ -81,8 +110,10 @@ git add -A
 git commit -q -m "feat: fixture change"
 EOF
 
-# Reviewer stand-in: `instant` is the confirmed failure — it returns at once
-# having touched nothing at all.
+# Reviewer stand-in. Every invocation records its whole argv, because the
+# sandbox flags are as much a contract as anything the reviewer writes.
+# `instant` is the confirmed failure — it returns at once having touched
+# nothing at all.
 cat > "$FAKES/codex" <<EOF
 #!/usr/bin/env bash
 wt=""; prev=""
@@ -90,8 +121,15 @@ for a in "\$@"; do
   if [ "\$prev" = "-C" ]; then wt="\$a"; break; fi
   prev="\$a"
 done
+printf '%s\n' "\$*" >> "$CODEX_ARGV"
+printf '%s\n' "\${CODEX_HOME-<unset>}" >> "$CODEX_HOMES"
 case "\$(cat "$CODEX_MODE")" in
   instant) echo "codex: done" ;;
+  credits) if [ "\${CODEX_HOME-}" = "$FBHOME/harness-review" ]; then
+             printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md"
+           else printf 'stream error: Your workspace is out of\nCredits.\n'; fi ;;
+  resolve) ( cd "\$wt" && printf 'both sides\n' > f.txt && git add -A \
+             && git commit -q --no-verify -m "Merge latest main" ) ;;
   notes)   printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md" ;;
   commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
              && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
@@ -145,6 +183,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   RUN="$RUNS/$ticket"
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
+  : > "$CODEX_ARGV"; : > "$CODEX_HOMES"
   # shellcheck disable=SC2086
   env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
@@ -279,6 +318,247 @@ check "failing gate, no commits: the run parks at gate_failed as before" \
   "$(result .status)" "gate_failed"
 TEST_GATE_CMD=true
 
+# ---------------------------------------------------------------------------
+echo "== the reviewer measures on loopback and reaches nothing else =="
+# ---------------------------------------------------------------------------
+printf 'notes\n' > "$CODEX_MODE"
+dispatch NET-ON ""
+RHOME="$OPHOME/harness-review"
+check "network: the attempt runs in a harness-owned CODEX_HOME" \
+  "$(cat "$CODEX_HOMES")" "$RHOME"
+check "network: built inside the account's own tree, not somewhere else" \
+  "$(dirname "$RHOME")" "$OPHOME"
+CFG="$RHOME/config.toml"
+
+echo "-- the policy it is handed --"
+file_has "$CFG" "features.network_proxy.enabled = true" \
+  "policy: sandboxed networking is the mechanism"
+file_has "$CFG" 'default_permissions = "harness-review"' \
+  "policy: pointed at the harness's own profile"
+file_has "$CFG" 'mode = "limited"' \
+  "policy: the restricted mode is named, never left to a default"
+file_has "$CFG" '"localhost" = "allow"'  "policy: localhost is reachable"
+file_has "$CFG" '"127.0.0.1" = "allow"' "policy: and the v4 loopback literal"
+file_has "$CFG" '"::1" = "allow"'       "policy: and the v6 one"
+file_has "$CFG" "allow_local_binding = true" \
+  "policy: loopback can be BOUND, which is what flutter test needs"
+has_not "$(cat "$CFG")" '"*" = "allow"' \
+  "policy: no wildcard allow — what is not named is denied"
+has_not "$(cat "$CFG")" "danger" \
+  "policy: no escape hatch anywhere in it"
+# The whole point of the redesign: the blunt flag must appear nowhere at all.
+has_not "$(cat "$CFG")" "network_access" \
+  "policy: unrestricted sandbox networking is never asked for in the config"
+has_not "$(cat "$CODEX_ARGV")" "network_access" \
+  "policy: nor on the command line"
+# A named profile may supersede the -s workspace-write roots; losing the git
+# common dir would mean a reviewer that cannot commit. Taken from the flag
+# itself so the two can never be asserted against different values.
+FLAG_ROOT="$(sed -n 's/.*writable_roots=\["\([^"]*\)".*/\1/p' "$CODEX_ARGV" | head -1)"
+check "policy: the flag still names the git common dir" \
+  "$(printf '%s' "$FLAG_ROOT" | grep -c '\.git$' | tr -d ' ')" "1"
+file_has "$CFG" "\"$FLAG_ROOT\" = \"write\"" \
+  "policy: and the profile restates it, so either layer keeps it writable"
+
+echo "-- what it does NOT inherit --"
+# The operator's own home is full of things an unattended reviewer must not
+# get: a rules file that allows `git push` and `gh`, an MCP server, a plugin.
+if [ -e "$RHOME/rules" ] || [ -e "$RHOME/plugins" ]; then
+  bad "isolation: the operator's rules and plugins are not on the review path"
+else
+  ok "isolation: the operator's rules and plugins are not on the review path"
+fi
+# Signatures of the operator's own config, not the words for them — the review
+# config talks *about* rules and plugins in its header comment.
+INHERITED="$(grep -rlF -e 'prefix_rule' -e 'mcp_servers' -e 'prod-db-mcp' \
+  "$RHOME" 2>/dev/null | paste -sd, -)"
+check "isolation: no inherited rule, plugin or MCP server is on that path" \
+  "$INHERITED" ""
+check "isolation: the operator's own home is untouched — still theirs" \
+  "$(cat "$OPHOME/rules/default.rules")" "$OPERATOR_RULES"
+
+echo "-- auth: inherited, never copied, never logged --"
+if [ -L "$RHOME/auth.json" ]; then
+  ok "auth: reached through a link, not a copy"
+else
+  bad "auth: reached through a link, not a copy"
+fi
+check "auth: the link stays inside the account's own tree" \
+  "$(readlink "$RHOME/auth.json")" "../auth.json"
+check "auth: the account's own auth.json is where it always was" \
+  "$(cat "$OPHOME/auth.json")" "$FAKE_TOKEN"
+LEAK="$(grep -rlF "$FAKE_TOKEN" "$RUNS" 2>/dev/null | paste -sd, -)"
+check "auth: no token anywhere in any run dir" "$LEAK" ""
+
+echo "-- a token the attempt refreshed goes back to the account --"
+# codex may replace auth.json rather than write through the link. The next
+# attempt must put it back, not discard it by relinking over the top. Replacing
+# it is the point, so the link is removed rather than written through.
+command rm -f "$RHOME/auth.json"
+printf 'refreshed-token\n' > "$RHOME/auth.json"
+dispatch NET-REFRESH ""
+check "auth: the refreshed token landed back in the account's own file" \
+  "$(cat "$OPHOME/auth.json")" "refreshed-token"
+if [ -L "$RHOME/auth.json" ]; then
+  ok "auth: and the link was restored over it"
+else
+  bad "auth: and the link was restored over it"
+fi
+printf '%s\n' "$FAKE_TOKEN" > "$OPHOME/auth.json"
+
+echo "-- the knob puts everything back --"
+ON_ARGV="$(cat "$CODEX_ARGV")"
+command rm -rf "$RHOME"
+dispatch NET-OFF "HARNESS_REVIEW_NETWORK=0"
+check "off: no CODEX_HOME is imposed on the primary account, as before" \
+  "$(cat "$CODEX_HOMES")" "<unset>"
+if [ -e "$RHOME" ]; then
+  bad "off: and no review home is built at all"
+else
+  ok "off: and no review home is built at all"
+fi
+# Byte-compare the whole command line, not just an absent flag: the knob has to
+# restore today's invocation exactly, and the run ids are the only other thing
+# that differs between these two dispatches.
+check "off: the command line is the one it always was" \
+  "$(printf '%s' "$ON_ARGV" | sed 's/net-refresh/X/g')" \
+  "$(sed -e 's/net-off/X/g' "$CODEX_ARGV")"
+
+echo "-- it composes with the fallback account --"
+printf 'credits\n' > "$CODEX_MODE"
+dispatch NET-FALLBACK "HARNESS_CODEX_HOME_FALLBACK=$FBHOME"
+check "fallback: each account's attempt runs in that account's own review home" \
+  "$(cat "$CODEX_HOMES")" "$OPHOME/harness-review
+$FBHOME/harness-review"
+file_has "$FBHOME/harness-review/config.toml" '"localhost" = "allow"' \
+  "fallback: with the same policy"
+check "fallback: and the fallback account's own auth, not the primary's" \
+  "$(readlink "$FBHOME/harness-review/auth.json")" "../auth.json"
+printf 'notes\n' > "$CODEX_MODE"
+
+# ---------------------------------------------------------------------------
+echo "== does the policy actually hold? (real codex sandbox, when available) =="
+# ---------------------------------------------------------------------------
+# The assertions above pin the policy the harness HANDS to codex. Whether codex
+# enforces it is codex's contract, and proving that needs the real CLI — which
+# the gate cannot assume, so this probe reports honestly instead of pretending.
+#
+# Ordered so it can only ever produce evidence, never a green by accident:
+#
+#   - the loopback bind under our profile has to succeed first, which is what
+#     proves the wrapper ran at all. Only then is a failure to reach a public
+#     host read as a refusal rather than as a broken invocation;
+#   - and a CONTROL runs the same bind under a bare CODEX_HOME. If loopback
+#     already worked there, the profile is not what changed anything and the
+#     probe says so instead of taking credit.
+with_timeout() {  # $1 = seconds, rest = command
+  local s="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$s" "$@"
+  else perl -e 'alarm shift; exec @ARGV' "$s" "$@"; fi
+}
+BIND_PROBE='import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1)
+socket.create_connection(("127.0.0.1", s.getsockname()[1]), 2)
+print("LOOPBACK-OK")'
+PROBE_ARGV=""   # the codex sandbox invocation that this build accepted
+sandbox_probe() {  # $1 = CODEX_HOME, $2 = shell command -> output, or 1 if unrunnable
+  local plat out rc a
+  case "$(uname -s)" in Darwin) plat=macos ;; Linux) plat=linux ;; *) return 1 ;; esac
+  for a in "${PROBE_ARGV:-sandbox $plat}" "sandbox"; do
+    # shellcheck disable=SC2086
+    out=$(CODEX_HOME="$1" with_timeout 60 codex $a -- /bin/sh -c "$2" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] || printf '%s' "$out" | grep -q 'LOOPBACK-OK'; then
+      PROBE_ARGV="$a"; printf '%s' "$out"; return 0
+    fi
+  done
+  return 1
+}
+bare_home="$ROOT/codex-bare"; mkdir -p "$bare_home"
+
+dispatch NET-PROBE ""   # rebuild the review home the probe runs under
+if ! command -v codex >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  skip "probe: no real codex/python3 here — policy enforcement unverified on this machine"
+elif ! OURS=$(sandbox_probe "$RHOME" "python3 -c '$BIND_PROBE'") \
+     || ! printf '%s' "$OURS" | grep -q 'LOOPBACK-OK'; then
+  skip "probe: this codex build would not run a sandbox probe — enforcement unverified here"
+else
+  ok "probe: a loopback socket binds and connects inside the sandbox (codex $PROBE_ARGV)"
+  if sandbox_probe "$RHOME" 'curl -sS -m 5 -o /dev/null https://example.com' >/dev/null 2>&1; then
+    bad "probe: a public host was reachable — the domain map is not holding"
+  else
+    ok "probe: and a public host is refused"
+  fi
+  # The control. Without it, a build that allowed loopback all along would read
+  # as this feature working.
+  if CTRL=$(sandbox_probe "$bare_home" "python3 -c '$BIND_PROBE'") \
+     && printf '%s' "$CTRL" | grep -q 'LOOPBACK-OK'; then
+    skip "probe: this build binds loopback without the profile too — the bind above proves nothing about it"
+  else
+    ok "probe: and the same bind is refused without the profile — the profile is what allows it"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+echo "== sync-pr.sh's resolver is the same invocation, deliberately =="
+# ---------------------------------------------------------------------------
+# The two codex command lines are mirrors. A network posture that lands on one
+# and not the other means a conflict resolver that cannot run the tests it is
+# told to re-run — and one that still inherits the operator's `git push` rule.
+# A sync consumes its own conflict, so each case gets a branch of its own.
+mk_sync_case() {  # $1 = ticket -> a pushed branch that conflicts with main
+  local t="$1" lc
+  lc=$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')
+  git -C "$REPO" checkout -q -b "fix/$t" main
+  printf 'branch side %s\n' "$t" > "$REPO/f.txt"
+  git -C "$REPO" add -A && git -C "$REPO" commit -q -m "feat: branch side"
+  git -C "$REPO" push -q -u origin "fix/$t"
+  git -C "$REPO" checkout -q main
+  printf 'base side %s\n' "$t" > "$REPO/f.txt"
+  git -C "$REPO" add -A && git -C "$REPO" commit -q -m "feat: base side"
+  git -C "$REPO" push -q origin main
+  git -C "$REPO" branch -q -D "fix/$t"
+  mkdir -p "$RUNS/$t"
+  printf '# fixture task\n' > "$RUNS/$t/brief.md"
+  jq -n --arg wt "$ROOT/greenapp-$lc" --arg b "fix/$t" --arg t "$t" \
+    '{ticket:$t,status:"ready",worktree:$wt,branch:$b,base:"main"}' > "$RUNS/$t/result.json"
+}
+sync_pr() {  # $1 = ticket, $2 = space-separated VAR=VAL overrides (may be empty)
+  : > "$CODEX_ARGV"; : > "$CODEX_HOMES"
+  # shellcheck disable=SC2086
+  env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+      CODEX_BIN="$FAKES/codex" HARNESS_NOTIFY=0 $2 \
+      bash "$SRCDIR/sync-pr.sh" "$1" > "$ROOT/sync-$1.log" 2>&1
+}
+printf 'resolve\n' > "$CODEX_MODE"
+mk_sync_case SYNC-ON
+command rm -rf "$RHOME"
+sync_pr SYNC-ON ""
+check "sync-pr: its resolver runs in the same harness-owned home" \
+  "$(cat "$CODEX_HOMES")" "$RHOME"
+file_has "$RHOME/config.toml" "features.network_proxy.enabled = true" \
+  "sync-pr: with sandboxed networking, not the blunt flag"
+file_has "$RHOME/config.toml" '"127.0.0.1" = "allow"' \
+  "sync-pr: and the same loopback-only domain map"
+has_not "$(cat "$RHOME/config.toml")" "network_access" \
+  "sync-pr: unrestricted networking is never asked for here either"
+SYNC_ON_ARGV="$(cat "$CODEX_ARGV")"
+check "sync-pr: the resolver really ran" \
+  "$(printf '%s' "$SYNC_ON_ARGV" | grep -c 'workspace-write' | tr -d ' ')" "1"
+
+mk_sync_case SYNC-OFF
+command rm -rf "$RHOME"
+sync_pr SYNC-OFF "HARNESS_REVIEW_NETWORK=0"
+check "sync-pr: the knob puts its environment back too" \
+  "$(cat "$CODEX_HOMES")" "<unset>"
+if [ -e "$RHOME" ]; then
+  bad "sync-pr: and builds no review home"
+else
+  ok "sync-pr: and builds no review home"
+fi
+check "sync-pr: leaving the command line it always had" \
+  "$(printf '%s' "$SYNC_ON_ARGV" | sed 's/sync-on/X/g')" \
+  "$(sed 's/sync-off/X/g' "$CODEX_ARGV")"
+
 echo
-printf 'review truth: %d passed, %d failed\n' "$pass" "$fail"
+printf 'review truth: %d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skipped"
 [ "$fail" -eq 0 ]

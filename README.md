@@ -657,6 +657,14 @@ utilities) and **denies the ones that could do damage**: `git push`,
 `git checkout`, `git switch`, and `gh`. The harness itself owns pushing and PR
 creation; the worker must never touch remotes or switch branches.
 
+**This file governs the Claude worker and nothing else.** It is a Claude
+settings file, passed to the implementer and to the Claude conflict resolver; no
+`codex` invocation consumes it, and none ever has. What bounds the Codex
+reviewer is its own sandbox plus the harness-owned `CODEX_HOME` described under
+[What the reviewer is allowed to reach](#what-the-reviewer-is-allowed-to-reach)
+— which is why that config dir exists, and why it carries none of the operator's
+rules.
+
 If your worker loads an MCP server (via `MCP_CONFIG`) that exposes destructive
 tools — switching a database environment, deploying, deleting records — **add
 those tool names to the `deny` list in your installed copy** of
@@ -1127,6 +1135,67 @@ was already failing still reaches the fix round exactly as before. Any commit at
 all — the review's or an earlier fix round's — and the round runs as it always
 has.
 
+#### What the reviewer is allowed to reach
+
+`codex` runs under its `workspace-write` sandbox, which denies network — and
+denies **loopback** with it. That is not academic: Flutter's test harness could
+not bind its socket and DB-backed jest suites could not reach a local Postgres,
+so on those repos the reviewer argued about the code instead of running it, on a
+pipeline whose review is the only defect detection after the implementer.
+
+The reviewer gets loopback, and nothing else. Two things, together:
+
+**Sandboxed networking, scoped to the loopback destinations.** Not
+`sandbox_workspace_write.network_access`, which is all-or-nothing and would hand
+an unattended reviewer the LAN and the internet. Instead
+`features.network_proxy` with a permission profile whose domain map allows
+exactly `localhost`, `127.0.0.1` and `::1`. Everything else is denied because
+nothing allows it — there is no `"*"` entry, and an absent allow rule already
+denies. `allow_local_binding` is on because allowlisting a loopback target is
+[not sufficient on its own](https://github.com/openai/codex/issues/33227) and
+Flutter's runner has to *bind* a socket rather than merely reach one; that
+widens the sandbox to local and private ranges and no further.
+
+**A harness-owned `CODEX_HOME` for the attempt.** `codex` reads rules, plugins
+and MCP servers out of `CODEX_HOME`, and a developer's `rules/default.rules`
+records every command they ever approved — `git push` and `gh` among them.
+Note what that means: `worker-settings.json` is a *Claude* settings file and no
+`codex` invocation consumes it, so the deny list below has never been the
+reviewer's boundary. So each attempt runs out of `<account home>/harness-review/`,
+a directory the harness writes: the policy above and nothing else. No rules, no
+plugins, no MCP servers. Auth is the one thing inherited, through a symlink to
+that account's own `auth.json` — nothing is copied, nothing leaves the account's
+tree, nothing is logged, and a token the attempt refreshes is moved back to the
+account's own file. Each account gets its own, so this composes with
+[`HARNESS_CODEX_HOME_FALLBACK`](#a-second-codex-account-for-a-dry-primary).
+
+The cost of that isolation is the thing to know before you turn it on: the
+review also stops inheriting the *benign* half of your `config.toml` — a custom
+model provider, say, or a proxy. The harness passes the model and effort knobs
+itself, so a stock ChatGPT-subscription setup needs nothing else; if yours does,
+`HARNESS_REVIEW_NETWORK=0` puts the reviewer back on your own config.
+
+**It fails closed.** The network can only ever come from the profile; nothing
+sets `network_access`. A `codex` build that ignores the profile therefore leaves
+the reviewer with today's sandbox rather than an open one.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_REVIEW_NETWORK` | `0` restores the old sandbox exactly: no loopback, no isolated config dir, and a `codex` command line and environment byte-identical to what they were before this existed. Anything else (or unset) enables both. | `1` |
+
+The same posture applies to `sync-pr.sh`'s conflict resolver, a deliberate
+mirror of `run-task.sh`'s `codex` invocation: it is told to re-run the tests
+relevant to the conflicted files, and it had the same problem — and the same
+inherited `git push` rule.
+
+What is *not* pinned here: whether your `codex` build enforces the profile it is
+handed. `tests/review-truth.test.sh` pins the policy the harness assembles, and
+then probes a real `codex sandbox` when one is on the machine — binding loopback
+under the profile, refusing a public host, and running the same bind under a
+bare `CODEX_HOME` as a control so a build that allowed loopback all along cannot
+read as this feature working. Where the CLI is absent or will not run the probe,
+the suite prints `skip` rather than a pass.
+
 #### A second Codex account for a dry primary
 
 The day the primary ChatGPT workspace ran out of credits, every review for six
@@ -1218,11 +1287,14 @@ code**, against your repositories. Be clear-eyed about what that means.
   machine.
 - **Prompt-injection surface.** Workers are allowed `WebFetch` and `WebSearch`,
   and they read repository contents and dependency code. Any of that text can
-  contain instructions crafted to subvert the agent. The deny list
-  (`git push`/`checkout`/`switch`, `gh`, plus any destructive MCP tools you add)
-  is the containment boundary: even a fully hijacked worker cannot push, switch
-  branches, open/merge PRs, or hit a denied MCP tool. The harness — not the
-  model — owns every outward-facing action.
+  contain instructions crafted to subvert the agent. For the Claude worker the
+  deny list (`git push`/`checkout`/`switch`, `gh`, plus any destructive MCP
+  tools you add) is the containment boundary: even a fully hijacked worker
+  cannot push, switch branches, open/merge PRs, or hit a denied MCP tool. For
+  the Codex reviewer that file does not apply at all — its boundary is the
+  sandbox it runs in and the harness-owned `CODEX_HOME` that gives it no rules,
+  plugins or MCP servers of yours, and no route off loopback. Either way the
+  harness — not the model — owns every outward-facing action.
 - **Deny-list philosophy.** Allow the worker the minimum it needs to implement
   and self-check; deny anything that reaches outside the worktree or is
   irreversible. When in doubt, deny — a blocked tool call surfaces as a prompt,

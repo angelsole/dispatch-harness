@@ -866,6 +866,125 @@ GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-di
 # with_timeout is the backstop cap (timeout(1), or a perl-alarm fallback).
 CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
 
+# Every root the reviewer must be able to write outside the worktree: a
+# worktree's refs live in the git common dir, so without it no review can
+# commit, and the Flutter/Dart caches are what its test runner touches. Named
+# once because the sandbox flag and the permission profile below must describe
+# the same set — two hand-maintained copies would drift.
+CODEX_WRITABLE_ROOTS=("$GIT_COMMON" "/opt/homebrew/share/flutter/bin/cache" \
+  "$HOME/.pub-cache" "$HOME/.config/flutter" "$HOME/.dart-tool")
+codex_writable_roots_json() {
+  local out="" r
+  for r in "${CODEX_WRITABLE_ROOTS[@]}"; do out="$out,\"$r\""; done
+  printf '[%s]' "${out#,}"
+}
+
+# --- Letting the reviewer measure, without letting it out ---------------------
+# codex's workspace-write sandbox denies network, and denies loopback with it:
+# Flutter's test harness could not bind its socket (OLYX-1555/1556) and
+# DB-backed jest suites could not reach their localhost Postgres
+# (OLYX-1587-backend, OLYX-1568), so on those repos the review argued about the
+# code instead of running it — on a pipeline whose review is the only defect
+# detection after the implementer.
+#
+# The narrow capability, not the blunt one. `sandbox_workspace_write.
+# network_access = true` is all-or-nothing and would hand an unattended
+# reviewer the LAN and the internet. Worse, `codex` reads the OPERATOR's
+# CODEX_HOME, and a developer's `rules/default.rules` records every command
+# they ever approved — `git push` and `gh` among them. Unrestricted egress plus
+# inherited rules puts a real remote within reach of a stage nothing watches,
+# and the review prompt's "do NOT push" is guidance, not a boundary. So:
+#
+#   1. features.network_proxy with a permission profile whose domain map allows
+#      exactly localhost / 127.0.0.1 / ::1. Every other destination is denied
+#      because nothing allows it.
+#   2. A harness-owned CODEX_HOME for the attempt, so the reviewer inherits no
+#      user rules, plugins or MCP servers — only the account's own auth.
+#
+# Both live in a config file the harness writes into that home (see
+# review_home), so they arrive together or not at all: isolation exists to make
+# the network safe, and neither is worth having without the other.
+#
+# FAILS CLOSED BY CONSTRUCTION. The network can only ever come from the
+# profile, never from the sandbox flag — nothing here sets network_access. A
+# codex build that ignores the profile therefore gives the reviewer today's
+# sandbox rather than an open one.
+#
+# HARNESS_REVIEW_NETWORK=0 leaves both the command line and the environment
+# byte-for-byte what they were; every new thing appears only in the enabled arm.
+REVIEW_NETWORK="${HARNESS_REVIEW_NETWORK:-1}"
+
+# codex may replace auth.json rather than write through the link below when it
+# refreshes a token. Move a refreshed file back to where the account keeps it,
+# so the account's own auth is never left stale — and is never discarded by the
+# relink. Auth is read, moved within the account's own tree, and never logged.
+reconcile_review_auth() {  # $1 = the account's CODEX_HOME
+  local home="$1/harness-review"
+  if [ -f "$home/auth.json" ] && [ ! -L "$home/auth.json" ]; then
+    mv -f "$home/auth.json" "$1/auth.json" 2>/dev/null || true
+  fi
+}
+
+# The reviewer's own CODEX_HOME, built inside the account's own directory tree
+# so nothing about that account ever travels. codex reads rules, plugins and
+# MCP servers out of CODEX_HOME and nowhere else, so a directory the harness
+# writes IS the isolation: the operator's rules file is simply not on this path.
+# Auth is the one thing inherited, through a symlink to the account's own
+# auth.json — nothing copied, nothing outside the tree, nothing logged.
+#
+# Per account, so it composes with HARNESS_CODEX_HOME_FALLBACK: whichever
+# subscription takes the attempt gets its own isolated home and its own auth.
+# Echoes the home on success; a failure to build one is silent and total (the
+# caller then runs exactly as it did before, network included, i.e. without).
+review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
+  local base="$1" home="$1/harness-review" r
+  [ -n "$base" ] || return 1
+  mkdir -p "$home" 2>/dev/null || return 1
+  reconcile_review_auth "$base"
+  # A dangling link would be worse than none: only link what is there.
+  [ -e "$base/auth.json" ] && { ln -sfn ../auth.json "$home/auth.json" || return 1; }
+  {
+    echo "# Written by dispatch-harness run-task.sh before every review attempt."
+    echo "# This directory is the reviewer's entire CODEX_HOME: whatever is not"
+    echo "# here — rules, plugins, MCP servers — is not available to the review."
+    echo
+    echo "features.network_proxy.enabled = true"
+    echo 'default_permissions = "harness-review"'
+    echo
+    echo '[permissions.harness-review]'
+    echo 'description = "dispatch-harness review: workspace writes, loopback only"'
+    echo 'extends = ":workspace"'
+    echo
+    echo "# The same roots as the -s workspace-write flags below, restated here"
+    echo "# because a named profile may supersede them: whichever layer the CLI"
+    echo "# treats as authoritative, the reviewer can still write its refs."
+    echo '[permissions.harness-review.filesystem]'
+    for r in "${CODEX_WRITABLE_ROOTS[@]}"; do printf '"%s" = "write"\n' "$r"; done
+    echo
+    echo '[permissions.harness-review.network]'
+    echo 'enabled = true'
+    echo '# "limited" names the restricted mode explicitly, so no change to what'
+    echo '# the CLI defaults to can quietly promote this to "full".'
+    echo 'mode = "limited"'
+    echo '# Required for loopback even though the three literals below are'
+    echo '# allowed: allowlisting a local target is not sufficient on its own'
+    echo '# (openai/codex#33227), and Flutter'"'"'s test harness has to BIND a'
+    echo '# loopback socket rather than merely reach one. It widens the sandbox'
+    echo '# to local and private ranges and no further — the domain map below'
+    echo '# still denies every public destination.'
+    echo 'allow_local_binding = true'
+    echo
+    echo '[permissions.harness-review.network.domains]'
+    echo '"localhost" = "allow"'
+    echo '"127.0.0.1" = "allow"'
+    echo '"::1" = "allow"'
+    echo '# No "*" entry: an absent allow rule already denies, and the global'
+    echo '# wildcard is rejected unless allowlist compilation is opened up. What'
+    echo '# is not named above is what the reviewer cannot reach.'
+  } > "$home/config.toml" 2>/dev/null || return 1
+  printf '%s\n' "$home"
+}
+
 # --- Which Codex subscription an attempt runs on ------------------------------
 # A dry primary workspace turned six hours of reviews into honestly-flagged
 # no-ops. codex auth is entirely CODEX_HOME-directory-scoped, so a second
@@ -878,6 +997,11 @@ CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
 # NEXT attempt, so the review retry, the fix round and base-sync conflict
 # resolution all follow wherever the review ended up.
 CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
+# Where the primary account keeps its own config — the ambient CODEX_HOME when
+# the station exports one, codex's own default otherwise. Never passed to codex
+# on the primary (that is today's behaviour, unchanged); it is the tree the
+# isolated review home is built inside.
+CODEX_HOME_PRIMARY="${CODEX_HOME:-$HOME/.codex}"
 CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
 CODEX_PRIMARY_DRY=0       # the primary answered "out of credits" at least once
 
@@ -902,10 +1026,17 @@ feed() {  # $1 = marker + model, $2 = line
 run_codex() {  # $1 = round label, $2 = prompt
   local log="$RUN_DIR/codex-$1.log" rc
   # env(1) sits between the timeout and the CLI because with_timeout is a shell
-  # function: env cannot exec one. Empty on the primary, so the command line is
-  # exactly what it has always been.
-  local home=()
-  [ "$CODEX_ACCOUNT" = fallback ] && home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  # function: env cannot exec one. Empty on the primary with the network knob
+  # off, so the command line and the environment are exactly what they have
+  # always been.
+  local home=() acct_home rhome
+  acct_home="$CODEX_HOME_PRIMARY"
+  [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
+  if [ "$REVIEW_NETWORK" != 0 ] && rhome=$(review_home "$acct_home"); then
+    home=(env "CODEX_HOME=$rhome")
+  elif [ "$CODEX_ACCOUNT" = fallback ]; then
+    home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  fi
   # The attempt's log opens with the account LABEL — which subscription ran it,
   # and nothing else about it. tee appends from here; the truncation above keeps
   # a re-dispatch's log as fresh as it was before.
@@ -913,7 +1044,7 @@ run_codex() {  # $1 = round label, $2 = prompt
   with_timeout "$CODEX_TIMEOUT" \
     ${home[@]+"${home[@]}"} \
     "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
-    -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\",\"/opt/homebrew/share/flutter/bin/cache\",\"$HOME/.pub-cache\",\"$HOME/.config/flutter\",\"$HOME/.dart-tool\"]" \
+    -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)" \
     -c "model=\"$CODEX_MODEL\"" \
     -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
     "$2" </dev/null 2>&1 \
@@ -924,6 +1055,9 @@ run_codex() {  # $1 = round label, $2 = prompt
         feed '◆ codex' "$l"
       done
   rc="${PIPESTATUS[0]}"
+  # Hand a token this attempt refreshed straight back to the account it belongs
+  # to, rather than leaving it in the harness's directory until the next run.
+  [ "$REVIEW_NETWORK" != 0 ] && reconcile_review_auth "$acct_home"
   if [ "$CODEX_ACCOUNT" = primary ] && codex_out_of_credits "$log"; then
     CODEX_PRIMARY_DRY=1
     if [ -n "$CODEX_HOME_FALLBACK" ]; then
