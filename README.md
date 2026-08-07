@@ -592,11 +592,14 @@ harness's own secrets, plus one `Write` into `runs/` — no Bash, no network, no
 subagents, no git writes), turns the ticket text into the brief. The ticket
 text reaches that planner inside a fence whose marker is minted per call, so a
 description that types its own `END` marker and then gives orders is still just
-quoted data. Every `brief.md` under `runs/` is checkpointed before the planner
-starts: anything it wrote other than the brief it was asked for is put back
-byte for byte, the planner's version quarantined beside it, and the ticket left
-unarmed — a steered planner cannot plant an armable brief in a sibling ticket's
-directory or overwrite one a human approved. The report lists self-written
+quoted data. The planner writes a uniquely named, non-armable candidate; after
+validation, the quartermaster publishes it as `brief.md` with an atomic
+no-clobber link, so a brief that appeared meanwhile is never replaced. Every
+existing `brief.md` under `runs/` is also checkpointed before the planner
+starts: anything it wrote elsewhere is put back byte for byte, the planner's
+version quarantined beside it, and the ticket left unarmed — a steered planner
+cannot plant an armable brief in a sibling ticket's directory or overwrite one
+a human approved. The report lists self-written
 briefs under *Self-briefed* — no human has read those plans, which is the trade
 the default makes; set `QM_AUTOBRIEF=0` to restore the stricter contract where
 unbriefed tickets are listed under *needs a brief* and left alone. `--report`

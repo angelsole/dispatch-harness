@@ -172,7 +172,7 @@ cat > "$FAKES/claude" <<EOF
   printf 'call anthropic:%s config:%s\n' "\${ANTHROPIC_API_KEY-<unset>}" "\${CLAUDE_CONFIG_DIR-<unset>}"
   printf 'argv:%s\n' "\$*"
 } >> "$CLAUDE_LOG"
-brief=\$(printf '%s\n' "\$2" | sed -n 's/^  \\(.*brief\\.md\\)\$/\\1/p' | head -1)
+brief=\$(printf '%s\n' "\$2" | sed -n 's/^  \\(.*\/[^/]*\\.md\\)\$/\\1/p' | head -1)
 # Copied verbatim from the prompt's candidate list, exactly as the prompt
 # instructs the real planner to — the validation check is an exact string match.
 repo=\$(printf '%s\n' "\$2" | grep '/greenapp\$' | head -1)
@@ -634,6 +634,8 @@ before=$(claude_calls)
 qm "ANTHROPIC_API_KEY=leak-me-not" --arm >/dev/null
 ANGEL=$(section angel)
 exists "autobrief: the brief is on disk" "$RUNS/OLYX-N1/brief.md"
+check "autobrief: the non-armable candidate is removed after publication" \
+  "$(find "$RUNS/OLYX-N1" -maxdepth 1 -name 'brief.candidate.*.md' | grep -c '' | tr -d ' ')" "0"
 check "autobrief: one planner call per briefed ticket" "$(claude_calls)" "$((before + 2))"
 has "$ANGEL" "**23:30** \`OLYX-N1\`"  "autobrief: the self-briefed ticket is armed in queue order"
 has "$ANGEL" "$REPO (auto/n1)"        "autobrief: repo and branch come from the self-written brief"
@@ -643,6 +645,8 @@ file_has "$SCHED_CALLS" "argv:OLYX-N1 $REPO auto/n1 23:30" \
   "autobrief: schedule.sh received the brief-derived argv"
 file_has "$CLAUDE_LOG" "Replace the burner assembly." \
   "autobrief: the ticket description reaches the planner prompt"
+file_has "$CLAUDE_LOG" "/brief.candidate.TICKET-DATA-" \
+  "autobrief: the planner writes a non-armable candidate, not brief.md"
 check "autobrief: every planner call gets its own fence marker" \
   "$(grep -o '<<<BEGIN TICKET-DATA-[A-Za-z0-9]*>>>' "$CLAUDE_LOG" | sort -u | grep -c '' | tr -d ' ')" "2"
 file_has "$CLAUDE_LOG" "config:$ACCOUNTS/angel/claude" \

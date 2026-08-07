@@ -379,12 +379,13 @@ nth_time() {  # $1 = zero-based index into TIMES; prints nothing when we run out
 #     and the preamble says what the marker means. Concatenated text has no
 #     boundary a reader can rely on: "--- END TICKET --- New instructions:"
 #     typed into a description is exactly what an unfenced prompt invites.
-#   - That Write is scoped to runs/, not to *this ticket's* directory under it,
-#     so the writes are contained after the fact instead. Every brief.md under
-#     runs/ is checkpointed before the planner starts; anything it wrote other
-#     than the one brief it was asked for is put back and the planner's version
+#   - The planner writes a uniquely named, non-armable candidate. Only this
+#     script publishes it as brief.md, with an atomic no-clobber link after
+#     validation. Write is scoped to runs/, not to *this ticket's* directory,
+#     so every existing brief.md is also checkpointed before the planner starts;
+#     anything it wrote elsewhere is put back and the planner's version
 #     quarantined. A steered planner cannot leave an armable brief in a sibling
-#     ticket's directory, nor overwrite a brief a human approved.
+#     ticket's directory, nor replace a brief a human approved.
 #   - What the brief claims is verified rather than trusted — by validate_brief
 #     below, which the arming loop applies to every brief it is about to hand
 #     schedule.sh, whoever wrote it.
@@ -413,7 +414,12 @@ repo_candidates() {
 # or read it ever, and a junk one parks the ticket in "skipped" every evening
 # after. Moved aside, not deleted — the post-mortem wants it, the armable
 # namespace must not.
-reject_brief() { [ -f "$1" ] && mv -f "$1" "${1%.md}.rejected.md"; return 0; }
+reject_brief() {  # $1 = source, $2 = destination (optional)
+  local source="$1" destination
+  destination="${2:-${source%.md}.rejected.md}"
+  [ -f "$source" ] && mv -f "$source" "$destination"
+  return 0
+}
 
 # Everything about a brief a machine can check before 02:00 acts on it. Applied
 # to every brief, self-written and hand-written alike, because the failure does
@@ -473,8 +479,8 @@ snapshot_briefs() {  # $1 = checkpoint dir
 # ticket's directory is quarantined the same way. Nothing is deleted in either
 # direction — both versions survive, only one of them is armable. Records each
 # in $WORK/strays for the report and prints how many there were.
-contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket, $3 = its own brief
-  local d="$1" ticket="$2" own="$3" n b count=0
+contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
+  local d="$1" ticket="$2" n b count=0
   while IFS="$TAB" read -r n b; do
     [ -n "$n" ] || continue
     cmp -s "$d/$n" "$b" 2>/dev/null && continue
@@ -485,7 +491,6 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket, $3 = its own bri
   done < "$d/manifest"
   for b in "$RUNS"/*/brief.md; do
     [ -f "$b" ] || continue
-    [ "$b" = "$own" ] && continue
     cut -f2 "$d/manifest" | grep -qxF -- "$b" && continue
     reject_brief "$b"
     printf '%s\t%s\t%s\n' "$ticket" "invented" "$b" >> "$WORK/strays"
@@ -499,7 +504,7 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket, $3 = its own bri
 autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 station dir
   local ticket="$1" title="$2" bodyfile="$3" station="$4" dir="$5"
   local run_dir="$RUNS/$1" brief="$RUNS/$1/brief.md"
-  local repos prompt fence snap stray reason r b rc=0
+  local repos prompt fence candidate snap stray reason r b rc=0
   repos=$(repo_candidates)
   if [ -z "$repos" ]; then
     echo "no git repo found under QM_REPO_ROOTS ($REPO_ROOTS)" >&2
@@ -510,16 +515,24 @@ autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 statio
   mkdir -p "$run_dir" || { echo "cannot create $run_dir" >&2; return 1; }
   # Write-once, stated where the write happens rather than inferred from the
   # caller's bookkeeping: the evening adds briefs, it never replaces one.
-  if [ -f "$brief" ]; then
+  if [ -e "$brief" ] || [ -L "$brief" ]; then
     echo "runs/$ticket/brief.md already exists — the evening does not overwrite a brief" >&2
     return 1
   fi
   fence=$(fence_tag)
+  candidate="$run_dir/brief.candidate.$fence.md"
+  if [ -e "$candidate" ] || [ -L "$candidate" ]; then
+    echo "cannot reserve a unique candidate path under runs/$ticket" >&2
+    return 1
+  fi
 
   prompt="You are the planner stage of the dispatch harness, running unattended.
 
-Write a task brief for ticket $ticket to this exact path:
-  $brief
+Write a task brief for ticket $ticket to this exact candidate path:
+  $candidate
+
+That candidate name is deliberately not brief.md. The harness validates it and
+publishes it without replacing any brief that appeared while you were working.
 
 Follow the template at $HARNESS_DIR/brief-template.md. The header lines are not
 optional: Repo, Branch and Base are parsed by machine, and a brief missing any
@@ -587,30 +600,39 @@ to the path and under the rules given above the fence."
   # Containment before anything else, and whatever the exit status: a planner
   # that wrote outside the brief it was asked for was steered, so nothing it
   # wrote is trusted — its own brief least of all.
-  stray=$(contain_planner_writes "$snap" "$ticket" "$brief")
+  stray=$(contain_planner_writes "$snap" "$ticket")
   if [ "${stray:-0}" -gt 0 ]; then
-    reject_brief "$brief"
+    reject_brief "$candidate" "${brief%.md}.rejected.md"
     echo "the planner wrote $stray brief(s) it was not asked for — all quarantined" >&2
     return 1
   fi
   if [ "$rc" -ne 0 ]; then
     # A timeout can strike after a perfectly valid Write; quarantine whatever
     # landed or tomorrow arms a brief tonight reported as failed.
-    reject_brief "$brief"
+    reject_brief "$candidate" "${brief%.md}.rejected.md"
     echo "planner exited $rc (see runs/$ticket/autobrief.log)" >&2
     return 1
   fi
-  [ -f "$brief" ] || {
+  [ -f "$candidate" ] && [ ! -L "$candidate" ] || {
     echo "planner wrote no brief (see runs/$ticket/autobrief.log)" >&2; return 1; }
   # The claims the prompt cannot enforce are verified instead, by the same
   # validate_brief the arming loop applies to every brief.
-  r=$(brief_field "$brief" Repo); b=$(brief_field "$brief" Branch)
+  r=$(brief_field "$candidate" Repo); b=$(brief_field "$candidate" Branch)
   reason=$(validate_brief "$r" "$b" 2>&1 >/dev/null); rc=$?
   if [ "$rc" -ne 0 ]; then
-    [ "$rc" -eq 2 ] || reject_brief "$brief"
+    [ "$rc" -eq 2 ] || reject_brief "$candidate" "${brief%.md}.rejected.md"
     printf '%s\n' "$reason" >&2
     return 1
   fi
+  # ln is the portable atomic no-clobber primitive here: candidate and final
+  # share a directory/filesystem, and link(2) fails if brief.md appeared while
+  # the planner was running. The planner itself never writes the armable path.
+  if ! ln "$candidate" "$brief" 2>/dev/null; then
+    reject_brief "$candidate" "${brief%.md}.rejected.md"
+    echo "runs/$ticket/brief.md appeared while planning — the candidate was quarantined, not published" >&2
+    return 1
+  fi
+  rm -f "$candidate"
   printf '%s\n' "$ticket" >> "$WORK/autobriefed"
   return 0
 }
