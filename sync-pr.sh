@@ -141,19 +141,22 @@ codex_writable_roots_json() {
 # leaves command line and environment byte-for-byte what they were.
 REVIEW_NETWORK="${HARNESS_REVIEW_NETWORK:-1}"
 
-reconcile_review_auth() {  # $1 = the account's CODEX_HOME
-  local home="$1/harness-review"
+reconcile_review_auth() {  # $1 = account CODEX_HOME, $2 = isolated run home
+  local home="$2"
   if [ -f "$home/auth.json" ] && [ ! -L "$home/auth.json" ]; then
-    mv -f "$home/auth.json" "$1/auth.json" 2>/dev/null || true
+    mv -f "$home/auth.json" "$1/auth.json" 2>/dev/null || return 1
+    ln -sfn ../../auth.json "$home/auth.json" 2>/dev/null || return 1
   fi
 }
 
 review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
-  local base="$1" home="$1/harness-review" r
+  # Runs are independent worktrees and may resolve concurrently. A per-run
+  # directory prevents either resolver from replacing the other's root policy.
+  local base="$1" home="$1/harness-review/$TICKET_LC" r
   [ -n "$base" ] || return 1
   mkdir -p "$home" 2>/dev/null || return 1
-  reconcile_review_auth "$base"
-  [ -e "$base/auth.json" ] && { ln -sfn ../auth.json "$home/auth.json" || return 1; }
+  reconcile_review_auth "$base" "$home"
+  [ -e "$base/auth.json" ] && { ln -sfn ../../auth.json "$home/auth.json" || return 1; }
   {
     echo "# Written by dispatch-harness sync-pr.sh before every codex attempt."
     echo "# This directory is the resolver's entire CODEX_HOME: whatever is not"
@@ -212,7 +215,7 @@ run_codex() {  # $1 = label, $2 = prompt
   # env(1) goes after with_timeout, which is a shell function env cannot exec.
   local home=() sandbox=(-s workspace-write \
     -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)")
-  local acct_home rhome
+  local acct_home rhome=""
   acct_home="$CODEX_HOME_PRIMARY"
   [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
   if [ "$REVIEW_NETWORK" != 0 ] && rhome=$(review_home "$acct_home"); then
@@ -235,7 +238,8 @@ run_codex() {  # $1 = label, $2 = prompt
         [ -n "$l" ] && printf '%.100s\n' "$l" > "$RUN_DIR/activity"
       done
   rc="${PIPESTATUS[0]}"
-  [ "$REVIEW_NETWORK" != 0 ] && reconcile_review_auth "$acct_home"
+  [ "$REVIEW_NETWORK" != 0 ] && [ -n "$rhome" ] \
+    && reconcile_review_auth "$acct_home" "$rhome"
   if [ "$CODEX_ACCOUNT" = primary ] && [ -n "$CODEX_HOME_FALLBACK" ] \
      && codex_out_of_credits "$log"; then
     CODEX_ACCOUNT="fallback"

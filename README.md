@@ -1167,12 +1167,15 @@ and MCP servers out of `CODEX_HOME`, and a developer's `rules/default.rules`
 records every command they ever approved — `git push` and `gh` among them.
 Note what that means: `worker-settings.json` is a *Claude* settings file and no
 `codex` invocation consumes it, so the deny list below has never been the
-reviewer's boundary. So each attempt runs out of `<account home>/harness-review/`,
-a directory the harness writes: the policy above and nothing else. No rules, no
-plugins, no MCP servers. Auth is the one thing inherited, through a symlink to
-that account's own `auth.json` — nothing is copied, nothing leaves the account's
-tree, nothing is logged, and a token the attempt refreshes is moved back to the
-account's own file. Each account gets its own, so this composes with
+reviewer's boundary. So each run uses a directory the harness writes,
+`<account home>/harness-review/<run-id>/`: the policy above and nothing else.
+Per-run directories matter because tickets can review in parallel and their
+writable git roots differ; no run can replace another's policy while Codex is
+starting. There are no rules, plugins, or MCP servers.
+Auth is the one thing inherited, through a symlink to that account's own
+`auth.json` — nothing is copied, nothing leaves the account's tree, nothing is
+logged, and a token the attempt refreshes is moved back to the account's own
+file. Each account gets its own tree, so this composes with
 [`HARNESS_CODEX_HOME_FALLBACK`](#a-second-codex-account-for-a-dry-primary).
 
 The cost of that isolation is the thing to know before you turn it on: the

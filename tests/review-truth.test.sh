@@ -127,12 +127,15 @@ printf '%s\0' "\$@" >> "$CODEX_ARGS"
 printf '%s\n' "\${CODEX_HOME-<unset>}" >> "$CODEX_HOMES"
 case "\$(cat "$CODEX_MODE")" in
   instant) echo "codex: done" ;;
-  credits) if [ "\${CODEX_HOME-}" = "$FBHOME/harness-review" ]; then
+  credits) case "\${CODEX_HOME-}" in "$FBHOME/harness-review"/*)
              printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md"
-           else printf 'stream error: Your workspace is out of\nCredits.\n'; fi ;;
+           ;; *) printf 'stream error: Your workspace is out of\nCredits.\n' ;; esac ;;
   resolve) ( cd "\$wt" && printf 'both sides\n' > f.txt && git add -A \
              && git commit -q --no-verify -m "Merge latest main" ) ;;
   notes)   printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md" ;;
+  refresh) rm -f "\$CODEX_HOME/auth.json"
+           printf 'refreshed-token\n' > "\$CODEX_HOME/auth.json"
+           printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md" ;;
   commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
              && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
   fix)     ( cd "\$wt" && printf 'ok\n' > fixed.txt && git add -A \
@@ -210,6 +213,9 @@ argv_count() {
   local i=0 a
   while IFS= read -r -d '' a; do i=$((i + 1)); done < "$CODEX_ARGS"
   printf '%s' "$i"
+}
+review_home_for() {  # $1 = account home, $2 = ticket
+  printf '%s/harness-review/%s' "$1" "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
 }
 
 # ---------------------------------------------------------------------------
@@ -337,11 +343,11 @@ echo "== the reviewer measures on loopback and reaches nothing else =="
 # ---------------------------------------------------------------------------
 printf 'notes\n' > "$CODEX_MODE"
 dispatch NET-ON ""
-RHOME="$OPHOME/harness-review"
+RHOME="$(review_home_for "$OPHOME" NET-ON)"
 check "network: the attempt runs in a harness-owned CODEX_HOME" \
   "$(cat "$CODEX_HOMES")" "$RHOME"
 check "network: built inside the account's own tree, not somewhere else" \
-  "$(dirname "$RHOME")" "$OPHOME"
+  "$(dirname "$(dirname "$RHOME")")" "$OPHOME"
 CFG="$RHOME/config.toml"
 
 echo "-- the policy it is handed --"
@@ -402,34 +408,40 @@ else
   bad "auth: reached through a link, not a copy"
 fi
 check "auth: the link stays inside the account's own tree" \
-  "$(readlink "$RHOME/auth.json")" "../auth.json"
+  "$(readlink "$RHOME/auth.json")" "../../auth.json"
 check "auth: the account's own auth.json is where it always was" \
   "$(cat "$OPHOME/auth.json")" "$FAKE_TOKEN"
 LEAK="$(grep -rlF "$FAKE_TOKEN" "$RUNS" 2>/dev/null | paste -sd, -)"
 check "auth: no token anywhere in any run dir" "$LEAK" ""
 
 echo "-- a token the attempt refreshed goes back to the account --"
-# codex may replace auth.json rather than write through the link. The next
-# attempt must put it back, not discard it by relinking over the top. Replacing
-# it is the point, so the link is removed rather than written through.
-command rm -f "$RHOME/auth.json"
-printf 'refreshed-token\n' > "$RHOME/auth.json"
+# codex may replace auth.json rather than write through the link. Reconciliation
+# after that same attempt must put it back. The fake performs
+# the replacement while it is running, exactly where the real CLI would.
+printf 'refresh\n' > "$CODEX_MODE"
 dispatch NET-REFRESH ""
+REFRESH_HOME="$(review_home_for "$OPHOME" NET-REFRESH)"
 check "auth: the refreshed token landed back in the account's own file" \
   "$(cat "$OPHOME/auth.json")" "refreshed-token"
-if [ -L "$RHOME/auth.json" ]; then
+if [ -L "$REFRESH_HOME/auth.json" ]; then
   ok "auth: and the link was restored over it"
 else
   bad "auth: and the link was restored over it"
 fi
+check "isolation: different runs have different config homes" \
+  "$REFRESH_HOME" "$OPHOME/harness-review/net-refresh"
+file_has "$RHOME/config.toml" "$GIT_ROOT" \
+  "isolation: a later run leaves the first run's root policy intact"
+printf 'notes\n' > "$CODEX_MODE"
 printf '%s\n' "$FAKE_TOKEN" > "$OPHOME/auth.json"
 
 echo "-- the knob puts everything back --"
-command rm -rf "$RHOME"
+OFF_HOME="$(review_home_for "$OPHOME" NET-OFF)"
+command rm -rf "$OFF_HOME"
 dispatch NET-OFF "HARNESS_REVIEW_NETWORK=0"
 check "off: no CODEX_HOME is imposed on the primary account, as before" \
   "$(cat "$CODEX_HOMES")" "<unset>"
-if [ -e "$RHOME" ]; then
+if [ -e "$OFF_HOME" ]; then
   bad "off: and no review home is built at all"
 else
   ok "off: and no review home is built at all"
@@ -459,12 +471,12 @@ echo "-- it composes with the fallback account --"
 printf 'credits\n' > "$CODEX_MODE"
 dispatch NET-FALLBACK "HARNESS_CODEX_HOME_FALLBACK=$FBHOME"
 check "fallback: each account's attempt runs in that account's own review home" \
-  "$(cat "$CODEX_HOMES")" "$OPHOME/harness-review
-$FBHOME/harness-review"
-file_has "$FBHOME/harness-review/config.toml" '"localhost" = "allow"' \
+  "$(cat "$CODEX_HOMES")" "$OPHOME/harness-review/net-fallback
+$FBHOME/harness-review/net-fallback"
+file_has "$FBHOME/harness-review/net-fallback/config.toml" '"localhost" = "allow"' \
   "fallback: with the same policy"
 check "fallback: and the fallback account's own auth, not the primary's" \
-  "$(readlink "$FBHOME/harness-review/auth.json")" "../auth.json"
+  "$(readlink "$FBHOME/harness-review/net-fallback/auth.json")" "../../auth.json"
 printf 'notes\n' > "$CODEX_MODE"
 
 # ---------------------------------------------------------------------------
@@ -507,6 +519,7 @@ sandbox_probe() {  # $1 = CODEX_HOME, $2 = shell command -> output, or 1 if unru
 bare_home="$ROOT/codex-bare"; mkdir -p "$bare_home"
 
 dispatch NET-PROBE ""   # rebuild the review home the probe runs under
+RHOME="$(review_home_for "$OPHOME" NET-PROBE)"
 if ! command -v codex >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
   skip "probe: no real codex/python3 here — policy enforcement unverified on this machine"
 elif ! OURS=$(sandbox_probe "$RHOME" "python3 -c '$BIND_PROBE'") \
@@ -562,6 +575,7 @@ sync_pr() {  # $1 = ticket, $2 = space-separated VAR=VAL overrides (may be empty
 }
 printf 'resolve\n' > "$CODEX_MODE"
 mk_sync_case SYNC-ON
+RHOME="$(review_home_for "$OPHOME" SYNC-ON)"
 command rm -rf "$RHOME"
 sync_pr SYNC-ON ""
 check "sync-pr: its resolver runs in the same harness-owned home" \
@@ -579,11 +593,12 @@ has_not "$SYNC_ON_ARGV" "-s workspace-write" \
   "sync-pr: enabled exec leaves its permission profile authoritative"
 
 mk_sync_case SYNC-OFF
-command rm -rf "$RHOME"
+OFF_HOME="$(review_home_for "$OPHOME" SYNC-OFF)"
+command rm -rf "$OFF_HOME"
 sync_pr SYNC-OFF "HARNESS_REVIEW_NETWORK=0"
 check "sync-pr: the knob puts its environment back too" \
   "$(cat "$CODEX_HOMES")" "<unset>"
-if [ -e "$RHOME" ]; then
+if [ -e "$OFF_HOME" ]; then
   bad "sync-pr: and builds no review home"
 else
   ok "sync-pr: and builds no review home"

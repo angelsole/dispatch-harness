@@ -916,12 +916,16 @@ REVIEW_NETWORK="${HARNESS_REVIEW_NETWORK:-1}"
 
 # codex may replace auth.json rather than write through the link below when it
 # refreshes a token. Move a refreshed file back to where the account keeps it,
-# so the account's own auth is never left stale — and is never discarded by the
-# relink. Auth is read, moved within the account's own tree, and never logged.
-reconcile_review_auth() {  # $1 = the account's CODEX_HOME
-  local home="$1/harness-review"
+# then restore the link. If either operation fails, fail the isolated-home build
+# rather than relinking over and discarding the only refreshed credential.
+# Auth is moved within the account's own tree and never logged.
+# The second argument is per run. Parallel tickets must never rewrite the same
+# config.toml while one of their codex processes is starting.
+reconcile_review_auth() {  # $1 = account CODEX_HOME, $2 = isolated run home
+  local home="$2"
   if [ -f "$home/auth.json" ] && [ ! -L "$home/auth.json" ]; then
-    mv -f "$home/auth.json" "$1/auth.json" 2>/dev/null || true
+    mv -f "$home/auth.json" "$1/auth.json" 2>/dev/null || return 1
+    ln -sfn ../../auth.json "$home/auth.json" 2>/dev/null || return 1
   fi
 }
 
@@ -932,17 +936,18 @@ reconcile_review_auth() {  # $1 = the account's CODEX_HOME
 # Auth is the one thing inherited, through a symlink to the account's own
 # auth.json — nothing copied, nothing outside the tree, nothing logged.
 #
-# Per account, so it composes with HARNESS_CODEX_HOME_FALLBACK: whichever
-# subscription takes the attempt gets its own isolated home and its own auth.
+# Per account and run, so it composes with HARNESS_CODEX_HOME_FALLBACK without
+# letting parallel tickets share policy: whichever subscription takes the
+# attempt gets its own isolated home and its own auth.
 # Echoes the home on success; a failure to build one is silent and total (the
 # caller then runs exactly as it did before, network included, i.e. without).
 review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
-  local base="$1" home="$1/harness-review" r
+  local base="$1" home="$1/harness-review/$TICKET_LC" r
   [ -n "$base" ] || return 1
   mkdir -p "$home" 2>/dev/null || return 1
-  reconcile_review_auth "$base"
+  reconcile_review_auth "$base" "$home"
   # A dangling link would be worse than none: only link what is there.
-  [ -e "$base/auth.json" ] && { ln -sfn ../auth.json "$home/auth.json" || return 1; }
+  [ -e "$base/auth.json" ] && { ln -sfn ../../auth.json "$home/auth.json" || return 1; }
   {
     echo "# Written by dispatch-harness run-task.sh before every review attempt."
     echo "# This directory is the reviewer's entire CODEX_HOME: whatever is not"
@@ -1031,7 +1036,7 @@ run_codex() {  # $1 = round label, $2 = prompt
   # always been.
   local home=() sandbox=(-s workspace-write \
     -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)")
-  local acct_home rhome
+  local acct_home rhome=""
   acct_home="$CODEX_HOME_PRIMARY"
   [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
   if [ "$REVIEW_NETWORK" != 0 ] && rhome=$(review_home "$acct_home"); then
@@ -1063,7 +1068,8 @@ run_codex() {  # $1 = round label, $2 = prompt
   rc="${PIPESTATUS[0]}"
   # Hand a token this attempt refreshed straight back to the account it belongs
   # to, rather than leaving it in the harness's directory until the next run.
-  [ "$REVIEW_NETWORK" != 0 ] && reconcile_review_auth "$acct_home"
+  [ "$REVIEW_NETWORK" != 0 ] && [ -n "$rhome" ] \
+    && reconcile_review_auth "$acct_home" "$rhome"
   if [ "$CODEX_ACCOUNT" = primary ] && codex_out_of_credits "$log"; then
     CODEX_PRIMARY_DRY=1
     if [ -n "$CODEX_HOME_FALLBACK" ]; then

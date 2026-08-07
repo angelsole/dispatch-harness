@@ -157,7 +157,7 @@ accounts() { awk '{print $2}' "$CODEX_CALLS" | paste -sd, - | tr -d ' '; }
 # The account tree each attempt was pointed at. The isolated config dir inside
 # it is another feature's contract; what this suite is about is which
 # subscription ran, so the leaf comes off here.
-homes()    { awk '{print $3}' "$CODEX_CALLS" | sed 's#/harness-review$##' \
+homes()    { awk '{print $3}' "$CODEX_CALLS" | sed 's#/harness-review/[^/]*$##' \
                | sort -u | paste -sd, - | tr -d ' '; }
 raw_homes() { awk '{print $3}' "$CODEX_CALLS" | sort -u | paste -sd, - | tr -d ' '; }
 first_of() { head -1 "$1" 2>/dev/null; }
@@ -173,7 +173,7 @@ check "credits: and the second one really was handed the other CODEX_HOME" \
 # Whichever account takes an attempt gets the review's own isolated config dir
 # inside that account's tree — the two features have to compose.
 check "credits: each account's attempt is isolated inside its own tree" \
-  "$(raw_homes)" "$FALLBACK_HOME/harness-review,$PRIMARY_HOME/harness-review"
+  "$(raw_homes)" "$FALLBACK_HOME/harness-review/fb-credits,$PRIMARY_HOME/harness-review/fb-credits"
 check "credits: the review counts as a real review" "$(result .review)" "reviewed"
 check "credits: result.json names the account it ran on" "$(result .review_account)" "fallback"
 check "credits: the arm stays full — nothing was left unreviewed" "$(result .arm)" "full"
