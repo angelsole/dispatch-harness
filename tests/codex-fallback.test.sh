@@ -292,7 +292,7 @@ echo "== sync-pr.sh: the conflict resolver follows the same rule =="
 # A published PR branch that conflicts with a moved base, resolved by codex —
 # whose primary account is dry. The knob has to reach this script too, or a run
 # whose review already fell back still parks on a conflict nobody can resolve.
-SYNC=SYNC-1
+SYNC="SYNC-1"
 git -C "$REPO" checkout -q -b "fix/$SYNC" main
 printf 'branch side\n' > "$REPO/f.txt"
 git -C "$REPO" add -A && git -C "$REPO" commit -q -m "feat: branch side"
