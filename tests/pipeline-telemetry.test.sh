@@ -285,22 +285,22 @@ check "compat: metrics.sh's gate column still renders" \
   "$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" \
       | awk '$1 == "GATE-FAIL" { print $8 }')" "fail"
 
-# The failing command inside a subshell: the DEBUG trap never sees it (bash does
-# not inherit that trap), so before the ERR trap the round blamed its neighbour —
-# the OLYX-1601 misattribution.
-TEST_GATE_CMD='gate-lint && ( cd . && gate-tests )'
+# The failing command inside a subshell in the MIDDLE of a chain: ERR is
+# suppressed there by bash, so inherited DEBUG tracking must keep the round from
+# blaming the preceding command — the OLYX-1601 misattribution.
+TEST_GATE_CMD='gate-lint && ( cd . && gate-tests ) && gate-lint'
 dispatch GATE-SUBSHELL "CODEX_BIN=$ROOT/no-such-codex"
 check "subshell: the step that returned nonzero is the one recorded" \
   "$(result '.metrics.gate_rounds[0].failed_step')" "gate-tests"
 
-# Same for a shell function, the other construct a DEBUG trap does not enter.
-TEST_GATE_CMD='f() { cd . && gate-tests; }; gate-lint && f'
+# Same for a shell function in the middle of the chain.
+TEST_GATE_CMD='f() { cd . && gate-tests; }; gate-lint && f && gate-lint'
 dispatch GATE-FUNC "CODEX_BIN=$ROOT/no-such-codex"
 check "function: a failure inside a function names the command, not the function" \
   "$(result '.metrics.gate_rounds[0].failed_step')" "gate-tests"
 
-# The trap pair must not blame a command substitution bash ran while expanding
-# the real step — that is what makes `set -T` the wrong fix.
+# Inherited DEBUG also sees a command substitution while expanding the real
+# step; the ERR trap must restore the full outer command after it fails.
 TEST_GATE_CMD='gate-lint && gate-tests --rev=$(gate-lint)'
 dispatch GATE-SUBST "CODEX_BIN=$ROOT/no-such-codex"
 check "expansion: an expansion helper is never recorded as the failing step" \

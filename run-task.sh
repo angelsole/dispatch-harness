@@ -976,21 +976,19 @@ echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
 # into functions, subshells or command substitutions without `set -T`, and a
 # gate whose failing command hides in one of those recorded its neighbour
 # instead (OLYX-1601 recorded `npm test` for a round `flutter test` failed in,
-# because the flutter step sat inside a subshell). `set -T` is the wrong cure —
-# it would also record every command substitution bash runs while EXPANDING the
-# real step, so a `--define=$(git rev-parse HEAD)` argument would name git as
-# the failed step. The ERR trap is the right one: with `set -E` it IS inherited
-# everywhere, and it fires on the command that actually returned nonzero. The
-# two are complementary and both write the same file, last writer winning —
-# ERR does not fire for a non-final element of an `&&` chain, which is exactly
-# the case DEBUG already gets right.
+# because the flutter step sat inside a subshell). DEBUG must be inherited for a
+# failing function/subshell in the MIDDLE of an `&&` chain: bash deliberately
+# suppresses ERR there. That also traces command substitutions, but the inherited
+# ERR trap runs after a genuinely failing outer command and restores that full
+# command (for example `test --rev=$(git rev-parse HEAD)`). The two traps are
+# complementary and both write the same file, last writer winning.
 #
 # Redirected to its own file, never to the log, so the reviewer's gate-latest.log
 # is exactly what it always was. `|| :` keeps a failed write from ever being
 # visible to the gate.
 GATE_TRACE_WRITE='printf "%s\n" "$BASH_COMMAND" > "$HARNESS_GATE_STEP" 2>/dev/null || :'
 GATE_TRACE_PRELUDE="trap '$GATE_TRACE_WRITE' DEBUG
-set -E
+set -ET
 trap '$GATE_TRACE_WRITE' ERR"
 
 run_gate() {
