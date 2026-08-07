@@ -425,24 +425,37 @@ was launched with; on disk it is indistinguishable from a human-armed one
 (`runs/<TICKET>/scheduled`, `schedule.sh --list`, and the quartermaster's
 `already armed` skip all just work).
 
-**Belt to the braces.** A window can also empty *during* a run. When the
-implementer exits non-zero and the session-limit message appears in the live
-feed, its stderr, or its final result message, the run is classified as capacity
-rather than `implementer_failed` and takes the same path. The message is only
-the trigger — the reset time always comes from ccusage, so nothing here depends
-on parsing the reset time out of prose Anthropic is free to reword.
+**Belt to the braces: the mid-run self-resume.** A window can also empty
+*during* a run — the single biggest sink in the corpus that motivated this, 25
+attempts and 8.6 hours burned, most of them recoverable. When the implementer
+exits non-zero and the session-limit message appears in the live feed, its
+stderr, or its final result message, the run is classified as capacity rather
+than `implementer_failed` and takes the same path: `deferred: capacity`, one
+one-shot armed for the reset, and the scheduled dispatch resumes the pinned
+implementer session exactly as a human re-dispatch would. Nobody has to notice.
+The phone push says so in a sentence — *"session limit — self-resuming at
+13:35"* — and `metrics.sh --report` counts these under `capacity self-resumes`.
 
-**Advisory, never a blocker.** ccusage missing, erroring, or unable to name a
-reset time, and a `schedule.sh` that refuses to arm, all log one line and
-dispatch anyway. `HARNESS_PREFLIGHT=off` disables the preflight and the mid-run
-classifier together. With capacity in hand, a run behaves exactly as it did
-before this existed — the check writes its verdict to
-`runs/<TICKET>/capacity.log` and says nothing on the console.
+A mid-run limit therefore always defers, because it always has a reset time to
+aim at:
 
-**And it stops.** A run auto-defers at most `HARNESS_MAX_DEFERRALS` times
-(counted in `runs/<TICKET>/deferrals`). After that it fails as
-`capacity_failed` — a status of its own, so the honest outcome is never dressed
-up as a broken implementer, and no run can reschedule itself forever.
+1. ccusage's block reset, the authority whenever it can answer at all;
+2. failing that, the wall-clock time the limit message itself names (*"resets
+   1:30pm"*, read in the operator's timezone) — prose, so it is the fallback
+   rather than the source;
+3. failing both, one hour, written into `capacity.log` as the guess it is.
+
+**Advisory, never a blocker.** ccusage missing or erroring, and a `schedule.sh`
+that refuses to arm, log one line and dispatch anyway. `HARNESS_PREFLIGHT=off`
+disables the preflight and the mid-run classifier together. With capacity in
+hand, a run behaves exactly as it did before this existed — the check writes its
+verdict to `runs/<TICKET>/capacity.log` and says nothing on the console.
+
+**And it stops.** A run auto-defers at most `HARNESS_MAX_DEFERRALS` times —
+preflight and mid-run self-resumes counted together in
+`runs/<TICKET>/deferrals`. After that it fails as `capacity_failed` — a status
+of its own, so the honest outcome is never dressed up as a broken implementer,
+and no run can reschedule itself forever.
 
 | Env var | What it does | Default |
 | --- | --- | --- |
@@ -503,6 +516,48 @@ nothing to strip keeps its shas.
 | --- | --- | --- |
 | `HARNESS_MAX_TURNS` | Turn ceiling for the implementer's session; pinned at first dispatch | `200` |
 | `HARNESS_MAX_RESUMES` | Automatic resumes allowed on turn exhaustion before the run fails (`0` opts out) | `2` |
+
+### Attempts: a run is a ticket, an attempt is a dispatch
+
+A run gets re-dispatched — after a question, after a failure, after a session
+limit — and everything below distinguishes the two.
+
+**Per-attempt telemetry survives the attempt.** Every invocation used to
+truncate `opus-stream.jsonl`, `gate-rounds.log` and `opus.log` on the way in, so
+each re-dispatch destroyed the evidence of the attempt it was recovering from
+(in one 46-run corpus: the turn counts and gate detail of all 36 failed
+attempts, unrecoverable). They are now **rotated**, not truncated:
+
+```
+runs/<TICKET>/
+  opus-stream.jsonl      the live attempt, exactly where it has always been
+  gate-rounds.log
+  opus.log
+  attempts/1/{opus-stream.jsonl,gate-rounds.log,opus.log}   attempt 1's own
+  attempts/2/…                                              attempt 2's own
+  attempts.log           <n> <status> <started> <ended>, one row per attempt
+```
+
+The live filenames never move, so everything reading the current attempt — the
+wall, the classifiers, `metrics.sh`, the reviewer — is untouched. The attempt
+number is the count of `__invocation__` markers in the append-only `stages.log`.
+`result.json` gains `attempt` (this invocation's ordinal), `attempts_total`, and
+`metrics.attempts` (the ledger), all additive; `metrics.turn_resumes` now counts
+**this invocation's** resumes rather than the run's lifetime total.
+
+**A finished run is not dispatched again.** Five runs in that same corpus were
+re-armed *after* reaching `done: ready`, burning 3.9 hours on work that was
+already in a PR — and one of them came back `push_failed`, turning a finished
+run into a broken one. So a dispatch of a run whose status is `done: ready`
+refuses before anything is touched (no worktree, no marker, no `result.json`
+rewrite), printing the PR it already produced. Every other status keeps today's
+behaviour: re-dispatching after a failure, a question or a deferral is the
+normal path. The deliberate override — a revised brief on a shipped branch, a PR
+closed by hand — is `HARNESS_REDISPATCH=1`.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_REDISPATCH` | `1` dispatches a run that already reached `done: ready` | unset |
 
 ### The Quartermaster
 
@@ -803,7 +858,10 @@ and `status.sh --watch` gives you the same picture on demand.
 The paper trail per run: `brief.md`, `specs/` (converted spec attachments, when
 the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
 `feed.log`, `gate-*.log`, `result.json`, `opus-head`, `capacity.log`
-(the [preflight's](#capacity-preflight-a-run-that-defers-itself) verdict).
+(the [preflight's](#capacity-preflight-a-run-that-defers-itself) verdict), and
+`attempts/<n>/` plus `attempts.log` — every earlier attempt's stream, gate
+rounds and final message, kept instead of overwritten
+([Attempts](#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)).
 
 ### Ghost Shift
 
@@ -1044,11 +1102,15 @@ fields are `null`/empty):
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
 | `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `failed_step` is the command a failing round died on, `null` on a passing round and on rounds recorded before this existed. |
-| `metrics.turn_resumes` | How many times the implementer was resumed rather than started fresh (counted across invocations). |
+| `metrics.turn_resumes` | How many times the implementer was resumed rather than started fresh **within this invocation** (turn-ceiling resumes plus the re-dispatch's own resume). Segmented by the `__invocation__` markers in `stages.log`, so it is never the run's lifetime total. |
+| `attempt` / `attempts_total` | This invocation's ordinal, and how many attempts the run has had. See [Attempts](#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch). |
+| `metrics.attempts` | The attempt ledger: `[{n, status, started, ended}]`, one row per invocation, which is what makes attempt-level rates and the idle gaps between attempts computable from `result.json` alone. |
+| `metrics.self_resumes` | Mid-run session limits this run rescheduled itself out of. |
 | `metrics.opus_commits` | Commit count `base..opus_head` (the implementer's). |
 | `metrics.codex_commits` | Commit count `opus_head..HEAD` (the reviewer's). |
 | `metrics.diff` | `{files_changed, insertions, deletions}` vs. base. |
 | `metrics.implementer_num_turns` | `num_turns` from the implementer's stream-json result event. |
+| `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Recorded beside `num_turns` because the two count different things — see [the turns caveat](#reading-the-pipelines-own-vitals). |
 | `metrics.implementer_usage` | Token `usage` from the same event. |
 
 ### `metrics.sh` — tabulate runs
@@ -1083,25 +1145,39 @@ STATUS                   RUNS      %
 ready                     120   67.0
 gate_failed                31   17.3
 …
+runs reaching ready (last attempt)   120   67.0
 
 REVIEW                   RUNS      %
 reviewed                  140   78.2
 skipped                    30   16.8
 no_evidence                 7    3.9
 failed_silent               2    1.1
+pre-telemetry              28   15.6
 silent review failures      2   <- these diffs are UNREVIEWED
 fallback-account reviews    3   <- the primary Codex account needs topping up
 
+ATTEMPTS                COUNT      %
+attempts total            240
+reaching ready            120   50.0
+capacity self-resumes       9   <- deaths the run recovered from on its own
+
+ATTEMPT DEATHS          COUNT      %
+implementer_failed         48   20.0
+gate_failed                31   12.9
+
 PER RUN              MEDIAN       P90      N
+attempts                1.0       3.0    179
+idle gap mins           1.6     216.0     61
 turns                    34        78    147
 wall minutes           22.4      58.1    179
 output tokens         41200     98000    140
 gate seconds            184       402    170
+turns vs cap     2 of 147 runs report more CLI turns than their pinned ceiling
 
-GATE ROUNDS              RUNS      %
-1 round                    45   25.1
-2 rounds                  110   61.5
-3 rounds                   24   13.4
+GATE FAILURES          FAILED      %
+round 1                   134   74.9
+round 2                    24   17.9
+round 3                     6   25.0
 
 FAILED GATE STEP               ROUNDS
 npm run type-check                 18
@@ -1114,20 +1190,44 @@ myapp                      80     24.1         36    70.0
 ```
 
 Read it in this order: **silent review failures** first (those diffs are
-unreviewed — see below), then **GATE ROUNDS** and **FAILED GATE STEP** (a second
-gate round means a whole extra suite run, and the step names what to fix first),
-then the medians for cost. Medians and p90s are nearest-rank over the runs that
-recorded the field — the `N` column says how many those were, so a partial
-history is visibly partial instead of silently averaged with zeros. Percentages
-in `GATE ROUNDS` are over the runs that ran a numbered gate round; base-sync
-re-gates are recorded in `result.json` but left out of that distribution.
+unreviewed — see below), then **ATTEMPT DEATHS** and the **idle gap** (what the
+machine actually spent, and how long a dead attempt waited to be noticed), then
+**GATE FAILURES** and **FAILED GATE STEP** (which round fails, and the step names
+what to fix first), then the medians for cost. Medians and p90s are nearest-rank
+over the runs that recorded the field — the `N` column says how many those were,
+so a partial history is visibly partial instead of silently averaged with zeros.
+
+Three labels earn their length:
+
+- **runs reaching ready (last attempt)** — `result.json` only ever describes the
+  attempt that wrote it, so run-level success is a last-attempt number. The
+  attempt-level rate in `ATTEMPTS` is the one that counts what was spent.
+- **GATE FAILURES, not gate rounds** — a second round is the *design* (gate,
+  review, re-gate), so counting rounds made the norm read as an 88.6% retry
+  rate. The share here is, of the runs that ran round *N*, how many failed it.
+  Base-sync re-gates are recorded in `result.json` but left out.
+- **pre-telemetry** — a run whose `result.json` predates the `review` field.
+  Reported as "(not reached)" it hid 28 perfectly good reviews behind a label
+  that claimed the stage never ran.
+
+**Turns and the ceiling count different things.** `metrics.implementer_num_turns`
+is the CLI's own `num_turns`; `metrics.implementer_max_turns` is the
+`--max-turns` the attempt was spawned with. A run can honestly report 206
+against a pinned 200 — the ceiling bounds the worker's turns within one
+invocation, while `num_turns` is the CLI's count over the conversation, which a
+resumed session carries forward. The report reconciles them in one line
+(`turns vs cap`) instead of leaving a phantom violation on the table.
 
 **Which gate step failed.** Each entry in `metrics.gate_rounds` carries
-`seconds` and `failed_step`. The step is captured by the gate's own shell: a
-`DEBUG` trap records each top-level command just before it runs, into a side
-file, so at exit the file holds the command the chain stopped on — which in an
-`&&` chain is the first failing step. Nothing about how your `GATE_CMD` runs
-changes, the gate log is byte-identical (the trap writes nowhere near it), and
+`seconds` and `failed_step`. The step is captured by the gate's own shell, with
+two traps that between them always name the command that actually returned
+nonzero: a `DEBUG` trap records each top-level command just before it runs, and
+an `ERR` trap (under `set -E`, so it is inherited by functions, subshells and
+command substitutions the DEBUG trap never enters) overwrites it with the
+command that failed. DEBUG alone once blamed a chain's *previous* step for a
+failure inside a subshell; `set -T` would have mis-blamed the helpers bash runs
+while expanding a step's arguments. Nothing about how your `GATE_CMD` runs
+changes, the gate log is byte-identical (the traps write nowhere near it), and
 no test output is parsed. Only failing rounds record a step.
 
 `HARNESS_GATE_STEP` is the path of that side file. It is **not a knob you

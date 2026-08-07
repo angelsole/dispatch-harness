@@ -6,10 +6,15 @@
 #      recorded, loudly, as a review that did not happen. Evidence decides, not
 #      duration: a fast review that writes its notes is a real review.
 #   2. Gate-round telemetry — every gate round records how long it took and
-#      which command it died on, without breaking readers of the old two-field
-#      shape.
-#   3. `metrics.sh --report` — the aggregate health picture, computed from
-#      result.json files alone.
+#      which command it died on (the command that actually returned nonzero,
+#      wherever in the gate's own shell it lives), without breaking readers of
+#      the old two-field shape.
+#   3. Attempt lifecycle — each invocation's telemetry is rotated into
+#      attempts/<n>/ instead of being truncated, the resume counter is this
+#      invocation's alone, and a run that already reached `done: ready` is not
+#      dispatched again.
+#   4. `metrics.sh --report` — the aggregate health picture, per attempt as well
+#      as per run, computed from result.json files alone.
 #
 # Nothing real is contacted. `claude` (implementer), `codex` (reviewer), `gh`
 # (the PR) and `curl` (ntfy) are fake binaries on PATH driven by mode files, and
@@ -288,7 +293,29 @@ check "compat: metrics.sh's gate column still renders" \
   "$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" \
       | awk '$1 == "GATE-FAIL" { print $8 }')" "fail"
 
+# The failing command inside a subshell in the MIDDLE of a chain: ERR is
+# suppressed there by bash, so inherited DEBUG tracking must keep the round from
+# blaming the preceding command — the OLYX-1601 misattribution.
+TEST_GATE_CMD='gate-lint && ( cd . && gate-tests ) && gate-lint'
+dispatch GATE-SUBSHELL "CODEX_BIN=$ROOT/no-such-codex"
+check "subshell: the step that returned nonzero is the one recorded" \
+  "$(result '.metrics.gate_rounds[0].failed_step')" "gate-tests"
+
+# Same for a shell function in the middle of the chain.
+TEST_GATE_CMD='f() { cd . && gate-tests; }; gate-lint && f && gate-lint'
+dispatch GATE-FUNC "CODEX_BIN=$ROOT/no-such-codex"
+check "function: a failure inside a function names the command, not the function" \
+  "$(result '.metrics.gate_rounds[0].failed_step')" "gate-tests"
+
+# Inherited DEBUG also sees a command substitution while expanding the real
+# step; the ERR trap must restore the full outer command after it fails.
+TEST_GATE_CMD='gate-lint && gate-tests --rev=$(gate-lint)'
+dispatch GATE-SUBST "CODEX_BIN=$ROOT/no-such-codex"
+check "expansion: an expansion helper is never recorded as the failing step" \
+  "$(result '.metrics.gate_rounds[0].failed_step')" 'gate-tests --rev=$(gate-lint)'
+
 printf 'notes\n' > "$CODEX_MODE"
+TEST_GATE_CMD='gate-lint && gate-tests'
 dispatch GATE-ROUNDS ""
 check "rounds: a full review loop records all three rounds" \
   "$(result '.metrics.gate_rounds | length')" "3"
@@ -299,12 +326,97 @@ TEST_GATE_CMD=true
 # ---------------------------------------------------------------------------
 echo "== resumes are counted, not inferred =="
 # ---------------------------------------------------------------------------
+# A failing gate: re-dispatching a run that did NOT reach ready is the normal
+# path, and the one a resume counter is about.
+TEST_GATE_CMD='exit 1'
 dispatch RESUME-1 ""
 check "resume: a first dispatch has no resumes" "$(result .metrics.turn_resumes)" "0"
 dispatch RESUME-1 ""
 check "resume: the second dispatch resumed the worker once" \
   "$(result .metrics.turn_resumes)" "1"
 file_has "$RUN/stages.log" "resuming — Opus (Claude sub)" "resume: from the stage it counts"
+# stages.log is append-only across every invocation. The count is this
+# invocation's, not the run's lifetime total.
+dispatch RESUME-1 ""
+check "resume: a third dispatch still reports one — its own, not the history's" \
+  "$(result .metrics.turn_resumes)" "1"
+check "resume: while the log has kept every invocation's" \
+  "$(grep -c 'resuming — Opus' "$RUN/stages.log" | tr -d ' ')" "2"
+
+# ---------------------------------------------------------------------------
+echo "== every attempt keeps its own telemetry =="
+# ---------------------------------------------------------------------------
+check "attempts: the third dispatch is attempt 3" "$(result .attempt)" "3"
+check "attempts: and the run knows how many there have been" \
+  "$(result .attempts_total)" "3"
+exists "attempts: the first attempt's stream survived two re-dispatches" \
+  "$RUN/attempts/1/opus-stream.jsonl"
+exists "attempts: with its gate rounds" "$RUN/attempts/1/gate-rounds.log"
+exists "attempts: and the worker's final message" "$RUN/attempts/1/opus.log"
+exists "attempts: the second attempt has its own directory" \
+  "$RUN/attempts/2/gate-rounds.log"
+absent "attempts: the live attempt is not rotated while it runs" "$RUN/attempts/3"
+exists "attempts: the live filenames are exactly where they always were" \
+  "$RUN/gate-rounds.log"
+check "attempts: and the live gate log is this attempt's alone" \
+  "$(grep -c '' "$RUN/gate-rounds.log" | tr -d ' ')" \
+  "$(grep -c '' "$RUN/attempts/1/gate-rounds.log" | tr -d ' ')"
+check "attempts: the ledger has a row per attempt" \
+  "$(result '.metrics.attempts | length')" "3"
+check "attempts: each with the status it ended on" \
+  "$(result '[.metrics.attempts[].status] | join(",")')" \
+  "gate_failed,gate_failed,gate_failed"
+check "attempts: and its own clock" \
+  "$(result '[.metrics.attempts[] | select(.started > 0 and .ended >= .started)] | length')" "3"
+check "attempts: the pinned turn ceiling is recorded beside the CLI's count" \
+  "$(result .metrics.implementer_max_turns)" "200"
+
+# Preservation is the contract, so a filesystem collision must stop before the
+# next worker truncates the live files. Silently continuing here would destroy
+# exactly the telemetry this feature exists to retain.
+dispatch ROTATE-FAIL ""
+ROTATE_RESULT=$(cat "$RUN/result.json")
+ROTATE_STREAM=$(cat "$RUN/opus-stream.jsonl")
+ROTATE_MARKERS=$(grep -c '__invocation__' "$RUN/stages.log" | tr -d ' ')
+mkdir -p "$RUN/attempts/1"
+printf 'collision\n' > "$RUN/attempts/1/opus-stream.jsonl"
+BEFORE=$(grep -c '' "$CLAUDE_CALLS" | tr -d ' ')
+dispatch ROTATE-FAIL ""
+check "attempts: a rotation collision fails the dispatch" \
+  "$([ "$RC" -ne 0 ] && echo yes || echo no)" "yes"
+check "attempts: no worker can truncate the unpreserved stream" \
+  "$(grep -c '' "$CLAUDE_CALLS" | tr -d ' ')" "$BEFORE"
+check "attempts: the previous result is left intact" \
+  "$(cat "$RUN/result.json")" "$ROTATE_RESULT"
+check "attempts: the live stream is left intact" \
+  "$(cat "$RUN/opus-stream.jsonl")" "$ROTATE_STREAM"
+check "attempts: a failed rotation does not count as a new invocation" \
+  "$(grep -c '__invocation__' "$RUN/stages.log" | tr -d ' ')" "$ROTATE_MARKERS"
+has "$OUT" "refusing to overwrite preserved attempt telemetry" \
+  "attempts: the collision is explained"
+TEST_GATE_CMD=true
+
+# ---------------------------------------------------------------------------
+echo "== a run that already shipped is not dispatched again =="
+# ---------------------------------------------------------------------------
+dispatch READY-GUARD ""
+check "guard: the first dispatch ships" "$(result .status)" "ready"
+READY_BEFORE=$(cat "$RUN/result.json")
+BEFORE=$(grep -c '' "$CLAUDE_CALLS" | tr -d ' ')
+dispatch READY-GUARD ""
+check "guard: a re-dispatch of a ready run exits 0 — nothing failed" "$RC" "0"
+check "guard: no implementer was spawned" "$(grep -c '' "$CLAUDE_CALLS" | tr -d ' ')" "$BEFORE"
+check "guard: result.json is left exactly as the shipped run wrote it" \
+  "$(cat "$RUN/result.json")" "$READY_BEFORE"
+check "guard: and so is the attempt count" "$(result .attempt)" "1"
+has "$OUT" "already finished as 'done: ready'" "guard: it says why it refused"
+has "$OUT" "https://example.invalid/pr/1" "guard: and points at the PR that already exists"
+has "$OUT" "HARNESS_REDISPATCH=1" "guard: with the override spelled out"
+
+dispatch READY-GUARD "HARNESS_REDISPATCH=1"
+check "override: HARNESS_REDISPATCH=1 dispatches anyway" \
+  "$(grep -c '' "$CLAUDE_CALLS" | tr -d ' ')" "$((BEFORE + 1))"
+check "override: and the run is on its second attempt" "$(result .attempt)" "2"
 
 # ---------------------------------------------------------------------------
 echo "== metrics.sh --report: the aggregate picture =="
@@ -320,19 +432,31 @@ mkrun() {  # $1 = run id, $2 = the whole result.json
 mkrun A-1 '{"ticket":"A-1","status":"ready","arm":"full","review":"reviewed",
   "worktree":"/w/myapp-a-1",
   "metrics":{"wall_seconds":600,"implementer_num_turns":10,"turn_resumes":0,
+    "implementer_max_turns":200,
     "implementer_usage":{"output_tokens":1000},
     "gate_rounds":[{"round":"1","result":"fail","seconds":30,"failed_step":"npm run lint"},
                    {"round":"2","result":"pass","seconds":40,"failed_step":null}]}}'
+# Two attempts: the first stopped for input, the second shipped. The gap between
+# them is the idle time a human took to answer.
 mkrun A-2 '{"ticket":"A-2","status":"ready","arm":"full","review":"reviewed",
+  "attempt":2,"attempts_total":2,
   "worktree":"/w/myapp-a-2",
   "metrics":{"wall_seconds":1200,"implementer_num_turns":20,"turn_resumes":1,
     "implementer_usage":{"output_tokens":3000},
+    "attempts":[{"n":1,"status":"needs_input","started":100,"ended":700},
+                {"n":2,"status":"ready","started":1000,"ended":2200}],
     "gate_rounds":[{"round":"1","result":"fail","seconds":10,"failed_step":"npm run lint"},
                    {"round":"2","result":"pass","seconds":10,"failed_step":null}]}}'
+# Three attempts, one of them a session limit the run recovered from by itself.
 mkrun A-3 '{"ticket":"A-3","status":"gate_failed","arm":"full","review":"failed_silent",
+  "attempt":3,"attempts_total":3,
   "worktree":"/w/myapp-a-3",
   "metrics":{"wall_seconds":1800,"implementer_num_turns":30,"turn_resumes":2,
+    "implementer_max_turns":20,"self_resumes":1,
     "implementer_usage":{"output_tokens":5000},
+    "attempts":[{"n":1,"status":"implementer_failed","started":1000,"ended":1600},
+                {"n":2,"status":"deferred_capacity","started":1700,"ended":1760},
+                {"n":3,"status":"gate_failed","started":5360,"ended":7160}],
     "gate_rounds":[{"round":"1","result":"fail","seconds":20,"failed_step":"npm test"},
                    {"round":"2","result":"fail","seconds":20,"failed_step":"npm test"},
                    {"round":"3","result":"fail","seconds":20,"failed_step":"npm test"}]}}'
@@ -366,16 +490,39 @@ has "$FLAT" "no_review 1 16.7"         "report: both arms"
 has "$FLAT" "reviewed 2 33.3"          "report: review classifications"
 has "$FLAT" "failed_silent 1 16.7"     "report: silent review failures are counted"
 has "$FLAT" "no_evidence 1 16.7"       "report: and so are the unproven ones"
-has "$FLAT" "(not reached) 1 16.7"     "report: a run with no review field is not a review"
+has "$FLAT" "pre-telemetry 1 16.7" \
+  "report: a run from before the review telemetry says so, instead of claiming the stage was never reached"
+has_not "$FLAT" "(not reached)" \
+  "report: and the label that hid 28 real reviews is gone"
+has "$FLAT" "runs reaching ready (last attempt) 4 66.7" \
+  "report: run-level success is labelled as the last-attempt number it is"
 has "$FLAT" "silent review failures 1 <- these diffs are UNREVIEWED" \
   "report: and the silent count is called out in words"
 has "$FLAT" "turns 30 50 5"            "report: median/p90 turns over the runs that recorded them"
 has "$FLAT" "wall minutes 40.0 60.0 6" "report: median/p90 wall minutes"
 has "$FLAT" "output tokens 5000 9000 5" "report: median/p90 output tokens"
 has "$FLAT" "gate seconds 60 70 5"     "report: median/p90 seconds spent in the gate"
-has "$FLAT" "1 round 2 33.3"           "report: gate-round distribution"
-has "$FLAT" "2 rounds 3 50.0"          "report: the common case — a second full suite run"
-has "$FLAT" "3 rounds 1 16.7"          "report: and the tail"
+has "$FLAT" "turns vs cap 1 of 2 runs report more CLI turns than their pinned ceiling" \
+  "report: the CLI's turn count and the pinned ceiling are reconciled, not conflated"
+
+# Attempt-level truth: the run-level 66.7% above counts last attempts only.
+has "$FLAT" "attempts total 9"         "report: every attempt of every run is counted"
+has "$FLAT" "reaching ready 4 44.4"    "report: with the attempt-level success rate"
+has "$FLAT" "capacity self-resumes 1 <- deaths the run recovered from on its own" \
+  "report: and the deaths the runs recovered from without a human"
+has "$FLAT" "ATTEMPT DEATHS COUNT %"   "report: deaths are broken down by terminal status"
+has "$FLAT" "implementer_failed 1 11.1" "report: the #1 sink is visible as an attempt, not a run"
+has "$FLAT" "needs_input 1 11.1"       "report: including the attempts that stopped to ask"
+has "$FLAT" "attempts 1.0 3.0 6"       "report: median/p90 attempts per run"
+has "$FLAT" "idle gap mins 5.0 60.0 3" \
+  "report: and the idle time between one attempt ending and the next starting"
+
+has "$FLAT" "GATE FAILURES FAILED %"   "report: rounds are reported by failure, not as retries"
+has "$FLAT" "round 1 4 66.7"           "report: how often the first round fails"
+has "$FLAT" "round 2 1 25.0"           "report: and the second, over the runs that ran one"
+has "$FLAT" "round 3 1 100.0"          "report: and the tail"
+has_not "$FLAT" "2 rounds 3 50.0" \
+  "report: the by-design second pass is no longer presented as a retry rate"
 has "$FLAT" "npm test 3"               "report: the top failing gate step, most frequent first"
 has "$FLAT" "npm run lint 2"           "report: and the runner-up"
 has "$FLAT" "RESUMES 3 of 6 runs resumed (50.0%) · 4 resumes total" \
@@ -403,6 +550,13 @@ has "$(env HARNESS_DIR="$REPORTH" bash "$HARNESS/metrics.sh" --csv)" "A-1,full,"
 LIVE="$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
 has "$LIVE" "silent review failures 1" \
   "live: the report finds the silent review in real run dirs"
+LIVE_RUNS=$(printf '%s\n' "$LIVE" | awk '/^pipeline vitals/ { print $4 }')
+LIVE_ATTEMPTS=$(printf '%s\n' "$LIVE" | awk '/^attempts total/ { print $3 }')
+if [ "${LIVE_ATTEMPTS:-0}" -gt "${LIVE_RUNS:-0}" ]; then
+  ok "live: the re-dispatched runs make attempts outnumber runs ($LIVE_ATTEMPTS vs $LIVE_RUNS)"
+else
+  bad "live: attempts ($LIVE_ATTEMPTS) should outnumber runs ($LIVE_RUNS) — the ledger is not being read"
+fi
 
 echo
 printf 'pipeline telemetry: %d passed, %d failed\n' "$pass" "$fail"

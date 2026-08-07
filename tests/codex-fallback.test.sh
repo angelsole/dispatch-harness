@@ -150,8 +150,12 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
   : > "$CODEX_CALLS"; : > "$CURL_LOG"
+  # -u, because the "knob unset" section means unset — a station whose shell
+  # exports a real fallback account would otherwise smuggle it into the fixture
+  # and the suite would assert the opposite of what it says.
   # shellcheck disable=SC2086
-  env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  env -u HARNESS_CODEX_HOME_FALLBACK \
+      HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       CODEX_HOME="$PRIMARY_HOME" \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=fallback-test \
