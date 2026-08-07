@@ -1062,12 +1062,157 @@ $GATE_CMD"
   return $rc
 }
 
+# A round the pipeline deliberately did not run, because the tree it would have
+# verified is byte-identical to the one an earlier round already judged. The
+# standing verdict is that earlier round's, so GATE_STATUS is left exactly as it
+# was and the exit status is the one a real round on this tree would have
+# returned — the caller branches identically either way.
+#
+# The row is run_gate's shape with a third result value beside pass/fail: zero
+# seconds (none were spent), no failing step. Every existing reader keeps
+# working — wall/server.js takes the first two whitespace fields, metrics.sh
+# reads .result — and the skip is stated rather than inferred from a gap in the
+# round numbers.
+skip_gate() {  # $1 = round, $2 = why
+  stage "test gate #$1 skipped — $2"
+  printf '%s %s %s\t%s\n' "$1" skipped 0 "" >> "$RUN_DIR/gate-rounds.log"
+  [ "$GATE_STATUS" = pass ]
+}
+
 GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)
 # codex exec must never inherit our stdin: in a background run it is a pipe
 # that never closes, and codex blocks forever on "Reading additional input
 # from stdin..." (bit us in production). </dev/null fixes the cause;
 # with_timeout is the backstop cap (timeout(1), or a perl-alarm fallback).
 CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
+
+# Every root the reviewer must be able to write outside the worktree: a
+# worktree's refs live in the git common dir, so without it no review can
+# commit, and the Flutter/Dart caches are what its test runner touches. Named
+# once because the sandbox flag and the permission profile below must describe
+# the same set — two hand-maintained copies would drift.
+CODEX_WRITABLE_ROOTS=("$GIT_COMMON" "/opt/homebrew/share/flutter/bin/cache" \
+  "$HOME/.pub-cache" "$HOME/.config/flutter" "$HOME/.dart-tool")
+codex_writable_roots_json() {
+  local out="" r
+  for r in "${CODEX_WRITABLE_ROOTS[@]}"; do out="$out,\"$r\""; done
+  printf '[%s]' "${out#,}"
+}
+
+# --- Letting the reviewer measure, without letting it out ---------------------
+# codex's workspace-write sandbox denies network, and denies loopback with it:
+# Flutter's test harness could not bind its socket (OLYX-1555/1556) and
+# DB-backed jest suites could not reach their localhost Postgres
+# (OLYX-1587-backend, OLYX-1568), so on those repos the review argued about the
+# code instead of running it — on a pipeline whose review is the only defect
+# detection after the implementer.
+#
+# The narrow capability, not the blunt one. `sandbox_workspace_write.
+# network_access = true` is all-or-nothing and would hand an unattended
+# reviewer the LAN and the internet. Worse, `codex` reads the OPERATOR's
+# CODEX_HOME, and a developer's `rules/default.rules` records every command
+# they ever approved — `git push` and `gh` among them. Unrestricted egress plus
+# inherited rules puts a real remote within reach of a stage nothing watches,
+# and the review prompt's "do NOT push" is guidance, not a boundary. So:
+#
+#   1. features.network_proxy with a permission profile whose domain map allows
+#      exactly localhost / 127.0.0.1 / ::1. Every other destination is denied
+#      because nothing allows it.
+#   2. A harness-owned CODEX_HOME for the attempt, so the reviewer inherits no
+#      user rules, plugins or MCP servers — only the account's own auth.
+#
+# Both live in a config file the harness writes into that home (see
+# review_home), so they arrive together or not at all: isolation exists to make
+# the network safe, and neither is worth having without the other.
+#
+# This is the Codex tier only. The Claude review tier below runs under
+# worker-settings.json, which confines it already and needs nothing from here.
+#
+# FAILS CLOSED BY CONSTRUCTION. The network can only ever come from the
+# profile, never from the sandbox flag — nothing here sets network_access. A
+# codex build that ignores the profile therefore gives the reviewer today's
+# sandbox rather than an open one.
+#
+# HARNESS_REVIEW_NETWORK=0 leaves both the command line and the environment
+# byte-for-byte what they were; every new thing appears only in the enabled arm.
+REVIEW_NETWORK="${HARNESS_REVIEW_NETWORK:-1}"
+
+# codex may replace auth.json rather than write through the link below when it
+# refreshes a token. Move a refreshed file back to where the account keeps it,
+# then restore the link. If either operation fails, fail the isolated-home build
+# rather than relinking over and discarding the only refreshed credential.
+# Auth is moved within the account's own tree and never logged.
+# The second argument is per run. Parallel tickets must never rewrite the same
+# config.toml while one of their codex processes is starting.
+reconcile_review_auth() {  # $1 = account CODEX_HOME, $2 = isolated run home
+  local home="$2"
+  if [ -f "$home/auth.json" ] && [ ! -L "$home/auth.json" ]; then
+    mv -f "$home/auth.json" "$1/auth.json" 2>/dev/null || return 1
+    ln -sfn ../../auth.json "$home/auth.json" 2>/dev/null || return 1
+  fi
+}
+
+# The reviewer's own CODEX_HOME, built inside the account's own directory tree
+# so nothing about that account ever travels. codex reads rules, plugins and
+# MCP servers out of CODEX_HOME and nowhere else, so a directory the harness
+# writes IS the isolation: the operator's rules file is simply not on this path.
+# Auth is the one thing inherited, through a symlink to the account's own
+# auth.json — nothing copied, nothing outside the tree, nothing logged.
+#
+# Per account and run, so it composes with HARNESS_CODEX_HOME_FALLBACK without
+# letting parallel tickets share policy: whichever subscription takes the
+# attempt gets its own isolated home and its own auth.
+# Echoes the home on success; a failure to build one is silent and total. The
+# caller does not start codex on the ambient config: another isolated account or
+# the Claude tier must take the work instead.
+review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
+  local base="$1" home="$1/harness-review/$TICKET_LC" r
+  [ -n "$base" ] || return 1
+  mkdir -p "$home" 2>/dev/null || return 1
+  reconcile_review_auth "$base" "$home" || return 1
+  # A dangling link would be worse than none: only link what is there.
+  [ -e "$base/auth.json" ] && { ln -sfn ../../auth.json "$home/auth.json" || return 1; }
+  {
+    echo "# Written by dispatch-harness run-task.sh before every review attempt."
+    echo "# This directory is the reviewer's entire CODEX_HOME: whatever is not"
+    echo "# here — rules, plugins, MCP servers — is not available to the review."
+    echo
+    echo "features.network_proxy.enabled = true"
+    echo 'default_permissions = "harness-review"'
+    echo
+    echo '[permissions.harness-review]'
+    echo 'description = "dispatch-harness review: workspace writes, loopback only"'
+    echo 'extends = ":workspace"'
+    echo
+    echo "# The same roots as the legacy workspace-write flags used when this"
+    echo "# feature is disabled. The profile is authoritative in the enabled arm"
+    echo "# because an explicit -s workspace-write would override it."
+    echo '[permissions.harness-review.filesystem]'
+    for r in "${CODEX_WRITABLE_ROOTS[@]}"; do printf '"%s" = "write"\n' "$r"; done
+    echo
+    echo '[permissions.harness-review.network]'
+    echo 'enabled = true'
+    echo '# "limited" names the restricted mode explicitly, so no change to what'
+    echo '# the CLI defaults to can quietly promote this to "full".'
+    echo 'mode = "limited"'
+    echo '# Required for loopback even though the three literals below are'
+    echo '# allowed: allowlisting a local target is not sufficient on its own'
+    echo '# (openai/codex#33227), and Flutter'"'"'s test harness has to BIND a'
+    echo '# loopback socket rather than merely reach one. It widens the sandbox'
+    echo '# to local and private ranges and no further — the domain map below'
+    echo '# still denies every public destination.'
+    echo 'allow_local_binding = true'
+    echo
+    echo '[permissions.harness-review.network.domains]'
+    echo '"localhost" = "allow"'
+    echo '"127.0.0.1" = "allow"'
+    echo '"::1" = "allow"'
+    echo '# No "*" entry: an absent allow rule already denies, and the global'
+    echo '# wildcard is rejected unless allowlist compilation is opened up. What'
+    echo '# is not named above is what the reviewer cannot reach.'
+  } > "$home/config.toml" 2>/dev/null || return 1
+  printf '%s\n' "$home"
+}
 
 # --- Which Codex subscription an attempt runs on ------------------------------
 # A dry primary workspace turned six hours of reviews into honestly-flagged
@@ -1081,8 +1226,14 @@ CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
 # NEXT attempt, so the review retry, the fix round and base-sync conflict
 # resolution all follow wherever the review ended up.
 CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
+# Where the primary account keeps its own config — the ambient CODEX_HOME when
+# the station exports one, codex's own default otherwise. Never passed to codex
+# on the primary (that is today's behaviour, unchanged); it is the tree the
+# isolated review home is built inside.
+CODEX_HOME_PRIMARY="${CODEX_HOME:-$HOME/.codex}"
 CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
 CODEX_PRIMARY_DRY=0       # the primary answered "out of credits" at least once
+CODEX_START_FAILED=0      # the isolated home could not be built; codex did not run
 
 # The workspace-credits error is certainty rather than a guess: retrying the
 # same account cannot possibly work. Matched case-insensitively on
@@ -1105,18 +1256,43 @@ feed() {  # $1 = marker + model, $2 = line
 run_codex() {  # $1 = round label, $2 = prompt
   local log="$RUN_DIR/codex-$1.log" rc
   # env(1) sits between the timeout and the CLI because with_timeout is a shell
-  # function: env cannot exec one. Empty on the primary, so the command line is
-  # exactly what it has always been.
-  local home=()
-  [ "$CODEX_ACCOUNT" = fallback ] && home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  # function: env cannot exec one. Empty on the primary with the network knob
+  # off, so the command line and the environment are exactly what they have
+  # always been.
+  local home=() sandbox=(-s workspace-write \
+    -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)")
+  local acct_home rhome=""
+  CODEX_START_FAILED=0
+  acct_home="$CODEX_HOME_PRIMARY"
+  [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
+  if [ "$REVIEW_NETWORK" != 0 ]; then
+    if rhome=$(review_home "$acct_home"); then
+      home=(env "CODEX_HOME=$rhome")
+      # default_permissions in the isolated config must select the profile.
+      # codex 0.145 treats an explicit -s as authoritative, so retaining the old
+      # workspace-write flag here would silently disable the loopback policy.
+      sandbox=()
+    else
+      # Network and isolation are one capability. Never recover from a failed
+      # isolated-home build by starting codex on the operator's ambient config.
+      CODEX_START_FAILED=1
+    fi
+  elif [ "$CODEX_ACCOUNT" = fallback ]; then
+    home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  fi
   # The attempt's log opens with the account LABEL — which subscription ran it,
   # and nothing else about it. tee appends from here; the truncation above keeps
   # a re-dispatch's log as fresh as it was before.
   printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"
+  if [ "$CODEX_START_FAILED" = 1 ]; then
+    echo "[harness] reviewer isolation setup failed — codex attempt not started" \
+      | tee -a "$log"
+    return 1
+  fi
   with_timeout "$CODEX_TIMEOUT" \
     ${home[@]+"${home[@]}"} \
-    "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
-    -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\",\"/opt/homebrew/share/flutter/bin/cache\",\"$HOME/.pub-cache\",\"$HOME/.config/flutter\",\"$HOME/.dart-tool\"]" \
+    "$CODEX_BIN" exec -C "$WORKTREE" \
+    ${sandbox[@]+"${sandbox[@]}"} \
     -c "model=\"$CODEX_MODEL\"" \
     -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
     "$2" </dev/null 2>&1 \
@@ -1127,6 +1303,10 @@ run_codex() {  # $1 = round label, $2 = prompt
         feed '◆ codex' "$l"
       done
   rc="${PIPESTATUS[0]}"
+  # Hand a token this attempt refreshed straight back to the account it belongs
+  # to, rather than leaving it in the harness's directory until the next run.
+  [ "$REVIEW_NETWORK" != 0 ] && [ -n "$rhome" ] \
+    && reconcile_review_auth "$acct_home" "$rhome"
   if [ "$CODEX_ACCOUNT" = primary ] && codex_out_of_credits "$log"; then
     CODEX_PRIMARY_DRY=1
     if [ -n "$CODEX_HOME_FALLBACK" ]; then
@@ -1163,11 +1343,12 @@ resolve_conflicts() {  # $1 = round label, $2 = prompt
   [ "$CODEX_AVAILABLE" = 1 ] || { run_claude_worker "$1" "$2"; return; }
   before="$CODEX_ACCOUNT"
   run_codex "$1" "$2" || true
-  # A primary that answered "out of credits" resolved nothing, and the merge is
-  # still stopped. run_codex moves the account only on that exact evidence, so
-  # this pair of conditions is the credits case and nothing else — one more
-  # attempt on the fallback before the caller escalates to a human.
-  if [ "$before" = primary ] && [ "$CODEX_ACCOUNT" = fallback ]; then
+  # A primary that answered "out of credits" or could not be started inside the
+  # isolated review home resolved nothing, and the merge is still stopped. Give
+  # the fallback one attempt before the caller escalates to a human.
+  if [ "$before" = primary ] && [ -n "$CODEX_HOME_FALLBACK" ] \
+     && { [ "$CODEX_ACCOUNT" = fallback ] || [ "$CODEX_START_FAILED" = 1 ]; }; then
+    CODEX_ACCOUNT="fallback"
     stage "base sync — conflict resolution ($CONFLICT_AGENT, fallback account)"
     run_codex "$1-fallback" "$2"
   fi
@@ -1356,6 +1537,12 @@ fi
 
 stage "review — Codex (ChatGPT sub)"
 REVIEW_STARTED=$(date +%s)
+# The tree the review stage is handed, so the post-review gate below can prove
+# whether anything at all changed under it. Captured before the FIRST tier, so
+# it spans every one of them: the codex attempt, its retry, the Claude reviewer
+# tier and the fix round all move HEAD the same way, and a commit from any of
+# them is a commit.
+REVIEW_HEAD=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null || echo "")
 # Read before the attempt, not after: run_codex may move the account for the
 # NEXT attempt, and this records the one that actually ran this review.
 REVIEW_ACCOUNT="$CODEX_ACCOUNT"
@@ -1369,6 +1556,12 @@ REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
 REVIEW_RETRY_REASON=""
 if review_evidence; then
   REVIEW_CLASS="reviewed"
+elif [ "$CODEX_START_FAILED" = 1 ]; then
+  if [ -n "$CODEX_HOME_FALLBACK" ]; then
+    REVIEW_RETRY_REASON="the primary Codex review sandbox could not be prepared"
+  else
+    claude_review_tier "the Codex review sandbox could not be prepared"
+  fi
 elif [ "$CODEX_PRIMARY_DRY" = 1 ]; then
   if [ -n "$CODEX_HOME_FALLBACK" ]; then
     # Tier 1 — credits-certain. Takes precedence over the floor below: the
@@ -1424,7 +1617,24 @@ if [ -n "$REVIEW_RETRY_REASON" ]; then
 fi
 
 if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
-  if ! run_gate 2; then
+  # The post-review gate re-ran the whole suite on a byte-identical tree in 16
+  # of 46 runs — the reviewer had committed nothing, so round 2 verified exactly
+  # what round 1 had just verified, at ~2 minutes a run. A gate is a function of
+  # the tree, so an unchanged HEAD makes round 2's verdict knowable without
+  # spending it: skip_gate records the skip and hands back round 1's verdict, so
+  # the fix round below still fires on a gate that was already failing. The
+  # comparison is against the tree the review STAGE was handed, so it counts a
+  # commit from any tier — codex, its retry, or the Claude reviewer — alike. Any
+  # commit at all and this is the run it has always been.
+  if [ -n "$REVIEW_HEAD" ] \
+     && [ "$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null)" = "$REVIEW_HEAD" ]; then
+    skip_gate 2 "review committed nothing"
+    GATE2_RC=$?
+  else
+    run_gate 2
+    GATE2_RC=$?
+  fi
+  if [ "$GATE2_RC" -ne 0 ]; then
     if [ "$REVIEW_AGENT" = codex ]; then
       stage "fix round 2 — Codex (ChatGPT sub)"
     else

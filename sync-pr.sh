@@ -122,12 +122,90 @@ run_gate() {
 GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)
 CODEX_TIMEOUT="${CODEX_TIMEOUT:-3600}"
 
+CODEX_WRITABLE_ROOTS=("$GIT_COMMON")
+codex_writable_roots_json() {
+  local out="" r
+  for r in "${CODEX_WRITABLE_ROOTS[@]}"; do out="$out,\"$r\""; done
+  printf '[%s]' "${out#,}"
+}
+
+# Same network posture as run-task.sh's run_codex, and mirrored for the same
+# reason: this resolver is told to re-run the tests relevant to the conflicted
+# files, and the workspace-write sandbox denies loopback along with the network.
+# The narrow capability, not the blunt one — features.network_proxy plus a
+# permission profile that allows exactly localhost / 127.0.0.1 / ::1, inside a
+# harness-owned CODEX_HOME so the resolver inherits none of the operator's
+# rules, plugins or MCP servers (a developer's rules file typically allows
+# `git push` and `gh`). It fails closed: nothing here sets network_access, so a
+# CLI that ignores the profile leaves today's sandbox. HARNESS_REVIEW_NETWORK=0
+# leaves command line and environment byte-for-byte what they were.
+REVIEW_NETWORK="${HARNESS_REVIEW_NETWORK:-1}"
+
+reconcile_review_auth() {  # $1 = account CODEX_HOME, $2 = isolated run home
+  local home="$2"
+  if [ -f "$home/auth.json" ] && [ ! -L "$home/auth.json" ]; then
+    mv -f "$home/auth.json" "$1/auth.json" 2>/dev/null || return 1
+    ln -sfn ../../auth.json "$home/auth.json" 2>/dev/null || return 1
+  fi
+}
+
+review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
+  # Runs are independent worktrees and may resolve concurrently. A per-run
+  # directory prevents either resolver from replacing the other's root policy.
+  local base="$1" home="$1/harness-review/$TICKET_LC" r
+  [ -n "$base" ] || return 1
+  mkdir -p "$home" 2>/dev/null || return 1
+  reconcile_review_auth "$base" "$home" || return 1
+  [ -e "$base/auth.json" ] && { ln -sfn ../../auth.json "$home/auth.json" || return 1; }
+  {
+    echo "# Written by dispatch-harness sync-pr.sh before every codex attempt."
+    echo "# This directory is the resolver's entire CODEX_HOME: whatever is not"
+    echo "# here — rules, plugins, MCP servers — is not available to it."
+    echo
+    echo "features.network_proxy.enabled = true"
+    echo 'default_permissions = "harness-review"'
+    echo
+    echo '[permissions.harness-review]'
+    echo 'description = "dispatch-harness review: workspace writes, loopback only"'
+    echo 'extends = ":workspace"'
+    echo
+    echo "# The same roots as the legacy workspace-write flags used when this"
+    echo "# feature is disabled. The profile is authoritative in the enabled arm"
+    echo "# because an explicit -s workspace-write would override it."
+    echo '[permissions.harness-review.filesystem]'
+    for r in "${CODEX_WRITABLE_ROOTS[@]}"; do printf '"%s" = "write"\n' "$r"; done
+    echo
+    echo '[permissions.harness-review.network]'
+    echo 'enabled = true'
+    echo '# "limited" names the restricted mode explicitly, so no change to what'
+    echo '# the CLI defaults to can quietly promote this to "full".'
+    echo 'mode = "limited"'
+    echo '# Required for loopback even though the three literals below are'
+    echo '# allowed: allowlisting a local target is not sufficient on its own'
+    echo '# (openai/codex#33227), and a test runner has to BIND a loopback'
+    echo '# socket rather than merely reach one. It widens the sandbox to local'
+    echo '# and private ranges and no further — the domain map below still'
+    echo '# denies every public destination.'
+    echo 'allow_local_binding = true'
+    echo
+    echo '[permissions.harness-review.network.domains]'
+    echo '"localhost" = "allow"'
+    echo '"127.0.0.1" = "allow"'
+    echo '"::1" = "allow"'
+    echo '# No "*" entry: an absent allow rule already denies, and the global'
+    echo '# wildcard is rejected unless allowlist compilation is opened up.'
+  } > "$home/config.toml" 2>/dev/null || return 1
+  printf '%s\n' "$home"
+}
+
 # Same two-account rule as run-task.sh's run_codex, for the same reason: a
 # primary workspace that is out of credits resolves nothing, and codex auth is
 # CODEX_HOME-scoped, so a second account is a directory. One attempt, one
 # account; the switch is sticky and only moves the NEXT attempt.
 CODEX_HOME_FALLBACK="${HARNESS_CODEX_HOME_FALLBACK:-}"
+CODEX_HOME_PRIMARY="${CODEX_HOME:-$HOME/.codex}"
 CODEX_ACCOUNT="primary"   # primary | fallback — a label, never a path
+CODEX_START_FAILED=0      # the isolated home could not be built; codex did not run
 codex_out_of_credits() {  # $1 = an attempt's log
   [ -f "$1" ] || return 1
   tr -s '[:space:]' ' ' < "$1" | grep -qiE 'out of credits'
@@ -136,13 +214,36 @@ codex_out_of_credits() {  # $1 = an attempt's log
 run_codex() {  # $1 = label, $2 = prompt
   local log="$RUN_DIR/codex-$1.log" rc
   # env(1) goes after with_timeout, which is a shell function env cannot exec.
-  local home=()
-  [ "$CODEX_ACCOUNT" = fallback ] && home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  local home=() sandbox=(-s workspace-write \
+    -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)")
+  local acct_home rhome=""
+  CODEX_START_FAILED=0
+  acct_home="$CODEX_HOME_PRIMARY"
+  [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
+  if [ "$REVIEW_NETWORK" != 0 ]; then
+    if rhome=$(review_home "$acct_home"); then
+      home=(env "CODEX_HOME=$rhome")
+      # An explicit -s wins over default_permissions in codex 0.145. Omit the
+      # legacy sandbox only when the isolated permission profile was built.
+      sandbox=()
+    else
+      # Network and isolation are one capability. Never recover from a failed
+      # isolated-home build by starting codex on the operator's ambient config.
+      CODEX_START_FAILED=1
+    fi
+  elif [ "$CODEX_ACCOUNT" = fallback ]; then
+    home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
+  fi
   printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"   # the label, nothing more
+  if [ "$CODEX_START_FAILED" = 1 ]; then
+    echo "[sync-pr] resolver isolation setup failed — codex attempt not started" \
+      | tee -a "$log"
+    return 1
+  fi
   with_timeout "$CODEX_TIMEOUT" \
     ${home[@]+"${home[@]}"} \
-    "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
-    -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\"]" \
+    "$CODEX_BIN" exec -C "$WORKTREE" \
+    ${sandbox[@]+"${sandbox[@]}"} \
     -c 'model_reasoning_effort="high"' \
     "$2" </dev/null 2>&1 \
     | tee -a "$log" \
@@ -150,6 +251,8 @@ run_codex() {  # $1 = label, $2 = prompt
         [ -n "$l" ] && printf '%.100s\n' "$l" > "$RUN_DIR/activity"
       done
   rc="${PIPESTATUS[0]}"
+  [ "$REVIEW_NETWORK" != 0 ] && [ -n "$rhome" ] \
+    && reconcile_review_auth "$acct_home" "$rhome"
   if [ "$CODEX_ACCOUNT" = primary ] && [ -n "$CODEX_HOME_FALLBACK" ] \
      && codex_out_of_credits "$log"; then
     CODEX_ACCOUNT="fallback"
@@ -181,10 +284,12 @@ resolve_conflicts() {  # $1 = label, $2 = prompt
   [ "$CODEX_AVAILABLE" = 1 ] || { run_claude_worker "$1" "$2"; return; }
   before="$CODEX_ACCOUNT"
   run_codex "$1" "$2" || true
-  # run_codex moves the account only on the workspace-credits error, so this is
-  # the credits case and nothing else: the merge is still stopped and the same
-  # account cannot help. One more attempt on the fallback before we give up.
-  if [ "$before" = primary ] && [ "$CODEX_ACCOUNT" = fallback ]; then
+  # A primary that answered "out of credits" or could not be started inside the
+  # isolated resolver home left the merge stopped. Give the fallback one attempt
+  # before we give up.
+  if [ "$before" = primary ] && [ -n "$CODEX_HOME_FALLBACK" ] \
+     && { [ "$CODEX_ACCOUNT" = fallback ] || [ "$CODEX_START_FAILED" = 1 ]; }; then
+    CODEX_ACCOUNT="fallback"
     stage "base sync — conflict resolution ($CONFLICT_AGENT, fallback account)"
     run_codex "$1-fallback" "$2"
   fi

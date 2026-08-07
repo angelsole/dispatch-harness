@@ -44,7 +44,7 @@ git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
 
 # --- fake workers: record the prompt, then move the pipeline along -----------
-FAKES="$ROOT/bin"; mkdir -p "$FAKES"
+FAKES="$ROOT/bin"; FHOME="$ROOT/home"; mkdir -p "$FAKES" "$FHOME"
 cat > "$FAKES/claude" <<'SH'
 #!/usr/bin/env bash
 # Implementer stand-in: save the -p prompt, commit so the run reaches review.
@@ -86,7 +86,8 @@ SH
   fi
   printf '# fixture task\n' > "$h/runs/$ticket/brief.md"
   CAPTURE_IMPL="$ROOT/impl-$ticket.txt" CAPTURE_REVIEW="$ROOT/review-$ticket.txt" \
-  HARNESS_DIR="$h" CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
+  HOME="$FHOME" HARNESS_DIR="$h" \
+  CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
   HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC="" \
     bash "$SRC/run-task.sh" "$ticket" "$REPO" "fix/$ticket" > "$ROOT/run-$ticket.log" 2>&1
   return 0   # the fixture run ends in `rejected`, i.e. non-zero, by design
