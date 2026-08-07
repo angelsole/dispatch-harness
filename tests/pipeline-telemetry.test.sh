@@ -362,6 +362,30 @@ check "attempts: and its own clock" \
   "$(result '[.metrics.attempts[] | select(.started > 0 and .ended >= .started)] | length')" "3"
 check "attempts: the pinned turn ceiling is recorded beside the CLI's count" \
   "$(result .metrics.implementer_max_turns)" "200"
+
+# Preservation is the contract, so a filesystem collision must stop before the
+# next worker truncates the live files. Silently continuing here would destroy
+# exactly the telemetry this feature exists to retain.
+dispatch ROTATE-FAIL ""
+ROTATE_RESULT=$(cat "$RUN/result.json")
+ROTATE_STREAM=$(cat "$RUN/opus-stream.jsonl")
+ROTATE_MARKERS=$(grep -c '__invocation__' "$RUN/stages.log" | tr -d ' ')
+mkdir -p "$RUN/attempts/1"
+printf 'collision\n' > "$RUN/attempts/1/opus-stream.jsonl"
+BEFORE=$(grep -c '' "$CLAUDE_CALLS" | tr -d ' ')
+dispatch ROTATE-FAIL ""
+check "attempts: a rotation collision fails the dispatch" \
+  "$([ "$RC" -ne 0 ] && echo yes || echo no)" "yes"
+check "attempts: no worker can truncate the unpreserved stream" \
+  "$(grep -c '' "$CLAUDE_CALLS" | tr -d ' ')" "$BEFORE"
+check "attempts: the previous result is left intact" \
+  "$(cat "$RUN/result.json")" "$ROTATE_RESULT"
+check "attempts: the live stream is left intact" \
+  "$(cat "$RUN/opus-stream.jsonl")" "$ROTATE_STREAM"
+check "attempts: a failed rotation does not count as a new invocation" \
+  "$(grep -c '__invocation__' "$RUN/stages.log" | tr -d ' ')" "$ROTATE_MARKERS"
+has "$OUT" "refusing to overwrite preserved attempt telemetry" \
+  "attempts: the collision is explained"
 TEST_GATE_CMD=true
 
 # ---------------------------------------------------------------------------

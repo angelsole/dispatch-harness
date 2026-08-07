@@ -573,8 +573,6 @@ max_turns_hit() {
   grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
 }
 
-ATTEMPT_STARTED=$(date +%s)
-echo "$ATTEMPT_STARTED" > "$RUN_DIR/started"
 # --- Per-attempt telemetry ---------------------------------------------------
 # An attempt is one invocation of this script against this run dir, and until
 # now each new one destroyed the last one's evidence: opus-stream.jsonl,
@@ -601,13 +599,29 @@ invocations_so_far() {
 }
 PREV_ATTEMPT=$(invocations_so_far)
 if [ "$PREV_ATTEMPT" -gt 0 ]; then
-  mkdir -p "$RUN_DIR/attempts/$PREV_ATTEMPT"
+  attempt_dir="$RUN_DIR/attempts/$PREV_ATTEMPT"
+  if ! mkdir -p "$attempt_dir"; then
+    echo "FATAL: cannot preserve attempt $PREV_ATTEMPT telemetry at $attempt_dir" >&2
+    exit 1
+  fi
   for f in $ATTEMPT_FILES; do
     [ -f "$RUN_DIR/$f" ] || continue
-    mv "$RUN_DIR/$f" "$RUN_DIR/attempts/$PREV_ATTEMPT/$f" 2>/dev/null || true
+    if [ -e "$attempt_dir/$f" ]; then
+      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$f" >&2
+      exit 1
+    fi
+    if ! mv "$RUN_DIR/$f" "$attempt_dir/$f"; then
+      echo "FATAL: cannot preserve $f for attempt $PREV_ATTEMPT" >&2
+      exit 1
+    fi
   done
 fi
 ATTEMPT=$((PREV_ATTEMPT + 1))
+# Only mark the new attempt after every previous live file is safe. A failed
+# rotation therefore leaves the last result, clock and invocation count intact,
+# and—most importantly—never reaches a worker that would truncate those files.
+ATTEMPT_STARTED=$(date +%s)
+echo "$ATTEMPT_STARTED" > "$RUN_DIR/started"
 # Metrics bookkeeping: a per-invocation marker segments stages.log so resume
 # pauses aren't charged to a stage — and so the turn-resume count below is this
 # invocation's, not the whole history's.
