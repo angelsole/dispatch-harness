@@ -188,6 +188,7 @@ check "silent: a diff nothing reviewed does not ship — review_failed, no PR" \
   "$(result .status)" "review_failed"
 check "silent: so there is no pr_url to mistake for a reviewed one" \
   "$(result .pr_url)" ""
+check "silent: and the exit code says not-ready" "$RC" "1"
 check "silent: the pinned arm is untouched, so a re-dispatch still tries to review" \
   "$(cat "$RUN/arm")" "full"
 
