@@ -14,19 +14,37 @@
     "pretends to close. Research is Read/Grep/Glob; nothing more is needed to",
     "write a brief.",
     "",
+    "No Task either. A subagent is a second context with a turn budget of its",
+    "own — the ration --max-turns exists to impose, handed out again — and it",
+    "reads the same description with none of the caller's suspicion. Whatever",
+    "a subagent could research, the planner can research itself.",
+    "",
     "Write is scoped to the runs directory under the default HARNESS_DIR — the",
     "one mutation the planner exists to make. A non-default HARNESS_DIR makes",
     "self-briefing fail visibly (reported as could-not-self-brief) rather than",
     "widen this file. The deny list is belt to those braces: a rule added to",
     "allow later cannot re-open the shell, editor, or network paths without",
-    "also deleting a deny."
+    "also deleting a deny. Scoped to runs/, not to one ticket's directory under",
+    "it — quartermaster.sh asks for a uniquely named, non-armable candidate,",
+    "publishes it with an atomic no-clobber link, and checkpoints every brief.md",
+    "before the planner starts so it can quarantine and restore writes elsewhere.",
+    "",
+    "The harness's own secrets are denied by path. The planner has no way to",
+    "send anything anywhere itself — the network tools are denied above — but",
+    "the brief it writes is read by an implementer whose settings do allow Bash",
+    "and WebFetch, so a secret quoted into a brief is a secret one step from",
+    "leaving the machine. These paths assume the default HARNESS_DIR, like the",
+    "Write rule; a key kept elsewhere (LINEAR_API_KEY_FILE) needs its own deny.",
+    "Read is what this closes. Grep and Glob take a search root rather than a",
+    "file path and are matched by tool name only, so treat the deny as the",
+    "brake it is, not as proof — what confines the planner is that nothing it",
+    "reads has a way out of this machine."
   ],
   "permissions": {
     "allow": [
       "Read",
       "Grep",
       "Glob",
-      "Task",
       "TodoWrite",
       "Write(~/.claude/harness/runs/**)"
     ],
@@ -36,7 +54,10 @@
       "MultiEdit",
       "NotebookEdit",
       "WebFetch",
-      "WebSearch"
+      "WebSearch",
+      "Read(~/.claude/harness/linear-api-key)",
+      "Read(~/.claude/harness/notify.conf)",
+      "Read(~/.claude/harness/auth/**)"
     ]
   }
 }

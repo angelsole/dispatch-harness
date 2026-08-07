@@ -178,6 +178,9 @@ claim README      "$README"    'HARNESS_REDISPATCH=1'
 claim README      "$README"    'attempts/<n>/'
 claim README      "$README"    'attempts.log'
 claim SKILL.md    "$SKILL"     'HARNESS_REDISPATCH=1'
+# A brief that fails validation is moved, not armed and not deleted. An
+# operator who finds their brief gone has to be able to look up where it went.
+claim README      "$README"    'brief.rejected.md'
 
 # Every backtick-quoted *.sh name in the docs must resolve to a shipped file.
 # A gitignored local config resolves through its *.example template; code spans
