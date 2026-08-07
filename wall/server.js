@@ -151,6 +151,7 @@ const ACTORS = [
   [/^review skipped/, 'skipped', 'skipped'],
   [/Claude reviewer/, 'Claude', 'opus'],
   [/^(review|fix)/, 'Codex', 'codex'],
+  [/^test gate.* skipped/, 'skipped', 'skipped'],
   [/^test gate/, 'gate', 'gate'],
   [/^ticket sync/, 'ticket', 'pr'],
   [/^push/, 'PR', 'pr'],

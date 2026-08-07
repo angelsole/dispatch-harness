@@ -111,7 +111,9 @@ for a in "\$@"; do
   prev="\$a"
 done
 acct=primary
-[ "\${CODEX_HOME-}" = "$FALLBACK_HOME" ] && acct=fallback
+# The account is the directory TREE, not the exact path: the review runs out of
+# a harness-owned config dir inside it (tests/review-truth.test.sh owns that).
+case "\${CODEX_HOME-}" in "$FALLBACK_HOME"|"$FALLBACK_HOME"/*) acct=fallback ;; esac
 printf 'codex %s %s\n' "\$acct" "\${CODEX_HOME-<unset>}" >> "$CODEX_CALLS"
 notes() { printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md"; }
 dry()   { printf 'stream error: Your workspace is out of\nCredits. Top up and retry.\n'; }
@@ -169,7 +171,12 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
 FB="HARNESS_CODEX_HOME_FALLBACK=$FALLBACK_HOME"
 result()   { jq -r "$1 // \"\"" "$RUN/result.json" 2>/dev/null; }
 accounts() { awk '{print $2}' "$CODEX_CALLS" | paste -sd, - | tr -d ' '; }
-homes()    { awk '{print $3}' "$CODEX_CALLS" | sort -u | paste -sd, - | tr -d ' '; }
+# The account tree each attempt was pointed at. The isolated config dir inside
+# it is another feature's contract; what this suite is about is which
+# subscription ran, so the leaf comes off here.
+homes()    { awk '{print $3}' "$CODEX_CALLS" | sed 's#/harness-review/[^/]*$##' \
+               | sort -u | paste -sd, - | tr -d ' '; }
+raw_homes() { awk '{print $3}' "$CODEX_CALLS" | sort -u | paste -sd, - | tr -d ' '; }
 first_of() { head -1 "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
@@ -180,6 +187,10 @@ dispatch FB-CREDITS "$FB"
 check "credits: two attempts — primary, then the fallback" "$(accounts)" "primary,fallback"
 check "credits: and the second one really was handed the other CODEX_HOME" \
   "$(homes)" "$FALLBACK_HOME,$PRIMARY_HOME"
+# Whichever account takes an attempt gets the review's own isolated config dir
+# inside that account's tree — the two features have to compose.
+check "credits: each account's attempt is isolated inside its own tree" \
+  "$(raw_homes)" "$FALLBACK_HOME/harness-review/fb-credits,$PRIMARY_HOME/harness-review/fb-credits"
 check "credits: the review counts as a real review" "$(result .review)" "reviewed"
 check "credits: result.json names the account it ran on" "$(result .review_account)" "fallback"
 check "credits: the arm stays full — nothing was left unreviewed" "$(result .arm)" "full"

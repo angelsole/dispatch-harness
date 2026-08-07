@@ -18,7 +18,10 @@ fi
 
 # Bash expands the glob in filename order and includes new suites before their
 # first commit. Only a failing suite prints its transcript; a green one is worth
-# exactly one line.
+# exactly one line — plus its skips, if it has any. A suite that could not test
+# a claim on this machine (no codex CLI for the review-sandbox probe, say) says
+# so with a `  skip ` line, and a gate summary that swallowed those would read
+# as coverage the run does not have.
 for t in tests/*.test.sh; do
   [ -e "$t" ] || continue
   started=$SECONDS
@@ -26,8 +29,11 @@ for t in tests/*.test.sh; do
   counts=$(printf '%s\n' "$out" | awk '
     /^  ok /   { passed++ }
     /^  FAIL / { failed++ }
-    END { printf "%d passed, %d failed", passed, failed }
+    /^  skip / { skipped++ }
+    END { printf "%d passed, %d failed%s", passed, failed,
+            (skipped ? ", " skipped " SKIPPED" : "") }
   ')
+  printf '%s\n' "$out" | grep '^  skip ' || true
   printf 'gate: %-24s %-4s %3ds  %s\n' "$t" "$verdict" "$((SECONDS - started))" \
     "$counts"
   [ "$verdict" = ok ] || printf '%s\n' "$out"
