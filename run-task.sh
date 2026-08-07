@@ -955,9 +955,9 @@ review_home() {  # $1 = the account's CODEX_HOME -> echoes the isolated home
     echo 'description = "dispatch-harness review: workspace writes, loopback only"'
     echo 'extends = ":workspace"'
     echo
-    echo "# The same roots as the -s workspace-write flags below, restated here"
-    echo "# because a named profile may supersede them: whichever layer the CLI"
-    echo "# treats as authoritative, the reviewer can still write its refs."
+    echo "# The same roots as the legacy workspace-write flags used when this"
+    echo "# feature is disabled. The profile is authoritative in the enabled arm"
+    echo "# because an explicit -s workspace-write would override it."
     echo '[permissions.harness-review.filesystem]'
     for r in "${CODEX_WRITABLE_ROOTS[@]}"; do printf '"%s" = "write"\n' "$r"; done
     echo
@@ -1029,11 +1029,17 @@ run_codex() {  # $1 = round label, $2 = prompt
   # function: env cannot exec one. Empty on the primary with the network knob
   # off, so the command line and the environment are exactly what they have
   # always been.
-  local home=() acct_home rhome
+  local home=() sandbox=(-s workspace-write \
+    -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)")
+  local acct_home rhome
   acct_home="$CODEX_HOME_PRIMARY"
   [ "$CODEX_ACCOUNT" = fallback ] && acct_home="$CODEX_HOME_FALLBACK"
   if [ "$REVIEW_NETWORK" != 0 ] && rhome=$(review_home "$acct_home"); then
     home=(env "CODEX_HOME=$rhome")
+    # default_permissions in the isolated config must select the profile.
+    # codex 0.145 treats an explicit -s as authoritative, so retaining the old
+    # workspace-write flag here would silently disable the loopback policy.
+    sandbox=()
   elif [ "$CODEX_ACCOUNT" = fallback ]; then
     home=(env "CODEX_HOME=$CODEX_HOME_FALLBACK")
   fi
@@ -1043,8 +1049,8 @@ run_codex() {  # $1 = round label, $2 = prompt
   printf 'codex account: %s\n' "$CODEX_ACCOUNT" > "$log"
   with_timeout "$CODEX_TIMEOUT" \
     ${home[@]+"${home[@]}"} \
-    "$CODEX_BIN" exec -C "$WORKTREE" -s workspace-write \
-    -c "sandbox_workspace_write.writable_roots=$(codex_writable_roots_json)" \
+    "$CODEX_BIN" exec -C "$WORKTREE" \
+    ${sandbox[@]+"${sandbox[@]}"} \
     -c "model=\"$CODEX_MODEL\"" \
     -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
     "$2" </dev/null 2>&1 \

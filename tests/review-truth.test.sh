@@ -50,6 +50,7 @@ FHOME="$ROOT/home"
 HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"
 SRCDIR="$ROOT/src"; FAKES="$ROOT/bin"
 CODEX_ARGV="$ROOT/codex-argv.log"
+CODEX_ARGS="$ROOT/codex-args.nul"
 CODEX_HOMES="$ROOT/codex-homes.log"
 CODEX_MODE="$ROOT/codex-mode"
 PR_BODIES="$ROOT/pr-bodies"
@@ -65,7 +66,7 @@ prefix_rule(pattern = ["gh"], decision = "allow")'
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$PR_BODIES" \
   "$OPHOME/rules" "$OPHOME/plugins" "$FBHOME"
-: > "$CODEX_ARGV"; : > "$CODEX_HOMES"
+: > "$CODEX_ARGV"; : > "$CODEX_ARGS"; : > "$CODEX_HOMES"
 printf 'notes\n' > "$CODEX_MODE"
 printf '%s\n' "$FAKE_TOKEN" > "$OPHOME/auth.json"
 printf '%s\n' "$OPERATOR_RULES" > "$OPHOME/rules/default.rules"
@@ -122,6 +123,7 @@ for a in "\$@"; do
   prev="\$a"
 done
 printf '%s\n' "\$*" >> "$CODEX_ARGV"
+printf '%s\0' "\$@" >> "$CODEX_ARGS"
 printf '%s\n' "\${CODEX_HOME-<unset>}" >> "$CODEX_HOMES"
 case "\$(cat "$CODEX_MODE")" in
   instant) echo "codex: done" ;;
@@ -183,7 +185,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   RUN="$RUNS/$ticket"
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
-  : > "$CODEX_ARGV"; : > "$CODEX_HOMES"
+  : > "$CODEX_ARGV"; : > "$CODEX_ARGS"; : > "$CODEX_HOMES"
   # shellcheck disable=SC2086
   env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
@@ -197,6 +199,18 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
 result()  { jq -r "$1 // \"\"" "$RUN/result.json" 2>/dev/null; }
 rounds()  { awk '{ print $1 $2 }' "$RUN/gate-rounds.log" | paste -sd, - | tr -d ' '; }
 pr_body() { cat "$PR_BODIES/$1" 2>/dev/null; }
+argv_arg() {  # $1 = one-based position in the most recent codex invocation
+  local want="$1" i=0 a
+  while IFS= read -r -d '' a; do
+    i=$((i + 1))
+    if [ "$i" -eq "$want" ]; then printf '%s' "$a"; return; fi
+  done < "$CODEX_ARGS"
+}
+argv_count() {
+  local i=0 a
+  while IFS= read -r -d '' a; do i=$((i + 1)); done < "$CODEX_ARGS"
+  printf '%s' "$i"
+}
 
 # ---------------------------------------------------------------------------
 echo "== an unreviewed diff says so on the PR itself =="
@@ -351,14 +365,18 @@ has_not "$(cat "$CFG")" "network_access" \
   "policy: unrestricted sandbox networking is never asked for in the config"
 has_not "$(cat "$CODEX_ARGV")" "network_access" \
   "policy: nor on the command line"
-# A named profile may supersede the -s workspace-write roots; losing the git
-# common dir would mean a reviewer that cannot commit. Taken from the flag
-# itself so the two can never be asserted against different values.
-FLAG_ROOT="$(sed -n 's/.*writable_roots=\["\([^"]*\)".*/\1/p' "$CODEX_ARGV" | head -1)"
-check "policy: the flag still names the git common dir" \
-  "$(printf '%s' "$FLAG_ROOT" | grep -c '\.git$' | tr -d ' ')" "1"
-file_has "$CFG" "\"$FLAG_ROOT\" = \"write\"" \
-  "policy: and the profile restates it, so either layer keeps it writable"
+# The profile only becomes active when no legacy -s override is present. This
+# is production argv behavior, not something the separate sandbox probe proves:
+# codex 0.145 gives an explicit -s precedence over default_permissions.
+has_not "$(cat "$CODEX_ARGV")" "-s workspace-write" \
+  "policy: enabled exec does not override the named permission profile"
+has_not "$(cat "$CODEX_ARGV")" "sandbox_workspace_write.writable_roots" \
+  "policy: nor smuggle the legacy sandbox back through its root override"
+GIT_ROOT="$(git -C "$ROOT/greenapp-net-on" rev-parse --path-format=absolute --git-common-dir)"
+check "policy: the fixture really has a separate git common dir" \
+  "$(printf '%s' "$GIT_ROOT" | grep -c '\.git$' | tr -d ' ')" "1"
+file_has "$CFG" "\"$GIT_ROOT\" = \"write\"" \
+  "policy: the active profile keeps the git common dir writable"
 
 echo "-- what it does NOT inherit --"
 # The operator's own home is full of things an unattended reviewer must not
@@ -407,7 +425,6 @@ fi
 printf '%s\n' "$FAKE_TOKEN" > "$OPHOME/auth.json"
 
 echo "-- the knob puts everything back --"
-ON_ARGV="$(cat "$CODEX_ARGV")"
 command rm -rf "$RHOME"
 dispatch NET-OFF "HARNESS_REVIEW_NETWORK=0"
 check "off: no CODEX_HOME is imposed on the primary account, as before" \
@@ -417,12 +434,26 @@ if [ -e "$RHOME" ]; then
 else
   ok "off: and no review home is built at all"
 fi
-# Byte-compare the whole command line, not just an absent flag: the knob has to
-# restore today's invocation exactly, and the run ids are the only other thing
-# that differs between these two dispatches.
-check "off: the command line is the one it always was" \
-  "$(printf '%s' "$ON_ARGV" | sed 's/net-refresh/X/g')" \
-  "$(sed -e 's/net-off/X/g' "$CODEX_ARGV")"
+# Pin the complete pre-feature argv prefix by element, including its count.
+# The final element is the unchanged review prompt; everything before it is the
+# old invocation contract and no new option may leak into this arm.
+check "off: the legacy invocation still has exactly twelve arguments" \
+  "$(argv_count)" "12"
+check "off: argv 1 is exec" "$(argv_arg 1)" "exec"
+check "off: argv 2 selects the worktree" "$(argv_arg 2)" "-C"
+check "off: argv 3 is the worktree" "$(argv_arg 3)" "$ROOT/greenapp-net-off"
+check "off: argv 4 selects the legacy sandbox" "$(argv_arg 4)" "-s"
+check "off: argv 5 is workspace-write" "$(argv_arg 5)" "workspace-write"
+check "off: argv 6 introduces the root override" "$(argv_arg 6)" "-c"
+has "$(argv_arg 7)" "sandbox_workspace_write.writable_roots=[\"" \
+  "off: argv 7 is the legacy writable-roots override"
+check "off: argv 8 introduces the model" "$(argv_arg 8)" "-c"
+check "off: argv 9 keeps the pinned model" "$(argv_arg 9)" 'model="gpt-5.6-sol"'
+check "off: argv 10 introduces effort" "$(argv_arg 10)" "-c"
+check "off: argv 11 keeps the pinned effort" \
+  "$(argv_arg 11)" 'model_reasoning_effort="high"'
+has "$(argv_arg 12)" "You are the reviewer stage" \
+  "off: argv 12 remains the review prompt"
 
 echo "-- it composes with the fallback account --"
 printf 'credits\n' > "$CODEX_MODE"
@@ -523,7 +554,7 @@ mk_sync_case() {  # $1 = ticket -> a pushed branch that conflicts with main
     '{ticket:$t,status:"ready",worktree:$wt,branch:$b,base:"main"}' > "$RUNS/$t/result.json"
 }
 sync_pr() {  # $1 = ticket, $2 = space-separated VAR=VAL overrides (may be empty)
-  : > "$CODEX_ARGV"; : > "$CODEX_HOMES"
+  : > "$CODEX_ARGV"; : > "$CODEX_ARGS"; : > "$CODEX_HOMES"
   # shellcheck disable=SC2086
   env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CODEX_BIN="$FAKES/codex" HARNESS_NOTIFY=0 $2 \
@@ -543,7 +574,9 @@ has_not "$(cat "$RHOME/config.toml")" "network_access" \
   "sync-pr: unrestricted networking is never asked for here either"
 SYNC_ON_ARGV="$(cat "$CODEX_ARGV")"
 check "sync-pr: the resolver really ran" \
-  "$(printf '%s' "$SYNC_ON_ARGV" | grep -c 'workspace-write' | tr -d ' ')" "1"
+  "$(printf '%s' "$SYNC_ON_ARGV" | grep -c 'exec -C' | tr -d ' ')" "1"
+has_not "$SYNC_ON_ARGV" "-s workspace-write" \
+  "sync-pr: enabled exec leaves its permission profile authoritative"
 
 mk_sync_case SYNC-OFF
 command rm -rf "$RHOME"
@@ -555,9 +588,22 @@ if [ -e "$RHOME" ]; then
 else
   ok "sync-pr: and builds no review home"
 fi
-check "sync-pr: leaving the command line it always had" \
-  "$(printf '%s' "$SYNC_ON_ARGV" | sed 's/sync-on/X/g')" \
-  "$(sed 's/sync-off/X/g' "$CODEX_ARGV")"
+check "sync-pr: its legacy invocation still has exactly ten arguments" \
+  "$(argv_count)" "10"
+check "sync-pr: off argv 1 is exec" "$(argv_arg 1)" "exec"
+check "sync-pr: off argv 2 selects the worktree" "$(argv_arg 2)" "-C"
+check "sync-pr: off argv 3 is the worktree" \
+  "$(argv_arg 3)" "$ROOT/greenapp-sync-off"
+check "sync-pr: off argv 4 selects the legacy sandbox" "$(argv_arg 4)" "-s"
+check "sync-pr: off argv 5 is workspace-write" "$(argv_arg 5)" "workspace-write"
+check "sync-pr: off argv 6 introduces the root override" "$(argv_arg 6)" "-c"
+has "$(argv_arg 7)" "sandbox_workspace_write.writable_roots=[\"" \
+  "sync-pr: off argv 7 is the legacy writable-roots override"
+check "sync-pr: off argv 8 introduces effort" "$(argv_arg 8)" "-c"
+check "sync-pr: off argv 9 keeps the pinned effort" \
+  "$(argv_arg 9)" 'model_reasoning_effort="high"'
+has "$(argv_arg 10)" "A merge of origin/main" \
+  "sync-pr: off argv 10 remains the conflict-resolution prompt"
 
 echo
 printf 'review truth: %d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skipped"

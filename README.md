@@ -1137,7 +1137,7 @@ has.
 
 #### What the reviewer is allowed to reach
 
-`codex` runs under its `workspace-write` sandbox, which denies network — and
+`codex` ordinarily runs under its `workspace-write` sandbox, which denies network — and
 denies **loopback** with it. That is not academic: Flutter's test harness could
 not bind its socket and DB-backed jest suites could not reach a local Postgres,
 so on those repos the reviewer argued about the code instead of running it, on a
@@ -1155,6 +1155,12 @@ denies. `allow_local_binding` is on because allowlisting a loopback target is
 [not sufficient on its own](https://github.com/openai/codex/issues/33227) and
 Flutter's runner has to *bind* a socket rather than merely reach one; that
 widens the sandbox to local and private ranges and no further.
+
+In the enabled arm that named profile replaces the explicit `-s
+workspace-write` argument. This is required: Codex CLI 0.145 gives an explicit
+sandbox selector precedence over `default_permissions`, which would otherwise
+leave the loopback policy configured but inactive. The off knob restores the
+legacy selector and writable-root override together.
 
 **A harness-owned `CODEX_HOME` for the attempt.** `codex` reads rules, plugins
 and MCP servers out of `CODEX_HOME`, and a developer's `rules/default.rules`
