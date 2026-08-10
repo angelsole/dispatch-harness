@@ -611,7 +611,9 @@ protected path and refuses edits outside the session's cwd tree, so a planner
 pointed straight at `runs/<TICKET>/` cannot write at all — which is precisely how
 self-briefing shipped broken and stayed broken until 2026-08-10, invisible behind
 machines that were only ever in `--report` mode. The scratch dir is also the
-whole of its write reach, which is tighter than the rule it replaced. The ticket
+whole of its write reach, which is tighter than the rule it replaced, and
+`planner-settings.json` denies edits under `~/.claude` by policy on top of that,
+so the harness's own tree stays shut even if that cwd wall ever moves. The ticket
 text reaches that planner inside a fence whose marker is minted per call, so a
 description that types its own `END` marker and then gives orders is still just
 quoted data. The planner writes a uniquely named, non-armable candidate; after

@@ -670,6 +670,12 @@ to the path and under the rules given above the fence."
     return 1
   fi
   if [ -n "$copyfail" ]; then
+    # A copy that dies partway (ENOSPC is the likeliest reason it died at all)
+    # leaves a truncated candidate behind, so quarantine it like every other
+    # failure path rather than leaving half a brief loose under runs/. The
+    # stage goes with $WORK at exit, which makes this rejected copy the only
+    # evidence that outlives the evening.
+    reject_brief "$candidate" "${brief%.md}.rejected.md"
     echo "the planner wrote a brief but it could not be copied into runs/$ticket" >&2
     return 1
   fi
