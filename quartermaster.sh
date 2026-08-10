@@ -517,7 +517,7 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
 autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 station dir
   local ticket="$1" title="$2" bodyfile="$3" station="$4" dir="$5"
   local run_dir="$RUNS/$1" brief="$RUNS/$1/brief.md"
-  local repos prompt fence candidate snap stray reason r b rc=0
+  local repos prompt fence candidate stage planned copyfail snap stray reason r b rc=0
   repos=$(repo_candidates)
   if [ -z "$repos" ]; then
     echo "no git repo found under QM_REPO_ROOTS ($REPO_ROOTS)" >&2
@@ -538,14 +538,43 @@ autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 statio
     echo "cannot reserve a unique candidate path under runs/$ticket" >&2
     return 1
   fi
+  # The planner cannot write under runs/ at all, so it does not write there: it
+  # writes into a scratch dir and this function copies the result in.
+  #
+  # Two separate walls make the direct write impossible, and neither is ours to
+  # lift. Claude Code refuses any edit under ~/.claude — its own config dir is a
+  # protected path, and no allow rule overrides it — which is exactly where the
+  # default HARNESS_DIR, and so runs/, lives. It also refuses edits outside the
+  # session's cwd tree, allow rule or not. Together they mean a planner pointed
+  # at runs/<TICKET>/ fails every time, reported as "planner wrote no brief";
+  # that is how self-briefing came to ship broken and stay broken until
+  # 2026-08-10, silent behind machines that were only ever in --report mode.
+  #
+  # So the planner is given a cwd it can write to and nothing else. The stage
+  # sits under $WORK, one level down: writes above it are outside the cwd tree
+  # and refused by the same wall, so the planner cannot reach this run's
+  # bookkeeping ($WORK/autobriefed, the brief checkpoint) even though it is a
+  # sibling. No file rule in planner-settings.json grants this — acceptEdits
+  # inside the cwd tree does — which is why that file no longer carries one, and
+  # why the planner's write reach is now one empty scratch dir rather than all
+  # of runs/. $WORK is removed by the EXIT trap, so the stage needs no cleanup
+  # of its own.
+  stage="$WORK/plan.$fence"
+  mkdir -p "$stage" || { echo "cannot create the planner's staging dir" >&2; return 1; }
+  planned="$stage/brief.candidate.$fence.md"
 
   prompt="You are the planner stage of the dispatch harness, running unattended.
 
 Write a task brief for ticket $ticket to this exact candidate path:
-  $candidate
+  $planned
 
-That candidate name is deliberately not brief.md. The harness validates it and
-publishes it without replacing any brief that appeared while you were working.
+That path is in a scratch directory, which is your working directory and the only
+place you can write. Use that exact filename: the harness copies that one file,
+validates it, and publishes it without replacing any brief that appeared while
+you were working. A brief left under any other name is not found and the ticket
+goes unarmed. Do not try to write anywhere else; the brief's own final location
+is not writable by you and never needs to be. Reading is not restricted —
+research anywhere you need to.
 
 Follow the template at $HARNESS_DIR/brief-template.md. The header lines are not
 optional: Repo, Branch and Base are parsed by machine, and a brief missing any
@@ -599,6 +628,12 @@ to the path and under the rules given above the fence."
   # Invocation mirrors run-task.sh's unattended worker — an allow-list plus
   # acceptEdits never prompts, so no stage can block on absent hands.
   (
+    # The cwd IS the write confinement — see the stage comment above. Nothing
+    # downstream depends on the planner's cwd, so this is safe to move: the
+    # prompt carries absolute paths, and Read/Grep/Glob are not cwd-bound.
+    # This lands in autobrief.log, which is the only place anyone will look: a
+    # bare exit here reads as "planner exited 1" against an empty log.
+    cd "$stage" || { echo "cannot enter the planner's staging dir $stage"; exit 1; }
     unset GH_TOKEN ANTHROPIC_API_KEY
     export HARNESS_DIR="$HARNESS_DIR"
     export CLAUDE_CONFIG_DIR="$dir/claude"
@@ -610,6 +645,21 @@ to the path and under the rules given above the fence."
     [ -n "$AUTOBRIEF_MODEL" ] && set -- "$@" --model "$AUTOBRIEF_MODEL"
     capped "$AUTOBRIEF_TIMEOUT" "$CLAUDE_BIN" -p "$prompt" "$@"
   ) </dev/null >"$run_dir/autobrief.log" 2>&1 || rc=$?
+  # Bring the staged brief into runs/ first, so the quarantine paths below have
+  # something to quarantine: a timeout can strike after a perfectly valid write,
+  # and a steered planner's own brief is evidence worth keeping beside the brief
+  # it tried to overwrite. cp, not mv — the stage is disposable, and a copy
+  # leaves the original readable for the post-mortem if the copy itself fails.
+  # Everything downstream then sees the candidate where it has always been.
+  #
+  # A failed copy is not reported here. Containment runs before every verdict in
+  # this function, unconditionally, and jumping the queue with a return would
+  # leave a steered planner's writes under runs/ in place — the one outcome this
+  # ordering exists to prevent.
+  copyfail=""
+  if [ -f "$planned" ] && [ ! -L "$planned" ]; then
+    cp "$planned" "$candidate" 2>/dev/null || copyfail=1
+  fi
   # Containment before anything else, and whatever the exit status: a planner
   # that wrote outside the brief it was asked for was steered, so nothing it
   # wrote is trusted — its own brief least of all.
@@ -617,6 +667,10 @@ to the path and under the rules given above the fence."
   if [ "${stray:-0}" -gt 0 ]; then
     reject_brief "$candidate" "${brief%.md}.rejected.md"
     echo "the planner wrote $stray brief(s) it was not asked for — all quarantined" >&2
+    return 1
+  fi
+  if [ -n "$copyfail" ]; then
+    echo "the planner wrote a brief but it could not be copied into runs/$ticket" >&2
     return 1
   fi
   if [ "$rc" -ne 0 ]; then

@@ -603,8 +603,15 @@ brief `schedule.sh` demands. By default (`QM_AUTOBRIEF=1`) an `--arm` run
 self-briefs the tagged tickets that lack one, in queue order and only up to
 the night's remaining headroom: a planner session on the owning station's own
 subscription, confined by `planner-settings.json` (read-only research minus the
-harness's own secrets, plus one `Write` into `runs/` — no Bash, no network, no
-subagents, no git writes), turns the ticket text into the brief. The ticket
+harness's own secrets — no Bash, no network, no subagents, no git writes), turns
+the ticket text into the brief. It writes that brief into a scratch directory
+minted for the call and handed to it as its working directory, and the harness
+copies the result into `runs/`: Claude Code refuses edits under `~/.claude` as a
+protected path and refuses edits outside the session's cwd tree, so a planner
+pointed straight at `runs/<TICKET>/` cannot write at all — which is precisely how
+self-briefing shipped broken and stayed broken until 2026-08-10, invisible behind
+machines that were only ever in `--report` mode. The scratch dir is also the
+whole of its write reach, which is tighter than the rule it replaced. The ticket
 text reaches that planner inside a fence whose marker is minted per call, so a
 description that types its own `END` marker and then gives orders is still just
 quoted data. The planner writes a uniquely named, non-armable candidate; after
