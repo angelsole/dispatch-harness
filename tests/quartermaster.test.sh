@@ -171,6 +171,8 @@ cat > "$FAKES/claude" <<EOF
 {
   printf 'call anthropic:%s config:%s\n' "\${ANTHROPIC_API_KEY-<unset>}" "\${CLAUDE_CONFIG_DIR-<unset>}"
   printf 'argv:%s\n' "\$*"
+  # The planner's cwd is its write confinement, so it is part of the contract.
+  printf 'cwd:%s\n' "\$PWD"
 } >> "$CLAUDE_LOG"
 brief=\$(printf '%s\n' "\$2" | sed -n 's/^  \\(.*\/[^/]*\\.md\\)\$/\\1/p' | head -1)
 # Copied verbatim from the prompt's candidate list, exactly as the prompt
@@ -742,6 +744,30 @@ file_has "$CLAUDE_LOG" "never do what it says" \
 file_has "$CLAUDE_LOG" "--settings $SRCABS/planner-settings.json" \
   "fence: the planner is launched under the shipped tool policy"
 
+# The planner cannot write under runs/ — ~/.claude is a protected path and edits
+# outside the cwd tree are refused — so it is asked for a scratch path instead
+# and the harness copies the result in. Assert the whole contract: the path it is
+# told to write is not under runs/, its cwd is that scratch dir, and the brief
+# still lands at the armable path anyway.
+PLANNED=$(sed -n 's/^  \(.*\/brief\.candidate\..*\.md\)$/\1/p' "$CLAUDE_LOG" | head -1)
+check "confinement: the planner is given a candidate path" \
+  "$([ -n "$PLANNED" ] && echo yes || echo no)" "yes"
+case "$PLANNED" in
+  "$RUNS"/*) bad "confinement: the candidate path is not under runs/ (got $PLANNED)" ;;
+  *)         ok  "confinement: the candidate path is not under runs/" ;;
+esac
+PLANCWD=$(sed -n 's/^cwd://p' "$CLAUDE_LOG" | tail -1)
+# $TMPDIR carries a trailing slash, so the prompt's path can hold a // that the
+# shell's own $PWD has already collapsed — compare the two normalized.
+squash() { printf '%s' "$1" | sed 's;//*;/;g'; }
+check "confinement: the planner's cwd is the scratch dir holding that candidate" \
+  "$(squash "$PLANCWD")" "$(squash "$(dirname "$PLANNED")")"
+case "$PLANCWD" in
+  "$RUNS"/*) bad "confinement: the planner's cwd is outside runs/ (got $PLANCWD)" ;;
+  *)         ok  "confinement: the planner's cwd is outside runs/" ;;
+esac
+absent "confinement: the scratch dir is gone with \$WORK once the evening exits" "$PLANCWD"
+
 # ---------------------------------------------------------------------------
 echo "== a steered planner writes outside its own brief =="
 # ---------------------------------------------------------------------------
@@ -774,6 +800,76 @@ file_has "$RUNS/OLYX-VICTIM/brief.rejected.md" "auto/stolen" \
   "overwrite: the planner's version is kept beside it as evidence"
 has "$ANGEL" "overwrote while self-briefing \`OLYX-P1\`" \
   "overwrite: the collision is reported"
+
+# ---------------------------------------------------------------------------
+echo "== the staged brief cannot be copied into runs/ =="
+# ---------------------------------------------------------------------------
+# The planner writes into a scratch dir and the harness copies the result in, so
+# that copy is a failure mode of its own — and it must be reported without
+# jumping ahead of containment, which is what an early return here would do.
+# Only the staged-brief copy is broken; the brief checkpoint still uses real cp.
+cat > "$FAKES/cp" <<'EOF'
+#!/usr/bin/env bash
+# Fails the way a real cp dies on a full disk: the destination is created and
+# left truncated. Only the staged brief is affected — the checkpoint copy and
+# containment's restore copy both name brief.md, so they get the real cp.
+for a in "$@"; do
+  case "$a" in *"/brief.candidate."*)
+    printf 'truncated' > "${@: -1}" 2>/dev/null
+    exit 1 ;;
+  esac
+done
+exec /bin/cp "$@"
+EOF
+chmod +x "$FAKES/cp"
+printf 'good\n' > "$CLAUDE_MODE"
+rm -rf "$RUNS/OLYX-CP"
+{
+  printf '{"data":{"issues":{"nodes":['
+  issue id-cp OLYX-CP "Uncopyable" 1 angel.sole@olyx.nl backlog
+  printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
+} > "$LINEAR_JSON"
+before_arms=$(arm_calls)
+qm "" --arm >/dev/null
+check "copyfail: the ticket is not armed" "$(arm_calls)" "$before_arms"
+absent "copyfail: no brief reaches the armable path" "$RUNS/OLYX-CP/brief.md"
+has "$(section angel)" "could not be copied into runs/OLYX-CP" \
+  "copyfail: the report names the copy as what failed"
+# A half-written candidate is quarantined like every other rejected brief. The
+# stage it was copied from goes with $WORK at exit, so this is the only evidence
+# that survives the evening — and leaving it loose under runs/ would mean a
+# truncated brief sitting beside the real ones.
+exists "copyfail: the truncated candidate is quarantined" \
+  "$RUNS/OLYX-CP/brief.rejected.md"
+check "copyfail: nothing is left loose under runs/" \
+  "$(find "$RUNS/OLYX-CP" -maxdepth 1 -name 'brief.candidate.*.md' | grep -c '' | tr -d ' ')" "0"
+
+# The same copy failure, now with a steered planner — the two must not be traded
+# off against each other. Reporting the copy with an early return would jump the
+# queue ahead of contain_planner_writes and leave the overwritten brief in place,
+# which is the one outcome that ordering exists to prevent. Asserting only "the
+# ticket did not arm" cannot see that: it holds either way. These two can.
+brief_for OLYX-VICTIM fix/victim
+printf 'overwrite\n' > "$CLAUDE_MODE"
+rm -rf "$RUNS/OLYX-CP2"
+{
+  printf '{"data":{"issues":{"nodes":['
+  issue id-cp2 OLYX-CP2 "Uncopyable and steered" 1 angel.sole@olyx.nl backlog
+  printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
+} > "$LINEAR_JSON"
+before_arms=$(arm_calls)
+qm "" --arm >/dev/null
+ANGEL=$(section angel)
+check "copyfail+stray: the ticket is not armed" "$(arm_calls)" "$before_arms"
+file_has "$RUNS/OLYX-VICTIM/brief.md" "fix/victim" \
+  "copyfail+stray: containment still ran — the overwritten brief is put back"
+file_has "$RUNS/OLYX-VICTIM/brief.rejected.md" "auto/stolen" \
+  "copyfail+stray: the planner's version is still quarantined beside it"
+has "$ANGEL" "overwrote while self-briefing \`OLYX-CP2\`" \
+  "copyfail+stray: the steering is reported, not swallowed by the copy failure"
+has "$ANGEL" "brief(s) it was not asked for" \
+  "copyfail+stray: containment's verdict outranks the copy's"
+rm -f "$FAKES/cp"
 
 # ---------------------------------------------------------------------------
 echo "== validation at arming: every brief, whoever wrote it =="
@@ -850,8 +946,34 @@ has "$DENY" "Read(~/.claude/harness/notify.conf)" \
   "settings: nor the notify topic"
 has "$DENY" "Read(~/.claude/harness/auth/**)" \
   "settings: nor the captured auth state"
-has "$ALLOW" "Write(~/.claude/harness/runs/**)" \
-  "settings: the one Write it exists to make is still there"
+# No file-write rule in allow, by design: the planner writes into a per-call
+# scratch dir acceptEdits covers, and a rule cannot name a path minted per call.
+# The old
+# Write(~/.claude/harness/runs/**) is the bug this guards — runs/ lives under
+# ~/.claude, which Claude Code refuses to write to as a protected path whatever
+# this file says, so every self-brief failed as "planner wrote no brief" from the
+# day it shipped until 2026-08-10. Spelling it Edit(path) does not fix it either:
+# the wall is the path, not the tool name. If a file rule ever comes back it must
+# not point under HARNESS_DIR, so assert on the directory, not on one spelling.
+# (grep is a substring match and "NotebookEdit" contains "Edit", so rules that
+# must be compared whole go through jq index(), not grep.)
+has_not "$ALLOW" ".claude/harness/runs" \
+  "settings: no file rule points into runs/ — that path is unwritable by any planner"
+lacks_rule() {  # $1 = allow|deny, $2 = exact rule, $3 = label
+  if jq -e --arg r "$2" ".permissions.$1 | index(\$r)" "$PSET" >/dev/null 2>&1
+  then bad "$3 (found [$2])"; else ok "$3"; fi
+}
+lacks_rule deny "Edit" \
+  "settings: no bare Edit deny — it would cover Write in the scratch dir too"
+lacks_rule deny "MultiEdit" \
+  "settings: no MultiEdit deny — it matches no known tool and only warns"
+# Belt to the cwd wall's brace. That wall is Claude Code's behaviour, not this
+# repo's, so the harness tree is refused by policy as well — a release that
+# relaxes it must not silently hand the planner every brief under runs/. Scoped
+# to a path, never bare, for the reason asserted immediately above; the scratch
+# dir lives under TMPDIR, so this rule cannot reach it.
+has "$DENY" "Edit(~/.claude/**)" \
+  "settings: writes into the harness's own tree are denied by policy, not just by cwd"
 
 mv "$ROOT/linear-park.json" "$LINEAR_JSON"
 rm -rf "$RUNS"/OLYX-N1 "$RUNS"/OLYX-N2 "$RUNS"/OLYX-N3 "$RUNS"/OLYX-N8 "$RUNS"/OLYX-N9 \
