@@ -455,6 +455,11 @@ file_has "$PROMPTS" "current status: fail — the failing step was: gate-tests)"
   "prompt: the reviewer is told the failing step alongside the gate status"
 file_has "$PROMPTS" "gate-latest.log is a clipped extract, not the whole gate log" \
   "prompt: and told that what it is reading is an extract"
+file_has "$PROMPTS" "':(exclude)package-lock.json'" \
+  "prompt: lockfiles are excluded from the diff the reviewer reads"
+file_has "$PROMPTS" "checklist item 1 below keeps its full force over every file in the diff" \
+  "prompt: without letting that exemption reach anything else"
+
 # The header is a line in the file too, and the failing step it quotes is a whole
 # element of the operator's own gate command — nothing bounds its length. The
 # ceiling has to cover the header, or a long gate command reopens the hole.
