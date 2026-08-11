@@ -192,6 +192,12 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
 fi
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
+# The top-level gate command the standing verdict died on, isolated by the trap
+# machinery around run_gate and carried at the same scope as GATE_STATUS because
+# it is the same fact: the two are read together by gate-latest.log's header and
+# by both model-facing prompts. Empty whenever there is nothing to name — no
+# round has run, the round passed, or the trap wrote nothing.
+GATE_FAILED_STEP=""
 # How the review stage actually went, decided from evidence after it runs (see
 # section 5b): "" until the stage is reached, then skipped | reviewed |
 # reviewed_claude | failed_silent. Recorded in result.json so nobody has to read
@@ -1036,16 +1042,105 @@ echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
 # command (for example `test --rev=$(git rev-parse HEAD)`). The two traps are
 # complementary and both write the same file, last writer winning.
 #
-# Redirected to its own file, never to the log, so the reviewer's gate-latest.log
-# is exactly what it always was. `|| :` keeps a failed write from ever being
-# visible to the gate.
+# Redirected to its own file, never to the log, so $RUN_DIR/gate-<n>.log stays
+# byte-identical to the gate's own output — the raw, complete record, and the
+# only artifact that still promises that. The models' copy is deliberately NOT
+# that file any more: gate-latest.log is a clipped tail behind a header
+# (gate_write_latest below), and the step this trap isolates is one of the facts
+# that header states. `|| :` keeps a failed write from ever being visible to the
+# gate.
 GATE_TRACE_WRITE='printf "%s\n" "$BASH_COMMAND" > "$HARNESS_GATE_STEP" 2>/dev/null || :'
 GATE_TRACE_PRELUDE="trap '$GATE_TRACE_WRITE' DEBUG
 set -ET
 trap '$GATE_TRACE_WRITE' ERR"
 
+# --- The copy of the gate the models actually read ----------------------------
+# Two ceilings, because a hostile log needs two. The line ceiling is the one
+# that was missing: a jest snapshot diff, a vite build error or a minified stack
+# frame puts tens of KB on ONE line, so a hundred-line tail was unbounded in
+# bytes and could displace the brief and the diff in the reviewer's context
+# window. Depth is unchanged at 100 — the ceiling that was already right.
+GATE_TAIL_LINES=100
+GATE_LINE_CHARS=2000
+
+# Clamp every line to $1 characters, disclosing each cut inline: the point is
+# that a reader can tell the line was cut, not that the gate printed garbage.
+# The clipped line lands at exactly $1 characters, marker included — a ceiling a
+# marker can push past is not a ceiling.
+#
+# perl, because the obvious tools are all byte-based: GNU `cut -c` is `cut -b`
+# in disguise, awk's substr counts bytes under LC_ALL=C, and either leaves half
+# a multi-byte character at the cut. No decoding happens here either. Every byte
+# string splits uniquely into a non-continuation byte followed by its
+# continuation bytes, so counting those units counts codepoints, and a log that
+# is partly binary counts one unit per stray byte instead of failing. Lines
+# inside the ceiling are passed through untouched, byte for byte, which is still
+# the overwhelmingly common case (and the length test that skips the scan is
+# sound because a line can never hold more characters than bytes).
+gate_clamp_lines() {  # stdin -> stdout; $1 = max characters per line
+  perl -e '
+    my $max = shift @ARGV;
+    while (defined(my $line = <STDIN>)) {
+      my $nl = ($line =~ s/\n\z//) ? "\n" : "";
+      if (length($line) <= $max) { print $line, $nl; next; }
+      my @c = $line =~ /([^\x80-\xBF][\x80-\xBF]*|[\x80-\xBF])/g;
+      if (@c <= $max) { print $line, $nl; next; }
+      my $mark = sprintf(" [clipped: this line is %d characters long]", scalar @c);
+      print join("", @c[0 .. $max - length($mark) - 1]), $mark, $nl;
+    }
+  ' "$1"
+}
+
+# The model-facing copy of a gate round: the raw log's tail, clipped, behind a
+# header that says exactly that. An unlabelled tail taught both models that read
+# it (the reviewer, the fix round) the wrong thing — with npm/jest the failure
+# prints early and the last 100 lines are green summary, so a model read it,
+# learned nothing, and had no way to know that more of the log existed. So the
+# header states the round, how much of the log this is, the verdict, and the
+# failing step the trap machinery already isolated.
+#
+# It deliberately names no path to the full log: $RUN_DIR is outside the
+# worktree and outside both the worker and the review sandbox, so pointing there
+# would send the model after a file it cannot open.
+gate_write_latest() {  # $1 = round, $2 = pass|fail, $3 = failed step, $4 = source log, $5 = destination
+  local total shown clipped body="$5.partial"
+  tail -n "$GATE_TAIL_LINES" "$4" | gate_clamp_lines "$GATE_LINE_CHARS" > "$body"
+  # NR, not `wc -l`: a gate whose last line has no newline still printed it, and
+  # a count that dropped it would understate what was cut.
+  total=$(awk 'END { print NR + 0 }' "$4")
+  shown=$(awk 'END { print NR + 0 }' "$body")
+  clipped=$(grep -c ' \[clipped: this line is [0-9]* characters long\]$' "$body" || true)
+  {
+    # The header goes through the same clamp as the body, so the ceiling holds
+    # for every line in the file without anyone having to reason about which
+    # fields can be long: the failing step is a whole GATE_CMD element, and
+    # nothing bounds how long an operator's gate command is.
+    {
+      printf '=== gate round %s ===\n' "$1"
+      printf 'result: %s\n' "$2"
+      # No failing step is a real state, twice over: a passing round has none,
+      # and a trap that wrote nothing has none either. Both say nothing here
+      # rather than inventing a command for the model to go and chase.
+      if [ -n "$3" ]; then printf 'failed step: %s\n' "$3"; fi
+      if [ "$shown" -lt "$total" ]; then
+        printf 'shown: the last %s of %s lines — the rest is not reachable from here\n' \
+          "$shown" "$total"
+      else
+        printf 'shown: all %s lines\n' "$total"
+      fi
+      if [ "$clipped" -gt 0 ]; then
+        printf 'clipped: %s line(s) over %s characters, each marked inline\n' \
+          "$clipped" "$GATE_LINE_CHARS"
+      fi
+      printf '=== gate output follows ===\n'
+    } | gate_clamp_lines "$GATE_LINE_CHARS"
+    cat "$body"
+  } > "$5"
+  rm -f "$body"
+}
+
 run_gate() {
-  local rc started secs step script failed_step
+  local rc started secs step script
   stage "test gate #$1 (deterministic — no model)"
   step="$RUN_DIR/gate-$1.step"
   : > "$step"
@@ -1055,20 +1150,32 @@ $GATE_CMD"
   (cd "$WORKTREE" && HARNESS_GATE_STEP="$step" bash -c "$script") > "$RUN_DIR/gate-$1.log" 2>&1
   rc=$?
   secs=$(( $(date +%s) - started ))
-  tail -100 "$RUN_DIR/gate-$1.log" > "$WORKTREE/.harness/gate-latest.log"
   if [ $rc -eq 0 ]; then GATE_STATUS="pass"; else GATE_STATUS="fail"; fi
   # Only a failing round has a failing step; a passing round's last command
   # explains nothing, and recording it would invite exactly that misreading.
-  failed_step=""
+  GATE_FAILED_STEP=""
   if [ "$GATE_STATUS" = fail ]; then
-    failed_step=$(tr -d '\t' < "$step" 2>/dev/null | head -1)
+    GATE_FAILED_STEP=$(tr -d '\t' < "$step" 2>/dev/null | head -1)
   fi
+  # After the verdict, not before it: the header states the round's result and
+  # its failing step, so it cannot be written until the round has them.
+  gate_write_latest "$1" "$GATE_STATUS" "$GATE_FAILED_STEP" \
+    "$RUN_DIR/gate-$1.log" "$WORKTREE/.harness/gate-latest.log"
   # Additive: the first two fields are byte-for-byte what they were, so every
   # existing reader (wall/server.js splits on whitespace and takes two) is
   # unaffected; the step is tab-separated because a command contains spaces.
-  printf '%s %s %s\t%s\n' "$1" "$GATE_STATUS" "$secs" "$failed_step" \
+  printf '%s %s %s\t%s\n' "$1" "$GATE_STATUS" "$secs" "$GATE_FAILED_STEP" \
     >> "$RUN_DIR/gate-rounds.log"
   return $rc
+}
+
+# The failing step in the words the model-facing prompts use, or nothing at all
+# when there is none to name. The harness has known this fact since the round
+# ended and kept it to itself; both models used to spend paid turns re-deriving
+# it from a tail that often does not even contain it.
+gate_step_clause() {
+  [ -n "$GATE_FAILED_STEP" ] || return 0
+  printf ' — the failing step was: %s' "$GATE_FAILED_STEP"
 }
 
 # A round the pipeline deliberately did not run, because the tree it would have
@@ -1076,6 +1183,11 @@ $GATE_CMD"
 # standing verdict is that earlier round's, so GATE_STATUS is left exactly as it
 # was and the exit status is the one a real round on this tree would have
 # returned — the caller branches identically either way.
+#
+# GATE_FAILED_STEP and gate-latest.log are left standing for the same reason:
+# they belong to the verdict, and the verdict is unchanged. The standing file
+# names the round it came from in its own header, so a fix round reading it after
+# a skip is told which round it is looking at rather than assuming this one.
 #
 # The row is run_gate's shape with a third result value beside pass/fail: zero
 # seconds (none were spent), no failing step. Every existing reader keeps
@@ -1521,7 +1633,8 @@ run_gate 1 || true
 # above still ran there, so a failing gate still yields gate_failed downstream,
 # and the base-sync step below still runs in every arm.
 REVIEW_PROMPT="You are the reviewer stage of an automated pipeline; another agent just implemented a task.
-Context (all inside .harness/): brief.md (the task contract), specs/ when present (the task's source documents converted to markdown — part of the contract, read them alongside the brief), implementer-notes.md, gate-latest.log (test gate output — current status: $GATE_STATUS).
+Context (all inside .harness/): brief.md (the task contract), specs/ when present (the task's source documents converted to markdown — part of the contract, read them alongside the brief), implementer-notes.md, gate-latest.log (test gate output — current status: $GATE_STATUS$(gate_step_clause)).
+gate-latest.log is a clipped extract, not the whole gate log: its header states which round it is, how many of that round's lines it holds, and where lines were cut. Trust the header over your instinct that you are looking at everything — the rest of that log is not reachable from here, so if the extract does not explain the failure, re-run the failing step yourself.
 implementer-notes.md is the implementer's own account of its work: treat it as claims to verify against the diff, not as facts.
 Review ALL changes on this branch: git log $BASE_REF..HEAD and git diff $BASE_REF...HEAD.
 
@@ -1683,7 +1796,7 @@ if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
     else
       stage "fix round 2 — Claude reviewer (Claude sub)"
     fi
-    run_fix_round 2 "The test gate is still failing after your review. Output is in .harness/gate-latest.log. Fix the failures and commit (no AI attribution; never commit anything under .harness/). If it cannot be fixed without violating .harness/brief.md, write .harness/REJECTED.md instead." || true
+    run_fix_round 2 "The test gate is still failing after your review$(gate_step_clause). Output is in .harness/gate-latest.log — a clipped extract of that round, not the whole log; its header states which round, how much of it, and where lines were cut, and the rest is not reachable from here. Fix the failures and commit (no AI attribution; never commit anything under .harness/). If it cannot be fixed without violating .harness/brief.md, write .harness/REJECTED.md instead." || true
     run_gate 3 || true
   fi
 fi

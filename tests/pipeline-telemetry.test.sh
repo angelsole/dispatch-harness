@@ -8,7 +8,10 @@
 #   2. Gate-round telemetry — every gate round records how long it took and
 #      which command it died on (the command that actually returned nonzero,
 #      wherever in the gate's own shell it lives), without breaking readers of
-#      the old two-field shape.
+#      the old two-field shape. The copy the models read is bounded in both
+#      dimensions (100 lines, 2000 characters per line), says which round it is
+#      and what it left out, and hands over the failing step the harness already
+#      knows instead of making a model re-derive it.
 #   3. Attempt lifecycle — each invocation's telemetry is rotated into
 #      attempts/<n>/ instead of being truncated, the resume counter is this
 #      invocation's alone, and a run that already reached `done: ready` is not
@@ -47,9 +50,12 @@ CODEX_CALLS="$ROOT/codex-calls.log"
 CURL_LOG="$ROOT/curl.log"
 CLAUDE_MODE="$ROOT/claude-mode"
 CODEX_MODE="$ROOT/codex-mode"
+# Every argument list either model stand-in was handed, truncated per dispatch by
+# dispatch() below: the only way to assert what a prompt actually said.
+PROMPTS="$ROOT/prompts.log"
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
-: > "$CLAUDE_CALLS"; : > "$CODEX_CALLS"; : > "$CURL_LOG"
+: > "$CLAUDE_CALLS"; : > "$CODEX_CALLS"; : > "$CURL_LOG"; : > "$PROMPTS"
 printf 'commit\n' > "$CLAUDE_MODE"
 printf 'notes\n' > "$CODEX_MODE"
 
@@ -89,6 +95,7 @@ git -C "$REPO" push -q -u origin main
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
 printf 'claude\n' >> "$CLAUDE_CALLS"
+printf '%s\n' "\$*" >> "$PROMPTS"
 prompt=""; prev=""
 for a in "\$@"; do [ "\$prev" = "-p" ] && prompt="\$a"; prev="\$a"; done
 case "\$prompt" in *"reviewer stage"*) exit 0 ;; esac
@@ -111,10 +118,13 @@ for a in "\$@"; do
   prev="\$a"
 done
 printf 'codex %s\n' "\$wt" >> "$CODEX_CALLS"
+printf '%s\n' "\$*" >> "$PROMPTS"
 case "\$(cat "$CODEX_MODE")" in
   instant) echo "codex: done" ;;
   notes)   printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md" ;;
   commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
+             && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
+  marker)  ( cd "\$wt" && printf 'reviewed\n' > reviewed.txt \
              && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
   reject)  printf '# rejected\n\nWrong approach entirely.\n' > "\$wt/.harness/REJECTED.md" ;;
 esac
@@ -146,8 +156,27 @@ echo "tests: 1 failing"
 exit 1
 EOF
 
+# A DIFFERENT failing step, for the round-2 prompt: it must name the round that
+# just failed, not the one the review prompt was built from.
+cat > "$FAKES/gate-tests-late" <<'EOF'
+#!/usr/bin/env bash
+echo "tests: still 1 failing"
+exit 1
+EOF
+
+# The shape a jest snapshot diff, a vite build error or a minified stack frame
+# has: enormous output on ONE line, where a line-count ceiling bounds nothing.
+# The second line's 2000-character mark falls inside a two-byte character, which
+# is what a byte-based clamp splits.
+cat > "$FAKES/gate-wide" <<'EOF'
+#!/usr/bin/env bash
+perl -e 'print "x" x 10000, "\n"'
+perl -e 'print "\xc3\xa9" x 3000, "\n"'
+EOF
+
 chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/curl" "$FAKES/gh" \
-  "$FAKES/gate-lint" "$FAKES/gate-tests"
+  "$FAKES/gate-lint" "$FAKES/gate-tests" "$FAKES/gate-tests-late" \
+  "$FAKES/gate-wide"
 
 # --- the harness under test ---------------------------------------------------
 codex_calls() { grep -c '^codex ' "$CODEX_CALLS" 2>/dev/null | tr -d ' '; }
@@ -160,6 +189,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   RUN="$RUNS/$ticket"
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
+  : > "$PROMPTS"
   # shellcheck disable=SC2086
   env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
@@ -303,12 +333,22 @@ check "fail: the run parks at gate_failed as before" "$(result .status)" "gate_f
 has_not "$(grep -A1 -F 'Title: dispatch GATE-FAIL' "$CURL_LOG")" \
   "review ran on the Claude tier" \
   "fail: a dead Claude attempt is not described as a completed review"
-# The gate log is what the reviewer reads: the tracer must be invisible in it.
+# The run dir's log is the raw, complete record: the tracer must be invisible in
+# it, and nothing else may be added to it either.
 check "fail: the gate log is exactly the gate's own output" \
   "$(cat "$RUN/gate-1.log")" "linting: clean
 tests: 1 failing"
-check "fail: and so is the copy handed to the reviewer" \
-  "$(cat "$ROOT/greenapp-gate-fail/.harness/gate-latest.log")" "linting: clean
+# The models' copy is deliberately NOT that file. On a log this small nothing is
+# cut, so every line of the gate's output is still there verbatim — behind a
+# header that says which round, what its verdict was, which step it died on, and
+# that this is the whole thing. Pinned in full: the header IS the contract.
+check "fail: the copy handed to the reviewer states what it is, then the output" \
+  "$(cat "$ROOT/greenapp-gate-fail/.harness/gate-latest.log")" "=== gate round 1 ===
+result: fail
+failed step: gate-tests
+shown: all 2 lines
+=== gate output follows ===
+linting: clean
 tests: 1 failing"
 
 # Old readers parse the first two whitespace-separated fields (wall/server.js) or
@@ -350,6 +390,120 @@ check "rounds: a full review loop records all three rounds" \
   "$(result '.metrics.gate_rounds | length')" "3"
 check "rounds: every one of them names the failing step" \
   "$(result '[.metrics.gate_rounds[].failed_step] | unique | join(",")')" "gate-tests"
+TEST_GATE_CMD=true
+
+# ---------------------------------------------------------------------------
+echo "== the gate output the models read is bounded and self-describing =="
+# ---------------------------------------------------------------------------
+# Counts characters, not bytes: a clamp that landed at 2000 BYTES on the
+# two-byte line below would look compliant to a byte ruler and be broken.
+widest() {  # $1 = file; prints the longest line's length in characters
+  perl -MEncode -ne 'chomp; my $n = length(Encode::decode("UTF-8", $_));
+    $m = $n if $n > $m; END { print $m + 0, "\n" }' "$1"
+}
+
+# A log that is deep AND wide, failing on a named step: all three ceilings and
+# all three header facts in one round.
+printf 'notes\n' > "$CODEX_MODE"
+TEST_GATE_CMD='seq 1 4312 && gate-wide && gate-tests'
+dispatch GATE-CONTEXT "CODEX_BIN=$ROOT/no-such-codex"
+LATEST="$ROOT/greenapp-gate-context/.harness/gate-latest.log"
+TOTAL=$(awk 'END { print NR + 0 }' "$RUN/gate-1.log")
+
+check "extract: the fixture log really is deeper than the tail depth" \
+  "$(( TOTAL > 100 ))" "1"
+check "extract: the first line names the round it came from" \
+  "$(sed -n 1p "$LATEST")" "=== gate round 1 ==="
+file_has "$LATEST" "result: fail" "extract: the header states the round's verdict"
+file_has "$LATEST" "failed step: gate-tests" \
+  "extract: and the failing step the trap machinery already isolated"
+# Counted against the real log, not a constant: the header's claim about how much
+# it left out has to be true of the file it was cut from.
+file_has "$LATEST" "shown: the last 100 of $TOTAL lines" \
+  "extract: and how much of the log this is, shown against the real total"
+check "extract: the tail depth is unchanged — 100 lines below the header" \
+  "$(awk 'f { n++ } /^=== gate output follows ===$/ { f = 1 } END { print n + 0 }' "$LATEST")" \
+  "100"
+check "extract: and it is the END of the log, as it always was" \
+  "$(tail -1 "$LATEST")" "tests: 1 failing"
+# The run dir is outside the worktree and outside both sandboxes. A header that
+# named it would send the model after a file it cannot open.
+has_not "$(cat "$LATEST")" "$RUN" \
+  "extract: the header points the model at no path outside its reach"
+
+check "clamp: no line reaches the reviewer wider than the 2000-character ceiling" \
+  "$(widest "$LATEST")" "2000"
+file_has "$LATEST" "[clipped: this line is 10000 characters long]" \
+  "clamp: and a cut line says it was cut, and how much line there was"
+file_has "$LATEST" "clipped: 2 line(s) over 2000 characters, each marked inline" \
+  "clamp: the header counts the cuts too"
+# The 2000-character mark falls mid-character on this line. Strip the marker and
+# what remains must be whole two-byte characters — `cut -c` would leave a stray
+# lead byte here.
+check "clamp: a multi-byte line is cut between characters, never inside one" \
+  "$(perl -ne 'next unless /^\xc3\xa9/; chomp;
+     s/ \[clipped: this line is [0-9]+ characters long\]\z//;
+     print /\A(?:\xc3\xa9)+\z/ ? "whole" : "split"; exit' "$LATEST")" \
+  "whole"
+# The raw log keeps its promise while the extract keeps the ceiling.
+check "clamp: the run dir's own log still holds the line at full width" \
+  "$(awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$RUN/gate-1.log")" \
+  "10000"
+
+# The whole point of isolating the failing step: hand it over.
+file_has "$PROMPTS" "current status: fail — the failing step was: gate-tests)" \
+  "prompt: the reviewer is told the failing step alongside the gate status"
+file_has "$PROMPTS" "gate-latest.log is a clipped extract, not the whole gate log" \
+  "prompt: and told that what it is reading is an extract"
+# The header is a line in the file too, and the failing step it quotes is a whole
+# element of the operator's own gate command — nothing bounds its length. The
+# ceiling has to cover the header, or a long gate command reopens the hole.
+TEST_GATE_CMD="gate-tests --pad=$(perl -e 'print "x" x 3000')"
+dispatch GATE-CTX-WIDESTEP "CODEX_BIN=$ROOT/no-such-codex"
+WIDESTEP="$ROOT/greenapp-gate-ctx-widestep/.harness/gate-latest.log"
+check "wide step: no line escapes the ceiling, the header included" \
+  "$(widest "$WIDESTEP")" "2000"
+has "$(sed -n 3p "$WIDESTEP")" "failed step: gate-tests --pad=xxx" \
+  "wide step: the header still names the step, just bounded"
+has "$(sed -n 3p "$WIDESTEP")" "characters long]" \
+  "wide step: and says where it cut it"
+# Bounding the models' copy must not bound the record readers parse.
+check "wide step: gate-rounds.log still carries the step at full length" \
+  "$(result '.metrics.gate_rounds[0].failed_step' | wc -c | tr -d ' ')" "3018"
+
+# A passing round has no failing step to name, and must not borrow one.
+TEST_GATE_CMD='seq 1 3 && gate-lint'
+dispatch GATE-CTX-PASS "CODEX_BIN=$ROOT/no-such-codex"
+PASSED="$ROOT/greenapp-gate-ctx-pass/.harness/gate-latest.log"
+check "pass: the header states the pass" "$(sed -n 2p "$PASSED")" "result: pass"
+has_not "$(cat "$PASSED")" "failed step:" \
+  "pass: and invents no failing step for a round that had none"
+file_has "$PASSED" "shown: all 4 lines" \
+  "pass: a log inside the tail depth says so rather than claiming a cut"
+file_has "$PROMPTS" "current status: pass)" \
+  "pass: and the reviewer prompt claims no failing step either"
+
+# Round 2's failure is a DIFFERENT step from round 1's, so the fix-round prompt
+# cannot pass by quoting the step the review prompt was built from.
+printf 'marker\n' > "$CODEX_MODE"
+TEST_GATE_CMD='if [ -f reviewed.txt ]; then gate-tests-late; else gate-tests; fi'
+dispatch GATE-CTX-FIX ""
+check "fix: round 1 died on the first step" \
+  "$(result '.metrics.gate_rounds[0].failed_step')" "gate-tests"
+check "fix: round 2 died on a different one" \
+  "$(result '.metrics.gate_rounds[1].failed_step')" "gate-tests-late"
+file_has "$PROMPTS" \
+  "The test gate is still failing after your review — the failing step was: gate-tests-late." \
+  "fix: the fix round is told the step of the round that just failed"
+has_not "$(cat "$PROMPTS")" \
+  "The test gate is still failing after your review — the failing step was: gate-tests." \
+  "fix: not the one the review prompt was built from"
+file_has "$PROMPTS" "current status: fail — the failing step was: gate-tests)" \
+  "fix: while the review prompt still carries round 1's, which is when it was written"
+check "fix: and the standing extract names the last round that actually ran" \
+  "$(sed -n 1p "$ROOT/greenapp-gate-ctx-fix/.harness/gate-latest.log")" \
+  "=== gate round 3 ==="
+printf 'notes\n' > "$CODEX_MODE"
 TEST_GATE_CMD=true
 
 # ---------------------------------------------------------------------------
