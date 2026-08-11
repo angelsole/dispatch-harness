@@ -172,6 +172,8 @@ cat > "$FAKES/gate-wide" <<'EOF'
 #!/usr/bin/env bash
 perl -e 'print "x" x 10000, "\n"'
 perl -e 'print "\xc3\xa9" x 3000, "\n"'
+printf 'ordinary [clipped: this line is 123 characters long]\n'
+perl -e 'print "A", "\x80" x 10000, "\n"'
 EOF
 
 chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/curl" "$FAKES/gh" \
@@ -398,7 +400,7 @@ echo "== the gate output the models read is bounded and self-describing =="
 # Counts characters, not bytes: a clamp that landed at 2000 BYTES on the
 # two-byte line below would look compliant to a byte ruler and be broken.
 widest() {  # $1 = file; prints the longest line's length in characters
-  perl -MEncode -ne 'chomp; my $n = length(Encode::decode("UTF-8", $_));
+  perl -MEncode -ne 'chomp; my $n = length(Encode::decode("UTF-8", $_, Encode::FB_DEFAULT));
     $m = $n if $n > $m; END { print $m + 0, "\n" }' "$1"
 }
 
@@ -422,7 +424,7 @@ file_has "$LATEST" "failed step: gate-tests" \
 file_has "$LATEST" "shown: the last 100 of $TOTAL lines" \
   "extract: and how much of the log this is, shown against the real total"
 check "extract: the tail depth is unchanged — 100 lines below the header" \
-  "$(awk 'f { n++ } /^=== gate output follows ===$/ { f = 1 } END { print n + 0 }' "$LATEST")" \
+  "$(LC_ALL=C awk 'f { n++ } /^=== gate output follows ===$/ { f = 1 } END { print n + 0 }' "$LATEST")" \
   "100"
 check "extract: and it is the END of the log, as it always was" \
   "$(tail -1 "$LATEST")" "tests: 1 failing"
@@ -435,8 +437,12 @@ check "clamp: no line reaches the reviewer wider than the 2000-character ceiling
   "$(widest "$LATEST")" "2000"
 file_has "$LATEST" "[clipped: this line is 10000 characters long]" \
   "clamp: and a cut line says it was cut, and how much line there was"
-file_has "$LATEST" "clipped: 2 line(s) over 2000 characters, each marked inline" \
+file_has "$LATEST" "clipped: 3 line(s) over 2000 characters, each marked inline" \
   "clamp: the header counts the cuts too"
+file_has "$LATEST" "ordinary [clipped: this line is 123 characters long]" \
+  "clamp: a genuine marker-like log line is preserved"
+has_not "$(cat "$LATEST")" "clipped: 4 line(s)" \
+  "clamp: a genuine marker-like log line is not counted as a cut"
 # The 2000-character mark falls mid-character on this line. Strip the marker and
 # what remains must be whole two-byte characters — `cut -c` would leave a stray
 # lead byte here.
@@ -445,10 +451,16 @@ check "clamp: a multi-byte line is cut between characters, never inside one" \
      s/ \[clipped: this line is [0-9]+ characters long\]\z//;
      print /\A(?:\xc3\xa9)+\z/ ? "whole" : "split"; exit' "$LATEST")" \
   "whole"
+# Malformed input must not let a long line escape the ceiling either. The old
+# grouping of a lead byte plus every following continuation byte treated this
+# entire line as one unit; the replacement-aware ruler above counts each stray
+# byte as one display character.
+check "clamp: malformed bytes cannot reopen the width hole" \
+  "$(LC_ALL=C grep -cF '[clipped: this line is 10001 characters long]' "$LATEST")" "1"
 # The raw log keeps its promise while the extract keeps the ceiling.
 check "clamp: the run dir's own log still holds the line at full width" \
-  "$(awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$RUN/gate-1.log")" \
-  "10000"
+  "$(LC_ALL=C awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$RUN/gate-1.log")" \
+  "10001"
 
 # The whole point of isolating the failing step: hand it over.
 file_has "$PROMPTS" "current status: fail — the failing step was: gate-tests)" \
@@ -472,6 +484,12 @@ has "$(sed -n 3p "$WIDESTEP")" "failed step: gate-tests --pad=xxx" \
   "wide step: the header still names the step, just bounded"
 has "$(sed -n 3p "$WIDESTEP")" "characters long]" \
   "wide step: and says where it cut it"
+# The prompt quotes the same operator-controlled command. Bounding only the file
+# would leave the same context hole open immediately beside it.
+file_has "$PROMPTS" "current status: fail — the failing step was: gate-tests --pad=xxx" \
+  "wide step: the reviewer prompt still identifies the long failing step"
+file_has "$PROMPTS" "characters long])" \
+  "wide step: and bounds that copy with the same disclosed marker"
 # Bounding the models' copy must not bound the record readers parse.
 check "wide step: gate-rounds.log still carries the step at full length" \
   "$(result '.metrics.gate_rounds[0].failed_step' | wc -c | tr -d ' ')" "3018"

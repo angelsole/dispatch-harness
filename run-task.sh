@@ -1070,25 +1070,42 @@ GATE_LINE_CHARS=2000
 #
 # perl, because the obvious tools are all byte-based: GNU `cut -c` is `cut -b`
 # in disguise, awk's substr counts bytes under LC_ALL=C, and either leaves half
-# a multi-byte character at the cut. No decoding happens here either. Every byte
-# string splits uniquely into a non-continuation byte followed by its
-# continuation bytes, so counting those units counts codepoints, and a log that
-# is partly binary counts one unit per stray byte instead of failing. Lines
-# inside the ceiling are passed through untouched, byte for byte, which is still
-# the overwhelmingly common case (and the length test that skips the scan is
-# sound because a line can never hold more characters than bytes).
-gate_clamp_lines() {  # stdin -> stdout; $1 = max characters per line
+# a multi-byte character at the cut. No decoding happens here either. The regex
+# recognizes every valid UTF-8 scalar as one unit and every malformed byte as
+# one unit, so a partly binary log remains bounded without cutting a valid
+# multi-byte character in half. Lines inside the ceiling are passed through
+# untouched, byte for byte, which is still the overwhelmingly common case (and
+# the length test that skips the scan is sound because a line can never hold
+# more characters than bytes).
+gate_clamp_lines() {  # stdin -> stdout; $1 = max chars, optional $2 = clip-count file
   perl -e '
-    my $max = shift @ARGV;
+    my ($max, $count_file) = @ARGV;
+    my $clipped = 0;
     while (defined(my $line = <STDIN>)) {
       my $nl = ($line =~ s/\n\z//) ? "\n" : "";
       if (length($line) <= $max) { print $line, $nl; next; }
-      my @c = $line =~ /([^\x80-\xBF][\x80-\xBF]*|[\x80-\xBF])/g;
+      my @c = $line =~ /(
+          [\x00-\x7F]
+        | [\xC2-\xDF][\x80-\xBF]
+        | \xE0[\xA0-\xBF][\x80-\xBF]
+        | [\xE1-\xEC\xEE-\xEF][\x80-\xBF]{2}
+        | \xED[\x80-\x9F][\x80-\xBF]
+        | \xF0[\x90-\xBF][\x80-\xBF]{2}
+        | [\xF1-\xF3][\x80-\xBF]{3}
+        | \xF4[\x80-\x8F][\x80-\xBF]{2}
+        | [\x80-\xFF]
+      )/gx;
       if (@c <= $max) { print $line, $nl; next; }
       my $mark = sprintf(" [clipped: this line is %d characters long]", scalar @c);
       print join("", @c[0 .. $max - length($mark) - 1]), $mark, $nl;
+      $clipped++;
     }
-  ' "$1"
+    if (length($count_file)) {
+      open(my $count, ">", $count_file) or die "open $count_file: $!";
+      print {$count} "$clipped\n";
+      close($count) or die "close $count_file: $!";
+    }
+  ' "$1" "${2-}"
 }
 
 # The model-facing copy of a gate round: the raw log's tail, clipped, behind a
@@ -1103,13 +1120,14 @@ gate_clamp_lines() {  # stdin -> stdout; $1 = max characters per line
 # worktree and outside both the worker and the review sandbox, so pointing there
 # would send the model after a file it cannot open.
 gate_write_latest() {  # $1 = round, $2 = pass|fail, $3 = failed step, $4 = source log, $5 = destination
-  local total shown clipped body="$5.partial"
-  tail -n "$GATE_TAIL_LINES" "$4" | gate_clamp_lines "$GATE_LINE_CHARS" > "$body"
+  local total shown clipped body="$5.partial" clip_count="$5.clipped.partial"
+  tail -n "$GATE_TAIL_LINES" "$4" \
+    | gate_clamp_lines "$GATE_LINE_CHARS" "$clip_count" > "$body"
   # NR, not `wc -l`: a gate whose last line has no newline still printed it, and
   # a count that dropped it would understate what was cut.
-  total=$(awk 'END { print NR + 0 }' "$4")
-  shown=$(awk 'END { print NR + 0 }' "$body")
-  clipped=$(grep -c ' \[clipped: this line is [0-9]* characters long\]$' "$body" || true)
+  total=$(LC_ALL=C awk 'END { print NR + 0 }' "$4")
+  shown=$(LC_ALL=C awk 'END { print NR + 0 }' "$body")
+  clipped=$(cat "$clip_count")
   {
     # The header goes through the same clamp as the body, so the ceiling holds
     # for every line in the file without anyone having to reason about which
@@ -1136,7 +1154,7 @@ gate_write_latest() {  # $1 = round, $2 = pass|fail, $3 = failed step, $4 = sour
     } | gate_clamp_lines "$GATE_LINE_CHARS"
     cat "$body"
   } > "$5"
-  rm -f "$body"
+  rm -f "$body" "$clip_count"
 }
 
 run_gate() {
@@ -1172,10 +1190,14 @@ $GATE_CMD"
 # The failing step in the words the model-facing prompts use, or nothing at all
 # when there is none to name. The harness has known this fact since the round
 # ended and kept it to itself; both models used to spend paid turns re-deriving
-# it from a tail that often does not even contain it.
+# it from a tail that often does not even contain it. Apply the same disclosed
+# ceiling as the extract: the command is unbounded operator input, so quoting it
+# at full length here would reopen the context-width hole beside the bounded
+# file.
 gate_step_clause() {
   [ -n "$GATE_FAILED_STEP" ] || return 0
-  printf ' — the failing step was: %s' "$GATE_FAILED_STEP"
+  printf ' — the failing step was: %s\n' "$GATE_FAILED_STEP" \
+    | gate_clamp_lines "$GATE_LINE_CHARS"
 }
 
 # A round the pipeline deliberately did not run, because the tree it would have
