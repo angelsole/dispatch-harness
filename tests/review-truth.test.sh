@@ -185,8 +185,13 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
   : > "$CODEX_ARGV"; : > "$CODEX_ARGS"; : > "$CODEX_HOMES"
+  # The fallback account is scrubbed for the same reason CODEX_HOME is: it is a
+  # documented operator knob, so a machine that has one configured failed the
+  # arms below that are about having nowhere else to go. The overrides can still
+  # set it — env applies -u before its own assignments.
   # shellcheck disable=SC2086
-  env -u CODEX_HOME HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  env -u CODEX_HOME -u HARNESS_CODEX_HOME_FALLBACK \
+      HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       TEST_GATE_CMD="$TEST_GATE_CMD" \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=review-truth-test \
