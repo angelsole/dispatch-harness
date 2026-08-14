@@ -62,6 +62,14 @@
   --shop-arcade: #7fd4ec;
   --shop-repair: #9fe8b8;
 
+  /* The lettering on that street. The page's monospace stack carries no CJK
+     family, so the five glyphs this city is signed with would fall to whatever
+     the OS reached for last — which at sign size is a smear rather than strokes.
+     Declared once and applied only to the sign elements: no bundled font, no
+     build step, and every other surface stays the terminal face the room reads. */
+  --cjk: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC",
+         "Microsoft YaHei", sans-serif;
+
   --accent: var(--codex);
   --ground: 9vh;         /* how far above the bottom edge the towers stand */
 
@@ -361,6 +369,12 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   justify-content: space-evenly;
   gap: 1.4vw;
   padding: 0 3vw;
+  /* The skyline is a fixed sheet over the whole upper city, and everything in it
+     that is not a tower is empty air. It hands that air back, so the one
+     hoverable thing behind it — the district's dedication — is reachable with a
+     pointer; the towers take their own hover back below, for the desk browser
+     that reads a shaft's title. */
+  pointer-events: none;
 }
 /* No live runs, no towers: what is left is the dark city in the rain, which is
    the whole point. Nothing renders an empty state. */
@@ -436,6 +450,7 @@ body[data-idle="rest"] .rest { display: block; }
   height: 50%;
   flex: 0 1 auto;
   min-width: 0;
+  pointer-events: auto;   /* a tower is hoverable; the air between towers is not */
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -778,10 +793,15 @@ body[data-idle="rest"] .rest { display: block; }
   --col: 0.2rem;
   --crew: #e8cfa6;
   --age: 0;
+  /* How wide this building actually is, named rather than inlined: everything
+     hung on the frontage is sized off it instead of in rem, which is the only
+     way a sign on a low deck on pylons and a sign on a spire both stay signs. */
+  --facade: calc(2.9rem * var(--deep) * var(--wide));
+  --shop: var(--shop-diner);
   position: absolute;
   bottom: 0;
   left: var(--x);
-  width: calc(2.9rem * var(--deep) * var(--wide));
+  width: var(--facade);
   height: calc((3.4vh + var(--storeys) * 1.9vh) * var(--deep) * var(--tall));
   transform: translate3d(-50%, 0, 0);
   /* Fast-forwarded by --age exactly like the completion moment: a browser
@@ -868,7 +888,6 @@ body[data-idle="rest"] .rest { display: block; }
    under a narrow spire gets a narrow sign, and no sign ever sticks out past the
    building paying for it. */
 .block__neon {
-  --shop: var(--shop-diner);
   display: none;
   position: absolute;
   left: calc(var(--bay, 0) * 19%);
@@ -884,10 +903,53 @@ body[data-idle="rest"] .rest { display: block; }
   animation: neon-hum 23s linear infinite;
   animation-delay: calc(var(--flicker, 0) * -1s);
 }
-.block[data-shop="noodle"] .block__neon { --shop: var(--shop-noodle); }
-.block[data-shop="diner"]  .block__neon { --shop: var(--shop-diner); }
-.block[data-shop="arcade"] .block__neon { --shop: var(--shop-arcade); }
-.block[data-shop="repair"] .block__neon { --shop: var(--shop-repair); }
+/* The shop's colour is the building's, not the tube's: the tube says which shop
+   it is in light, and the glyph beside it says the same thing in a word. Two
+   fixtures on one frontage, so they read one variable. */
+.block[data-shop="noodle"] { --shop: var(--shop-noodle); }
+.block[data-shop="diner"]  { --shop: var(--shop-diner); }
+.block[data-shop="arcade"] { --shop: var(--shop-arcade); }
+.block[data-shop="repair"] { --shop: var(--shop-repair); }
+
+/* And what the tube is for, in one character: 麵 noodles, 食 a place that feeds
+   you, 樂 an arcade, 修 a repair bench. A hanging vertical sign in the idiom the
+   towers already use — same tube-glow recipe as .tower__sign, at the scale of a
+   shopfront — bracketed to one end of the frontage rather than over a bay, so it
+   is bounded by the building paying for it whichever way it hangs. It follows
+   the tube's own one-in-three rule: a glyph on every building would be a theme
+   park, and the room would stop reading them. */
+.block__glyph {
+  display: none;
+  position: absolute;
+  left: 0;
+  /* Clear of the tube under it, and low enough that the shortest building this
+     district can put up — a three-storey deck on pylons — still has roofline
+     above the sign hanging on it. */
+  bottom: 0.62rem;
+  writing-mode: vertical-rl;
+  font-family: var(--cjk);
+  /* Off the facade, never in rem, and capped: a wide low deck does not get a
+     billboard, and a narrow spire still gets strokes you can tell apart. */
+  font-size: min(0.78rem, var(--facade) * 0.3);
+  line-height: 1;
+  padding: 0.14em 0.18em;
+  color: var(--shop);
+  background: rgba(2, 6, 10, 0.55);
+  border: 1px solid color-mix(in srgb, var(--shop) 34%, transparent);
+  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop) 18%, transparent);
+  text-shadow: 0 0 0.4rem var(--shop),
+               0 0 1.1rem color-mix(in srgb, var(--shop) 55%, transparent);
+}
+/* Which shoulder the bracket is bolted to, off the run id: a street where every
+   sign hangs the same way is a wallpaper sample. */
+.block[data-side="1"] .block__glyph { left: auto; right: 0; }
+.block[data-neon="1"] .block__glyph {
+  display: block;
+  /* Its own tube, so it stumbles on its own beat rather than in unison with the
+     bar under it. */
+  animation: neon-hum 23s linear infinite;
+  animation-delay: calc(var(--hang, 0) * -1s);
+}
 
 /* Occupancy. Three windows per facade keeping their own hours: each one fades up
    and back down over a minute and a half or more, on its own loop length and
@@ -984,6 +1046,72 @@ body[data-idle="rest"] .rest { display: block; }
   box-shadow: 0 0 0.55rem var(--crew);
   animation: sign-cool var(--sign-life) linear forwards;
   animation-delay: calc(var(--age, 0) * -1s);
+}
+
+/* --- the landmark ------------------------------------------------------------
+   One building on this layer is not a ship, and it is the only one that never
+   will be. Ran pays for the subscription every run on this wall is spent from,
+   so the district carries the name the way this city carries any name: a tube on
+   a shoulder. It stands in the back band, taller than the week in front of it and
+   well under the towers above it, lit on a Monday with an empty ledger exactly as
+   it is on a Friday with a full one.
+
+   It borrows the block wholesale — mass, facade grid, lit ground floor — and
+   changes only what a monument changes: it is slimmer and taller, it does not
+   land because it was always there, and it is the one thing on this layer you
+   can actually hover. */
+.block--landmark {
+  --wide: 1.15;
+  --tall: 1.25;
+  --storeys: 16;
+  animation: none;
+  /* The district is inert by design. This is the exception, and the only reason
+     .city hands its empty space back at all. */
+  pointer-events: auto;
+}
+/* A stepped shoulder rather than a slab: the silhouette is what the room reads
+   from the sofa, and this one has to be findable at a glance across a district
+   of sheds and mid-rises. */
+.block--landmark .block__mass {
+  clip-path: polygon(34% 0, 66% 0, 66% 5%, 84% 5%, 84% 13%, 100% 13%,
+                     100% 100%, 0 100%, 0 13%, 16% 13%, 16% 5%, 34% 5%);
+}
+.block--landmark .block__crown::before {
+  left: 50%; width: 0.1rem; height: 1.1rem; margin-left: -0.05rem;
+}
+/* The mast lamp, under the same rule the observatory spire obeys: never red,
+   which belongs to an alarm, and never green, which belongs to a run that just
+   shipped. Warm, small, and never off. */
+.block--landmark .block__crown::after {
+  left: 50%; bottom: 0.98rem; width: 0.24rem; height: 0.24rem; margin-left: -0.12rem;
+  border-radius: 50%;
+  background: var(--shop-diner);
+  box-shadow: 0 0 0.5rem var(--shop-diner);
+}
+/* The dedication: 冉, hung down the shoulder in the same tube-glow recipe as a
+   tower's project sign and sized off the facade rather than in rem, so it is the
+   same sign on a 1280 preview and on the panel across the room. Warm amber out
+   of the street's own palette — red is a run asking for a human, and nothing
+   here is asking for anything. */
+.landmark__sign {
+  --sign: var(--shop-diner);
+  position: absolute;
+  z-index: 2;
+  top: 16%;
+  right: -0.3rem;
+  writing-mode: vertical-rl;
+  font-family: var(--cjk);
+  font-size: min(1.3rem, var(--facade) * 0.52);
+  line-height: 1;
+  padding: 0.34em 0.2em;
+  color: var(--sign);
+  background: rgba(2, 6, 10, 0.6);
+  border: 1px solid color-mix(in srgb, var(--sign) 40%, transparent);
+  box-shadow: 0 0 0.8rem color-mix(in srgb, var(--sign) 22%, transparent);
+  text-shadow: 0 0 0.45rem var(--sign),
+               0 0 1.5rem color-mix(in srgb, var(--sign) 60%, transparent);
+  animation: sign-flicker 16s linear infinite;
+  animation-delay: -7s;   /* off the towers' beat, like every other tube here */
 }
 
 /* Last week, flattened. This SVG group sits before every painted skyline plane,
@@ -1962,8 +2090,11 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
      reduced motion does not make attribution permanent. */
   .block__sign::before { opacity: var(--sign-static, 0); }
   .life[data-tram="1"] .life__tram { opacity: 0.62; }
-  /* Nightlife standing still is still nightlife: the shopfronts, the neon and
-     the occupied windows are facts about the week, not motion, so they stay lit.
+  /* Nightlife standing still is still nightlife: the shopfronts, the neon, the
+     lettering on it and the occupied windows are facts about the week, not
+     motion, so they stay lit. Every sign on this wall is drawn fully lit and only
+     flickers off it, so silencing the flicker leaves the tube on rather than
+     dark — which is why the glyph signs and the dedication need no rule here.
      Only the two things that ARE motion go — a plume that cannot rise is a
      smudge, and a headlight streak that cannot travel is a scratch. */
   .life__vent, .life__car { display: none; }
