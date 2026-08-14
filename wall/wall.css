@@ -789,6 +789,19 @@ body[data-idle="rest"] .rest { display: block; }
   --veil: 0.34;
   --wide: 1;            /* repo family: footprint and proportion */
   --tall: 1;
+  /* Typology: what kind of building this is, on top of what family it belongs
+     to. --form-tall is never above 1, and --jitter-tall never above 1 either:
+     the tallest thing this district can ship is still (family x band x storeys),
+     so the landmark stands clear of the week exactly as it did before. Every
+     form only ever shortens and widens off that ceiling, which is what turns a
+     linear wall of slabs into a mostly-low-rise city. */
+  --form-wide: 1;
+  --form-tall: 1;
+  --form-floor: 7vh;    /* the shortest a building on this street can stand */
+  --eaves: 12%;         /* where this form's roofline starts, for what hangs on it */
+  --grade: 0;
+  --jitter: calc(1 + (var(--grade) - 1.5) * 0.1);
+  --jitter-tall: calc(1 - var(--grade) * 0.05);
   --row: 0.3rem;        /* the facade grid, a storey finer than a tower's */
   --col: 0.2rem;
   --crew: #e8cfa6;
@@ -796,13 +809,17 @@ body[data-idle="rest"] .rest { display: block; }
   /* How wide this building actually is, named rather than inlined: everything
      hung on the frontage is sized off it instead of in rem, which is the only
      way a sign on a low deck on pylons and a sign on a spire both stay signs. */
-  --facade: calc(2.9rem * var(--deep) * var(--wide));
+  --facade: calc(2.9rem * var(--deep) * var(--wide) * var(--form-wide) * var(--jitter));
   --shop: var(--shop-diner);
   position: absolute;
   bottom: 0;
   left: var(--x);
   width: var(--facade);
-  height: calc((3.4vh + var(--storeys) * 1.9vh) * var(--deep) * var(--tall));
+  height: calc((3.4vh + var(--storeys) * 1.9vh) * var(--deep) * var(--tall) * var(--form-tall) * var(--jitter-tall));
+  /* A shopfront row, a hanging glyph sign and three lit windows have to fit on
+     the shortest thing this vocabulary can put up, so a form declares its own
+     floor rather than letting a two-line diff become a kerbstone. */
+  min-height: calc(var(--form-floor) * var(--deep));
   transform: translate3d(-50%, 0, 0);
   /* Fast-forwarded by --age exactly like the completion moment: a browser
      opened at four in the afternoon finds this morning's buildings standing,
@@ -825,6 +842,18 @@ body[data-idle="rest"] .rest { display: block; }
 .block[data-kind="industrial"]  { --wide: 1.55; --tall: 0.74; }
 .block[data-kind="spire"]       { --wide: 0.58; --tall: 1.1; }
 .block[data-kind="infra"]       { --wide: 1.85; --tall: 0.5; }
+
+/* Building typology, drawn per run id in wall.js. The family says whose work
+   this is; the type says what kind of building the street put up for it — and
+   the type is what the room actually reads from the sofa, so it owns the
+   footprint and the roofline. Six of them, weighted low: the district is a city
+   with a couple of towers in it, not a bar chart standing up. */
+.block[data-form="shophouse"] { --form-wide: 1.62; --form-tall: 0.40; --form-floor: 6.5vh; --eaves: 24%; }
+.block[data-form="warehouse"] { --form-wide: 1.86; --form-tall: 0.34; --form-floor: 6vh;   --eaves: 34%; }
+.block[data-form="tank"]      { --form-wide: 1.06; --form-tall: 0.66; --form-floor: 8vh;   --eaves: 18%; }
+.block[data-form="slab"]      { --form-wide: 1;    --form-tall: 0.88; --form-floor: 9vh; }
+.block[data-form="setback"]   { --form-wide: 0.94; --form-tall: 1;    --form-floor: 11vh;  --eaves: 20%; }
+.block[data-form="mast"]      { --form-wide: 0.42; --form-tall: 1;    --form-floor: 12vh;  --eaves: 22%; }
 
 .block__mass {
   position: absolute;
@@ -849,6 +878,33 @@ body[data-idle="rest"] .rest { display: block; }
 }
 .block[data-kind="spire"] .block__mass {
   clip-path: polygon(28% 0, 72% 0, 100% 20%, 100% 100%, 0 100%, 0 20%);
+}
+
+/* And the typology's roofline, which wins where it has one: these are cut deep
+   enough to read as different buildings rather than as the same slab with a
+   different notch in it. `slab` deliberately declares none — it is the district's
+   existing look, so it keeps its family roofline above.
+
+   Every one of these reaches 0% somewhere, and that is where the roof furniture
+   below stands: a chimney over a notch would float in the air. */
+.block[data-form="shophouse"] .block__mass {     /* a low terrace of bays */
+  clip-path: polygon(0 30%, 18% 30%, 18% 14%, 40% 14%, 40% 34%, 62% 34%,
+                     62% 0, 84% 0, 84% 20%, 100% 20%, 100% 100%, 0 100%);
+}
+.block[data-form="warehouse"] .block__mass {     /* five sawtooth bays */
+  clip-path: polygon(0 30%, 0 0, 20% 30%, 20% 0, 40% 30%, 40% 0, 60% 30%, 60% 0,
+                     80% 30%, 80% 0, 100% 30%, 100% 100%, 0 100%);
+}
+.block[data-form="setback"] .block__mass {       /* a tower stepping in as it climbs */
+  clip-path: polygon(0 30%, 14% 30%, 14% 12%, 34% 12%, 34% 0, 72% 0,
+                     72% 16%, 100% 16%, 100% 100%, 0 100%);
+}
+.block[data-form="mast"] .block__mass {          /* thin, shouldered, one antenna */
+  clip-path: polygon(0 18%, 30% 18%, 30% 0, 70% 0, 70% 18%, 100% 18%, 100% 100%, 0 100%);
+}
+.block[data-form="tank"] .block__mass {          /* flat, with a stair head and a plant deck */
+  clip-path: polygon(0 14%, 24% 14%, 24% 6%, 40% 6%, 40% 14%, 54% 14%,
+                     54% 0, 88% 0, 88% 14%, 100% 14%, 100% 100%, 0 100%);
 }
 
 /* The facade is the towers' own window grid at the district's pitch, dimmer:
@@ -968,11 +1024,14 @@ body[data-idle="rest"] .rest { display: block; }
    deck on pylons and a 14-storey slab, and a seeded row in absolute units would
    hang a lit window in the air over the short one. The floor clears the
    shopfront on even the smallest building there is. */
+/* The band they sit in has to clear the deepest roofline this vocabulary cuts —
+   a sawtooth warehouse loses its top third — or a seeded row would put a lit
+   window in the sky above a shed. */
 .block__occupancy i {
   --lamp: var(--win-a);
   position: absolute;
   left: calc(8% + var(--wx, 0) * 12%);
-  bottom: calc(30% + var(--wy, 0) * 14%);
+  bottom: calc(22% + var(--wy, 0) * 10%);
   width: 9%;
   height: 8%;
   background: var(--lamp);
@@ -1025,6 +1084,74 @@ body[data-idle="rest"] .rest { display: block; }
 }
 .block[data-kind="midrise"] .block__crown::before { left: 6%; right: 6%; height: 0.16rem; }
 
+/* Roof furniture per typology, which wins over the family's for the same reason
+   its roofline does. Each piece stands over a part of the roof its clip-path
+   takes to full height, and each is the silhouette the type is named for: two
+   chimneys on a warehouse, a tank on its frame, an antenna on a mast. `slab`
+   again declares none and keeps the family's.
+
+   A form that brings its own furniture replaces the family's outright, so first
+   it clears it: the family rules set `right`, `bottom`, borders and shadows that
+   a form rule has no reason to mention, and an infrastructure deck's cable
+   inherited onto a shophouse aerial is a white bar hanging in the sky. Same
+   specificity as the rules below, so declaration order decides. */
+.block[data-form="shophouse"] .block__crown::before, .block[data-form="shophouse"] .block__crown::after,
+.block[data-form="warehouse"] .block__crown::before, .block[data-form="warehouse"] .block__crown::after,
+.block[data-form="setback"] .block__crown::before, .block[data-form="setback"] .block__crown::after,
+.block[data-form="tank"] .block__crown::before, .block[data-form="tank"] .block__crown::after,
+.block[data-form="mast"] .block__crown::before, .block[data-form="mast"] .block__crown::after {
+  left: auto;
+  right: auto;
+  bottom: 0;
+  margin-left: 0;
+  width: 0;
+  height: 0;
+  background: var(--stone);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.block[data-form="shophouse"] .block__crown::before {
+  left: 64%; width: 16%; height: 0.28rem; border-top: 1px solid var(--edge);
+}
+.block[data-form="shophouse"] .block__crown::after { left: 78%; width: 0.09rem; height: 0.62rem; }
+.block[data-form="warehouse"] .block__crown::before {
+  left: 60%; margin-left: -0.11rem; width: 0.22rem; height: 0.92rem;
+}
+.block[data-form="warehouse"] .block__crown::after {
+  left: 20%; margin-left: -0.08rem; width: 0.16rem; height: 0.56rem;
+}
+.block[data-form="setback"] .block__crown::before {
+  left: 44%; width: 0.1rem; height: 1.1rem;
+}
+.block[data-form="setback"] .block__crown::after {
+  left: 36%; width: 30%; height: 0.2rem; border-top: 1px solid var(--edge);
+}
+/* The water tower this type is named for: a drum standing on an open frame, the
+   legs drawn as gaps in the frame exactly like the infrastructure deck's. */
+.block[data-form="tank"] .block__crown::before {
+  left: 58%; width: 26%; bottom: 0.28rem; height: 0.66rem;
+  /* Lit along the top only, like every mass on this street: three bright sides
+     would make the tank the loudest thing in the district. */
+  border-top: 1px solid var(--edge);
+}
+.block[data-form="tank"] .block__crown::after {
+  left: 61%; width: 20%; height: 0.28rem;
+  background: linear-gradient(90deg,
+    var(--stone) 0 14%, transparent 14% 43%, var(--stone) 43% 57%,
+    transparent 57% 86%, var(--stone) 86% 100%);
+}
+.block[data-form="mast"] .block__crown::before {
+  left: 50%; margin-left: -0.05rem; width: 0.1rem; height: 1.4rem;
+}
+/* The mast lamp, under the rule every fixed light on this wall obeys: never
+   red, which belongs to an alarm, and never green, which belongs to a run that
+   just shipped. */
+.block[data-form="mast"] .block__crown::after {
+  left: 50%; margin-left: -0.11rem; bottom: 1.28rem; width: 0.22rem; height: 0.22rem;
+  border-radius: 50%; background: var(--demo); box-shadow: 0 0 0.45rem var(--demo);
+}
+
 /* Attribution, and the whole of it: a small neon on the building's shoulder in
    the dispatcher's own crew tint, cooling to the district's neutral within
    --sign-life of landing. Nothing else on this layer names anybody, and nothing
@@ -1032,7 +1159,10 @@ body[data-idle="rest"] .rest { display: block; }
 .block__sign {
   position: absolute;
   right: -0.13rem;
-  top: 12%;
+  /* Hung off the form's own roofline rather than a fixed twelve per cent: a
+     shophouse's shoulder is a third of the way down its box, and a tube bolted
+     above it would be a tube bolted to the sky. */
+  top: var(--eaves);
   width: 0.24rem;
   height: 0.76rem;
   background: rgba(150, 205, 190, 0.26);
