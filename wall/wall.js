@@ -45,6 +45,17 @@
   const MALL_AT = 12;
   const TRAM_AT = 20;
   const OCCUPIED = 3;     // windows per building keeping their own hours
+  // The director. A room that has not touched anything for this long gets the
+  // film; the shot bucket is the wall-clock idiom the weather already uses, so
+  // two screens in the same room are cutting roughly together.
+  const CINEMA_IDLE_MS = 90 * 1000;
+  const SHOT_SEED_MS = 10 * 60 * 1000;
+  const MOVE_MIN = 6000, MOVE_MAX = 10000;   // how long the camera takes to arrive
+  const HOLD_MIN = 8000, HOLD_MAX = 20000;   // how long it stays once it has
+  const WIDE_HOLD = 20000;  // the establishing shot holds longest of all
+  const CUT_MS = 700;       // the ease home when somebody touches the room
+  const MAX_ZOOM = 4;       // the lens's ceiling; past this the city is pixels
+  const CREEP = 0.05;       // Ken Burns: how far a held frame drifts on
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -69,6 +80,7 @@
   };
   const STATE_GLYPH = { alarm: 'g-alarm', ready: 'g-done', failed: 'g-failed' };
 
+  const stage = document.getElementById('stage');
   const city = document.getElementById('city');
   const district = document.getElementById('district');
   const ghostLayer = document.getElementById('ghost');
@@ -1081,10 +1093,381 @@
     start();
   }
 
+  // --- the director ---------------------------------------------------------
+  // The wall can film itself. A slow camera holds the whole skyline, then goes
+  // and looks at something living in it — the tower somebody is waiting on, a
+  // noodle shopfront with its 麵 sign lit, a window where a light is still on,
+  // the 冉 landmark — and comes back out. It is ambient: never fast, never
+  // demanding, and gone the instant anybody in the room moves a mouse.
+  //
+  // The camera is ONE transform on the stage. No layer moves on its own, so the
+  // parallax, the weather and the ceremonies keep playing at every zoom, and
+  // the HUD — which is outside the stage — never learns any of this happened.
+  //
+  // Nothing here touches the city's fabric. Where a shot needs a coin flip it
+  // comes off a wall-clock bucket, the same idiom the weather uses; the
+  // buildings, shops and signs stay pure functions of a run id.
+
+  // Everything that decides whether the director is filming, with no DOM in it,
+  // so the whole truth table is one testable function. Reduced motion and an
+  // explicit ?cinema=0 are absolute: neither the key nor the idle timer can
+  // talk its way past them.
+  function wantsCinema(s) {
+    if (s.reduced || s.forced === 'off') return false;
+    if (s.manual !== null) return s.manual;
+    if (s.forced === 'on') return true;
+    return s.idle;
+  }
+
+  function between(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  // A shot is a rect in stage coordinates plus how much of the frame it should
+  // fill and where in that frame its middle belongs; the answer is the one
+  // translate/scale that puts it there. Clamped twice — the zoom to the lens's
+  // ceiling, the pan so the frame is always full of city, which at zoom 1
+  // collapses to the wide shot and is exactly right.
+  function frameFor(rect, view, opts) {
+    const o = opts || {};
+    const ax = o.ax === undefined ? 0.5 : o.ax;
+    const ay = o.ay === undefined ? 0.5 : o.ay;
+    const s = between(Math.min(view.w * (o.fillW || 0.6) / Math.max(1, rect.w),
+                               view.h * (o.fillH || 0.6) / Math.max(1, rect.h)),
+                      1, o.max || MAX_ZOOM);
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    return {
+      s,
+      x: between(view.w * ax - s * cx, view.w * (1 - s), 0),
+      y: between(view.h * ay - s * cy, view.h * (1 - s), 0),
+    };
+  }
+
+  // Ken Burns. A held frame is never quite still: it creeps a little further in
+  // and a little to one side, re-clamped so it cannot creep off the city.
+  function creepFrom(cam, view, dx, dy) {
+    const s = between(cam.s * (1 + CREEP), 1, MAX_ZOOM * 1.02);
+    const cx = (view.w / 2 - cam.x) / cam.s;
+    const cy = (view.h / 2 - cam.y) / cam.s;
+    return {
+      s,
+      x: between(view.w * (0.5 + dx) - s * cx, view.w * (1 - s), 0),
+      y: between(view.h * (0.5 + dy) - s * cy, view.h * (1 - s), 0),
+    };
+  }
+
+  // Which tower the camera would rather be looking at: one asking for a human
+  // beats one working, which beats one that has only just shipped. A tower with
+  // none of those in it is not a shot.
+  const SHOT_RANK = { alarm: 3, active: 2, ready: 1 };
+  function towerRank(states) {
+    let rank = 0;
+    for (const state of states) rank = Math.max(rank, SHOT_RANK[state] || 0);
+    return rank;
+  }
+
+  let filming = false;
+  let shotTimer = 0;
+  let wideNext = true;      // the wide shot is what every close shot returns to
+  let reel = null;          // the seeded draw this bucket's shot list comes from
+  let reelBucket = -1;
+  let queue = [];
+  let idle = false;
+  let idleTimer = 0;
+  let manual = null;        // what the `c` key last said, if anything
+  const forced = (() => {
+    const flag = new URLSearchParams(window.location.search).get('cinema');
+    return flag === '1' ? 'on' : flag === '0' ? 'off' : null;
+  })();
+
+  // Shot variety off the wall clock rather than off a counter, so two screens
+  // opened in the same room are cutting roughly the same film without a byte
+  // passing between them — and tomorrow's reel is not today's.
+  function shotSeed(ms) { return Math.floor(ms / SHOT_SEED_MS) >>> 0; }
+  function draw() {
+    const bucket = shotSeed(Date.now());
+    if (bucket !== reelBucket) { reelBucket = bucket; reel = seededRandom(bucket); }
+    return reel();
+  }
+  const pick = (list) => (list.length ? list[Math.floor(draw() * list.length) % list.length] : null);
+  function shuffled(list) {
+    const out = list.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(draw() * (i + 1)) % (i + 1);
+      const swap = out[i]; out[i] = out[j]; out[j] = swap;
+    }
+    return out;
+  }
+
+  // Where a node is on the stage, with whatever the camera is doing divided
+  // back out of it. Read in one batch per shot — never per frame.
+  function cameraNow() {
+    const t = window.getComputedStyle(stage).transform;
+    if (!t || t === 'none') return { x: 0, y: 0, s: 1 };
+    const n = t.slice(t.indexOf('(') + 1, -1).split(',').map(Number);
+    return n.length === 6 && n[0] ? { x: n[4], y: n[5], s: n[0] } : { x: 0, y: 0, s: 1 };
+  }
+
+  function stageRect(node, cam) {
+    const r = node.getBoundingClientRect();
+    return {
+      x: (r.left - cam.x) / cam.s, y: (r.top - cam.y) / cam.s,
+      w: r.width / cam.s, h: r.height / cam.s,
+    };
+  }
+
+  // How much clear street there is either side of a rect. Negative means a tower
+  // is standing squarely in front of it — the skyline is opaque, so that
+  // building is not on screen however lit it is.
+  function clearanceOf(rect, towers) {
+    let gap = Infinity;
+    for (const t of towers) {
+      gap = Math.min(gap, Math.max(t.x - (rect.x + rect.w), rect.x - (t.x + t.w)));
+    }
+    return gap;
+  }
+
+  const towerRects = (cam) => [...towerEls.values()].map((T) => stageRect(T.root, cam));
+
+  // The district is a plane BEHIND the skyline, so a shopfront squarely behind a
+  // tower is not a shopfront shot, it is a tower shot with a worse frame — and
+  // one merely NEXT to a tower spends half its frame on dark mass. So the room
+  // either side of a frontage is a score, not just a filter, and the street
+  // shots take their pick from the buildings with the most of it. One batch of
+  // rects per cut, never per frame.
+  function onScreenBlocks(cam) {
+    const towers = towerRects(cam);
+    const clear = [];
+    for (const B of blockEls.values()) {
+      const r = stageRect(B.root, cam);
+      const gap = clearanceOf(r, towers);
+      if (gap > 0) clear.push({ B, r, gap });
+    }
+    return clear.sort((a, b) => b.gap - a.gap);
+  }
+
+  // The roomiest of them, and never fewer than three to choose between: enough
+  // that the street shot is not the same corner every night, not so many that it
+  // picks a doorway with a tower leaning over it.
+  const roomiest = (list) => list.slice(0, Math.max(3, Math.ceil(list.length / 2)));
+
+  const span = (lo, hi) => lo + draw() * (hi - lo);
+
+  // --- the shot vocabulary ----------------------------------------------------
+  // Each of these returns a framing, or null when the city is not currently
+  // offering that shot: an empty district is skyline and towers only, and the
+  // director simply does not cut to a street that is not there.
+
+  function wideShot(view) {
+    const cam = { s: 1, x: 0, y: 0 };
+    return {
+      kind: 'establishing', cam, move: span(MOVE_MIN, MOVE_MAX), hold: WIDE_HOLD,
+      // Even the wide shot breathes: a hair of push-in over the longest hold on
+      // the wall, which is what stops it reading as a paused video.
+      creep: creepFrom(cam, view, draw() * 0.05 - 0.025, 0.01),
+    };
+  }
+
+  function towerShot(view, cam) {
+    let best = null, bestRank = 0;
+    for (const T of towerEls.values()) {
+      const rank = towerRank([...T.shaftEls.values()].map((S) => S.state));
+      if (rank > bestRank || (rank === bestRank && rank > 0 && draw() < 0.35)) {
+        best = T; bestRank = rank;
+      }
+    }
+    if (!best) return null;
+    const r = stageRect(best.root, cam);
+    // The tower's shoulders and its top half — a whole tower framed head to foot
+    // is the wide shot with fewer buildings in it. What is worth going in for is
+    // up here: the crown, the beacon, the cars near the top of the climb, and
+    // the vertical neon sign, which hangs off the mass and so needs the width.
+    const rect = { x: r.x - r.w * 0.45, y: r.y - r.h * 0.04, w: r.w * 1.9, h: r.h * 0.58 };
+    return shot('tower', frameFor(rect, view, { fillW: 0.6, fillH: 0.8, ax: 0.55, ay: 0.46 }), view);
+  }
+
+  function streetShot(view, cam) {
+    // A shopfront with a glyph over it, at street level. The tube that only one
+    // building in three carries is the better shot, so it is asked for first.
+    const shops = roomiest(onScreenBlocks(cam).filter((b) => b.B.root.dataset.shop));
+    if (!shops.length) return null;
+    const neon = shops.filter((b) => b.B.root.dataset.neon === '1');
+    const found = pick(neon.length ? neon : shops);
+    // The subject is the sign, not the building: the hanging glyph is the one
+    // thing at street level that says what is down there, so the camera goes to
+    // it and takes the shopfront row and the wet tarmac in with it. Everything
+    // out on that tarmac — a walker, a car, the tram — passes through the
+    // bottom of the frame rather than under it.
+    const g = stageRect(found.B.glyph, cam);
+    const top = g.y - g.h * 1.6;
+    const rect = {
+      x: g.x + g.w / 2 - 55, w: 110,
+      y: top, h: Math.max(24, view.h - top),
+    };
+    return shot('street', frameFor(rect, view, { fillW: 0.5, fillH: 0.92, ax: 0.5, ay: 0.5 }), view);
+  }
+
+  function windowShot(view, cam) {
+    // One window with somebody still behind it. The panes keep their own hours,
+    // so the shot asks the ones that are lit at this minute — on the largest
+    // facade the skyline is not standing in front of, because a close shot wants
+    // a wall of building around the light rather than a roofline.
+    const facades = onScreenBlocks(cam).sort((a, b) => b.r.w * b.r.h - a.r.w * a.r.h);
+    let found = null;
+    for (const b of facades) {
+      const lit = b.B.occupants
+        .map((node) => ({ node, lum: Number(window.getComputedStyle(node).opacity) }))
+        .filter((p) => p.lum > 0.45)
+        .sort((p, q) => q.lum - p.lum);
+      if (lit.length) { found = { b, pane: lit[0].node }; break; }
+    }
+    if (!found) return null;
+    const r = stageRect(found.pane, cam);
+    // The facade decides the width and the lit pane decides the height: a window
+    // this small is never going to fill a frame, so what the shot frames is the
+    // wall it is burning in, with the light itself on the centre line.
+    const rect = {
+      x: found.b.r.x + found.b.r.w / 2 - found.b.r.w * 1.1, w: found.b.r.w * 2.2,
+      y: r.y + r.h / 2 - 34, h: 68,
+    };
+    return shot('window', frameFor(rect, view, { fillW: 0.55, fillH: 0.42, ax: 0.5, ay: 0.5 }), view);
+  }
+
+  function landmarkShot(view, cam) {
+    const node = district.querySelector('.block--landmark');
+    if (!node) return null;
+    const r = stageRect(node, cam);
+    // The dedication stands in the back band, so on a busy skyline a tower can
+    // be squarely in front of it. Filming that is filming the tower: when the
+    // 冉 sign is not on screen there is no landmark shot, and the reel moves on.
+    if (clearanceOf(r, towerRects(cam)) <= 0) return null;
+    // Its top two thirds — the stepped shoulder, the mast lamp and the sign —
+    // held wide enough that the monument has district either side of it.
+    const rect = { x: r.x + r.w / 2 - r.w * 1.6, w: r.w * 3.2, y: r.y - r.h * 0.08, h: r.h * 0.66 };
+    return shot('landmark', frameFor(rect, view, { fillW: 0.44, fillH: 0.7, ax: 0.5, ay: 0.48 }), view);
+  }
+
+  // A close shot's timing, one place: the move eases in over seconds, the hold
+  // is long, and the drift across that hold is small and always inward.
+  function shot(kind, cam, view) {
+    return {
+      kind, cam,
+      move: span(MOVE_MIN, MOVE_MAX),
+      hold: span(HOLD_MIN, HOLD_MAX),
+      creep: creepFrom(cam, view, draw() * 0.06 - 0.03, draw() * 0.04 - 0.02),
+    };
+  }
+
+  const SHOTS = { tower: towerShot, street: streetShot, window: windowShot, landmark: landmarkShot };
+
+  function detailShot(view, cam) {
+    if (!queue.length) {
+      // One rotation of what the city can currently offer, shuffled. The
+      // landmark is deliberately not in every rotation — a dedication the camera
+      // visits every ninety seconds stops being a dedication.
+      const kinds = ['tower', 'street', 'window'];
+      if (draw() < 0.45) kinds.push('landmark');
+      queue = shuffled(kinds);
+    }
+    while (queue.length) {
+      const found = SHOTS[queue.shift()](view, cam);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // --- the loop ---------------------------------------------------------------
+
+  function moveCamera(cam, ms, ease) {
+    stage.style.transition = 'transform ' + Math.round(ms) + 'ms ' + ease;
+    stage.style.transform = 'translate(' + cam.x.toFixed(2) + 'px, ' + cam.y.toFixed(2)
+      + 'px) scale(' + cam.s.toFixed(4) + ')';
+  }
+
+  function nextShot() {
+    if (!filming) return;
+    const view = { w: stage.clientWidth, h: stage.clientHeight };
+    // One read of where the camera currently is, shared by every rect this cut
+    // measures: the shot is planned from a single frame of the DOM.
+    const cam = cameraNow();
+    const next = (wideNext ? null : detailShot(view, cam)) || wideShot(view);
+    // Every close shot is bracketed by the wide one; a rotation that ran out of
+    // live candidates just gets another establishing hold, which is the right
+    // answer for a city with nothing in it.
+    wideNext = next.kind !== 'establishing';
+    document.body.dataset.shot = next.kind;
+    // Seconds of easing toward where the camera already is would be seconds of
+    // nothing — which is exactly what the first cut of the film would be, since
+    // it opens on the wide shot the wall is already showing. Go straight to the
+    // hold instead, and let the drift be the first thing that moves.
+    const move = Math.abs(cam.s - next.cam.s) < 0.005
+      && Math.abs(cam.x - next.cam.x) < 2 && Math.abs(cam.y - next.cam.y) < 2 ? 0 : next.move;
+    moveCamera(next.cam, move, 'cubic-bezier(0.45, 0, 0.25, 1)');
+    shotTimer = setTimeout(() => {
+      if (!filming) return;
+      moveCamera(next.creep, next.hold, 'linear');
+      shotTimer = setTimeout(nextShot, next.hold);
+    }, move);
+  }
+
+  function syncCinema() {
+    const want = wantsCinema({ reduced: still.matches, forced, manual, idle });
+    if (want === filming) return;
+    filming = want;
+    clearTimeout(shotTimer);
+    shotTimer = 0;
+    document.body.dataset.cinema = want ? '1' : '0';
+    if (want) {
+      wideNext = true;
+      queue = [];
+      nextShot();
+      return;
+    }
+    // Somebody is in the room. Come home quickly and get out of the way.
+    delete document.body.dataset.shot;
+    moveCamera({ s: 1, x: 0, y: 0 }, CUT_MS, 'cubic-bezier(0.22, 0.61, 0.36, 1)');
+  }
+
+  // Any pointer or key resets the idle clock, and — when the director was only
+  // running because the room was quiet — ends the film inside a second.
+  function stirred() {
+    idle = false;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { idle = true; syncCinema(); }, CINEMA_IDLE_MS);
+    syncCinema();
+  }
+
+  function director() {
+    document.body.dataset.cinema = '0';
+    for (const ev of ['pointermove', 'pointerdown', 'wheel', 'keydown', 'touchstart']) {
+      window.addEventListener(ev, stirred, { passive: true });
+    }
+    window.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'c' && ev.key !== 'C') return;
+      // The two off-switches are absolute — the key cannot argue with either.
+      if (still.matches || forced === 'off') return;
+      manual = !filming;
+      syncCinema();
+    });
+    // A room that turns motion off mid-film gets the wide shot back at once.
+    still.addEventListener('change', syncCinema);
+    // A resized wall re-frames rather than holding a shot measured for the old
+    // one. Resizing is not somebody asking for the wall, so it never disengages.
+    let reframe = 0;
+    window.addEventListener('resize', () => {
+      if (!filming) return;
+      clearTimeout(reframe);
+      reframe = setTimeout(() => { clearTimeout(shotTimer); nextShot(); }, 400);
+    });
+    stirred();
+  }
+
+  // --- start of shift -----------------------------------------------------------
+
   render();
   connect();
   rain();
   paintSky();
+  director();
   // A room that turns motion off mid-shift gets the static sky back too.
   still.addEventListener('change', paintSky);
   setInterval(tick, 1000);
