@@ -144,10 +144,34 @@
        or types. An empty last week leaves this group empty and hidden. -->
   <g class="ghost" id="ghost" aria-hidden="true" hidden></g>
 
-  <!-- far skyline: flat, hazy, pinpricked with windows -->
+  <!-- Far skyline: the back-city, hazy and pinpricked with windows. One path, one
+       line per building or cluster, read left to right along the rooftops and
+       closed along the bottom — so a low line here is a low-rise row and a deep
+       one is a genuine valley with sky in it. The mix is a real city's: long
+       terraces, a sawtooth warehouse row, mid-rises with setbacks and a water
+       tower, a gasometer drum, two masts, and exactly one skyscraper cluster. -->
   <g class="sky__far">
     <g fill="url(#far)" opacity="0.85">
-      <path id="farline" d="M0 900V656h72v-52h44v52h58v-96h40v96h74v-64h96v64h58v-118h36v118h84v-40h70v40h60v-86h48v86h78v-52h64v52h72v-108h34v108h96v-70h58v70h74v-44h52v44h80v-92h40v92h92v900Z"/>
+      <path id="farline" d="M-60 900
+        V796 H24 V782 H30 V812 H70 L86 786 H104 V800 H150
+        V774 H162 V766 H165 V774 H180 V802 H206
+        V782 H212 V750 L234 782 V750 L256 782 V750 L278 782 V750 L300 782 H316
+        V736 H352 V712 H392
+        V656 H404 V632 H456 V604 H460 V596 H463 V604 H480 V632 H500
+        V668 H540
+        V736 H548 L564 676 H618 L634 736 H640
+        V748 H702 V470 H707 V748 H712
+        V758 H790 V806 H860
+        V520 H886 V470 H910 V430 H922 V386 H926 V430 H934 V478 H952 V540 H1000
+        V700 H1050 V664 H1064 V690 H1120
+        V596 H1140 V548 H1178 V520 H1188 V560 H1196 V620 H1210
+        V748 H1268 V790 H1330
+        V786 H1336 V756 L1358 786 V756 L1380 786 V756 L1402 786 H1420
+        V722 H1466 V680 H1478 V712 H1520
+        V618 H1546 V596 H1556 V640 H1570
+        V700 H1584 L1604 742 H1620
+        V774 H1636 V620 H1640 V774 H1660
+        V900 Z"/>
     </g>
     <use href="#farline" fill="url(#farlights)" opacity="0.32"/>
   </g>
@@ -156,18 +180,57 @@
     <path d="M0 700h1600M0 760h1600"/>
   </g>
 
-  <!-- mid block: closer, darker, its windows a touch larger -->
+  <!-- Mid block: closer, darker, its windows a touch larger. Same reading order,
+       shorter band. This is the plane the district stands nearest, so it carries
+       the two East-Asian accents that echo the 冉 landmark and the shopfront
+       glyphs: a three-tier pagoda roof with flared eaves, sitting where the
+       landmark does. Silhouette only — no lettering anywhere in here. -->
   <g class="sky__mid">
     <g fill="url(#mid)">
-      <path id="midline" d="M-40 900V742h64v-38h50v38h92v-60h56v60h118v-32h86v32h142v-74h48v74h112v-46h94v46h148v-66h60v66h132v-40h98v40h124v-58h72v58h132v-30h96v30h116v900Z"/>
+      <path id="midline" d="M-80 900
+        V806 H24 V778 H86 V820 H150
+        V730 H196 V706 H202 V698 H205 V706 H222 V730 H230
+        V762 H262
+        V726 H253 L268 706 H261 L275 688 H269 L282 672 H288 V662 H291 V672 H296
+        L309 688 H303 L317 706 H310 L325 726 H316 V762 H356
+        V782 H420 V736 H470 V700 H484 V748 H540
+        V590 H560 V546 H600 V510 H604 V462 H608 V510 H614 V546 H618 V606 H630
+        V726 H690 V790 H760
+        V786 H766 V754 L788 786 V754 L810 786 V754 L832 786 H850
+        V712 H900 V672 H914 V706 H960
+        V568 H970 V500 H974 V568 H982 V706 H990
+        V752 H1050 V800 H1120
+        V736 H1160 V690 H1176 V716 H1220 V664 H1228 V608 H1232 V664 H1236 V712 H1260
+        V748 H1268 L1284 690 H1322 L1338 748 H1346
+        V776 H1400
+        V722 H1440 V698 H1444 V690 H1447 V698 H1462 V722 H1470
+        V764 H1520 V812 H1580 V748 H1680
+        V900 Z"/>
     </g>
     <use href="#midline" fill="url(#farlights)" opacity="0.42"/>
   </g>
 
-  <!-- near backdrop: the block the project towers stand on -->
+  <!-- Near backdrop: the block the project towers stand on. Lowest band and pure
+       silhouette — no window pattern reaches this plane — so it is where the
+       strongest shapes go: shed rows under sawtooth roofs, a water tower, a mast,
+       and a capped gate whose posts carry the same flare as the pagoda behind. -->
   <g class="sky__near">
     <g fill="url(#near)">
-      <path d="M0 900V784h130v-44h86v44h150v-70h72v70h180v-36h120v36h210v-58h90v58h180v-40h124v40h258v116Z"/>
+      <path d="M-100 900
+        V800 H60 V824 H140
+        V812 H146 V782 L168 812 V782 L190 812 V782 L212 812 H230
+        V772 H300 V740 H310 V690 H314 V740 H316 V784 H380
+        H386 V706 H376 V698 H396 V712 H392 V744 H458 V712 H454 V698 H474 V706 H464 V784 H482
+        V800 H540 V764 H560 V812 H640
+        V776 H660 V744 H664 V736 H667 V744 H682 V776 H700
+        V808 H780 V752 H830 V796 H900
+        V680 H907 V796 H910
+        V770 H990 V818 H1080
+        V806 H1086 V776 L1108 806 V776 L1130 806 V776 L1152 806 H1170
+        V756 H1240 V724 H1256 V768 H1330 V812 H1400
+        V742 H1440 V716 H1444 V648 H1448 V716 H1452 V752 H1480
+        V804 H1560 V776 H1700
+        V900 Z"/>
     </g>
     <!-- wet street: what the back-city leaves smeared on the tarmac -->
     <g fill="url(#wet)" opacity="0.7">
