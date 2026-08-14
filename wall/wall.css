@@ -881,9 +881,9 @@ body[data-idle="rest"] .rest { display: block; }
   transition: opacity var(--spot-in) var(--ease);
 }
 
-/* The one sign on the street that says what the shop actually is. A third of the
-   buildings carry one — all of them would be Piccadilly Circus — and which bay
-   it hangs over, and when its tube stumbles, come off the run id. */
+/* The extra neon tube over one shop bay. A third of the buildings carry one —
+   all of them would be Piccadilly Circus — and which bay it hangs over, and
+   when its tube stumbles, come off the run id. */
 /* Sized off the shopfront row it hangs over rather than in rem: a repair shop
    under a narrow spire gets a narrow sign, and no sign ever sticks out past the
    building paying for it. */
@@ -915,9 +915,9 @@ body[data-idle="rest"] .rest { display: block; }
    you, 樂 an arcade, 修 a repair bench. A hanging vertical sign in the idiom the
    towers already use — same tube-glow recipe as .tower__sign, at the scale of a
    shopfront — bracketed to one end of the frontage rather than over a bay, so it
-   is bounded by the building paying for it whichever way it hangs. It follows
-   the tube's own one-in-three rule: a glyph on every building would be a theme
-   park, and the room would stop reading them. */
+   is bounded by the building paying for it whichever way it hangs. Every
+   data-shop building gets its matching glyph; the brighter bay tube above keeps
+   the established one-in-three density. */
 .block__glyph {
   display: none;
   position: absolute;
@@ -943,7 +943,7 @@ body[data-idle="rest"] .rest { display: block; }
 /* Which shoulder the bracket is bolted to, off the run id: a street where every
    sign hangs the same way is a wallpaper sample. */
 .block[data-side="1"] .block__glyph { left: auto; right: 0; }
-.block[data-neon="1"] .block__glyph {
+.block[data-shop] .block__glyph {
   display: block;
   /* Its own tube, so it stumbles on its own beat rather than in unison with the
      bar under it. */

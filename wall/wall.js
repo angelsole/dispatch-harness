@@ -317,9 +317,8 @@
       occupants.push(pane);
       occupancy.append(pane);
     }
-    // The ground floor: a lit shopfront row under every building, and on some of
-    // them the small neon that says which shop it is — the tube over the bay,
-    // and hanging off it the one character that says what the tube is for.
+    // The ground floor: a lit shopfront row and matching glyph under every
+    // building, plus the established one-in-three neon tube over a bay.
     const shop = el('i', 'block__shop');
     const glyph = el('i', 'block__glyph');
     shop.append(el('i', 'block__neon'), glyph);
@@ -510,7 +509,8 @@
       // What the sign says is the shop, never a draw: the glyph is a translation
       // of the row underneath it, not a second opinion about what is down there.
       glyph: SHOP_GLYPH[shop],
-      // One building in three carries a sign. All of them would be Piccadilly.
+      // One building in three carries the extra neon tube. All of them would be
+      // Piccadilly; the small glyph identifying each shop is separate.
       neon: pick(street, 2, 3) === 0,
       bay: pick(street, 4, BAYS),
       flicker: pick(street, 7, FLICKER_SPREAD),

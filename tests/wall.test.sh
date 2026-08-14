@@ -1189,8 +1189,10 @@ grep_ok "$PAGE_SRC" "const SHOP_GLYPH = { noodle: '麵', diner: '食', arcade: '
   "signage: one character per shop, and the vocabulary is closed"
 grep_ok "$PAGE_SRC" "seedOf(id + '·signage')" \
   "signage: how a sign hangs is its own draw, not a re-slice of the shop's"
-grep_ok "$CSS_SRC" '.block[data-neon="1"] .block__glyph' \
-  "signage: the glyph obeys the tube's own one-in-three rule"
+grep_ok "$CSS_SRC" '.block[data-shop] .block__glyph' \
+  "signage: every shop displays its matching glyph"
+grep_not "$CSS_SRC" '.block[data-neon="1"] .block__glyph' \
+  "signage: glyph visibility is not limited to the one-in-three neon tube"
 grep_ok "$CSS_SRC" 'font-family: var(--cjk);' \
   "signage: the signs declare a CJK stack the page's monospace does not carry"
 CJK_USERS="$(printf '%s\n' "$CSS_SRC" | grep -c 'font-family: var(--cjk);')"
@@ -1320,8 +1322,8 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
     everyKind: Object.keys(kinds).sort().join(','),
     spread: Object.values(kinds).every((n) => n > ids.length / 10),
     bays: [...bays].sort((a, b) => a - b).join(','),
-    // A sign on every building would be Piccadilly Circus; none would be a
-    // ghost town. Somewhere near a third.
+    // The brighter neon tube keeps its established one-in-three density even
+    // though every shop now carries a small glyph.
     someNeon: neon > ids.length / 6 && neon < ids.length / 2,
     windows: plans.every((plan) => plan.windows.length === OCCUPIED),
     inFrame: plans.every((plan) => plan.windows.every((w) =>
@@ -1360,7 +1362,7 @@ check "life: the whole vocabulary of the street gets used" \
   "$(night_of everyKind)" "arcade,diner,noodle,repair"
 check "life: and a ticket range is not one long row of arcades" "$(night_of spread)" "true"
 check "life: shopfronts spread across every bay of a base" "$(night_of bays)" "0,1,2,3,4"
-check "life: about a third of the buildings carry a sign" "$(night_of someNeon)" "true"
+check "life: about a third of the buildings carry a neon tube" "$(night_of someNeon)" "true"
 check "life: every facade gets its fixed handful of lit windows" "$(night_of windows)" "true"
 check "life: and every one of them lands on the building" "$(night_of inFrame)" "true"
 check "life: a facade's hours are not readable off its shop" "$(night_of unlinked)" "true"
