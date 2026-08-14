@@ -885,6 +885,13 @@ if [ -n "$WEEK_PORT" ]; then
   # not a history it went looking for.
   check "ledger: a run that finished last week is not backfilled from its dir" \
     "$(grep -c 'ANCIENT-1' "$WEEK_CITY")" "0"
+  # The district's dedication is drawn by the page and by nothing else. It is not
+  # a run, so it may not appear in the ledger the wall writes, in the city the
+  # server serves, or anywhere else in the snapshot.
+  check "landmark: the dedication is never written to the ledger" \
+    "$(grep -c '冉' "$WEEK_CITY")" "0"
+  check "landmark: nor does it reach the snapshot the server serves" \
+    "$(printf '%s' "$WEEK_API" | grep -c '冉')" "0"
 
   # A skyline the room can learn: the same week drawn by a second process puts
   # every building on the same plot.
@@ -1102,6 +1109,115 @@ for banned in windows sign data-kind; do
   grep_not "$GHOST_CSS" "$banned" "ghost: no [$banned] on last week's silhouette"
 done
 
+# --- the landmark ---------------------------------------------------------------
+# One building in the district is a fixture rather than a ship: the dedication to
+# the person whose subscription every run here is spent from. It is the page's
+# alone — the server has never heard of it — it stands on an empty ledger, and it
+# reads as a landmark rather than as another mid-rise.
+echo "== wall: the district's landmark =="
+grep_ok "$PAGE_SRC" 'if (!landmark) { landmark = makeLandmark(); district.append(landmark); }' \
+  "landmark: the page stands it up itself, once, before the week's first building"
+grep_ok "$PAGE_SRC" '冉 — For Ran, who keeps the lights on' \
+  "landmark: hovering it says who the district is for"
+grep_ok "$PAGE_SRC" "root.title = RAN.dedication" \
+  "landmark: and that dedication is carried as a title the browser will show"
+grep_ok "$CSS_SRC" '.block--landmark {' "landmark: it is a block, not a second kind of building"
+LANDMARK_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.block--landmark \{/, /^\}/')"
+grep_ok "$LANDMARK_CSS" 'pointer-events: auto;' \
+  "landmark: the inert district makes one exception so the tooltip is reachable"
+grep_ok "$LANDMARK_CSS" 'animation: none;' \
+  "landmark: it was standing before the week, so it does not settle into it"
+# Reaching a tooltip behind the skyline means the skyline stops eating pointers.
+# The towers have their own hover — a shaft carries its run id in a title — so
+# the exemption has to hand back the air between towers and nothing else.
+CITY_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.city \{/, /^\}/')"
+grep_ok "$CITY_CSS" 'pointer-events: none;' \
+  "landmark: the skyline hands back the empty air it was covering the district with"
+TOWER_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.tower \{/, /^\}/')"
+grep_ok "$TOWER_CSS" 'pointer-events: auto;' \
+  "landmark: and a tower keeps the hover its shafts' titles depend on"
+SERVER_SRC="$(cat "$SRC/wall/server.js")"
+for banned in 冉 landmark; do
+  grep_not "$SERVER_SRC" "$banned" "landmark: the server carries no [$banned]"
+done
+
+# A landmark that does not read as one is a mid-rise. Compute the heights the
+# page will actually produce, out of the page's own numbers rather than restating
+# them here: taller than anything the week can ship into its own depth band, and
+# still under the shortest tower the skyline stands in front of it.
+lm_var() { sed -n "/^\.block--landmark {/,/^}/s/^ *--$1: \([0-9.]*\);.*/\1/p" "$SRC/wall/wall.css"; }
+BLOCK_H="$(sed -n 's/^ *height: calc((\([0-9.]*\)vh + var(--storeys) \* \([0-9.]*\)vh).*/\1 \2/p' \
+  "$SRC/wall/wall.css" | head -1)"
+BASE_VH="${BLOCK_H% *}"; PITCH_VH="${BLOCK_H#* }"
+DEEP_BACK="$(sed -n 's/^\.block\[data-depth="0"\] { --deep: \([0-9.]*\);.*/\1/p' "$SRC/wall/wall.css")"
+TALL_MAX="$(sed -n 's/^\.block\[data-kind="[a-z]*"\] *{.*--tall: \([0-9.]*\);.*/\1/p' \
+  "$SRC/wall/wall.css" | sort -n | tail -1)"
+STOREYS_MAX="$(sed -n 's/^const STOREYS_MAX = \([0-9]*\);.*/\1/p' "$SRC/wall/server.js")"
+CITY_VH="$(sed -n '/^\.city {/,/^}/s/^ *height: \([0-9.]*\)vh;.*/\1/p' "$SRC/wall/wall.css")"
+# The shortest tower the skyline can stand: the floor of the page's own height
+# ramp, plus the one run it takes to put a tower on the wall at all.
+TOWER_RAMP="$(sed -n 's/.*Math.min(94, \([0-9]*\) + n \* \([0-9]*\)).*/\1 \2/p' \
+  "$SRC/wall/wall.js" | head -1)"
+# Every one of those numbers has to have actually been found: a formula fed an
+# empty field computes zero, and a zero-height landmark would sail through the
+# comparison below rather than failing it.
+GEOM="$BASE_VH|$PITCH_VH|$(lm_var storeys)|$(lm_var tall)|$DEEP_BACK|$TALL_MAX|$STOREYS_MAX|$CITY_VH|$TOWER_RAMP"
+if printf '%s' "$GEOM" | grep -qE '\|\||^\||\|$'; then
+  bad "landmark: the height check reads every number out of the page itself [$GEOM]"
+else
+  ok "landmark: the height check reads every number out of the page itself"
+fi
+HEIGHTS="$(awk -v base="$BASE_VH" -v pitch="$PITCH_VH" \
+  -v ls="$(lm_var storeys)" -v lt="$(lm_var tall)" -v deep="$DEEP_BACK" \
+  -v ms="$STOREYS_MAX" -v mt="$TALL_MAX" -v city="$CITY_VH" \
+  -v floor="${TOWER_RAMP% *}" -v step="${TOWER_RAMP#* }" 'BEGIN {
+    lm = (base + ls * pitch) * deep * lt;
+    neighbour = (base + ms * pitch) * deep * mt;
+    tower = city * (floor + step) / 100;
+    printf "%d %d", (lm > neighbour * 1.15), (lm < tower);
+  }')"
+check "landmark: it stands well clear of anything its own band can ship" \
+  "${HEIGHTS% *}" "1"
+check "landmark: and still under the shortest tower on the skyline" \
+  "${HEIGHTS#* }" "1"
+
+# --- the street's lettering -------------------------------------------------------
+# Five glyphs, and no sixth: the four shops and the dedication. Everything else on
+# this wall is the terminal face it has always been.
+echo "== wall: the signs say something =="
+grep_ok "$PAGE_SRC" "const SHOP_GLYPH = { noodle: '麵', diner: '食', arcade: '樂', repair: '修' };" \
+  "signage: one character per shop, and the vocabulary is closed"
+grep_ok "$PAGE_SRC" "seedOf(id + '·signage')" \
+  "signage: how a sign hangs is its own draw, not a re-slice of the shop's"
+grep_ok "$CSS_SRC" '.block[data-shop] .block__glyph' \
+  "signage: every shop displays its matching glyph"
+grep_not "$CSS_SRC" '.block[data-neon="1"] .block__glyph' \
+  "signage: glyph visibility is not limited to the one-in-three neon tube"
+grep_ok "$CSS_SRC" 'font-family: var(--cjk);' \
+  "signage: the signs declare a CJK stack the page's monospace does not carry"
+CJK_USERS="$(printf '%s\n' "$CSS_SRC" | grep -c 'font-family: var(--cjk);')"
+check "signage: and only the signs do" "$CJK_USERS" "2"
+# Sized off the frontage rather than in rem, both of them: the same lesson the
+# shopfront row already learned, so a sign under a narrow spire is a narrow sign.
+for sign in .block__glyph .landmark__sign; do
+  SIGN_CSS="$(printf '%s\n' "$CSS_SRC" | awk -v k="$sign {" 'index($0, k) == 1, /^\}/')"
+  grep_ok "$SIGN_CSS" 'var(--facade)' "signage: $sign is sized off the facade it hangs on"
+done
+# No sixth glyph anywhere in the page — comments included. Done in node rather
+# than with grep -P, which BSD grep does not have and would silently pass.
+STRAY_GLYPHS="$(node -e '
+  const fs = require("fs");
+  const curated = new Set([..."冉麵食樂修"]);
+  const text = process.argv.slice(1).map((f) => fs.readFileSync(f, "utf8")).join("");
+  const stray = [...new Set([...text])].filter((c) => /[一-鿿]/.test(c) && !curated.has(c));
+  process.stdout.write(stray.join(""));
+' "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js")"
+if [ -z "$STRAY_GLYPHS" ]; then
+  ok "signage: no lettering beyond the five curated glyphs"
+else
+  bad "signage: no lettering beyond the five curated glyphs (found [$STRAY_GLYPHS])"
+fi
+
 # --- the city lives at night ------------------------------------------------------
 # The desk's verdict on the accreting district was that it read as a mausoleum
 # after hours. The fix is that ambient life is no longer milestone-gated: one
@@ -1206,8 +1322,8 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
     everyKind: Object.keys(kinds).sort().join(','),
     spread: Object.values(kinds).every((n) => n > ids.length / 10),
     bays: [...bays].sort((a, b) => a - b).join(','),
-    // A sign on every building would be Piccadilly Circus; none would be a
-    // ghost town. Somewhere near a third.
+    // The brighter neon tube keeps its established one-in-three density even
+    // though every shop now carries a small glyph.
     someNeon: neon > ids.length / 6 && neon < ids.length / 2,
     windows: plans.every((plan) => plan.windows.length === OCCUPIED),
     inFrame: plans.every((plan) => plan.windows.every((w) =>
@@ -1215,6 +1331,14 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
     // The shop and the hours are separate draws: a facade's windows must not be
     // predictable from what is selling downstairs.
     unlinked: new Set(plans.map((plan) => plan.shop + ':' + plan.windows[0].phase)).size > 8,
+    // Every sign says the shop it hangs over, and the vocabulary never grows.
+    glyphMatched: plans.every((plan) => plan.glyph === SHOP_GLYPH[plan.shop]),
+    glyphVocab: [...new Set(plans.map((plan) => plan.glyph))].sort().join(''),
+    // How a sign hangs is a third draw: both sides of a frontage get used, and
+    // which one a building gets is not readable off what is selling under it.
+    sides: [...new Set(plans.map((plan) => plan.side))].sort().join(','),
+    hangUnlinked: new Set(plans.map((plan) =>
+      plan.shop + ':' + plan.side + ':' + plan.hang)).size > 40,
   }));
 JS
 } > "$NIGHT_PROBE"
@@ -1238,10 +1362,16 @@ check "life: the whole vocabulary of the street gets used" \
   "$(night_of everyKind)" "arcade,diner,noodle,repair"
 check "life: and a ticket range is not one long row of arcades" "$(night_of spread)" "true"
 check "life: shopfronts spread across every bay of a base" "$(night_of bays)" "0,1,2,3,4"
-check "life: about a third of the buildings carry a sign" "$(night_of someNeon)" "true"
+check "life: about a third of the buildings carry a neon tube" "$(night_of someNeon)" "true"
 check "life: every facade gets its fixed handful of lit windows" "$(night_of windows)" "true"
 check "life: and every one of them lands on the building" "$(night_of inFrame)" "true"
 check "life: a facade's hours are not readable off its shop" "$(night_of unlinked)" "true"
+check "signage: every sign says the shop it hangs over" "$(night_of glyphMatched)" "true"
+check "signage: and the lettering is the four curated glyphs, no more" \
+  "$(night_of glyphVocab)" "修樂食麵"
+check "signage: signs hang off both sides of a frontage" "$(night_of sides)" "0,1"
+check "signage: and how one hangs is not readable off its shop" \
+  "$(night_of hangUnlinked)" "true"
 
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"

@@ -102,6 +102,7 @@
   let towers = [];
   let floors = 6;
   let blocks = [];              // this week's buildings, newest included
+  let landmark = null;          // the one fixture in the district; not a run
   let ghosts = [];              // last week's, as bare silhouettes
   let week = { ships: 0, life: {} };
   let signSeconds = 0;           // supplied with the first server snapshot
@@ -316,16 +317,17 @@
       occupants.push(pane);
       occupancy.append(pane);
     }
-    // The ground floor: a lit shopfront row under every building, and on some of
-    // them the small neon that says which shop it is.
+    // The ground floor: a lit shopfront row and matching glyph under every
+    // building, plus the established one-in-three neon tube over a bay.
     const shop = el('i', 'block__shop');
-    shop.append(el('i', 'block__neon'));
+    const glyph = el('i', 'block__glyph');
+    shop.append(el('i', 'block__neon'), glyph);
     mass.append(occupancy, shop);
     // The sign is the only thing on a building that names anybody: a small neon
     // in the dispatcher's own crew tint, cooling to the district's neutral
     // within --sign-life of landing. No zones, no lanes, nothing cumulative.
     root.append(el('i', 'block__crown'), mass, el('i', 'block__sign'));
-    return { root, occupants };
+    return { root, glyph, occupants };
   }
 
   function paintStaticSign(B, b) {
@@ -354,6 +356,12 @@
     B.root.dataset.neon = night.neon ? '1' : '0';
     B.root.style.setProperty('--bay', String(night.bay));
     B.root.style.setProperty('--flicker', String(night.flicker));
+    // The lettering rides the same write-once pass as everything else on this
+    // building: a glyph is a fact about the shop, so it is set here and never
+    // touched again.
+    B.glyph.textContent = night.glyph;
+    B.root.dataset.side = String(night.side);
+    B.root.style.setProperty('--hang', String(night.hang));
     night.windows.forEach((w, i) => {
       const node = B.occupants[i];
       if (!node) return;
@@ -363,7 +371,43 @@
     });
   }
 
+  // --- the landmark -------------------------------------------------------------
+  // One building in this district is not a ship. Ran pays for the subscription
+  // every run on this wall is spent from, so the city carries the name in the
+  // idiom the street already speaks: a tall back-band tower with a vertical tube
+  // down its shoulder reading 冉.
+  //
+  // It is a fixture, not a fact about the week: never in wall-city.jsonl, never
+  // in an /api/runs payload, never counted by the HUD. The page stands it up
+  // once — on an empty Monday as much as on a full Friday — and then leaves it
+  // alone, exactly like every building around it.
+  const RAN = {
+    glyph: '冉',
+    dedication: '冉 — For Ran, who keeps the lights on',
+    x: 0.19,   // off the centre, where the towers cluster and the quiet line sits
+  };
+
+  function makeLandmark() {
+    const root = el('div', 'block block--landmark');
+    root.dataset.kind = 'landmark';
+    root.dataset.depth = '0';      // the back band: the week lands in front of it
+    root.style.setProperty('--x', (RAN.x * 100).toFixed(2) + '%');
+    // The one hoverable thing on this layer, which is why the district's
+    // pointer-events exemption in wall.css exists at all.
+    root.title = RAN.dedication;
+    const mass = el('i', 'block__mass');
+    // The district's own facade grid and its lit ground floor, wholesale: a
+    // monument is still a building on this street, not a graphic laid over it.
+    mass.append(el('i', 'tower__windows block__windows'), el('i', 'block__shop'));
+    root.append(el('i', 'block__crown'), mass, el('i', 'landmark__sign', RAN.glyph));
+    return root;
+  }
+
   function renderDistrict() {
+    // Built before the first block and never rebuilt: the dedication is what the
+    // week arrives into. Placement leaves it alone too — place() inserts every
+    // block ahead of it, so it settles as the last child and never moves again.
+    if (!landmark) { landmark = makeLandmark(); district.append(landmark); }
     const standing = new Set(blocks.map((b) => b.id));
     for (const [id, B] of blockEls) {
       // Only the week rolling over takes a building down, and then it takes the
@@ -410,6 +454,11 @@
   // The whole vocabulary of the street is four signs. More would be a theme park;
   // fewer would be a pattern the room notices.
   const SHOP_KINDS = ['noodle', 'diner', 'arcade', 'repair'];
+  // And what each of those signs actually says, one character each: 麵 noodles,
+  // 食 a place that feeds you, 樂 an arcade, 修 a repair bench. Four glyphs, each
+  // the shop it hangs over — a sign that means nothing is texture, and this city
+  // does not do texture. Nothing outside this map is ever lettered.
+  const SHOP_GLYPH = { noodle: '麵', diner: '食', arcade: '樂', repair: '修' };
   const BAYS = 5;            // shopfronts along a building's base
   const FLICKER_SPREAD = 89; // seconds of stagger, so no two neons ever stutter together
 
@@ -437,12 +486,14 @@
     return (v ^ (v >>> 16)) >>> 0;
   }
 
-  // Two draws, because a facade's hours have nothing to do with what is selling
-  // downstairs, and one 32-bit word cannot carry both without the slices sharing
-  // bits — which is how a district ends up with every arcade lit on floor three.
+  // Three draws, because a facade's hours have nothing to do with what is selling
+  // downstairs, nor with how the sign over it is hung, and one 32-bit word cannot
+  // carry them all without the slices sharing bits — which is how a district ends
+  // up with every arcade lit on floor three.
   function storefrontOf(id) {
     const street = seedOf(id);
     const hours = seedOf(id + '·hours');
+    const signage = seedOf(id + '·signage');
     const pick = (seed, shift, mod) => (seed >>> shift) % mod;
     const windows = [];
     for (let i = 0; i < OCCUPIED; i++) {
@@ -452,12 +503,22 @@
         phase: pick(hours, i * 9 + 6, 8),
       });
     }
+    const shop = SHOP_KINDS[pick(street, 0, SHOP_KINDS.length)];
     return {
-      shop: SHOP_KINDS[pick(street, 0, SHOP_KINDS.length)],
-      // One building in three carries a sign. All of them would be Piccadilly.
+      shop,
+      // What the sign says is the shop, never a draw: the glyph is a translation
+      // of the row underneath it, not a second opinion about what is down there.
+      glyph: SHOP_GLYPH[shop],
+      // One building in three carries the extra neon tube. All of them would be
+      // Piccadilly; the small glyph identifying each shop is separate.
       neon: pick(street, 2, 3) === 0,
       bay: pick(street, 4, BAYS),
       flicker: pick(street, 7, FLICKER_SPREAD),
+      // Which shoulder of the frontage the sign is bracketed to, and when its
+      // own tube stumbles: a street where every sign hangs the same way and
+      // blinks on the same beat is a wallpaper sample.
+      side: pick(signage, 0, 2),
+      hang: pick(signage, 3, FLICKER_SPREAD),
       windows,
     };
   }
