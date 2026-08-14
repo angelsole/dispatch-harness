@@ -1261,6 +1261,12 @@ grep_ok "$CSS_SRC" 'min-height: calc(var(--form-floor) * var(--deep));' \
   "form: and a form declares a floor, so a two-line diff is still a building"
 grep_ok "$CSS_SRC" 'var(--wide) * var(--form-wide)' \
   "form: the footprint is the family's times the type's, not one instead of the other"
+FORM_JITTER_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.block\[data-form\] \{/, /^}/')"
+grep_ok "$FORM_JITTER_CSS" '--jitter: calc(1 + (var(--grade)' \
+  "form: footprint grades only reshape shipped blocks"
+BLOCK_DEFAULTS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.block \{/, /^}/')"
+grep_ok "$BLOCK_DEFAULTS" '--jitter: 1;' \
+  "landmark: blocks without a typology keep their established footprint"
 # The server payload is frozen: a typology is presentation derived from the id
 # the payload already carries, exactly like the shop under the building.
 SERVER_SRC="$(cat "$SRC/wall/server.js")"
@@ -1324,7 +1330,7 @@ FORM_FLOOR_MAX="$(sed -n 's/^\.block\[data-form="[a-z]*"\] *{.*--form-floor: \([
 DEEP_NEAR="$(sed -n 's/^\.block\[data-depth="2"\] { --deep: \([0-9.]*\);.*/\1/p' "$SRC/wall/wall.css")"
 # And the jitter inside a form has to be a shortening, never a lengthening, or
 # the ceiling above is not a ceiling. Read as the formula, not as a number.
-grep_ok "$CSS_SRC" '--jitter-tall: calc(1 - var(--grade)' \
+grep_ok "$FORM_JITTER_CSS" '--jitter-tall: calc(1 - var(--grade)' \
   "district: the footprint jitter inside a form only ever shortens a building"
 # The shortest tower the skyline can stand: the floor of the page's own height
 # ramp, plus the one run it takes to put a tower on the wall at all.

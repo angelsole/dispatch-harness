@@ -799,9 +799,10 @@ body[data-idle="rest"] .rest { display: block; }
   --form-tall: 1;
   --form-floor: 7vh;    /* the shortest a building on this street can stand */
   --eaves: 12%;         /* where this form's roofline starts, for what hangs on it */
-  --grade: 0;
-  --jitter: calc(1 + (var(--grade) - 1.5) * 0.1);
-  --jitter-tall: calc(1 - var(--grade) * 0.05);
+  /* Non-typology blocks, notably the bespoke landmark, keep their established
+     dimensions. The grade-driven overrides only apply once data-form exists. */
+  --jitter: 1;
+  --jitter-tall: 1;
   --row: 0.3rem;        /* the facade grid, a storey finer than a tower's */
   --col: 0.2rem;
   --crew: #e8cfa6;
@@ -854,6 +855,11 @@ body[data-idle="rest"] .rest { display: block; }
 .block[data-form="slab"]      { --form-wide: 1;    --form-tall: 0.88; --form-floor: 9vh; }
 .block[data-form="setback"]   { --form-wide: 0.94; --form-tall: 1;    --form-floor: 11vh;  --eaves: 20%; }
 .block[data-form="mast"]      { --form-wide: 0.42; --form-tall: 1;    --form-floor: 12vh;  --eaves: 22%; }
+.block[data-form] {
+  --grade: 0;
+  --jitter: calc(1 + (var(--grade) - 1.5) * 0.1);
+  --jitter-tall: calc(1 - var(--grade) * 0.05);
+}
 
 .block__mass {
   position: absolute;
