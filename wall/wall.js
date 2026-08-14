@@ -1119,6 +1119,14 @@
     return s.idle;
   }
 
+  // The toggle acts on what the room is seeing, including a film that the idle
+  // timer started. Any other activity releases a manual "on" back to the idle
+  // policy, while an explicit manual "off" stays off until `c` changes it.
+  function manualAfterActivity(current, filmingNow, toggle) {
+    if (toggle) return !filmingNow;
+    return current === true ? null : current;
+  }
+
   function between(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
   // A shot is a rect in stage coordinates plus how much of the frame it should
@@ -1188,11 +1196,11 @@
     if (bucket !== reelBucket) { reelBucket = bucket; reel = seededRandom(bucket); }
     return reel();
   }
-  const pick = (list) => (list.length ? list[Math.floor(draw() * list.length) % list.length] : null);
+  const pick = (list) => (list.length ? list[Math.floor(draw() * list.length)] : null);
   function shuffled(list) {
     const out = list.slice();
     for (let i = out.length - 1; i > 0; i--) {
-      const j = Math.floor(draw() * (i + 1)) % (i + 1);
+      const j = Math.floor(draw() * (i + 1));
       const swap = out[i]; out[i] = out[j]; out[j] = swap;
     }
     return out;
@@ -1401,7 +1409,7 @@
     // hold instead, and let the drift be the first thing that moves.
     const move = Math.abs(cam.s - next.cam.s) < 0.005
       && Math.abs(cam.x - next.cam.x) < 2 && Math.abs(cam.y - next.cam.y) < 2 ? 0 : next.move;
-    moveCamera(next.cam, move, 'cubic-bezier(0.45, 0, 0.25, 1)');
+    moveCamera(next.cam, move, 'var(--ease-io)');
     shotTimer = setTimeout(() => {
       if (!filming) return;
       moveCamera(next.creep, next.hold, 'linear');
@@ -1424,13 +1432,14 @@
     }
     // Somebody is in the room. Come home quickly and get out of the way.
     delete document.body.dataset.shot;
-    moveCamera({ s: 1, x: 0, y: 0 }, CUT_MS, 'cubic-bezier(0.22, 0.61, 0.36, 1)');
+    moveCamera({ s: 1, x: 0, y: 0 }, CUT_MS, 'var(--ease)');
   }
 
-  // Any pointer or key resets the idle clock, and — when the director was only
-  // running because the room was quiet — ends the film inside a second.
-  function stirred() {
+  // Any pointer or key resets the idle clock. Ordinary activity also dismisses
+  // a manually-started film; `c` is the one input that toggles instead.
+  function stirred(toggle) {
     idle = false;
+    manual = manualAfterActivity(manual, filming, toggle === true);
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => { idle = true; syncCinema(); }, CINEMA_IDLE_MS);
     syncCinema();
@@ -1438,15 +1447,14 @@
 
   function director() {
     document.body.dataset.cinema = '0';
-    for (const ev of ['pointermove', 'pointerdown', 'wheel', 'keydown', 'touchstart']) {
+    for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart']) {
       window.addEventListener(ev, stirred, { passive: true });
     }
     window.addEventListener('keydown', (ev) => {
-      if (ev.key !== 'c' && ev.key !== 'C') return;
-      // The two off-switches are absolute — the key cannot argue with either.
-      if (still.matches || forced === 'off') return;
-      manual = !filming;
-      syncCinema();
+      const isToggle = ev.key === 'c' || ev.key === 'C';
+      // The two off-switches are absolute — under either one `c` is ordinary
+      // activity and cannot leave a manual film waiting to resume later.
+      stirred(isToggle && !still.matches && forced !== 'off');
     });
     // A room that turns motion off mid-film gets the wide shot back at once.
     still.addEventListener('change', syncCinema);

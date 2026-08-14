@@ -1677,6 +1677,14 @@ CINE_PROBE="$ROOT/cinema-probe.js"
     keyOverridesIdle: rows.find((r) => !r.reduced && !r.forced && r.manual === true && !r.idle).on,
     quietEngages: rows.find((r) => !r.reduced && !r.forced && r.manual === null && r.idle).on,
     busyWaits: rows.find((r) => !r.reduced && !r.forced && r.manual === null && !r.idle).on,
+    // The event transition matters as much as the activation truth table: `c`
+    // must stop a film the idle timer started, and ordinary input must dismiss
+    // one that `c` started instead of leaving a sticky manual override behind.
+    toggleStopsIdle: manualAfterActivity(null, true, true) === false,
+    inputStopsManual: !wantsCinema({
+      reduced: false, forced: null,
+      manual: manualAfterActivity(true, true, false), idle: false,
+    }),
     idleMinutes: CINEMA_IDLE_MS / 60000,
     // A shot is always a legal frame: never wider than the wide shot, never
     // past the lens ceiling, and never showing anything that is not city.
@@ -1710,6 +1718,10 @@ check "cinema: the c key starts one on an untouched wall" \
   "$(cine_of keyOverridesIdle)" "true"
 check "cinema: a quiet room gets the film by itself" "$(cine_of quietEngages)" "true"
 check "cinema: a room in use does not"               "$(cine_of busyWaits)" "false"
+check "cinema: the c key stops a film the idle timer started" \
+  "$(cine_of toggleStopsIdle)" "true"
+check "cinema: any other input stops a film the c key started" \
+  "$(cine_of inputStopsManual)" "true"
 check "cinema: it takes a minute and a half of quiet" "$(cine_of idleMinutes)" "1.5"
 check "cinema: every framing is inside the city and inside the lens" \
   "$(cine_of framesLegal)" "true"
@@ -1724,7 +1736,7 @@ check "cinema: a tower is worth its most interesting run" "$(cine_of rankPicks)"
 check "cinema: a tower with nothing live in it is not a shot" "$(cine_of rankEmpty)" "0"
 check "cinema: moves take six to ten seconds"  "$(cine_of moves)" "true"
 check "cinema: holds are long, and the wide shot holds longest" "$(cine_of holds)" "true"
-check "cinema: any input gets the wide shot back inside a second" \
+check "cinema: a dismissed film gets the wide shot back inside a second" \
   "$(cine_of cutFast)" "true"
 
 # Every shot type the brief names exists, and — the wide shot aside, which is
