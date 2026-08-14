@@ -1061,6 +1061,118 @@ else
   bad "life: server starts against a week that shipped once"
 fi
 
+# --- the painted sky ----------------------------------------------------------
+# Three hand-drawn parallax planes fill most of this screen, so a run of similar
+# flat-topped rectangles is most of what the room sees. The structure is pinned
+# (three groups, two reusable paths, one window pattern drawn through them) and
+# so is the shape of the city they draw: mixed heights, sloped and stepped
+# rooflines, roof furniture, and only a little of it tall.
+echo "== wall: the painted sky is a city, not a fence =="
+grep_ok "$PAGE_SRC" '<pattern id="farlights"' "sky: distant windows are still one pattern"
+for plane in far mid near; do
+  grep_ok "$PAGE_SRC" "class=\"sky__$plane\"" "sky: the $plane plane is its own group"
+done
+for line in farline midline; do
+  grep_ok "$PAGE_SRC" "<use href=\"#$line\" fill=\"url(#farlights)\"" \
+    "sky: #$line is drawn twice, once through the window pattern"
+done
+SKY_PROBE="$ROOT/sky-probe.js"
+cat > "$SKY_PROBE" <<'JS'
+// Read the three painted silhouettes out of the page and describe the city they
+// draw. Everything here is measured off the path data itself: the point is that
+// nothing restates the drawing, so a redraw that flattens it back into a fence
+// fails rather than passing on a comment.
+const fs = require('fs');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const open = html.indexOf('<svg class="sky"');
+const sky = html.slice(open, html.indexOf('</svg>', open));
+
+function pathOf(plane) {
+  const at = sky.indexOf('class="sky__' + plane + '"');
+  if (at < 0) return '';
+  // The leading space matters: `id="farline"` ends in `d="farline"`.
+  const d = /\sd="([^"]*)"/.exec(sky.slice(at));
+  return d ? d[1] : '';
+}
+
+// The rooftops, as horizontal runs. Only the absolute M/H/V/L vocabulary the
+// three planes are drawn in — an unknown command is a parse failure, not a
+// silently empty profile.
+function roofs(d) {
+  const runs = [];
+  let x = 0, y = 0, bad = 0;
+  for (const token of d.trim().split(/(?=[A-Za-z])/)) {
+    const cmd = token.trim()[0];
+    const nums = token.trim().slice(1).trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    if (cmd === 'M') { [x, y] = nums; }
+    else if (cmd === 'V') { y = nums[0]; }
+    else if (cmd === 'H') { runs.push({ w: Math.abs(nums[0] - x), y, slope: false }); x = nums[0]; }
+    else if (cmd === 'L') {
+      runs.push({ w: Math.abs(nums[0] - x), y: (y + nums[1]) / 2, slope: true });
+      [x, y] = nums;
+    } else if (cmd !== 'Z') bad++;
+  }
+  return { runs, bad };
+}
+
+const report = {};
+for (const plane of ['far', 'mid', 'near']) {
+  const { runs, bad } = roofs(pathOf(plane));
+  const flats = runs.filter((r) => !r.slope && r.w > 0);
+  const ys = runs.map((r) => r.y);
+  const high = Math.min(...ys), low = Math.max(...ys);
+  const band = low - high;
+  // Roof furniture: a narrow run standing well clear of what is either side of
+  // it — a mast, an antenna, a water tower's vent.
+  let spikes = 0;
+  for (let i = 1; i < flats.length - 1; i++) {
+    if (flats[i].w <= 8 && flats[i - 1].y - flats[i].y > 40 && flats[i + 1].y - flats[i].y > 40) spikes++;
+  }
+  const span = (test) => flats.filter(test).reduce((n, r) => n + r.w, 0)
+    / flats.reduce((n, r) => n + r.w, 0);
+  report[plane] = {
+    parsed: bad === 0 && flats.length > 0,
+    levels: new Set(flats.map((r) => r.y)).size,
+    band: Math.round(band),
+    slopes: runs.filter((r) => r.slope).length,
+    spikes,
+    // Mixed, and mixed the right way round: most of the width is low or mid
+    // rise, and only a little of it is genuinely tall.
+    lowish: span((r) => r.y > high + band * 0.5) > 0.5,
+    towers: span((r) => r.y < high + band * 0.3) < 0.2,
+  };
+}
+console.log(JSON.stringify(report));
+JS
+SKY="$(node "$SKY_PROBE" "$SRC/wall/index.html" 2>&1)"
+sky_of() { printf '%s' "$SKY" | jq -r ".$1" 2>/dev/null; }
+for plane in far mid near; do
+  check "sky: the $plane plane parses as one absolute-coordinate silhouette" \
+    "$(sky_of "$plane.parsed")" "true"
+  if [ "$(sky_of "$plane.levels")" -ge 20 ] 2>/dev/null; then
+    ok "sky: the $plane plane draws many different roof heights ($(sky_of "$plane.levels"))"
+  else
+    bad "sky: the $plane plane draws many different roof heights ($(sky_of "$plane.levels"))"
+  fi
+  if [ "$(sky_of "$plane.band")" -ge 140 ] 2>/dev/null; then
+    ok "sky: and spans a real height range ($(sky_of "$plane.band"))"
+  else
+    bad "sky: and spans a real height range ($(sky_of "$plane.band"))"
+  fi
+  if [ "$(sky_of "$plane.slopes")" -ge 3 ] 2>/dev/null; then
+    ok "sky: the $plane plane is not all flat tops ($(sky_of "$plane.slopes") sloped)"
+  else
+    bad "sky: the $plane plane is not all flat tops ($(sky_of "$plane.slopes") sloped)"
+  fi
+  if [ "$(sky_of "$plane.spikes")" -ge 2 ] 2>/dev/null; then
+    ok "sky: and carries roof furniture ($(sky_of "$plane.spikes") masts or vents)"
+  else
+    bad "sky: and carries roof furniture ($(sky_of "$plane.spikes") masts or vents)"
+  fi
+  check "sky: most of the $plane plane is low or mid rise" "$(sky_of "$plane.lowish")" "true"
+  check "sky: and only a little of it is a skyscraper" "$(sky_of "$plane.towers")" "true"
+done
+
 # --- what the district looks like -------------------------------------------------
 # The page half of the same contract: the plate that used to fire on an empty
 # skyline must not fire on a full week, buildings land once and then stop, and
@@ -1105,8 +1217,61 @@ grep_ok "$CSS_SRC" '.life[data-tram="1"] .life__tram' "life: so is the tram line
 # The ghost is one flat layer. Nothing that says what shipped last week — no
 # window grid, no sign, no repo type — may be attached to it.
 GHOST_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.ghost/, /^}/')"
-for banned in windows sign data-kind; do
+for banned in windows sign data-kind data-form; do
   grep_not "$GHOST_CSS" "$banned" "ghost: no [$banned] on last week's silhouette"
+done
+
+# --- building typologies ----------------------------------------------------------
+# The district used to be one slab per ship, taller or shorter. Every block now
+# also draws a typology, which is what stops a week of similar diffs reading as a
+# picket fence. Same rules as everything else on this layer: the run id is the
+# only input, the vocabulary is closed, and the server has never heard of it.
+echo "== wall: the district's building typologies =="
+grep_ok "$PAGE_SRC" "seedOf(id + '·form')" \
+  "form: a typology is its own draw, not a re-slice of the shop's or the plot's"
+grep_ok "$PAGE_SRC" 'B.root.dataset.form = shape.form' \
+  "form: and it is written onto the building, once, when it lands"
+grep_ok "$PAGE_SRC" "B.root.style.setProperty('--grade', String(shape.grade))" \
+  "form: with a footprint grade beside it, so one type is not one shape"
+for form in shophouse warehouse tank slab setback mast; do
+  # Read the declaration the same way the landmark height check below reads it, so
+  # a form that stops declaring its own ceiling fails here rather than there.
+  if [ -n "$(sed -n "s/^\.block\[data-form=\"$form\"\] *{.*--form-tall: \([0-9.]*\);.*/\1/p" \
+       "$SRC/wall/wall.css")" ]; then
+    ok "form: [$form] declares its own proportions"
+  else
+    bad "form: [$form] declares its own proportions"
+  fi
+done
+# `slab` is the district's existing look on purpose: it is the one type that keeps
+# the repo family's roofline and roof furniture, so it must NOT redeclare them.
+for form in shophouse warehouse tank setback mast; do
+  grep_ok "$CSS_SRC" ".block[data-form=\"$form\"] .block__mass {" \
+    "form: [$form] cuts its own roofline"
+  grep_ok "$CSS_SRC" ".block[data-form=\"$form\"] .block__crown::before {" \
+    "form: and stands its own roof furniture on it"
+done
+grep_not "$CSS_SRC" '.block[data-form="slab"] .block__mass {' \
+  "form: slab keeps the repo family's roofline, which is the whole point of it"
+# Everything a building already carried has to survive every one of them: the
+# typology reshapes the box, it does not replace what hangs on the box.
+grep_ok "$CSS_SRC" 'top: var(--eaves);' \
+  "form: the dispatcher's tube hangs off the form's own roofline, not a fixed inset"
+grep_ok "$CSS_SRC" 'min-height: calc(var(--form-floor) * var(--deep));' \
+  "form: and a form declares a floor, so a two-line diff is still a building"
+grep_ok "$CSS_SRC" 'var(--wide) * var(--form-wide)' \
+  "form: the footprint is the family's times the type's, not one instead of the other"
+FORM_JITTER_CSS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.block\[data-form\] \{/, /^}/')"
+grep_ok "$FORM_JITTER_CSS" '--jitter: calc(1 + (var(--grade)' \
+  "form: footprint grades only reshape shipped blocks"
+BLOCK_DEFAULTS="$(printf '%s\n' "$CSS_SRC" | awk '/^\.block \{/, /^}/')"
+grep_ok "$BLOCK_DEFAULTS" '--jitter: 1;' \
+  "landmark: blocks without a typology keep their established footprint"
+# The server payload is frozen: a typology is presentation derived from the id
+# the payload already carries, exactly like the shop under the building.
+SERVER_SRC="$(cat "$SRC/wall/server.js")"
+for banned in data-form form-tall shophouse warehouse setback; do
+  grep_not "$SERVER_SRC" "$banned" "form: the server carries no [$banned]"
 done
 
 # --- the landmark ---------------------------------------------------------------
@@ -1154,6 +1319,19 @@ TALL_MAX="$(sed -n 's/^\.block\[data-kind="[a-z]*"\] *{.*--tall: \([0-9.]*\);.*/
   "$SRC/wall/wall.css" | sort -n | tail -1)"
 STOREYS_MAX="$(sed -n 's/^const STOREYS_MAX = \([0-9]*\);.*/\1/p' "$SRC/wall/server.js")"
 CITY_VH="$(sed -n '/^\.city {/,/^}/s/^ *height: \([0-9.]*\)vh;.*/\1/p' "$SRC/wall/wall.css")"
+# The building typologies multiply into the same height, so the ceiling this
+# comparison is about is theirs too. Read the tallest of them the same way, and
+# the tallest floor a form can declare — a `min-height` no formula above knows
+# about would otherwise raise a shed over the dedication without failing here.
+FORM_TALL_MAX="$(sed -n 's/^\.block\[data-form="[a-z]*"\] *{.*--form-tall: \([0-9.]*\);.*/\1/p' \
+  "$SRC/wall/wall.css" | sort -n | tail -1)"
+FORM_FLOOR_MAX="$(sed -n 's/^\.block\[data-form="[a-z]*"\] *{.*--form-floor: \([0-9.]*\)vh;.*/\1/p' \
+  "$SRC/wall/wall.css" | sort -n | tail -1)"
+DEEP_NEAR="$(sed -n 's/^\.block\[data-depth="2"\] { --deep: \([0-9.]*\);.*/\1/p' "$SRC/wall/wall.css")"
+# And the jitter inside a form has to be a shortening, never a lengthening, or
+# the ceiling above is not a ceiling. Read as the formula, not as a number.
+grep_ok "$FORM_JITTER_CSS" '--jitter-tall: calc(1 - var(--grade)' \
+  "district: the footprint jitter inside a form only ever shortens a building"
 # The shortest tower the skyline can stand: the floor of the page's own height
 # ramp, plus the one run it takes to put a tower on the wall at all.
 TOWER_RAMP="$(sed -n 's/.*Math.min(94, \([0-9]*\) + n \* \([0-9]*\)).*/\1 \2/p' \
@@ -1161,7 +1339,7 @@ TOWER_RAMP="$(sed -n 's/.*Math.min(94, \([0-9]*\) + n \* \([0-9]*\)).*/\1 \2/p' 
 # Every one of those numbers has to have actually been found: a formula fed an
 # empty field computes zero, and a zero-height landmark would sail through the
 # comparison below rather than failing it.
-GEOM="$BASE_VH|$PITCH_VH|$(lm_var storeys)|$(lm_var tall)|$DEEP_BACK|$TALL_MAX|$STOREYS_MAX|$CITY_VH|$TOWER_RAMP"
+GEOM="$BASE_VH|$PITCH_VH|$(lm_var storeys)|$(lm_var tall)|$DEEP_BACK|$TALL_MAX|$STOREYS_MAX|$CITY_VH|$TOWER_RAMP|$FORM_TALL_MAX|$FORM_FLOOR_MAX|$DEEP_NEAR"
 if printf '%s' "$GEOM" | grep -qE '\|\||^\||\|$'; then
   bad "landmark: the height check reads every number out of the page itself [$GEOM]"
 else
@@ -1170,16 +1348,19 @@ fi
 HEIGHTS="$(awk -v base="$BASE_VH" -v pitch="$PITCH_VH" \
   -v ls="$(lm_var storeys)" -v lt="$(lm_var tall)" -v deep="$DEEP_BACK" \
   -v ms="$STOREYS_MAX" -v mt="$TALL_MAX" -v city="$CITY_VH" \
+  -v ft="$FORM_TALL_MAX" -v ff="$FORM_FLOOR_MAX" -v near="$DEEP_NEAR" \
   -v floor="${TOWER_RAMP% *}" -v step="${TOWER_RAMP#* }" 'BEGIN {
     lm = (base + ls * pitch) * deep * lt;
-    neighbour = (base + ms * pitch) * deep * mt;
+    neighbour = (base + ms * pitch) * deep * mt * ft;
     tower = city * (floor + step) / 100;
-    printf "%d %d", (lm > neighbour * 1.15), (lm < tower);
+    printf "%d %d %d", (lm > neighbour * 1.15), (lm < tower), (ff * near < lm);
   }')"
 check "landmark: it stands well clear of anything its own band can ship" \
-  "${HEIGHTS% *}" "1"
+  "$(printf '%s' "$HEIGHTS" | cut -d' ' -f1)" "1"
 check "landmark: and still under the shortest tower on the skyline" \
-  "${HEIGHTS#* }" "1"
+  "$(printf '%s' "$HEIGHTS" | cut -d' ' -f2)" "1"
+check "landmark: no typology's own floor reaches it either" \
+  "$(printf '%s' "$HEIGHTS" | cut -d' ' -f3)" "1"
 
 # --- the street's lettering -------------------------------------------------------
 # Five glyphs, and no sixth: the four shops and the dedication. Everything else on
@@ -1283,6 +1464,9 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
   const ids = [];
   for (let i = 0; i < 200; i++) ids.push('OLYX-' + (1500 + i));
   const plans = ids.map(storefrontOf);
+  const forms = ids.map(formOf);
+  const LOW = ['shophouse', 'warehouse', 'tank'];
+  const TALL = ['setback', 'mast'];
   const kinds = {};
   for (const plan of plans) kinds[plan.shop] = (kinds[plan.shop] || 0) + 1;
   const bays = new Set(plans.map((plan) => plan.bay));
@@ -1339,6 +1523,20 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
     sides: [...new Set(plans.map((plan) => plan.side))].sort().join(','),
     hangUnlinked: new Set(plans.map((plan) =>
       plan.shop + ':' + plan.side + ':' + plan.hang)).size > 40,
+    // And the typology, planned the same way and held to the same rules.
+    formStable: JSON.stringify(formOf('OLYX-1598')) === JSON.stringify(formOf('OLYX-1598')),
+    formDiffers: JSON.stringify(formOf('OLYX-1598')) !== JSON.stringify(formOf('OLYX-1599')),
+    formVocab: [...new Set(FORM_SHARES)].sort().join(','),
+    formDrawn: [...new Set(forms.map((f) => f.form))].sort().join(','),
+    // The shares ARE the skyline: mostly low and wide, a couple of towers in it.
+    formLow: forms.filter((f) => LOW.includes(f.form)).length > ids.length * 0.55,
+    formTowers: (() => {
+      const tall = forms.filter((f) => TALL.includes(f.form)).length;
+      return tall > 0 && tall < ids.length * 0.25;
+    })(),
+    // What kind of building it is has nothing to do with what is selling under it.
+    formUnlinked: new Set(plans.map((plan, i) => plan.shop + ':' + forms[i].form)).size > 16,
+    formGrades: [...new Set(forms.map((f) => f.grade))].sort((a, b) => a - b).join(','),
   }));
 JS
 } > "$NIGHT_PROBE"
@@ -1372,6 +1570,19 @@ check "signage: and the lettering is the four curated glyphs, no more" \
 check "signage: signs hang off both sides of a frontage" "$(night_of sides)" "0,1"
 check "signage: and how one hangs is not readable off its shop" \
   "$(night_of hangUnlinked)" "true"
+check "form: the same building is the same type, always" "$(night_of formStable)" "true"
+check "form: two buildings do not get the same type twice" "$(night_of formDiffers)" "true"
+check "form: the vocabulary is six types and closed" \
+  "$(night_of formVocab)" "mast,setback,shophouse,slab,tank,warehouse"
+check "form: and a ticket range uses all six" \
+  "$(night_of formDrawn)" "$(night_of formVocab)"
+check "form: the district is mostly low and wide" "$(night_of formLow)" "true"
+check "form: with a couple of towers in it, not a row of them" \
+  "$(night_of formTowers)" "true"
+check "form: what kind of building it is is not readable off its shop" \
+  "$(night_of formUnlinked)" "true"
+check "form: every footprint grade inside a type gets used" \
+  "$(night_of formGrades)" "0,1,2,3"
 
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"

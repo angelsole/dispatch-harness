@@ -342,6 +342,12 @@
     B.root.style.setProperty('--x', (b.x * 100).toFixed(2) + '%');
     B.root.style.setProperty('--storeys', String(b.storeys));
     B.root.style.setProperty('--crew', crewTint(b));
+    // What kind of building this is, on top of what family it belongs to. The
+    // same write-once pass and the same rule as the shop under it: a typology is
+    // a fact about the run id, so the district is the same city after a reload.
+    const shape = formOf(b.id);
+    B.root.dataset.form = shape.form;
+    B.root.style.setProperty('--grade', String(shape.grade));
     // Same idiom as the completion moment: a browser opening this afternoon
     // fast-forwards a building that landed this morning to where it already is,
     // rather than replaying every settle in the week at once.
@@ -520,6 +526,46 @@
       side: pick(signage, 0, 2),
       hang: pick(signage, 3, FLICKER_SPREAD),
       windows,
+    };
+  }
+
+  // --- building typologies ------------------------------------------------------
+  // How much shipped is the storey count, and it always was. What KIND of
+  // building that is, is this: a district where the diff only ever moves one
+  // number reads as a picket fence of identical slabs, however carefully the
+  // storeys are scaled. So every block also draws a typology — and the draw is
+  // weighted, because a real city is mostly low and wide with a few towers
+  // standing in it, not a chart sorted by height.
+  //
+  // Six types and no seventh, on their own domain-separated seed, exactly like
+  // the shop underneath: same id, same building, on both screens and tomorrow.
+  // The shape is the page's business — the server has never heard of it.
+  //
+  // The draw is spelled as shares rather than as probabilities, because what is
+  // in this list IS the skyline's distribution and it should be readable as one:
+  //   shophouse  low and wide, two to four floors over a shopfront row
+  //   warehouse  short, wide, sawtooth roof
+  //   tank       mid-rise carrying a water tower
+  //   slab       the district's existing look, family roofline and all
+  //   setback    a tower that steps in as it climbs
+  //   mast       thin, tall, one antenna
+  const FORM_SHARES = [
+    'shophouse', 'shophouse', 'shophouse', 'shophouse',
+    'warehouse', 'warehouse',
+    'tank', 'tank',
+    'slab', 'slab',
+    'setback',
+    'mast',
+  ];
+  const FORM_GRADES = 4;   // footprint nudges inside one type
+
+  function formOf(id) {
+    const draw = seedOf(id + '·form');
+    return {
+      form: FORM_SHARES[draw % FORM_SHARES.length],
+      // A second slice off the same word, taken high so it cannot shadow the
+      // type itself: two shophouses side by side are not the same shophouse.
+      grade: (draw >>> 12) % FORM_GRADES,
     };
   }
 
