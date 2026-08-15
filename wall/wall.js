@@ -38,6 +38,10 @@
   // when ?world=canvas asks for them: the DOM wall must never pay 1.4 MB of
   // WebGL for a city it draws in CSS.
   const CANVAS_SCRIPTS = ['vendor/phaser.min.js', 'world-canvas.js'];
+  // The top-down tile city (spike/topdown-city), behind ?world=topdown. Same
+  // engine, same seam, a different body — and the same rule: fetched only when
+  // the query string asked for it.
+  const TOPDOWN_SCRIPTS = ['vendor/phaser.min.js', 'world-topdown.js'];
   // The director. A room that has not touched anything for this long gets the
   // film; the shot bucket is the wall-clock idiom the weather already uses, so
   // two screens in the same room are cutting roughly together.
@@ -1014,9 +1018,14 @@
     return flag === '1' ? 'on' : flag === '0' ? 'off' : null;
   })();
   // Which body the city is drawn in, read once at load in the same idiom and in
-  // the same breath: ?world=canvas hands it to WebGL, anything else keeps the
-  // DOM. Nothing else in the page branches on it.
-  const wantsCanvas =
+  // the same breath: ?world=canvas hands it to WebGL, ?world=topdown to the
+  // top-down tile city that shares that canvas, anything else keeps the DOM.
+  // `wantsCanvas` is "the city is drawn on a canvas" — which of the two canvas
+  // worlds it is is the only thing `wantsTopdown` decides, and it decides it
+  // inside canvasWorld(). Nothing else in the page branches on either.
+  const wantsTopdown =
+    new URLSearchParams(window.location.search).get('world') === 'topdown';
+  const wantsCanvas = wantsTopdown ||
     new URLSearchParams(window.location.search).get('world') === 'canvas';
 
   // Shot variety off the wall clock rather than off a counter, so two screens
@@ -1337,8 +1346,8 @@
       // set the attribute the shared [hidden] rule actually matches.
       if (node) node.setAttribute('hidden', '');
     }
-    loadScripts(CANVAS_SCRIPTS, () => {
-      const factory = window.WallCanvasWorld;
+    loadScripts(wantsTopdown ? TOPDOWN_SCRIPTS : CANVAS_SCRIPTS, () => {
+      const factory = wantsTopdown ? window.WallTopdownWorld : window.WallCanvasWorld;
       if (!factory || !window.Phaser) return;
       live = factory.create({ parent: stage, still, clock: () => Date.now() / 1000 + skew });
       if (last) live.render(last);
