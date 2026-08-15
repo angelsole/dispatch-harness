@@ -1813,6 +1813,10 @@ const at = [0, 1, 7.5, 3600, 86399, 1755000000.25];
 const frozen = at.map((t) => JSON.stringify(C.phaseAt(t, { reducedMotion: true })));
 const moving = at.map((t) => JSON.stringify(C.phaseAt(t, {})));
 const rest = C.phaseAt(0, { reducedMotion: true });
+const roomy = C.towerLayout(Array.from({ length: 5 }, () => ({ widthRem: 5.6 })));
+const crowded = C.towerLayout(Array.from({ length: 20 }, () => ({ widthRem: 5.6 })));
+const bounded = (boxes) => boxes.every((box, i) => box.x >= 0 && box.x + box.w <= C.W + 1e-6
+  && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w));
 console.log(JSON.stringify({
   // Every second of the clock gives the same still frame.
   frozen: new Set(frozen).size === 1,
@@ -1836,6 +1840,14 @@ console.log(JSON.stringify({
   // And the camera is parked wide rather than held mid push-in.
   parked: rest.cam.city === 1 && rest.cam.sky === 1
     && rest.planes.every((p) => p === 0) && rest.ghost === 0,
+  // The hand-written flex row keeps both an ordinary fixture and a genuinely
+  // crowded skyline inside the same 640-wide box without letting towers overlap.
+  layout: bounded(roomy) && bounded(crowded),
+  // space-evenly leaves a single tower centred in the skyline band.
+  centred: (() => {
+    const [box] = C.towerLayout([{ widthRem: 5.6 }]);
+    return Math.abs(box.x + box.w / 2 - C.W / 2) < 1e-6;
+  })(),
 }));
 JS
 STILL="$(node "$STILL_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
@@ -1847,6 +1859,9 @@ check "motion: every beat in the world derives from that one phase" \
   "$(still_of beats)" "true"
 check "motion: a still canvas city is a lit city, not a dark one" "$(still_of lit)" "true"
 check "motion: with the camera parked wide" "$(still_of parked)" "true"
+check "canvas: a busy skyline shrinks inside the world without overlapping" \
+  "$(still_of layout)" "true"
+check "canvas: space-evenly keeps a lone tower centred" "$(still_of centred)" "true"
 
 # --- the director films the city --------------------------------------------------
 # The wall can film itself: a slow camera that holds the skyline, pushes in on

@@ -161,6 +161,33 @@
   const outline = (poly, x, y, w, h) =>
     poly.map((p) => ({ x: x + w * p[0], y: y + h * p[1] }));
 
+  // wall.css lays the skyline out as a flex row with fixed padding and gap.
+  // Flex shrink applies to the items, not to the gap between them, so solve the
+  // two budgets separately. Treating the gap as shrinkable makes the arithmetic
+  // claim everything fits while the full-size gaps rendered below still push a
+  // busy skyline past the right edge.
+  function towerLayout(towers) {
+    const pad = 3 * VW;
+    const gap = 1.4 * VW;
+    const avail = W - pad * 2;
+    const widths = towers.map((tower) => tower.widthRem * REM);
+    const widthTotal = widths.reduce((total, width) => total + width, 0);
+    const gapTotal = Math.max(0, towers.length - 1) * gap;
+    const widthBudget = Math.max(0, avail - gapTotal);
+    const squeeze = widthTotal > widthBudget && widthTotal > 0
+      ? widthBudget / widthTotal : 1;
+    const used = widthTotal * squeeze + gapTotal;
+    const slot = towers.length ? Math.max(0, avail - used) / (towers.length + 1) : 0;
+    const out = [];
+    let x = pad + slot;
+    for (let i = 0; i < towers.length; i++) {
+      const width = widths[i] * squeeze;
+      out.push({ x, w: width });
+      x += width + gap + slot;
+    }
+    return out;
+  }
+
   // --- the wall clock -----------------------------------------------------------
   // Everything that moves in this world is a position in a cycle, and every one
   // of those positions comes out of phaseAt(). Nothing keeps its own state, so a
@@ -969,21 +996,7 @@
       // The skyline's layout: wall.css hands .city a `space-evenly` flex row with
       // a gap and a padding, and this is that row solved.
       layout(towers) {
-        const pad = 3 * VW;
-        const gap = 1.4 * VW;
-        const avail = W - pad * 2;
-        const widths = towers.map((t) => t.widthRem * REM);
-        const total = widths.reduce((n, w) => n + w, 0) + Math.max(0, towers.length - 1) * gap;
-        // Overflow shrinks rather than spills: the towers are `flex: 0 1 auto`.
-        const squeeze = total > avail && total > 0 ? avail / total : 1;
-        const slot = towers.length ? (avail - total * squeeze) / (towers.length + 1) : 0;
-        const out = [];
-        let x = pad + slot;
-        for (let i = 0; i < towers.length; i++) {
-          out.push({ x, w: widths[i] * squeeze });
-          x += widths[i] * squeeze + gap + slot;
-        }
-        return out;
+        return towerLayout(towers);
       }
 
       makeTower() {
@@ -1498,6 +1511,6 @@
 
   return {
     create, phaseAt, tubeAt, paneAt, facadeAt, walkerAt, vehicleAt,
-    ramp, spansAt, outline, W, H,
+    ramp, spansAt, outline, towerLayout, W, H,
   };
 }));
