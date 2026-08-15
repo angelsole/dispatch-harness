@@ -40,7 +40,8 @@ fi
 # --- the JS parses -----------------------------------------------------------
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
-for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/fixtures/seed.js; do
+for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js \
+         wall/world-topdown.js wall/fixtures/seed.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 # The fixture generator accepts a target for hermetic tests, but must never
@@ -1967,6 +1968,152 @@ check "canvas: a busy skyline shrinks inside the world without overlapping" \
   "$(still_of layout)" "true"
 check "canvas: space-evenly keeps a lone tower centred" "$(still_of centred)" "true"
 
+# --- the top-down spike ---------------------------------------------------------
+# A THIRD body behind ?world=topdown (spike/topdown-city): the same seam, drawn
+# from bought 16x16 art packs that are licensed to the owner and may never be
+# committed. What is pinned here is what a screenshot cannot pin — that the page
+# picks the world off the query string and fetches the engine only then, that
+# the packs stay out of git and are reachable only through a route that refuses
+# a traversal, and that reduced motion is still one frame.
+echo "== wall: the top-down spike =="
+TOPDOWN_SRC="$(cat "$SRC/wall/world-topdown.js")"
+grep_ok "$PAGE_SRC" "get('world') === 'topdown'" \
+  "topdown: ?world=topdown is what selects it, in the idiom ?world=canvas uses"
+grep_ok "$PAGE_SRC" "const TOPDOWN_SCRIPTS = ['vendor/phaser.min.js', 'world-topdown.js']" \
+  "topdown: its own script list, so an ordinary wall still fetches neither"
+grep_ok "$PAGE_SRC" 'loadScripts(wantsTopdown ? TOPDOWN_SCRIPTS : CANVAS_SCRIPTS' \
+  "topdown: and that list is what the canvas holder loads"
+grep_ok "$PAGE_SRC" 'wantsTopdown ? window.WallTopdownWorld : window.WallCanvasWorld' \
+  "topdown: handing the seam to the right factory"
+check "topdown: the server serves the new world" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/world-topdown.js")" "200"
+TD_OFFSITE="$(printf '%s' "$TOPDOWN_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' | sort -u | tr '\n' ' ')"
+check "topdown: no off-origin URL in the new world" "$TD_OFFSITE" ""
+
+# The packs. `git check-ignore` answers for a path that does not exist, which is
+# the point: the rule has to hold for whatever the owner drops in there next.
+if git -C "$SRC" check-ignore -q wall/private/beezeebox-exterior/CyberPunk_Terrains.png; then
+  ok "private: a pack file under wall/private/ is gitignored"
+else
+  bad "private: a pack file under wall/private/ is gitignored"
+fi
+check "private: the README is the only tracked file under it" \
+  "$(git -C "$SRC" ls-files wall/private/ | tr '\n' ' ')" "wall/private/README.md "
+check "private: and nothing under it is staged or untracked in the working tree" \
+  "$(git -C "$SRC" status --porcelain -- wall/private/ | grep -vc '^$')" "0"
+
+# The route. --path-as-is stops curl from normalising the traversal away before
+# the server ever sees it, which is the only way this proves anything.
+priv() { curl -s -o /dev/null -w '%{http_code}' --path-as-is "http://127.0.0.1:$PORT$1"; }
+check "private: a traversal out of the pack directory 404s" \
+  "$(priv '/private/../server.js')" "404"
+check "private: an encoded traversal 404s too" \
+  "$(priv '/private/%2e%2e/server.js')" "404"
+check "private: so does a traversal spelled with a backslash" \
+  "$(priv '/private/..%5Cserver.js')" "404"
+check "private: an absolute path 404s" "$(priv '/private//etc/passwd')" "404"
+check "private: an extension outside the allowlist 404s" \
+  "$(priv '/private/x.txt')" "404"
+check "private: even when the file is really there — README.md is not servable" \
+  "$(priv '/private/README.md')" "404"
+check "private: the directory itself 404s" "$(priv '/private/')" "404"
+check "private: a missing pack 404s rather than erroring" \
+  "$(priv '/private/beezeebox-exterior/NoSuchSheet.png')" "404"
+# The positive case can only be tested where the owner has actually staged the
+# packs: they are gitignored by design, so a fresh clone has none.
+if [ -f "$SRC/wall/private/beezeebox-exterior/CyberPunk_Terrains.png" ]; then
+  check "private: a staged pack file is served" \
+    "$(priv '/private/beezeebox-exterior/CyberPunk_Terrains.png')" "200"
+  check "private: with no-store, like everything else this wall serves" \
+    "$(curl -s -D - -o /dev/null --path-as-is \
+       "http://127.0.0.1:$PORT/private/beezeebox-exterior/CyberPunk_Terrains.png" \
+       | grep -ci 'cache-control: no-store')" "1"
+else
+  printf '  skip private: no packs staged here, so the serving path is untested\n'
+fi
+
+# The world's own arithmetic, out of the real file: an integer scale, a block
+# that carries one building per project, and a still frame that is genuinely
+# still at every second of the clock.
+TD_PROBE="$ROOT/topdown-probe.js"
+cat > "$TD_PROBE" <<'JS'
+const T = require(process.argv[2]);
+T.measure(1920, 1080, 1);
+const g = T.grid();
+const lane = { row: 12, right: true, speed: 13, span: g.lw };
+const at = [0, 1, 7.5, 3600, 86399, 1755000000.25];
+const sample = (t, opts) => {
+  const p = T.phaseAt(t, opts);
+  return JSON.stringify([p, T.cycleAt(p, 1.1, 3, 0.4), T.tubeAt(p, 2),
+    T.walkerAt(p, 2, lane), T.rainAt(p, 5, 90)]);
+};
+const frozen = at.map((t) => sample(t, { reducedMotion: true }));
+const moving = at.map((t) => sample(t, {}));
+const plan = T.frontRow(5, 2, g.cols);
+const quiet = T.frontRow(0, -1, g.cols);
+const crowded = T.frontRow(20, 17, g.cols);
+const far = T.backRow(g.cols, g.rows);
+const heights = {};
+for (const b of plan) heights[b.kind] = b.h;
+const retina = (() => { T.measure(1440, 900, 2); const r = T.grid(); T.measure(1920, 1080, 1); return r; })();
+console.log(JSON.stringify({
+  scale: g.scale,
+  logical: g.lw + 'x' + g.lh,
+  retinaScale: retina.scale,
+  retinaInteger: Number.isInteger(retina.scale) && retina.scale >= 1,
+  frozen: new Set(frozen).size === 1,
+  moving: new Set(moving).size === at.length,
+  projects: plan.filter((b) => b.kind === 'project').length,
+  quietProjects: quiet.filter((b) => b.kind === 'project').length,
+  quietDistrict: quiet.some((b) => b.kind === 'shop') && quiet.some((b) => b.kind === 'alley'),
+  crowdedProjects: crowded.filter((b) => b.kind === 'project').length,
+  crowdedAlarms: crowded.filter((b) => b.alarm).length,
+  crowdedInFrame: crowded.every((b) => b.x >= 0 && b.x + b.w <= g.cols),
+  crowdedOrdered: crowded.every((b, i) => i === 0 || b.x >= crowded[i - 1].x + crowded[i - 1].w),
+  alarms: plan.filter((b) => b.alarm).length,
+  taller: heights.project > heights.shop,
+  alley: plan.some((b) => b.kind === 'alley'),
+  buildings: plan.filter((b) => b.kind !== 'alley').length + far.length,
+  inFrame: plan.concat(far).every((b) => b.x >= 0 && b.x + b.w <= g.cols),
+  ordered: plan.every((b, i) => i === 0 || b.x >= plan[i - 1].x + plan[i - 1].w),
+  local: T.PACK_FILES.every((u) => u.indexOf('private/') === 0),
+  key: T.planKeyOf({ towers: [{}, { alarm: true }] }),
+  keyIgnoresRest: T.planKeyOf({ towers: [{ label: 'A' }] }) === T.planKeyOf({ towers: [{ label: 'B' }] }),
+}));
+JS
+TD="$(node "$TD_PROBE" "$SRC/wall/world-topdown.js" 2>&1)"
+td_of() { printf '%s' "$TD" | jq -r ".$1" 2>/dev/null; }
+check "topdown: a 1920x1080 wall is the 480x270 grid at 4x" "$(td_of scale)" "4"
+check "topdown: which is exactly the authoring size" "$(td_of logical)" "480x270"
+check "topdown: a Retina laptop scales by a whole number too" "$(td_of retinaInteger)" "true"
+check "topdown: reduced motion is one frame, at every second of the clock" \
+  "$(td_of frozen)" "true"
+check "topdown: and the same world without it genuinely moves" "$(td_of moving)" "true"
+check "topdown: one project building per tower the wall reported" "$(td_of projects)" "5"
+check "topdown: a quiet wall invents no project buildings" "$(td_of quietProjects)" "0"
+check "topdown: and keeps district shops around its alley" "$(td_of quietDistrict)" "true"
+check "topdown: a crowded wall still gets one building per project" \
+  "$(td_of crowdedProjects)" "20"
+check "topdown: its alarm still belongs to exactly one project" "$(td_of crowdedAlarms)" "1"
+check "topdown: crowded projects remain in frame" "$(td_of crowdedInFrame)" "true"
+check "topdown: and remain ordered without overlap" "$(td_of crowdedOrdered)" "true"
+check "topdown: and exactly one of them is the alarm" "$(td_of alarms)" "1"
+check "topdown: a project building is taller than the shops around it" \
+  "$(td_of taller)" "true"
+check "topdown: the block has a lane cut through it" "$(td_of alley)" "true"
+check "topdown: at least ten buildings stand in the frame" \
+  "$(printf '%s' "$TD" | jq '.buildings >= 10')" "true"
+check "topdown: nothing is laid out past the edge of the grid" "$(td_of inFrame)" "true"
+check "topdown: and the terrace runs left to right without overlapping" \
+  "$(td_of ordered)" "true"
+check "topdown: everything it loads is a local pack path" "$(td_of local)" "true"
+grep_ok "$TOPDOWN_SRC" 'smoothPixelArt: true' \
+  "topdown: the renderer uses the canvas world's required smooth-pixel config"
+check "topdown: the block is rebuilt for the tower count and the alarm, nothing else" \
+  "$(td_of key)" "2:01"
+check "topdown: a tower changing anything else does not rebuild it" \
+  "$(td_of keyIgnoresRest)" "true"
+
 # --- the director films the city --------------------------------------------------
 # The wall can film itself: a slow camera that holds the skyline, pushes in on
 # something living in it, and comes back out. Two structural claims carry the
@@ -2013,7 +2160,7 @@ grep_ok "$CSS_SRC" '.stage { transform: none !important; }' \
 # so after this pass the page still contains no unseeded randomness at all.
 # Every authored file the page runs, both worlds included; never wall/vendor/,
 # whose contents are pinned by hash rather than read line by line.
-for authored in wall.js scene.js world-canvas.js; do
+for authored in wall.js scene.js world-canvas.js world-topdown.js; do
   grep_not "$(grep -v '^ *//' "$SRC/wall/$authored")" 'Math.random' \
     "cinema: nothing in $authored is drawn from unseeded randomness"
 done

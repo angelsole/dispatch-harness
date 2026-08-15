@@ -18,6 +18,15 @@ auth/
 wall-city.jsonl
 wall-city.jsonl.tmp
 
+# Bought art packs. Licensed to the owner, not to this repository: the wall
+# loads them off disk through the guarded /private/ route and not one byte of
+# them may ever be committed. The README saying what goes there is the one
+# tracked file, so the pattern ignores the CONTENTS rather than the directory —
+# an ignored directory is never descended into and the negation below would
+# never be reached.
+wall/private/*
+!wall/private/README.md
+
 # Backups
 *.bak*
 AGENTS.md

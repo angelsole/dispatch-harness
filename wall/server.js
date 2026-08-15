@@ -848,8 +848,65 @@ const STATIC = {
   // directory route: /vendor/ is one pinned file, and a route that walked a
   // directory is the path traversal this server has never had.
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
+  '/world-topdown.js': ['world-topdown.js', 'text/javascript; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
 };
+
+// --- the private packs --------------------------------------------------------
+// The one route on this server that walks a directory, and the reason it is
+// allowed to: the top-down world draws from bought 16x16 art packs which are
+// licensed to the owner and gitignored, so they cannot be named row by row in
+// STATIC the way every committed file is. Everything else about it is closed:
+// the path is decoded exactly once and rejected if that fails, a traversal, an
+// absolute path or a NUL is refused before the filesystem is touched, the
+// lexical path and the filesystem-resolved path are both re-checked to still be
+// under wall/private/ (the latter catches a symlink pointing out of it), only
+// the two extensions the page can use are served, and anything else — including
+// a directory — is a 404 with no detail. Nothing here leaves the origin: the
+// bytes are read off local disk for the TV on the tailnet, like the rest of the
+// wall.
+const PRIVATE = path.join(HERE, 'private');
+const PRIVATE_REAL = fs.realpathSync(PRIVATE);
+const PRIVATE_TYPES = {
+  '.png': 'image/png',
+  '.json': 'application/json; charset=utf-8',
+};
+
+function privateFile(urlPath) {
+  let rest;
+  try {
+    rest = decodeURIComponent(urlPath.slice('/private/'.length));
+  } catch {
+    return null; // a malformed escape is not a filename
+  }
+  if (rest === '' || rest.includes('\0') || rest.includes('\\')) return null;
+  if (rest.startsWith('/') || path.isAbsolute(rest)) return null;
+  if (rest.split('/').some((part) => part === '' || part === '.' || part === '..')) return null;
+  const type = PRIVATE_TYPES[path.extname(rest).toLowerCase()];
+  if (!type) return null;
+  // The belt to the braces above: whatever the segments looked like, the file
+  // that will actually be opened has to live under wall/private/.
+  const full = path.resolve(PRIVATE, rest);
+  if (full !== PRIVATE && !full.startsWith(PRIVATE + path.sep)) return null;
+  return { full, type };
+}
+
+function servePrivate(res, urlPath) {
+  const entry = privateFile(urlPath);
+  if (!entry) return notFound(res);
+  fs.realpath(entry.full, (resolveErr, real) => {
+    if (resolveErr || !real.startsWith(PRIVATE_REAL + path.sep)) return notFound(res);
+    // Keep the allowlist about the bytes actually opened, not merely the name
+    // of a symlink that led to them.
+    if (!PRIVATE_TYPES[path.extname(real).toLowerCase()]) return notFound(res);
+    fs.readFile(real, (readErr, buf) => {
+      if (readErr) return notFound(res);
+      res.writeHead(200, { 'Content-Type': entry.type, 'Cache-Control': 'no-store' });
+      res.end(buf);
+    });
+  });
+  return undefined;
+}
 
 const clients = new Set();
 let poller = null;
@@ -929,6 +986,11 @@ function stream(req, res) {
   res.on('error', close);
 }
 
+function notFound(res) {
+  res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('wall: no such page\n');
+}
+
 function serveStatic(res, entry) {
   fs.readFile(path.join(HERE, entry[0]), (err, buf) => {
     if (err) { res.writeHead(500).end('wall: missing asset\n'); return; }
@@ -947,8 +1009,8 @@ const server = http.createServer((req, res) => {
     }
     const entry = STATIC[url];
     if (entry) return serveStatic(res, entry);
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('wall: no such page\n');
+    if (url.startsWith('/private/')) return servePrivate(res, url);
+    return notFound(res);
   } catch (err) {
     try { res.writeHead(500).end(`wall: ${err.message}\n`); } catch { /* client gone */ }
   }
