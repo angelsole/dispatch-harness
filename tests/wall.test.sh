@@ -2211,6 +2211,7 @@ console.log(JSON.stringify({
   dignified: C.walkFrameAt(rest, 0, 0) === 'walker-a/idle/0'
     && C.walkFrameAt(rest, 1, 1) === 'walker-b/idle/1'
     && C.walkFrameAt(rest, 5, 2) === 'cop/idle/2'
+    && [0, 1, 2].every((slot) => C.vehicleAt(rest, slot, { cycle: 96, gap: 32 }).a > 0)
     && C.cookAt(rest) === 'cook/3'
     && C.bannerFrameAt(rest, 4, 17) === 0
     && C.occupantAt(rest, 9, 3) === 0

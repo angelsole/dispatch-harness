@@ -564,7 +564,11 @@
   }
 
   function vehicleAt(phase, slot, plan) {
-    if (phase.still) return { a: 0, x: 0 };
+    // Reduced motion parks each lane's car along the road. A vehicle is a thing
+    // that can stand still, unlike the old headlight streaks phaseAt() removes;
+    // hiding it would make the new street life disappear instead of holding it
+    // in the brief's lit, dignified still frame.
+    if (phase.still) return { a: 0.88, x: (18 + slot * 29) * VW };
     const u = loop(phase.t, plan.cycle || 48, slot * (plan.gap || 0));
     return { a: ramp(PROWL_ALPHA, u), x: (ramp(PROWL_X, u) * 122 - 8) * VW };
   }
