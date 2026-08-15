@@ -1,0 +1,54 @@
+The sprites in this directory come from two free asset packs by the same author,
+Luis Zuno (@ansimuz). Both are distributed as public domain / CC0 on OpenGameArt.
+Credit is not required by either licence; it is given in wall/THIRD_PARTY.md and
+here anyway. Only the sprite frames the wall actually draws were taken — no
+music, no source files. The two licence texts follow verbatim.
+
+Nothing else in this directory is ours: `people.png`, `vehicles.png` and
+`signs.png` are the artist's pixels, repacked into one atlas each. The `.json`
+files beside them are packing metadata (which rectangle is which frame), written
+by the packer named in wall/THIRD_PARTY.md.
+
+================================================================================
+Warped City — https://opengameart.org/content/warped-city
+(also https://ansimuz.itch.io/warped-city)
+================================================================================
+
+Artwork created by Luis Zuno @ansimuz
+
+License for Everyone.
+
+Public domain and free to use on whatever you want, personal or commercial. Credit is not required but appreciated.
+
+Feeling Grateful?
+You can support my work at https://www.patreon.com/ansimuz
+
+Get more Free Assetslike these at: http://www.pixelgameart.org
+
+Music by Pascal Belisle
+
+www.patreon.com/thetoadz
+www.soundcloud.com/thetoadz
+
+Music License
+You are free to use the music in your projects as long as you give appropriate credit.
+
+(The pack's music is not in this repository.)
+
+================================================================================
+Cyberpunk City 2 — https://opengameart.org/content/warped-city-2
+================================================================================
+
+Artwork created by Luis Zuno (@ansimuz)
+
+
+LICENSE:
+You may use these assets in personal or commercial projects. You can modify these assets to suit your needs. You can re-distribute the file.
+Credit no required but appreciated it.
+
+Links
+
+Twitter @ansimuz
+Support my work at Patreon https://www.patreon.com/ansimuz
+Buy my stuff https://ansimuz.itch.io/
+Get more Free Assetslike these at: http://www.ansimuz.com

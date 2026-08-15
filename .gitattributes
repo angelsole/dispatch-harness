@@ -4,3 +4,9 @@
 # in a pull request. What actually pins the file is its sha256 in
 # wall/THIRD_PARTY.md — read that, not the bytes.
 wall/vendor/** -diff linguist-vendored
+
+# Binary art is a blob, but its atlas metadata and licence are reviewable text.
+# Keep those visible in diffs: they are the proof that each named frame stays
+# inside the committed image and that each pack may be redistributed.
+wall/assets/warped-city/*.png -diff linguist-vendored
+wall/assets/ark-pixel/*.woff2 -diff linguist-vendored

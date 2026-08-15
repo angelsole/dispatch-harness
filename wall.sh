@@ -5,8 +5,10 @@
 #
 # Point a fullscreen browser on the TV at this machine's tailnet address. One
 # node (>= 20) server, one static page, and everything the page loads ships in
-# this repo — no build step, no npm at runtime, no CDN, and no request that
-# leaves the machine.
+# this repo — the engine under wall/vendor/ and, for the ?world=canvas city, the
+# CC0/OFL art under wall/assets/, each pack with its licence and a row in
+# wall/THIRD_PARTY.md. No build step, no npm at runtime, no CDN, and no request
+# that leaves the machine.
 #
 # The wall is a city at night. Each project is a tower — named by reversing the
 # worktree path run-task.sh records — and each run is a lit car climbing it, its

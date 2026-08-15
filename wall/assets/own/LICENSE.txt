@@ -1,0 +1,10 @@
+CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+
+`own.png` and `own.json` are drawn in this repository by `make-own.js`, which
+sits beside them: the pixel grids in that file are the art, one character per
+pixel. To the extent possible under law, the authors have waived all copyright
+and related or neighbouring rights to it. You may use it for anything.
+
+CC0 rather than this repository's MIT because it stands next to ansimuz's CC0
+pixels in the same city, and one atlas with two obligations in it is a trap for
+whoever ships next.

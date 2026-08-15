@@ -24,14 +24,59 @@
 //   — a lit city standing still, not a dark one — and the frame loop stops
 //   advancing anything at all.
 //
-// No image files and no loader: Graphics, Text, and a sky read straight off the
-// live <svg class="sky"> in index.html, which stays the one place that painting
-// is authored.
+//   Nothing loads that is not declared. This world used to say "no image files
+//   and no loader", and it meant it: everything was Graphics and Text. It draws
+//   with pixels now, because a city with people in it needs people, and nobody
+//   draws a walk cycle with fillRect. What replaces the ban is provenance —
+//   ASSETS below is the whole list of files this page can ask for, every one of
+//   them committed under wall/assets/, licensed, listed in wall/THIRD_PARTY.md
+//   and handed over by wall/server.js's one guarded route. The loader is touched
+//   in preload() and nowhere else, and nothing here ever reaches for fetch, an
+//   Image, or a data URI.
+//
+// The sky is still read straight off the live <svg class="sky"> in index.html,
+// which stays the one place that painting is authored, and everything that is
+// not a figure, a vehicle or a sign is still drawn rather than loaded.
+//
+// This world is no longer a parity port. The DOM world is still the default and
+// still exactly what it was; from #34 on, what is asked of the canvas city is
+// that it be ALIVE — people walking, cars passing, somebody moving behind a
+// window, a cook working under a neon that actually glows — not that it agree
+// with the stylesheet about a shopfront's alpha.
 
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.WallCanvasWorld = factory();
 }(typeof globalThis === 'object' ? globalThis : this, function () {
+  // --- what this world can load -------------------------------------------------
+  // The whole list, and the only list. Paths are relative to the page, which is
+  // how the browser will ask for them and how the suite checks them: every entry
+  // has to be a real file under wall/assets/, served 200 by wall/server.js, and
+  // covered by a wall/THIRD_PARTY.md row for its pack. Nothing else in this file
+  // may name a path under assets/ — a side door is exactly the thing the old
+  // "no loader" rule was protecting, and this list is what protects it now.
+  const ASSETS = [
+    'assets/warped-city/people.png',
+    'assets/warped-city/people.json',
+    'assets/warped-city/vehicles.png',
+    'assets/warped-city/vehicles.json',
+    'assets/warped-city/signs.png',
+    'assets/warped-city/signs.json',
+    'assets/own/own.png',
+    'assets/own/own.json',
+    'assets/ark-pixel/ark-pixel-12px-proportional-zh_hk.otf.woff2',
+  ];
+  // preload() asks for files by name so the list above stays the only place a
+  // path is written down.
+  const asset = (name) => ASSETS.find((url) => url.endsWith('/' + name)) || '';
+
+  // Texture and font keys, once.
+  const PEOPLE = 'people';
+  const TRAFFIC = 'vehicles';
+  const SIGNS = 'signs';
+  const OWN = 'own';
+  const ARK = 'ark';           // Ark Pixel — the only face any CJK on this wall is set in
+
   // --- the grid -----------------------------------------------------------------
   // The canvas fills #stage at the viewport's own aspect and draws at device
   // resolution — no base grid, no letterbox — because this is a parity port of
@@ -64,6 +109,18 @@
   let BASE_GAP = 0.3 * REM;           // its margin-top
   const CEREMONY = 6;                 // --ceremony, the shipping beat
 
+  // How big figures and the atlas's general street art are, in one number. A
+  // person on this wall stands FIGURE_VH tall — 2.2vh, about 24px on a 1080p TV,
+  // where a walk cycle reads from the sofa and a building still towers
+  // over it — and walker-a is FIGURE_PX tall inside its own frame. One ratio
+  // rather than a scale per sprite, because ansimuz drew a city to one scale: a
+  // figure keeps its source proportions. Vehicle frames are the exception: the
+  // four sources have radically different authored scales, so they normalize to
+  // the street's 3.5–4-person length where their catalogue is declared below.
+  const FIGURE_VH = 2.2;
+  const FIGURE_PX = 51;               // measured off the committed atlas, not guessed
+  let ART = 1;                        // general atlas pixel -> device pixel
+
   // How big the wall is now, and everything wall.css derives from that. The
   // device-pixel ratio is capped at 2: past that the backing store costs more
   // fill-rate than the sharpness is worth on a panel nobody stands close to.
@@ -88,6 +145,7 @@
     CROWN_H = 2.6 * REM;
     BASE_LINE = 0.88 * REM;
     BASE_GAP = 0.3 * REM;
+    ART = FIGURE_VH * VH / FIGURE_PX;
   }
 
   // --- the palette --------------------------------------------------------------
@@ -110,7 +168,51 @@
     done: 0x3fd984, failed: 0xff5a46, unreviewed: 0xff5a46, unknown: 0x7a878f,
   };
   const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace';
-  const CJK = '"PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif';
+  // --- what neon glows like -------------------------------------------------------
+  // A halo is the sign's OWN light: a warm-white glow around a cyan tube is a lamp
+  // behind a sign rather than a sign, and it costs the project tints — the one
+  // thing the skyline's lettering is colour-coded by — their whole meaning. So the
+  // glow is thrown in the sign's colour. A filter per sign would be a render
+  // target per sign, so signs are grouped by hue instead, and this is the entire
+  // vocabulary of hues on the wall: four shops, five project tints, one alarm.
+  const NEON = {
+    warm: 0xffb478,
+    cyan: 0x7fd4ec,
+    mint: 0x9fe8b8,
+    alarm: ALARM,
+  };
+  // Which family a tint belongs to, spelled as a table rather than as a distance
+  // in RGB: there are seven tints on this wall and guessing at them is not a
+  // virtue. The suite holds this against SHOP and SIGN_TINTS, so a new tint that
+  // nobody mapped fails the gate rather than quietly glowing amber.
+  const NEON_FAMILY = {
+    0xff9a5e: 'warm',    // 麵 noodles
+    0xffc27d: 'warm',    // 食 a place that feeds you, the dedication, and one project tint
+    0x7fd4ec: 'cyan',    // 樂 an arcade, and one project tint
+    0x9fe8b8: 'mint',    // 修 a repair bench, and one project tint
+    0xe8e2cf: 'warm',    // bone — a project tint with no hue of its own to keep
+    0x8fb0ff: 'cyan',    // iris — near enough cyan that a cyan halo is its own light
+    0xff2f45: 'alarm',   // a tower asking for a human, and nothing else on this wall
+  };
+  const familyOf = (colour) => NEON_FAMILY[colour] || 'warm';
+  // A shopfront is never an alarm, so the district does not carry that family.
+  const DISTRICT_FAMILIES = ['warm', 'cyan', 'mint'];
+  const TOWER_FAMILIES = ['warm', 'cyan', 'mint', 'alarm'];
+  // How far light travels off a stroke, and how hard — per layer, because it is
+  // a fact about the LETTERING and not about the wall. The skyline's names are
+  // set in a mono face at three-quarters of a rem: thin strokes, wide gaps, and a
+  // six-pixel halo at full strength is what makes them read as tubes. A CJK glyph
+  // in a 12px pixel face is the opposite problem — 麵 has four-pixel strokes four
+  // pixels apart at this size, so any halo that carries into the gaps closes the
+  // character up into an orange brick. It gets a short, soft one: enough to bloom
+  // off the edge, not enough to fill the counters.
+  const SIGN_GLOW = { strength: 1.7, reach: 0.3 };
+  const GLYPH_GLOW = { strength: 1.0, reach: 0.1 };
+  // Ark Pixel is a 12px design. A pixel face at a fraction of its em is mush, so
+  // every CJK size on this wall snaps to a whole multiple of that em — which also
+  // means a sign is the same crispness on a laptop as on the TV.
+  const ARK_EM = 12;
+  const arkSize = (px) => Math.max(1, Math.round(px / ARK_EM)) * ARK_EM;
 
   const hex = (n) => '#' + n.toString(16).padStart(6, '0');
   const rgb = (css) => parseInt(String(css || '#e8cfa6').slice(1), 16);
@@ -150,6 +252,11 @@
     midrise: BOX,
     landmark: [[0.34, 0], [0.66, 0], [0.66, 0.05], [0.84, 0.05], [0.84, 0.13],
                [1, 0.13], [1, 1], [0, 1], [0, 0.13], [0.16, 0.13], [0.16, 0.05], [0.34, 0.05]],
+    // The noodle bar: a long low frontage with a deep awning over it. Its own
+    // silhouette because it is its own building — the one thing on this wall a
+    // camera is meant to hold on, and the only ground floor with a person in it.
+    noodle: [[0, 0.24], [0.06, 0.24], [0.06, 0.1], [0.5, 0.1], [0.5, 0], [0.62, 0],
+             [0.62, 0.1], [0.94, 0.1], [0.94, 0.24], [1, 0.24], [1, 1], [0, 1]],
   };
 
   // The district's proportion tables, straight off wall.css.
@@ -161,6 +268,10 @@
     infra: { wide: 1.85, tall: 0.5 },
     midrise: { wide: 1, tall: 1 },
     landmark: { wide: 1.15, tall: 1.25 },
+    // Wide on purpose, and tall enough to carry its own sign over its own
+    // awning: the hero ground floor is the whole point of this building, and a
+    // frontage you can put a counter, a cook and a 麵 on needs the room.
+    noodle: { wide: 2.6, tall: 1.2 },
   };
   const FORMS = {
     shophouse: { wide: 1.62, tall: 0.40, floor: 6.5, eaves: 0.24 },
@@ -399,18 +510,181 @@
       scale: ramp(FLARE_SCALE, u),
     };
   }
-  // A walker's crossing, and the machines that do the other half of a night
-  // shift going the other way. Parked mid-street when the room asks for
-  // stillness, which is what wall.css does with a fixed translate per slot.
-  function walkerAt(phase, slot, robot) {
-    if (phase.still) return (9 + slot * 15) * VW;
-    const u = loop(phase.t, robot ? 176 : 132, slot * 21);
-    return (robot ? 108 - u * 216 : -108 + u * 216) * VW;
+  // --- who is out, and which frame of themselves they are on ---------------------
+  // Everything below picks a SPRITE FRAME, and every one of them is a pure
+  // function of the wall clock in exactly the way every alpha above is. Phaser's
+  // AnimationState is deliberately not used anywhere in this file: an animation
+  // that keeps its own playhead starts when the object is created, which means a
+  // browser opened at 3am joins a walk cycle at frame 0 and two TVs in a room
+  // walk out of step within a minute. A frame that is looked up from `t` cannot
+  // do either — and freezing `t` freezes the city into one dignified still.
+  //
+  // Three kinds of person, by slot. walker-a has a real 16-frame walk; the other
+  // two only ever run, which is what people do on the way home at one in the
+  // morning, so they are given shorter crossings to match. Direction belongs to
+  // the kind, so the pavement always has traffic both ways on it.
+  const WALKERS = [
+    { key: 'walker-a', move: 'walk', frames: 16, fps: 14, period: 132, west: false,
+      rest: 'idle', restFrames: 4 },
+    { key: 'walker-b', move: 'run', frames: 8, fps: 12, period: 96, west: true,
+      rest: 'idle', restFrames: 4 },
+    { key: 'cop', move: 'run', frames: 10, fps: 11, period: 176, west: true,
+      rest: 'idle', restFrames: 3 },
+  ];
+  const walkerKind = (slot) => WALKERS[slot % WALKERS.length];
+  // Not everybody out at one in the morning is going anywhere. Every other slot
+  // after the first is standing on the pavement instead of crossing it — a
+  // street where every single figure is in transit reads as a treadmill, and the
+  // first slot always walks so that a one-ship week is not one motionless person.
+  const stands = (slot) => slot > 0 && slot % 2 === 0;
+  const IDLE_FPS = 5;
+
+  // A walker's crossing. Parked mid-street when the room asks for stillness,
+  // which is what wall.css does with a fixed translate per slot — and parked
+  // there permanently if this slot is one of the ones standing about.
+  function walkerAt(phase, slot, kind) {
+    if (phase.still || stands(slot)) return (9 + slot * 15) * VW;
+    const who = WALKERS[kind % WALKERS.length];
+    const u = loop(phase.t, who.period, slot * 21);
+    return (who.west ? 108 - u * 216 : -108 + u * 216) * VW;
   }
+
+  // Which frame of themselves they are on. Standing still is STANDING: a frozen
+  // walk cycle is a figure balanced on one foot, and this city holds its
+  // stillness with more dignity than that.
+  function walkFrameAt(phase, slot, kind) {
+    const who = WALKERS[kind % WALKERS.length];
+    const rest = (i) => who.key + '/' + who.rest + '/' + (i % who.restFrames);
+    if (phase.still) return rest(slot);
+    if (stands(slot)) {
+      return rest(Math.floor(loop(phase.t, who.restFrames / IDLE_FPS, slot * 5.3) * who.restFrames));
+    }
+    const step = Math.floor(loop(phase.t, who.frames / who.fps, slot * 3.7) * who.frames);
+    return who.key + '/' + who.move + '/' + (step % who.frames);
+  }
+
   function vehicleAt(phase, slot, plan) {
-    if (phase.still) return { a: 0, x: 0 };
+    // Reduced motion parks each lane's car along the road. A vehicle is a thing
+    // that can stand still, unlike the old headlight streaks phaseAt() removes;
+    // hiding it would make the new street life disappear instead of holding it
+    // in the brief's lit, dignified still frame.
+    if (phase.still) return { a: 0.88, x: (18 + slot * 29) * VW };
     const u = loop(phase.t, plan.cycle || 48, slot * (plan.gap || 0));
     return { a: ramp(PROWL_ALPHA, u), x: (ramp(PROWL_X, u) * 122 - 8) * VW };
+  }
+
+  // What drives past this time. The lane is the slot's, but WHICH vehicle is a
+  // fact about which pass the street is in the middle of — so a room watching for
+  // a few minutes sees all four, and the wall never has to remember which one it
+  // used last.
+  const VEHICLE_KINDS = ['red', 'yellow', 'police', 'truck'];
+  // The atlas vehicles were authored at very different source scales (the
+  // compact hover cars are 93–96 px wide; the truck is 257). Keep each sprite's
+  // aspect ratio, but normalize its displayed length to the street's contract:
+  // roughly three and a half to four people, rather than two bikes and a
+  // five-person truck sharing one accidental scale.
+  const VEHICLE_SPECS = {
+    red: { width: 96, figures: 3.5 },
+    yellow: { width: 93, figures: 3.5 },
+    police: { width: 163, figures: 3.8 },
+    truck: { width: 257, figures: 4 },
+  };
+  function vehicleScaleAt(frame) {
+    const kind = String(frame || '').replace(/^vehicle\//, '');
+    const spec = VEHICLE_SPECS[kind] || VEHICLE_SPECS.red;
+    return FIGURE_VH * VH * spec.figures / spec.width;
+  }
+  function vehicleKindAt(phase, slot, plan) {
+    const pass = phase.still ? 0
+      : Math.floor((phase.t + slot * (plan.gap || 0)) / (plan.cycle || 48));
+    const i = (pass + slot * 3) % VEHICLE_KINDS.length;
+    return 'vehicle/' + VEHICLE_KINDS[(i + VEHICLE_KINDS.length) % VEHICLE_KINDS.length];
+  }
+
+  // Something crossing high over the district, rarely: four and a bit minutes
+  // apart, forty seconds in shot. Under stillness it hovers rather than vanishing
+  // — a drone holding station is a thing a drone does, unlike a headlight streak.
+  const DRONE = { period: 257, cross: 0.16, frames: 4, fps: 8, y: 0.2 };
+  const DRONE_ALPHA = [[0, 0], [0.07, 0.9], [0.9, 0.9], [1, 0]];
+  function droneAt(phase) {
+    if (phase.still) return { a: 0.9, x: 0.66 * W, frame: 'drone/0' };
+    const u = loop(phase.t, DRONE.period, 41);
+    if (u >= DRONE.cross) return { a: 0, x: -W, frame: 'drone/0' };
+    const k = u / DRONE.cross;
+    const spin = Math.floor(loop(phase.t, DRONE.frames / DRONE.fps, 0) * DRONE.frames);
+    return {
+      a: ramp(DRONE_ALPHA, k),
+      x: (1.08 - 1.16 * k) * W,
+      frame: 'drone/' + (spin % DRONE.frames),
+    };
+  }
+
+  // The whole dressing catalogue, and every frame the signs atlas has in it:
+  // [frame key, how many cels, which cel it starts at]. A three-entry row is a
+  // prop that shares a key with two other props at different sizes rather than
+  // three cels of one animation — `control-box` is a small box, a smaller box and
+  // a long box, and animating between them would be a sign changing shape.
+  const BANNERS = [
+    ['banner-neon', 4], ['banner-side', 4], ['banner-scroll', 4], ['banner-coke', 3],
+    ['banner-big', 4], ['banner-a', 4], ['banner-b', 4], ['banner-c', 4],
+    ['banner-d', 4], ['banner-e', 4], ['monitor-face', 4], ['lights', 4],
+    ['banner-sushi', 3], ['hotel-sign', 1], ['banners', 1], ['banner-small', 1],
+    ['banner-arrow', 1], ['banner-floor', 1], ['antenna', 1],
+    ['control-box', 1, 0], ['control-box', 1, 1], ['control-box', 1, 2],
+  ];
+  // The two the noodle bar hangs itself, over and above the district's draw:
+  // OPEN, and a vertical tube down the other shoulder.
+  const NOODLE_SIGNS = [['banner-open', 1], ['banner-scroll', 4]];
+
+  // The authored grid in wall/assets/own/make-own.js, and how many postures each
+  // archetype has. The suite holds these to what that file actually wrote.
+  const OCCUPANT_W = 8;
+  const OCCUPANT_H = 12;
+  const OCCUPANT_FRAMES = { stand: 3, sit: 2, lean: 2, pace: 3, desk: 2 };
+
+  // A banner's own art does the flickering — these packs blink their own letters
+  // out — so this is only which cel is up. Slow enough to read as a sign cycling
+  // and not as a fault in the panel.
+  const BANNER_FPS = 4;
+  function bannerFrameAt(phase, frames, drift) {
+    if (phase.still || frames <= 1) return 0;
+    return Math.floor(loop(phase.t, frames / BANNER_FPS, drift) * frames) % frames;
+  }
+
+  // The cook. Four beats — cleaver up, cleaver down, a toss, a bowl over the
+  // counter — at a pace that reads as work rather than as a machine. Stillness
+  // catches him handing the bowl over, which is the frame worth being caught in.
+  const COOK_FRAMES = 4;
+  const COOK_BEAT = 0.62;
+  const COOK_PX = 36;                 // the authored grid's own height, in pixels
+  const COOK_TALL = 1.6;              // and how many pedestrians tall he stands
+  function cookAt(phase) {
+    if (phase.still) return 'cook/3';
+    return 'cook/' + (Math.floor(loop(phase.t, COOK_FRAMES * COOK_BEAT, 0) * COOK_FRAMES)
+      % COOK_FRAMES);
+  }
+
+  // What comes off the wok. Three plumes on three periods that do not divide each
+  // other, on the same ramp the street vents already breathe on — and held, lit,
+  // as one hanging puff when the room asks for stillness.
+  const NOODLE_STEAM = [
+    { x: 0.22, period: 5.5, delay: 0, rise: 2.4 },
+    { x: 0.27, period: 7.1, delay: 2.4, rise: 3 },
+    { x: 0.18, period: 6.3, delay: 4.1, rise: 2.6 },
+  ];
+  function steamAt(phase, puff) {
+    if (phase.still) return { a: 0.34, y: -0.7 * REM, s: 0.95 };
+    const u = loop(phase.t, puff.period, puff.delay);
+    return { a: ramp(STEAM_ALPHA, u), y: -u * puff.rise * REM, s: 0.45 + u * 0.95 };
+  }
+
+  // Somebody behind a blind. A posture every several seconds and never faster:
+  // a window whose occupant twitches at fifteen frames a second is a fault, and a
+  // window whose occupant has moved since you last looked is a life.
+  const OCCUPANT_BEAT = 6.5;
+  function occupantAt(phase, seed, frames) {
+    if (phase.still || frames <= 1) return 0;
+    return Math.floor(loop(phase.t, frames * OCCUPANT_BEAT, seed) * frames) % frames;
   }
 
   // --- drawing helpers ----------------------------------------------------------
@@ -550,12 +824,30 @@
     class CityScene extends Phaser.Scene {
       constructor() { super('city'); }
 
+      // The only place in this file the loader is touched, and it asks for
+      // exactly what ASSETS declares. Text objects that use the font are built in
+      // create(), which the loader has already finished by.
+      preload() {
+        this.load.atlas(PEOPLE, asset('people.png'), asset('people.json'));
+        this.load.atlas(TRAFFIC, asset('vehicles.png'), asset('vehicles.json'));
+        this.load.atlas(SIGNS, asset('signs.png'), asset('signs.json'));
+        this.load.atlas(OWN, asset('own.png'), asset('own.json'));
+        this.load.font(ARK, asset('ark-pixel-12px-proportional-zh_hk.otf.woff2'), 'woff2');
+        // A missing atlas is a city without people, not a city of magenta boxes:
+        // every sprite below is built behind a texture check, so a failed load
+        // leaves the drawn city standing and says so once.
+        const reportLoadError = (file) => console.error('wall: cannot load ' + file.src);
+        this.load.once('loaderror', reportLoadError);
+        this.load.once('complete', () => this.load.off('loaderror', reportLoadError));
+      }
+
       create() {
         this.phase = phaseAt(0, { reducedMotion: true });
         this.model = null;          // the wall's scene model, once it arrives
         this.towers = new Map();    // project -> its objects
         this.blocks = new Map();    // run id -> its objects
         this.landmark = null;
+        this.noodle = null;
         this.ghostKey = '';
         this.walkers = [];
         this.vehicles = [];
@@ -568,10 +860,53 @@
         this.skyC.add(this.backdrop);
         this.skyC.add(this.ghostG);
         for (const plane of this.planes) this.skyC.add(plane);
+        // The district, in three passes rather than one. Bodies first, by depth
+        // band, so a building in front still hides one behind it. Then every dark
+        // PLATE the signage is bolted to, unfiltered — a plate inside a glow
+        // container has its own edges lit, which turns a 16px sign into a beige
+        // bar with the lettering lost inside it. Then the lettering and the tubes,
+        // in one filtered layer per colour family, so a cyan sign throws cyan.
         this.districtC = this.add.container(0, 0);
+        this.landmarkC = this.add.container(0, 0);
+        this.districtC.add(this.landmarkC);
+        this.bandC = [];
+        for (let i = 0; i < DEPTHS.length; i++) {
+          const body = this.add.container(0, 0);
+          this.districtC.add(body);
+          this.bandC.push(body);
+        }
+        this.districtPlates = this.add.container(0, 0);
+        this.districtC.add(this.districtPlates);
+        this.districtNeon = {};
+        for (const family of DISTRICT_FAMILIES) {
+          this.districtNeon[family] = this.glowLayer(NEON[family], GLYPH_GLOW);
+          this.districtC.add(this.districtNeon[family]);
+        }
+        // And in front of the whole district, the noodle bar, in the same three
+        // passes of its own. It is the one building on this wall meant to be
+        // WATCHED, so nothing gets to stand in front of it — not the next ship of
+        // the week landing on the same plot, and not a neighbour's sign hanging
+        // across its awning.
+        this.noodleC = this.add.container(0, 0);
+        this.noodlePlates = this.add.container(0, 0);
+        this.noodleNeon = this.glowLayer(SHOP.noodle, GLYPH_GLOW);
+        this.districtC.add(this.noodleC);
+        this.districtC.add(this.noodlePlates);
+        this.districtC.add(this.noodleNeon);
         this.dawnG = this.add.graphics();
         this.trafficC = this.add.container(0, 0);
         this.cityC = this.add.container(0, 0);
+        this.towerPlates = this.add.container(0, 0);
+        this.towerNeon = {};
+        // The skyline camera is the city container's one transform. The signage
+        // was split out only to share a filter, not to leave the towers: keeping
+        // these layers inside cityC prevents every project sign drifting off its
+        // building while the skyline breathes.
+        this.cityC.add(this.towerPlates);
+        for (const family of TOWER_FAMILIES) {
+          this.towerNeon[family] = this.glowLayer(NEON[family], SIGN_GLOW);
+          this.cityC.add(this.towerNeon[family]);
+        }
         this.hazeC = this.add.container(0, 0);
         this.streetC = this.add.container(0, 0);
         this.lifeC = this.add.container(0, 0);
@@ -588,6 +923,46 @@
         if (pending) this.apply(pending);
         this.spot(pendingSpot);
         this.step(true);
+      }
+
+      // Glow that is glow: the engine's own filter, not a stack of ellipses, and
+      // the only place in this file a filter is ever added. Eight of these stand
+      // on the wall — three district families, four skyline families and the
+      // noodle bar's own — which is the budget, because each one is a render
+      // target. WebGL only; a Canvas fallback simply goes without the halo.
+      //
+      // Tight, and never wider than the plate its sign is bolted to: `distance`
+      // is in device pixels, so it is written as a fraction of a rem and grows
+      // with the panel exactly like every other size in this world. Inner
+      // strength stays at zero — the glow belongs outside the stroke, and a
+      // glyph washing towards white is a glyph that has stopped being its colour.
+      glowLayer(colour, glow) {
+        const layer = this.add.container(0, 0);
+        if (typeof layer.enableFilters !== 'function') return layer;
+        layer.enableFilters();
+        if (!layer.filters) return layer;
+        layer.filters.internal.addGlow(colour, glow.strength, 0, 1, false, 6,
+                                       Math.max(2, Math.round(glow.reach * REM)));
+        return layer;
+      }
+
+      // A dark plate for a sign to be bolted to. Every one on this wall is made
+      // here, and every one is handed an UNFILTERED layer: that is the invariant
+      // the suite pins, and it is the difference between a sign and a light box.
+      makePlate(plates) {
+        const g = this.add.graphics();
+        plates.add(g);
+        return g;
+      }
+
+      // A sprite, or nothing at all if that atlas never arrived. Every sprite in
+      // this world goes through here, which is what makes a failed load a quiet
+      // city rather than a broken one.
+      figure(parent, key, frame) {
+        if (!this.textures.exists(key)) return null;
+        const s = this.add.sprite(0, 0, key, frame);
+        parent.add(s);
+        return s;
       }
 
       // --- the painted sky ------------------------------------------------------
@@ -783,46 +1158,70 @@
           return g;
         });
 
-        this.crowdC = this.add.container(0, 0);
+        // Cars behind, people in front of them: a pavement is nearer the room
+        // than a road is.
         this.roadC = this.add.container(0, 0);
-        this.lifeC.add(this.crowdC);
+        this.crowdC = this.add.container(0, 0);
         this.lifeC.add(this.roadC);
+        this.lifeC.add(this.crowdC);
         this.lifeC.setVisible(false);
+        // Pre-allocated to the street's own ceiling rather than to this week's
+        // plan: a wall that runs for a month must not build and destroy sprites
+        // every time a ship lands, and scene.js already promises the caps hold.
+        const caps = Model || { MAX_WALKERS: 6, MAX_VEHICLES: 3 };
+        for (let slot = 0; slot < caps.MAX_WALKERS; slot++) {
+          const walker = this.makeWalker(slot);
+          if (walker) this.walkers.push(walker);
+        }
+        for (let slot = 0; slot < caps.MAX_VEHICLES; slot++) {
+          const vehicle = this.makeVehicle(slot);
+          if (vehicle) this.vehicles.push(vehicle);
+        }
+        // And one thing up where the aircraft are, four minutes apart.
+        this.drone = this.figure(this.trafficC, TRAFFIC, 'drone/0');
+        if (this.drone) {
+          this.drone.setOrigin(0.5, 0.5);
+          this.drone.setScale(ART * 1.5);
+          this.drone.setPosition(-W, DRONE.y * H);
+          this.drone.setAlpha(0);
+        }
       }
 
-      // Somebody out at one in the morning: a silhouette, never a character, with
-      // the street's own warmth down one edge.
+      // Somebody out at one in the morning. The figures in this atlas stand on
+      // the bottom edge of their own frames, which is why the sprite's origin is
+      // the pavement it is standing on and nothing has to be nudged per frame.
       makeWalker(slot) {
-        const robot = slot % 3 === 2;
-        const g = this.add.graphics();
-        this.crowdC.add(g);
-        const w = (robot ? 0.4 : 0.3) * REM;
-        const h = (robot ? 0.42 : 0.72) * REM;
-        g.fillStyle(BG, 0.95);
-        g.fillRect(0, 0, Math.max(0.6, w * 0.55), h);
-        g.fillStyle(robot ? SHOP.repair : DINER, robot ? 0.6 : 0.55);
-        g.fillRect(w * 0.55, 0, Math.max(0.6, w * 0.45), h);
-        g.setPosition(0, H - (1.4 + (slot % 4) * 0.9) * VH - h);
-        g.setAlpha(0.62);
-        return { g, robot, slot };
+        const who = walkerKind(slot);
+        const s = this.figure(this.crowdC, PEOPLE, who.key + '/' + who.rest + '/0');
+        if (!s) return null;
+        s.setOrigin(0.5, 1);
+        s.setScale(ART);
+        // Four pavement depths, all of them clear of the comms ticker along the
+        // bottom of the page: a figure standing behind a scrolling line of type
+        // is a smear, however good the walk cycle is.
+        s.setPosition(0, H - (3.9 + (slot % 4) * 0.8) * VH);
+        // The art faces east; anybody walking the other way is turned round.
+        s.setFlipX(who.west);
+        s.setAlpha(0.94);
+        return { s, slot, kind: slot % WALKERS.length };
       }
 
       // A car, now and then. The wait is the point: on a quiet week this is
-      // nothing for forty seconds and then somebody drives home.
+      // nothing for forty seconds and then somebody drives home. Which car it is
+      // comes off the clock, so all four turn up over a few minutes.
       makeVehicle(slot) {
-        const g = this.add.graphics();
-        this.roadC.add(g);
+        const s = this.figure(this.roadC, TRAFFIC, 'vehicle/red');
+        if (!s) return null;
         const west = slot % 2 === 1;
-        const w = 3.2 * REM;
-        const h = Math.max(0.6, 0.14 * REM);
-        const tint = west ? SHOP.arcade : DINER;
-        g.fillGradientStyle(west ? tint : 0x000000, west ? 0x000000 : tint,
-                            west ? tint : 0x000000, west ? 0x000000 : tint, 1, 0, 1, 0);
-        g.fillRoundedRect(0, 0, w, h, h / 2);
-        glow(g, tint, west ? 0 : w, h / 2, w * 0.35, h * 4, 0.5, 5);
-        g.setPosition(0, H - (west ? 4.3 : 3.2) * VH);
-        g.setAlpha(0);
-        return { g, slot };
+        s.setOrigin(0.5, 1);
+        s.setScale(vehicleScaleAt('vehicle/red'));
+        // Two lanes, both BEHIND every pavement depth: the road is the far side
+        // of the strip and the people are the near side of it.
+        s.setPosition(0, H - (west ? 7.6 : 6.4) * VH);
+        // This art faces west, the opposite way round to the people.
+        s.setFlipX(!west);
+        s.setAlpha(0);
+        return { s, slot, west };
       }
 
       // --- last week, flattened -------------------------------------------------
@@ -869,10 +1268,23 @@
         };
       }
 
-      makeBlock(block) {
+      // A building, its dark signage, and its lit signage. Three containers
+      // rather than one, in three different layers: the body in its depth band,
+      // the plates and the banner sprites in the unfiltered plate layer, and only
+      // the tube and the glyph in the filtered layer for this shop's own colour.
+      // stepBlock moves all three together, so a landing building still settles
+      // with its own signs on it.
+      makeBlock(block, where) {
         const box = this.measure(block);
         const root = this.add.container(0, 0);
-        this.districtC.add(root);
+        const plates = this.add.container(0, 0);
+        const neon = this.add.container(0, 0);
+        const tint = block.shop ? SHOP[block.shop.shop] : DINER;
+        where.body.add(root);
+        where.plates.add(plates);
+        // `where.neon` is a map of colour families for the district, and a single
+        // layer for each of the two fixtures, which own theirs outright.
+        (where.neon[familyOf(tint)] || where.neon).add(neon);
         const points = outline(box.poly, box.x, box.y, box.w, box.h);
         const body = this.add.graphics();
         root.add(body);
@@ -892,20 +1304,46 @@
         veil.fillPoints(points, true, true);
         veil.setAlpha(box.veil * 0.6);
 
-        const parts = { root, box, block, shop: {} };
+        const parts = { root, plates, neon, box, block, shop: {} };
         this.roofFurniture(root, block, box);
         this.shopfront(parts, block, box);
+        this.hangBanners(parts, block, box);
         // Occupancy: a fixed handful of windows keeping their own hours, each on
-        // its own loop length and from its own seeded phase.
+        // its own loop length and from its own seeded phase — and about one in
+        // three of them with somebody in it.
         parts.panes = (block.shop ? block.shop.windows : []).map((win, i) => {
           const g = this.add.graphics();
           root.add(g);
+          // Big enough that a shape inside it is a person. The DOM world's pane
+          // is a stripe of light; this one is a window somebody lives behind, and
+          // that is a size difference before it is anything else.
+          const pw = Math.max(0.55 * REM, box.w * 0.13);
+          const ph = Math.max(0.8 * REM, box.h * 0.1);
+          const px = box.x + box.w * (0.08 + win.col * 0.12);
+          const py = box.y + box.h * (0.7 - win.row * 0.1);
           g.fillStyle(i === 2 ? WIN_C : WIN_A, 1);
-          g.fillRect(box.x + box.w * (0.08 + win.col * 0.12),
-                     box.y + box.h * (0.7 - win.row * 0.1),
-                     Math.max(0.6, box.w * 0.09), Math.max(0.6, box.h * 0.08));
+          g.fillRect(px, py, pw, ph);
           g.setAlpha(0);
-          return { g, phase: win.phase };
+          const pane = { g, phase: win.phase };
+          const who = win.who;
+          const frames = who && OCCUPANT_FRAMES[who.kind];
+          if (who && who.home && frames) {
+            // Standing IN the light, on the sill, not floating over the glass.
+            const s = this.figure(root, OWN, 'occupant/' + who.kind + '/0');
+            if (s) {
+              s.setOrigin(0.5, 1);
+              s.setPosition(px + pw / 2, py + ph);
+              // The grids in wall/assets/own/make-own.js are 8 x 12; fill the
+              // pane with the taller of the two fits so a figure is a figure.
+              s.setScale(Math.min(pw / OCCUPANT_W, ph / OCCUPANT_H) * 0.94);
+              s.setAlpha(0);
+              pane.who = s;
+              pane.kind = who.kind;
+              pane.seed = who.phase;
+              pane.frames = frames;
+            }
+          }
+          return pane;
         });
         // Attribution, and the whole of it: one small tube on the shoulder in the
         // dispatcher's own crew tint, cooling to neutral within --sign-life.
@@ -916,6 +1354,47 @@
                             Math.max(0.6, 0.24 * REM), 0.76 * REM);
         parts.sign.setAlpha(0);
         return parts;
+      }
+
+      // What else is bolted to the front. scene.js draws nought to two per block
+      // and hands over a `pick` rather than a name — this is the catalogue that
+      // draw lands in, so the model never learns what a sprite is called. Every
+      // animated banner in the pack is in here, and so is every static prop: the
+      // four shop kinds stay four kinds, and the DRESSING is what makes a street
+      // of them read as a street.
+      hangBanners(parts, block, box) {
+        parts.banners = [];
+        const draws = (block.shop && block.shop.banners) || [];
+        for (const draw of draws) {
+          const [key, frames, from] = BANNERS[draw.pick % BANNERS.length];
+          // Unfiltered, with the plates: these are already lit pixels drawn by
+          // somebody who knew what a neon sign looks like, in half a dozen hues
+          // apiece. One family colour thrown over a four-colour banner is a
+          // wash, not a halo.
+          const s = this.figure(parts.plates, SIGNS, key + '/' + (from || 0));
+          if (!s) continue;
+          // Never wider than a share of the frontage it hangs on, whatever the
+          // pack thought: a narrow spire gets a narrow sign, same as its glyph.
+          const scale = Math.min(ART, box.w * 0.42 / Math.max(1, s.width));
+          s.setScale(scale);
+          if (draw.slot === 2) {
+            // On the roof, standing on the roofline.
+            s.setOrigin(0.5, 1);
+            s.setPosition(box.x + box.w * (draw.pick % 2 ? 0.3 : 0.7), box.y + 0.6);
+          } else if (draw.slot === 1) {
+            // Bracketed off a shoulder, hanging down the way the shop signs do.
+            s.setOrigin(block.shop && block.shop.side ? 0 : 1, 0);
+            s.setPosition(block.shop && block.shop.side ? box.x + box.w : box.x,
+                          box.y + box.h * (box.eaves + 0.12));
+          } else {
+            // Flat on the facade, high enough to clear the shopfront row.
+            s.setOrigin(0.5, 0);
+            s.setPosition(box.x + box.w * 0.5,
+                          box.y + box.h * Math.max(box.eaves + 0.06, 0.2));
+          }
+          s.setAlpha(0);
+          parts.banners.push({ s, key, frames, from: from || 0, drift: draw.drift });
+        }
       }
 
       // Roof furniture. The silhouette is what the room reads from the sofa, so
@@ -992,84 +1471,241 @@
         }
         g.setAlpha(0.94);
         if (!shop) return;
+        // The tube, in two pieces in two layers: the wide soft bloom it throws
+        // onto its own bay is a lamp and stays out of the filter, and the lit
+        // tube itself goes in the layer for its colour and gets the tight halo.
+        // Both are stepped together — the pair IS one sign.
         if (shop.neon) {
-          const neon = this.add.graphics();
-          root.add(neon);
           const nx = left + w * (shop.bay * 0.19);
           const ny = GROUND_Y - 0.52 * REM - 0.15 * REM;
-          glow(neon, tint, nx + w * 0.1, ny, w * 0.22, 0.5 * REM, 0.45, 5);
+          const bloom = this.add.graphics();
+          parts.plates.add(bloom);
+          glow(bloom, tint, nx + w * 0.1, ny, w * 0.22, 0.5 * REM, 0.45, 5);
+          const neon = this.add.graphics();
+          parts.neon.add(neon);
           neon.fillStyle(tint, 1);
           neon.fillRect(nx, ny, Math.max(0.6, w * 0.2), Math.max(0.6, 0.15 * REM));
           parts.shop.neon = neon;
+          parts.shop.bloom = bloom;
           parts.shop.neonPhase = shop.flicker;
         }
         // A hanging vertical sign in the idiom the towers already use, bracketed
         // to one shoulder of the frontage rather than hung over a bay, so it is
-        // bounded by the building paying for it whichever way it hangs.
-        const size = Math.max(4, Math.min(0.78 * REM, box.w * 0.3));
-        const plate = this.add.graphics();
-        root.add(plate);
-        const px = shop.side ? box.x + box.w - size * 1.4 : box.x;
-        const py = GROUND_Y - 0.62 * REM - size * 1.4;
+        // bounded by the building paying for it whichever way it hangs. Set in
+        // Ark Pixel at a whole multiple of its own em — a pixel face at 15.7px is
+        // a smear, and a shop sign is the smallest lettering on this wall.
+        const size = arkSize(Math.max(ARK_EM, Math.min(1.15 * REM, box.w * 0.34)));
+        const plate = this.makePlate(parts.plates);
+        const px = shop.side ? box.x + box.w - size * 1.3 : box.x;
+        const py = GROUND_Y - 0.62 * REM - size * 1.3;
         plate.fillStyle(0x02060a, 0.55);
-        plate.fillRect(px, py, size * 1.4, size * 1.4);
+        plate.fillRect(px, py, size * 1.3, size * 1.3);
         plate.lineStyle(0.6, tint, 0.34);
-        plate.strokeRect(px, py, size * 1.4, size * 1.4);
-        const glyph = this.add.text(px + size * 0.7, py + size * 0.7, shop.glyph, {
-          fontFamily: CJK, fontSize: size + 'px', color: hex(tint),
+        plate.strokeRect(px, py, size * 1.3, size * 1.3);
+        const glyph = this.add.text(px + size * 0.65, py + size * 0.65, shop.glyph, {
+          fontFamily: ARK, fontSize: size + 'px', color: hex(tint),
         });
-        root.add(glyph);
+        parts.neon.add(glyph);
         glyph.setOrigin(0.5, 0.5);
         parts.shop.glyph = glyph;
         parts.shop.glyphPlate = plate;
         parts.shop.glyphPhase = shop.hang;
       }
 
+      // Which set of layers a building belongs in. Three depth bands of bodies,
+      // so the district reads as a city with air in it rather than as a row of
+      // bars; one shared plate layer and one filtered layer per colour family
+      // over the lot of them.
+      band(depth) {
+        const i = Math.max(0, Math.min(this.bandC.length - 1, depth | 0));
+        return { body: this.bandC[i], plates: this.districtPlates, neon: this.districtNeon };
+      }
+
       renderDistrict(model) {
         // The dedication is what the week arrives into: stood up once, before
-        // the week's first building, and left alone after that.
+        // the week's first building, and left alone after that. It stands behind
+        // the whole district, in its own layer under the back band.
         if (!this.landmark) {
           const ran = model.landmark;
           this.landmark = this.makeBlock({
             id: '·landmark', kind: 'landmark', depth: ran.depth, x: ran.x,
             storeys: ran.storeys, crew: hex(DINER), shop: null, shape: null,
-          });
+          }, { body: this.landmarkC, plates: this.districtPlates, neon: this.districtNeon });
+          this.landmark.fixture = true;
           const box = this.landmark.box;
-          const size = Math.max(6, Math.min(1.3 * REM, box.w * 0.52));
-          const plate = this.add.graphics();
-          this.landmark.root.add(plate);
-          const px = box.x + box.w - size * 0.7;
+          const size = arkSize(Math.max(ARK_EM, Math.min(1.6 * REM, box.w * 0.56)));
+          const plate = this.makePlate(this.landmark.plates);
+          const px = box.x + box.w - size * 0.65;
           const py = box.y + box.h * 0.16;
           plate.fillStyle(0x02060a, 0.6);
-          plate.fillRect(px, py, size * 1.4, size * 1.7);
+          plate.fillRect(px, py, size * 1.3, size * 1.6);
           plate.lineStyle(0.6, DINER, 0.4);
-          plate.strokeRect(px, py, size * 1.4, size * 1.7);
-          const sign = this.add.text(px + size * 0.7, py + size * 0.85, ran.glyph, {
-            fontFamily: CJK, fontSize: size + 'px', color: hex(DINER),
+          plate.strokeRect(px, py, size * 1.3, size * 1.6);
+          const sign = this.add.text(px + size * 0.65, py + size * 0.8, ran.glyph, {
+            fontFamily: ARK, fontSize: size + 'px', color: hex(DINER),
           });
-          this.landmark.root.add(sign);
+          this.landmark.neon.add(sign);
           sign.setOrigin(0.5, 0.5);
           this.landmark.dedication = sign;
           this.landmark.plate = plate;
-          this.landmark.root.setDepth(0);
         }
+        // And the other fixture. It is the one thing on this wall somebody is
+        // WORKING in, so it stands in the nearest band and gets built once.
+        if (!this.noodle && model.noodleBar) this.noodle = this.makeNoodleBar(model.noodleBar);
         const standing = new Set(model.blocks.map((b) => b.id));
         for (const [id, parts] of this.blocks) {
           // Only the week rolling over takes a building down, and then it takes
           // the whole district with it.
-          if (!standing.has(id)) { parts.root.destroy(); this.blocks.delete(id); }
+          if (!standing.has(id)) {
+            parts.root.destroy();
+            parts.plates.destroy();
+            parts.neon.destroy();
+            this.blocks.delete(id);
+          }
         }
-        let landed = false;
         for (const block of model.blocks) {
           if (this.blocks.has(block.id)) continue;
-          const parts = this.makeBlock(block);
-          parts.root.setDepth(block.depth + 1);
-          this.blocks.set(block.id, parts);
-          landed = true;
+          this.blocks.set(block.id, this.makeBlock(block, this.band(block.depth)));
         }
-        // Three depth bands, so the district reads as a city with air in it
-        // rather than as a row of bars. Re-sorted only when one lands.
-        if (landed) this.districtC.sort('depth');
+      }
+
+      // --- the noodle bar -------------------------------------------------------
+      // The hero ground floor, and the only place on this wall where somebody is
+      // doing a job rather than standing under a light. Everything in it is
+      // pre-built: a counter, a burner, two lanterns, an OPEN sign, a vertical
+      // neon, the 麵 over the door, and the cook. What the frame loop does to it
+      // afterwards is set an alpha, a scale and a frame — nothing here is redrawn.
+      makeNoodleBar(spec) {
+        const parts = this.makeBlock({
+          id: '·noodle', kind: spec.kind, depth: spec.depth, x: spec.x,
+          storeys: spec.storeys, crew: hex(SHOP.noodle), shop: null, shape: null,
+        }, { body: this.noodleC, plates: this.noodlePlates, neon: this.noodleNeon });
+        parts.fixture = true;
+        const box = parts.box;
+        const root = parts.root;
+        const plates = parts.plates;
+        const neon = parts.neon;
+        // Every height in here is the COOK's, because he is what the building is
+        // for: the room has to be tall enough to stand him up in, and the counter
+        // has to cross him at the hip so his hands are the thing above it. Sizing
+        // the room first and hoping he fits is how you get a chef's hat in a
+        // ceiling and a pair of shoulders behind a worktop.
+        const tall = FIGURE_VH * COOK_TALL * VH;            // how tall the cook is
+        const bar = Math.min(box.h * 0.62, tall * 1.55);    // the room, floor to soffit
+        const floorY = GROUND_Y - Math.max(1, bar * 0.05);  // what he is standing on
+        const top = floorY - tall * 0.36;                   // the counter, at his hip
+        const left = box.x + box.w * 0.06;
+        const wide = box.w * 0.88;
+        const room = this.add.graphics();
+        root.add(room);
+        // A LIT room, not a dark doorway. Everything in this building is a
+        // contrast problem: the cook is thirty-odd pixels of white linen, and he
+        // only reads from the sofa if what is behind him is warm and behind him.
+        room.fillGradientStyle(0x6a4128, 0x6a4128, 0x241611, 0x241611, 1, 1, 1, 1);
+        room.fillRect(left, GROUND_Y - bar, wide, bar);
+        // The back wall: tiles, and the pass-through to a kitchen nobody sees.
+        room.fillStyle(0x120b08, 0.55);
+        for (let x = left + wide * 0.06; x < left + wide * 0.94; x += 0.7 * REM) {
+          room.fillRect(x, GROUND_Y - bar * 0.92, Math.max(0.6, 0.34 * REM), bar * 0.5);
+        }
+        // The strip light along the soffit, which is what he is lit by.
+        room.fillStyle(WIN_A, 0.75);
+        room.fillRect(left, GROUND_Y - bar, wide, Math.max(0.8, 0.16 * REM));
+        glow(room, DINER, left + wide / 2, GROUND_Y - bar * 0.86, wide * 0.5, bar * 0.5, 0.55, 6);
+        parts.noodle = {};
+        // The cook, on the floor of his own kitchen, at half again a pedestrian.
+        const cook = this.figure(root, OWN, 'cook/3');
+        if (cook) {
+          cook.setOrigin(0.5, 1);
+          cook.setScale(tall / COOK_PX);
+          cook.setPosition(left + wide * 0.44, floorY);
+          parts.noodle.cook = cook;
+        }
+        // The burner, and the steam off it, BEHIND the counter and in front of
+        // him: the one red on this street that is not an alarm.
+        parts.noodle.burner = this.add.graphics();
+        root.add(parts.noodle.burner);
+        glow(parts.noodle.burner, 0xff8c3a, left + wide * 0.28, top - tall * 0.14,
+             0.4 * REM, 0.22 * REM, 0.95, 6);
+        // Three plumes on the street vents' own ramp, so the wok breathes on the
+        // beat the rest of the city already does.
+        parts.noodle.steam = NOODLE_STEAM.map((puff) => {
+          const g = this.add.graphics();
+          root.add(g);
+          glow(g, 0xd8e8ee, 0, 0, 0.5 * REM, 0.7 * REM, 0.34, 6);
+          g.setAlpha(0);
+          return { g, puff, x: left + wide * (0.2 + puff.x * 0.4), y: top - tall * 0.1 };
+        });
+        // The counter itself, drawn AFTER all of it: he is behind it, which is
+        // the whole reason he reads as staff rather than as a customer.
+        const counter = this.add.graphics();
+        root.add(counter);
+        counter.fillGradientStyle(0x27190f, 0x27190f, 0x0d0806, 0x0d0806, 1, 1, 1, 1);
+        counter.fillRect(left, top, wide, GROUND_Y - top);
+        // Only its lit edge is bright. A pale slab across the frontage would be
+        // the loudest thing in the building, and the cook has to be that.
+        counter.fillStyle(DINER, 0.75);
+        counter.fillRect(left, top, wide, Math.max(0.8, 0.09 * REM));
+        // Two lanterns over it, hung off the soffit. Lamps rather than signage,
+        // so they keep the ring-stack bloom and stay out of the filter.
+        const lanterns = this.add.graphics();
+        plates.add(lanterns);
+        for (const at of [0.14, 0.8]) {
+          const lx = left + wide * at;
+          const ly = GROUND_Y - bar * 0.78;
+          lanterns.fillStyle(STONE, 1);
+          lanterns.fillRect(lx - 0.03 * REM, GROUND_Y - bar, Math.max(0.6, 0.06 * REM), bar * 0.2);
+          glow(lanterns, 0xff6a4a, lx, ly, 0.32 * REM, 0.4 * REM, 0.7, 6);
+          lanterns.fillStyle(0xffb27a, 1);
+          lanterns.fillEllipse(lx, ly, 0.42 * REM, 0.54 * REM, 12);
+        }
+        parts.noodle.lanterns = lanterns;
+        // OPEN, and a vertical neon beside it. Both are the pack's own signs, so
+        // the bar is lettered in the same hand as the rest of the street.
+        // Sprites with their own hues, so unfiltered with the banners: one family
+        // colour thrown over somebody else's four-colour sign is a wash.
+        const [openKey] = NOODLE_SIGNS[0];
+        const [stripKey, stripFrames] = NOODLE_SIGNS[1];
+        const open = this.figure(plates, SIGNS, openKey + '/0');
+        if (open) {
+          open.setOrigin(0, 1);
+          open.setScale(Math.min(ART * 2, bar * 0.8 / Math.max(1, open.height)));
+          open.setPosition(box.x + box.w * 0.94, GROUND_Y - bar * 0.1);
+          parts.noodle.open = open;
+        }
+        const strip = this.figure(plates, SIGNS, stripKey + '/0');
+        if (strip) {
+          strip.setOrigin(1, 1);
+          strip.setScale(Math.min(ART * 2, bar * 0.86 / Math.max(1, strip.height)));
+          strip.setPosition(box.x + box.w * 0.06, GROUND_Y - bar * 0.08);
+          parts.noodle.strip = strip;
+          parts.noodle.stripKey = stripKey;
+          parts.noodle.stripFrames = stripFrames;
+        }
+        // And the sign the whole building is: 麵, over the awning, in Ark Pixel,
+        // throwing its own orange. This is the one piece of lettering on this
+        // wall that is meant to be read from the far side of the room, so it
+        // takes as much of the facade over the shop as that facade has — and its
+        // plate stays dark, in the unfiltered layer, which is what the glyph is
+        // legible against.
+        const facade = box.h - bar;
+        const size = arkSize(Math.max(ARK_EM * 2,
+          Math.min(3.2 * REM, box.w * 0.3, facade * 0.62)));
+        const plate = this.makePlate(plates);
+        const px = box.x + box.w * 0.5 - size * 0.75;
+        const py = GROUND_Y - bar - size * 1.5 - 0.3 * REM;
+        plate.fillStyle(0x02060a, 0.72);
+        plate.fillRect(px, py, size * 1.5, size * 1.5);
+        plate.lineStyle(Math.max(0.8, 0.06 * REM), SHOP.noodle, 0.55);
+        plate.strokeRect(px, py, size * 1.5, size * 1.5);
+        const glyph = this.add.text(px + size * 0.75, py + size * 0.75, spec.glyph, {
+          fontFamily: ARK, fontSize: size + 'px', color: hex(SHOP.noodle),
+        });
+        neon.add(glyph);
+        glyph.setOrigin(0.5, 0.5);
+        parts.noodle.glyph = glyph;
+        parts.noodle.plate = plate;
+        return parts;
       }
 
       // --- one project: a tower -------------------------------------------------
@@ -1092,12 +1728,23 @@
         }
         parts.shafts = this.add.container(0, 0);
         root.add(parts.shafts);
-        for (const key of ['halo', 'beacon', 'signPlate', 'basePlate']) {
+        for (const key of ['halo', 'beacon', 'basePlate']) {
           parts[key] = this.add.graphics();
           root.add(parts[key]);
         }
-        // Neon signage: the project's name hung off its tower's shoulder,
-        // vertical, in that project's own neon.
+        // The dark plate the project's name is bolted to, in the unfiltered
+        // layer over the skyline. This is the most important lettering on the
+        // wall — it is how the room knows which repo a tower is — and it is
+        // legible because a bright name sits on a dark plate. A plate inside a
+        // glow container has its own four edges lit, and a sixteen-pixel sign
+        // turns into a beige bar with the name lost inside it.
+        parts.signPlate = this.makePlate(this.towerPlates);
+        // The name itself is neon and glows like neon, in its own project tint.
+        // Which family layer it lives in follows that tint, and moves with it
+        // when the tower raises an alarm — see paintTower.
+        parts.family = '';
+        parts.back = 1;      // how far this tower has stepped back for a beam
+        parts.tube = 1;      // and where its own hum last left the sign
         parts.sign = this.add.text(0, 0, '', {
           fontFamily: MONO, fontSize: Math.max(4, 0.78 * REM) + 'px',
           color: '#7fd4ec', align: 'center',
@@ -1111,7 +1758,6 @@
         parts.labelLit = this.add.text(0, 0, '', {
           fontFamily: MONO, fontSize: Math.max(4, 0.72 * REM) + 'px', color: '#e4fff3',
         });
-        root.add(parts.sign);
         root.add(parts.label);
         root.add(parts.labelLit);
         parts.sign.setOrigin(0, 0);
@@ -1262,6 +1908,15 @@
           T.signPlate.lineStyle(0.6, rgb(signColour), 0.4);
           T.signPlate.strokeRect(T.sign.x - 0.16 * REM, T.sign.y - 0.3 * REM,
                                  T.sign.width + 0.32 * REM, T.sign.height + 0.6 * REM);
+          // And the tube moves into the layer that throws its own colour. A
+          // tower raising an alarm goes red, which is a different family, so
+          // this is a re-parent rather than a one-off — adding a child to a
+          // container takes it out of whichever one it was in.
+          const family = familyOf(rgb(signColour));
+          if (family !== T.family) {
+            T.family = family;
+            this.towerNeon[family].add(T.sign);
+          }
         }
         T.sweep.setVisible(tower.alarm);
         T.ceiling.setVisible(tower.alarm);
@@ -1412,7 +2067,14 @@
         const boxes = this.layout(model.towers);
         const standing = new Set(model.towers.map((t) => t.project));
         for (const [project, T] of this.towers) {
-          if (!standing.has(project)) { T.root.destroy(); this.towers.delete(project); }
+          if (!standing.has(project)) {
+            T.root.destroy();
+            // Its signage is not inside it: the plate and the tube live in the
+            // shared layers over the skyline and have to leave with the tower.
+            T.signPlate.destroy();
+            T.sign.destroy();
+            this.towers.delete(project);
+          }
         }
         model.towers.forEach((tower, i) => {
           let T = this.towers.get(tower.project);
@@ -1420,15 +2082,18 @@
           this.paintTower(T, tower, boxes[i], model.floors);
         });
         // Nightlife never competes with work: the instant anything is climbing,
-        // the whole ground floor drops a stop and the skyline keeps the eye.
+        // the whole ground floor steps back and the skyline keeps the eye. Not as
+        // far back as it did when the street was two rectangles, though — half
+        // alpha over a black pavement is not a quieter street, it is an empty
+        // one, and an empty street was the thing this pass was asked to fix.
         this.lifeC.setVisible(model.blocks.length > 0);
-        this.lifeC.setAlpha(model.quiet ? 1 : 0.5);
+        this.lifeC.setAlpha(model.quiet ? 1 : 0.74);
         this.districtC.setAlpha(model.quiet ? 1 : 0.86);
+        // The crowd is pre-allocated to the caps, so a busier week turns sprites
+        // ON rather than building them. Nothing is created or destroyed here.
         const plan = model.street;
-        while (this.walkers.length > plan.walkers) this.walkers.pop().g.destroy();
-        while (this.walkers.length < plan.walkers) this.walkers.push(this.makeWalker(this.walkers.length));
-        while (this.vehicles.length > plan.vehicles) this.vehicles.pop().g.destroy();
-        while (this.vehicles.length < plan.vehicles) this.vehicles.push(this.makeVehicle(this.vehicles.length));
+        this.walkers.forEach((walker, i) => walker.s.setVisible(i < plan.walkers));
+        this.vehicles.forEach((vehicle, i) => vehicle.s.setVisible(i < plan.vehicles));
         this.mall.setData('on', plan.mall);
         this.rail.setData('on', plan.tram);
         this.tram.setData('on', plan.tram);
@@ -1459,7 +2124,14 @@
         // what turns "brighter" into "that one".
         for (const T of this.towers.values()) {
           const keep = T.spot.visible || (T.tower && T.tower.alarm);
-          T.root.setAlpha(lit && !keep ? 0.6 : 1);
+          const back = lit && !keep ? 0.6 : 1;
+          T.root.setAlpha(back);
+          // The plate and the tube live in shared layers over the skyline rather
+          // than inside the tower, so they step back with their own building by
+          // hand — the sign's own hum times how far back this tower is.
+          T.back = back;
+          T.sign.setAlpha(T.tube * back);
+          T.signPlate.setAlpha(T.tube * back);
         }
       }
 
@@ -1505,13 +2177,30 @@
         this.rail.setAlpha(this.rail.getData('on') ? 1 : 0);
         this.tram.setAlpha(this.tram.getData('on') ? phase.tram.a : 0);
         this.tram.setX(phase.tram.x);
-        for (const walker of this.walkers) walker.g.setX(walkerAt(phase, walker.slot, walker.robot));
+        // The street. Position AND frame, both looked up from the same clock, so
+        // a walker joining mid-crossing is mid-stride rather than mid-reset.
+        for (const walker of this.walkers) {
+          walker.s.setX(walkerAt(phase, walker.slot, walker.kind));
+          walker.s.setFrame(walkFrameAt(phase, walker.slot, walker.kind));
+        }
         if (model) {
           for (const vehicle of this.vehicles) {
             const step = vehicleAt(phase, vehicle.slot, model.street);
-            vehicle.g.setAlpha(step.a);
-            vehicle.g.setX(step.x);
+            vehicle.s.setAlpha(step.a);
+            // One lane runs the other way, which is a mirrored path and not just
+            // a mirrored sprite: two cars sliding the same way in opposite
+            // liveries is the thing that used to read as a fault.
+            vehicle.s.setX(vehicle.west ? W - step.x : step.x);
+            const frame = vehicleKindAt(phase, vehicle.slot, model.street);
+            vehicle.s.setFrame(frame);
+            vehicle.s.setScale(vehicleScaleAt(frame));
           }
+        }
+        if (this.drone) {
+          const flight = droneAt(phase);
+          this.drone.setAlpha(flight.a);
+          this.drone.setX(flight.x);
+          this.drone.setFrame(flight.frame);
         }
         // The two ambient samples, re-read off this world's own clock exactly
         // like the DOM world re-reads them onto the root element — and left at
@@ -1523,7 +2212,16 @@
           this.hazeC.setAlpha(0.45 + 0.55 * Model.wetness(at - Model.RAIN_LAG));
           this.dawnG.setAlpha(Model.dawn(new Date(at * 1000)));
         }
-        if (this.landmark) this.landmark.dedication.setAlpha(tubeAt(phase, -7, 16));
+        if (this.landmark) {
+          const dedication = tubeAt(phase, -7, 16);
+          this.landmark.dedication.setAlpha(dedication);
+          this.landmark.plate.setAlpha(dedication);
+          this.stepBlock(this.landmark, phase, at, model);
+        }
+        if (this.noodle) {
+          this.stepBlock(this.noodle, phase, at, model);
+          this.stepNoodleBar(this.noodle, phase);
+        }
 
         for (const parts of this.blocks.values()) this.stepBlock(parts, phase, at, model);
         for (const T of this.towers.values()) this.stepTower(T, phase, at, model);
@@ -1532,23 +2230,85 @@
       stepBlock(parts, phase, at, model) {
         const block = parts.block;
         const shop = parts.shop;
-        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23));
+        if (shop.neon) {
+          const lit = tubeAt(phase, shop.neonPhase, 23);
+          shop.neon.setAlpha(lit);
+          shop.bloom.setAlpha(lit);
+        }
         if (shop.glyph) {
           const lit = tubeAt(phase, shop.glyphPhase, 23);
           shop.glyph.setAlpha(lit);
           shop.glyphPlate.setAlpha(lit);
         }
-        parts.panes.forEach((pane, i) => pane.g.setAlpha(paneAt(phase, i, pane.phase * 13)));
+        for (const banner of parts.banners) {
+          banner.s.setFrame(banner.key + '/'
+            + (banner.from + bannerFrameAt(phase, banner.frames, banner.drift)));
+          // The odd stumble, on the tube beat the whole street already uses, so a
+          // facade full of signs is not a facade full of metronomes.
+          banner.s.setAlpha(0.92 * tubeAt(phase, banner.drift, 23));
+        }
+        parts.panes.forEach((pane, i) => {
+          const lit = paneAt(phase, i, pane.phase * 13);
+          pane.g.setAlpha(lit);
+          // Somebody behind the blind, only ever as bright as the room they are
+          // standing in: a silhouette over an unlit pane is a stain on the glass.
+          if (pane.who) {
+            pane.who.setAlpha(lit * 0.95);
+            pane.who.setFrame('occupant/' + pane.kind + '/'
+              + occupantAt(phase, pane.seed, pane.frames));
+          }
+        });
         // A building lands with one settle and is furniture after that — and the
         // age it is fast-forwarded by is the same one --age carries in the DOM
         // world, so a browser opening this afternoon finds this morning's
         // buildings standing rather than the whole week landing at once.
+        // A fixture never lands and never carries a dispatcher: the dedication
+        // and the noodle bar were standing before the week started and will be
+        // standing after it rolls over.
         const age = Math.max(0, at - (block.at || at));
-        parts.root.setAlpha(phase.still ? 1 : Math.min(1, age / 0.9));
-        parts.root.setY(phase.still ? 0 : Math.max(0, 1 - age / 0.9) * 1.4 * REM);
+        const arriving = parts.fixture || phase.still ? 1 : Math.min(1, age / 0.9);
+        const drop = parts.fixture || phase.still ? 0 : Math.max(0, 1 - age / 0.9) * 1.4 * REM;
+        parts.root.setAlpha(arriving);
+        parts.root.setY(drop);
+        // The plates and the neon are in other layers — one unfiltered, one
+        // filtered in this shop's own colour — but they belong to this building
+        // and settle with it.
+        parts.plates.setAlpha(arriving);
+        parts.plates.setY(drop);
+        parts.neon.setAlpha(arriving);
+        parts.neon.setY(drop);
         // The dispatcher's tint cooling out of the sign, on the server's clock.
-        if (model) {
+        if (model && !parts.fixture) {
           parts.sign.setAlpha(signAt(phase, age, model.signSeconds));
+        }
+      }
+
+      // The one shopfront with a shift working in it.
+      stepNoodleBar(parts, phase) {
+        const bar = parts.noodle;
+        if (!bar) return;
+        if (bar.cook) bar.cook.setFrame(cookAt(phase));
+        // The burner breathes under the wok rather than blinking: a flame that
+        // strobes is an alarm, and nothing on this street is allowed to look like
+        // one except an alarm.
+        if (bar.burner) bar.burner.setAlpha(phase.still ? 0.85 : 0.62 + 0.38 * swing(phase.t, 1.7));
+        for (const plume of bar.steam || []) {
+          const puff = steamAt(phase, plume.puff);
+          plume.g.setAlpha(puff.a);
+          plume.g.setPosition(plume.x, plume.y + puff.y);
+          plume.g.setScale(puff.s);
+        }
+        const tube = tubeAt(phase, 11, 23);
+        if (bar.lanterns) bar.lanterns.setAlpha(phase.still ? 1 : 0.86 + 0.14 * swing(phase.t, 6.1));
+        if (bar.open) bar.open.setAlpha(tube);
+        if (bar.strip) {
+          bar.strip.setAlpha(tube);
+          bar.strip.setFrame(bar.stripKey + '/' + bannerFrameAt(phase, bar.stripFrames, 3));
+        }
+        if (bar.glyph) {
+          const lit = tubeAt(phase, 29, 23);
+          bar.glyph.setAlpha(lit);
+          bar.plate.setAlpha(lit);
         }
       }
 
@@ -1559,8 +2319,9 @@
         const completion = (model && model.completionSeconds) || 0;
         T.facade.setAlpha(facadeAt(phase, tower.drift));
         const tube = tubeAt(phase, tower.drift, 16);
-        T.sign.setAlpha(tube);
-        T.signPlate.setAlpha(tube);
+        T.tube = tube;
+        T.sign.setAlpha(tube * T.back);
+        T.signPlate.setAlpha(tube * T.back);
         if (tower.alarm) {
           T.sweep.setRotation(phase.sweep * Math.PI / 180);
           T.ceiling.setX(phase.ceiling.x);
@@ -1710,11 +2471,25 @@
     w: W, h: H, dpr: DPR, vw: VW, vh: VH, rem: REM, px: PX,
     sky: SKY, skyX: SKY_X, skyY: SKY_Y,
     ground: GROUND, groundY: GROUND_Y, cityH: CITY_H, hazeH: HAZE_H,
+    // Expose the base art scale so a test can ask how tall a person is on a given
+    // wall without standing a GPU up to find out.
+    art: ART, figure: FIGURE_PX * ART,
   });
 
   return {
     create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
     walkerAt, vehicleAt,
+    // The frame beats. Every one is a pure function of the wall clock, which is
+    // what keeps join-mid-beat true and reduced motion a single still frame.
+    walkFrameAt, vehicleKindAt, vehicleScaleAt, droneAt, bannerFrameAt, cookAt,
+    occupantAt, steamAt,
     ramp, spansAt, outline, towerLayout,
+    // The catalogues, so the suite can hold every frame this world can ask for
+    // against every frame the committed atlases actually have.
+    ASSETS, BANNERS, NOODLE_SIGNS, WALKERS, VEHICLE_KINDS, VEHICLE_SPECS, DRONE,
+    OCCUPANT_FRAMES, COOK_FRAMES,
+    // How the neon is grouped, so the suite can hold every tint on this wall
+    // against a family and count the filtered layers without standing a GPU up.
+    NEON, NEON_FAMILY, familyOf, DISTRICT_FAMILIES, TOWER_FAMILIES, SHOP, ALARM,
   };
 }));

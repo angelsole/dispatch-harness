@@ -1,0 +1,176 @@
+{
+ "frames": {
+  "drone/0": {
+   "frame": {
+    "x": 617,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "sourceSize": {
+    "w": 55,
+    "h": 52
+   }
+  },
+  "drone/1": {
+   "frame": {
+    "x": 674,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "sourceSize": {
+    "w": 55,
+    "h": 52
+   }
+  },
+  "drone/2": {
+   "frame": {
+    "x": 731,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "sourceSize": {
+    "w": 55,
+    "h": 52
+   }
+  },
+  "drone/3": {
+   "frame": {
+    "x": 788,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 55,
+    "h": 52
+   },
+   "sourceSize": {
+    "w": 55,
+    "h": 52
+   }
+  },
+  "vehicle/police": {
+   "frame": {
+    "x": 357,
+    "y": 0,
+    "w": 163,
+    "h": 60
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 163,
+    "h": 60
+   },
+   "sourceSize": {
+    "w": 163,
+    "h": 60
+   }
+  },
+  "vehicle/red": {
+   "frame": {
+    "x": 259,
+    "y": 0,
+    "w": 96,
+    "h": 61
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 96,
+    "h": 61
+   },
+   "sourceSize": {
+    "w": 96,
+    "h": 61
+   }
+  },
+  "vehicle/truck": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 257,
+    "h": 104
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 257,
+    "h": 104
+   },
+   "sourceSize": {
+    "w": 257,
+    "h": 104
+   }
+  },
+  "vehicle/yellow": {
+   "frame": {
+    "x": 522,
+    "y": 0,
+    "w": 93,
+    "h": 60
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 93,
+    "h": 60
+   },
+   "sourceSize": {
+    "w": 93,
+    "h": 60
+   }
+  }
+ },
+ "meta": {
+  "app": "pack.py (dispatch-harness planner)",
+  "version": "1.0",
+  "image": "vehicles.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 1024,
+   "h": 128
+  },
+  "scale": "1",
+  "source": "ansimuz Warped City (OGA, CC0) + Cyberpunk City 2 (OGA, CC0)"
+ }
+}

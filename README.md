@@ -1039,8 +1039,13 @@ one static page, and **everything the page loads ships in this repo**: the
 DOM/CSS world (the default, drawn in CSS, inline SVG and one small canvas for
 the rain) and, behind `?world=canvas`, a WebGL world drawn with a vendored,
 pinned Phaser 4 (`wall/vendor/`, MIT, licence and sha256 beside it, listed in
-`wall/THIRD_PARTY.md`). No build step, no npm at runtime, no CDN, and no request
-that leaves the machine, so it is happy on a tailnet-only screen. Everything
+`wall/THIRD_PARTY.md`). That world also draws with committed CC0 and OFL art —
+ansimuz's pixels for the people, vehicles and neon, and the Ark Pixel font for
+the signage — which lives in `wall/assets/`, one directory per pack with its
+licence inside it, every pack in `wall/THIRD_PARTY.md` and every file declared in
+one list the suite checks against the repo and the server. No build step, no npm
+at runtime, no CDN, and no request that leaves the machine, so it is happy on a
+tailnet-only screen. Everything
 that moves moves by `transform` or `opacity` on one of two easing curves, and
 `prefers-reduced-motion` stops the rain, the traffic and the searchlight's
 travel and leaves the same city standing still — in either world. There is no
@@ -1051,10 +1056,15 @@ staged fixture runs.
 
 ```
 ?world=canvas   draw the city with the vendored Phaser 4 instead of with CSS.
-                Same scene, same skyline, same street — the DOM world's layers
-                are left in the page and hidden, and the 1.4 MB engine is only
-                requested by a wall that asked for it. The DOM world is the
-                default and nothing about it changes.
+                Same scene and the same skyline, but this is where the city is
+                ALIVE: pedestrians with real walk cycles, four kinds of vehicle
+                passing, a drone crossing high now and then, silhouettes moving
+                behind about a third of the lit windows, animated neon on the
+                facades under a GPU glow, and a noodle bar whose cook is working
+                under a 麵 sign. The DOM world's layers are left in the page and
+                hidden; the engine, the atlases and the pixel font are only
+                requested by a wall that asked for this world. The DOM world is
+                still the default and nothing about it changes.
 ?cinema=1       start the ambient camera immediately (`?cinema=0` never lets it
                 run); the `c` key toggles it either way, and any other input
                 dismisses it. Both are outranked by prefers-reduced-motion.
