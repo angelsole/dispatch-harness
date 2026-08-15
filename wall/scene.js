@@ -12,8 +12,8 @@
 //
 // Sizes in here are SEMANTIC — storeys, run counts, a plot as a fraction of the
 // street, a height as a percentage of the skyline's own band. Never pixels: a
-// renderer owns its coordinate system, and the one that draws at 640x360 and
-// the one that draws at 1920x1080 have to be able to agree without conversion.
+// renderer owns its coordinate system, and bodies drawing at different live
+// stage sizes have to be able to agree without conversion.
 
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
