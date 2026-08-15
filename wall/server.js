@@ -848,8 +848,49 @@ const STATIC = {
   // directory route: /vendor/ is one pinned file, and a route that walked a
   // directory is the path traversal this server has never had.
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
+  '/world-sideview.js': ['world-sideview.js', 'text/javascript; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
 };
+
+// --- the private art packs ------------------------------------------------------
+// The one route on this server that is not a named row: ?world=sideview draws
+// from bought pixel-art packs that are licensed to this machine, so they live in
+// the gitignored wall/private/ and are read by path rather than by table — there
+// are 39 of them across four directory levels, with the packs' own spaces and
+// parentheses in the names.
+//
+// A path route is the traversal this server has never had, so this one is the
+// narrowest thing that can still work, and every rejection below is load-bearing:
+// decode once (a second decode is how %252e%252e becomes ..), refuse NUL, `..`
+// and absolute paths on the decoded string, allow two extensions, resolve, and
+// refuse anything that did not land under the root. Nothing is listed, nothing
+// is walked, and there is no fallthrough that serves the miss.
+const PRIVATE = path.resolve(HERE, 'private');
+const PRIVATE_TYPES = {
+  '.png': 'image/png',
+  '.json': 'application/json; charset=utf-8',
+};
+
+function missing(res) {
+  res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('wall: no such page\n');
+}
+
+function servePrivate(res, encoded) {
+  let rel;
+  try { rel = decodeURIComponent(encoded); } catch { return missing(res); }
+  if (!rel || rel.includes('\0') || rel.includes('..')) return missing(res);
+  if (rel.startsWith('/') || rel.startsWith('\\') || path.isAbsolute(rel)) return missing(res);
+  const type = PRIVATE_TYPES[path.extname(rel).toLowerCase()];
+  if (!type) return missing(res);
+  const file = path.resolve(PRIVATE, rel);
+  if (!file.startsWith(PRIVATE + path.sep)) return missing(res);
+  return fs.readFile(file, (err, buf) => {
+    if (err) return missing(res);
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+    return res.end(buf);
+  });
+}
 
 const clients = new Set();
 let poller = null;
@@ -947,8 +988,8 @@ const server = http.createServer((req, res) => {
     }
     const entry = STATIC[url];
     if (entry) return serveStatic(res, entry);
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('wall: no such page\n');
+    if (url.startsWith('/private/')) return servePrivate(res, url.slice('/private/'.length));
+    return missing(res);
   } catch (err) {
     try { res.writeHead(500).end(`wall: ${err.message}\n`); } catch { /* client gone */ }
   }

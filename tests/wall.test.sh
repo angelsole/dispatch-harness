@@ -40,7 +40,8 @@ fi
 # --- the JS parses -----------------------------------------------------------
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
-for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/fixtures/seed.js; do
+for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/world-sideview.js \
+         wall/fixtures/seed.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 # The fixture generator accepts a target for hermetic tests, but must never
@@ -69,11 +70,12 @@ fi
 # THIRD_PARTY.md row whose hash still matches.
 PAGE_SRC="$(cat "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js" \
   "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js")"
+SIDEVIEW_SRC="$(cat "$SRC/wall/world-sideview.js")"
 CSS_SRC="$(cat "$SRC/wall/wall.css")"
 # The AUTHORED page files only: the vendored bundle carries its upstream in its
 # own banner and is pinned by hash rather than by this grep. XML namespace URIs
 # (w3.org) are identifiers, never fetched.
-OFFSITE="$(printf '%s' "$PAGE_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' \
+OFFSITE="$(printf '%s\n%s' "$PAGE_SRC" "$SIDEVIEW_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' \
   | grep -v '^https\{0,1\}://www\.w3\.org/' | sort -u | tr '\n' ' ')"
 if [ -z "$OFFSITE" ]; then
   ok "assets: no off-origin URLs in anything the page authors"
@@ -120,6 +122,26 @@ else
 fi
 grep_ok "$(cat "$SRC/.gitattributes")" 'wall/vendor/** -diff linguist-vendored' \
   "assets: the vendored bundle reads as a blob, not as a 1.4 MB diff"
+
+# The other half of that rule, and its exact inverse: the ?world=sideview spike
+# draws from bought pixel-art packs that are licensed to this machine. They live
+# in wall/private/, they are NOT redistributable, and so — unlike wall/vendor/ —
+# the pin on them is that they never reach a commit at all. Only the README that
+# says which packs belong there is tracked.
+echo "== wall: the bought art packs never travel =="
+if git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1; then
+  if git -C "$SRC" check-ignore -q 'wall/private/cyberpunk-rooftops/Terrain/Terrain.png'; then
+    ok "private: a pack file under wall/private/ is gitignored"
+  else
+    bad "private: a pack file under wall/private/ is gitignored"
+  fi
+  check "private: and its README is the only thing in there that is tracked" \
+    "$(git -C "$SRC" ls-files wall/private)" "wall/private/README.md"
+else
+  echo "  skip private: wall/private/ is gitignored (no git checkout here)"
+fi
+grep_not "$(cat "$SRC/wall/THIRD_PARTY.md")" 'wall/private' \
+  "private: nothing in there claims a redistribution manifest row"
 
 # The crew manifest is gone, and must not creep back: the wall organises around
 # the work. Attribution survives only as a tinted light on the run's own car and
@@ -455,6 +477,48 @@ grep_not "$(cat "$SRC/wall/index.html")" 'vendor/phaser.min.js' \
   "assets: the DOM wall's document never links the 1.4 MB engine"
 grep_not "$(cat "$SRC/wall/index.html")" 'world-canvas.js' \
   "assets: nor the canvas world it belongs to"
+
+# --- the side-view spike --------------------------------------------------------
+# A third body behind ?world=sideview, loaded the same way the canvas world is,
+# drawing from the gitignored packs through the one guarded /private/ route.
+# Four pins: the query string picks the right file, the server serves it, the
+# route's guards hold, and the DOM wall is still what an unqualified URL gets.
+echo "== wall: ?world=sideview is a third body =="
+WALL_JS="$(cat "$SRC/wall/wall.js")"
+grep_ok "$WALL_JS" "wantsSideview ? canvasWorld(SIDEVIEW_SCRIPTS, 'WallSideviewWorld')" \
+  "sideview: ?world=sideview mounts the side-view world"
+grep_ok "$WALL_JS" "const SIDEVIEW_SCRIPTS = ['vendor/phaser.min.js', 'world-sideview.js']" \
+  "sideview: after the engine, and nothing else"
+grep_ok "$WALL_JS" "const CANVAS_SCRIPTS = ['vendor/phaser.min.js', 'world-canvas.js']" \
+  "sideview: with what ?world=canvas loads left alone"
+grep_ok "$WALL_JS" ": domWorld;" \
+  "sideview: and anything else still gets the DOM wall"
+grep_not "$(cat "$SRC/wall/index.html")" 'world-sideview.js' \
+  "sideview: the document never links it either"
+grep_ok "$SIDEVIEW_SRC" 'this.spotId = pendingSpot;' \
+  "sideview: a spotlight queued while the pack loads reaches the first live scene"
+check "sideview: the server serves the new world" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/world-sideview.js")" "200"
+# The packs are not committed, so nothing here may assert a 200 off /private/.
+# What is assertable is everything the route REFUSES, which is the only reason a
+# path route is allowed on this server at all.
+PATH_AS_IS=""
+if curl --path-as-is -s -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then
+  PATH_AS_IS="--path-as-is"
+fi
+# shellcheck disable=SC2086  # deliberately unquoted: empty means "flag unsupported"
+check "private: a traversal out of the pack root 404s" \
+  "$(curl -s $PATH_AS_IS -o /dev/null -w '%{http_code}' \
+     "http://127.0.0.1:$PORT/private/../server.js")" "404"
+check "private: and so does one that hid itself in an escape" \
+  "$(curl -s -o /dev/null -w '%{http_code}' \
+     "http://127.0.0.1:$PORT/private/%2e%2e/server.js")" "404"
+check "private: an extension off the allowlist 404s" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/private/x.txt")" "404"
+check "private: an absolute path 404s" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/private/%2Fetc%2Fhosts")" "404"
+check "private: the directory itself is not a listing" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/private/")" "404"
 
 API="$(get "$PORT" /api/runs)"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
@@ -1760,8 +1824,14 @@ echo "== wall: the city's second body =="
 CANVAS_SRC="$(cat "$SRC/wall/world-canvas.js")"
 grep_ok "$PAGE_SRC" "get('world') === 'canvas'" \
   "canvas: the world is chosen by the query string, in the idiom ?cinema uses"
-grep_ok "$PAGE_SRC" 'const world = wantsCanvas ? canvasWorld() : domWorld' \
-  "canvas: and the DOM world is what anything else gets"
+grep_ok "$PAGE_SRC" 'const world = wantsCanvas ? canvasWorld()' \
+  "canvas: which is what ?world=canvas gets, with no arguments and no ceremony"
+# The tail of that same ternary, which now has a third arm: the side-view spike.
+# Pinned as one line rather than two greps, so no world can be added between
+# ?world=canvas and the DOM default without saying so here.
+grep_ok "$PAGE_SRC" \
+  ": wantsSideview ? canvasWorld(SIDEVIEW_SCRIPTS, 'WallSideviewWorld') : domWorld;" \
+  "canvas: and the DOM world is still what anything else gets"
 grep_ok "$PAGE_SRC" "const CANVAS_SCRIPTS = ['vendor/phaser.min.js', 'world-canvas.js']" \
   "canvas: the engine is fetched only for the world that needs it"
 grep_ok "$PAGE_SRC" "host.id = 'world'" "canvas: it mounts one box inside the stage"
@@ -2013,7 +2083,7 @@ grep_ok "$CSS_SRC" '.stage { transform: none !important; }' \
 # so after this pass the page still contains no unseeded randomness at all.
 # Every authored file the page runs, both worlds included; never wall/vendor/,
 # whose contents are pinned by hash rather than read line by line.
-for authored in wall.js scene.js world-canvas.js; do
+for authored in wall.js scene.js world-canvas.js world-sideview.js; do
   grep_not "$(grep -v '^ *//' "$SRC/wall/$authored")" 'Math.random' \
     "cinema: nothing in $authored is drawn from unseeded randomness"
 done

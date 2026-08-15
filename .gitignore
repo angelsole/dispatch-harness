@@ -18,6 +18,14 @@ auth/
 wall-city.jsonl
 wall-city.jsonl.tmp
 
+# The bought pixel-art packs the ?world=sideview city draws from. They are
+# licensed to this machine, so the art never travels — only the README that says
+# which packs belong there and where they came from. The glob is `*` rather than
+# the directory itself because git cannot re-include a file whose parent
+# directory is excluded, and that README has to stay tracked.
+wall/private/*
+!wall/private/README.md
+
 # Backups
 *.bak*
 AGENTS.md
