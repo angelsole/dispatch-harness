@@ -314,6 +314,7 @@
   function phaseAt(seconds, opts) {
     const frozen = !!(opts && opts.reducedMotion);
     const t = frozen ? 0 : Number(seconds) || 0;
+    const alarm = swing(t, 4.4);
     return {
       still: frozen,
       t,
@@ -348,7 +349,13 @@
         x: (ramp(TRAM_X, loop(t, 96, 0)) * 128 - 12) * VW,
       },
       facade: frozen ? 0.9 : ramp(WIN_LIVE, loop(t, 26, 0)),
-      sweep: frozen ? -12 : -34 + 72 * swing(t, 4.4),
+      sweep: frozen ? -12 : -34 + 72 * alarm,
+      // The cloud patch has its own CSS keyframes: it travels from -0.86 to 1
+      // of the 9vh reach and stretches slightly as the beam leans. Reduced
+      // motion parks it at the stylesheet's separate -0.27 resting offset.
+      ceiling: frozen
+        ? { x: -0.27 * 9 * VH, scale: 1 }
+        : { x: (-0.86 + 1.86 * alarm) * 9 * VH, scale: 0.94 + 0.16 * alarm },
       klaxon: frozen ? 0.8 : 0.28 + 0.72 * swing(t, 1.1),
       // klaxon-text: the alarm tower's name plate, and the HUD's own count.
       text: frozen ? 1 : 0.25 + 0.75 * swing(t, 1),
@@ -1163,8 +1170,28 @@
           T.mirror.setAlpha(0.2);
           // A run needs a human: the beam, the lamp it comes out of, and the
           // patch it paints on the overcast just above that roof.
-          T.sweep.fillStyle(0xff5a5a, 0.45);
-          T.sweep.fillTriangle(0, 0, -0.1 * H, -1.5 * H, 0.1 * H, -1.5 * H);
+          // The DOM beam is a conic gradient under a radial mask, not a flat
+          // triangle. Nested wedges provide the soft sides and bright core;
+          // short trapezoid bands fade all three out into the cloud ceiling.
+          const reach = 1.5 * H;
+          const bands = 24;
+          for (const [spread, alpha] of [[0.18, 0.1], [0.11, 0.16], [0.05, 0.3]]) {
+            for (let i = 0; i < bands; i++) {
+              const u0 = i / bands;
+              const u1 = (i + 1) / bands;
+              const fade = Math.max(0, 1 - Math.max(0, (u0 - 0.08) / 0.82));
+              if (fade <= 0) continue;
+              const y0 = -reach * u0;
+              const y1 = -reach * u1;
+              T.sweep.fillStyle(0xff5a5a, alpha * fade);
+              T.sweep.fillPoints([
+                { x: -reach * u0 * spread, y: y0 },
+                { x: -reach * u1 * spread, y: y1 },
+                { x: reach * u1 * spread, y: y1 },
+                { x: reach * u0 * spread, y: y0 },
+              ], true, true);
+            }
+          }
           glow(T.sweep, ALARM, 0, 0, 2.4 * REM, 2.4 * REM, 0.6, 6);
           T.sweep.fillStyle(0xffffff, 1);
           T.sweep.fillCircle(0, 0, 0.55 * REM);
@@ -1536,7 +1563,8 @@
         T.signPlate.setAlpha(tube);
         if (tower.alarm) {
           T.sweep.setRotation(phase.sweep * Math.PI / 180);
-          T.ceiling.setX(phase.sweep * 0.14 * VH);
+          T.ceiling.setX(phase.ceiling.x);
+          T.ceiling.setScale(phase.ceiling.scale);
           T.wash.setAlpha(phase.klaxon);
           T.basePlate.setAlpha(phase.text);
           T.labelLit.setAlpha(phase.text);

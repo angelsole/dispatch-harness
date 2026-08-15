@@ -1924,6 +1924,18 @@ console.log(JSON.stringify({
   // And the camera is parked wide rather than held mid push-in.
   parked: rest.cam.city === 1 && rest.cam.sky === 1
     && rest.planes.every((p) => p === 0) && rest.ghost === 0,
+  // The sweep and the patch it paints share one alternate phase, but their
+  // ranges are the stylesheet's own distinct keyframes. Reduced motion parks
+  // each at its own resting transform.
+  alarmBeam: (() => {
+    const from = C.phaseAt(0, {});
+    const to = C.phaseAt(4.4, {});
+    return from.sweep === -34 && to.sweep === 38
+      && (from.ceiling.x / C.grid().vh).toFixed(2) === '-7.74'
+      && (to.ceiling.x / C.grid().vh).toFixed(2) === '9.00'
+      && (rest.ceiling.x / C.grid().vh).toFixed(2) === '-2.43'
+      && rest.ceiling.scale === 1;
+  })(),
   // The hand-written flex row keeps both an ordinary fixture and a genuinely
   // crowded skyline inside the stage without letting towers overlap.
   layout: bounded(roomy) && bounded(crowded),
@@ -1949,6 +1961,8 @@ check "motion: those completion and cooling beats advance when motion is allowed
   "$(still_of timedBeats)" "true"
 check "motion: a still canvas city is a lit city, not a dark one" "$(still_of lit)" "true"
 check "motion: with the camera parked wide" "$(still_of parked)" "true"
+check "alarm: the canvas sweep and ceiling patch use the DOM keyframe ranges" \
+  "$(still_of alarmBeam)" "true"
 check "canvas: a busy skyline shrinks inside the world without overlapping" \
   "$(still_of layout)" "true"
 check "canvas: space-evenly keeps a lone tower centred" "$(still_of centred)" "true"
