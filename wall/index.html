@@ -390,6 +390,11 @@
   </pre>
 </section>
 
+<!-- The city's own truth first, then the page that draws it. wall.js picks a
+     world from the query string and fetches the WebGL one — and the engine
+     behind it — only when ?world=canvas asked for it, so an ordinary wall never
+     requests a byte of vendor/. -->
+<script src="scene.js"></script>
 <script src="wall.js"></script>
 </body>
 </html>

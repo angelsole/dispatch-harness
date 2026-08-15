@@ -139,6 +139,13 @@ body {
   transform-origin: 0 0;
 }
 
+/* The city's other body. Behind ?world=canvas the whole world above is hidden
+   and one WebGL canvas is mounted here instead — same stage, same camera, same
+   z-index the skyline had, so everything outside the stage (the HUD, the plate,
+   the ticker, the rain) is unaware which world is drawing. Phaser owns the
+   canvas element's own size and centring; this only gives it a box to fill. */
+.world { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+
 /* --- sky, weather, traffic -------------------------------------------------- */
 
 .sky {
