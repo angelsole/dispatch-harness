@@ -70,11 +70,12 @@ fi
 # THIRD_PARTY.md row whose hash still matches.
 PAGE_SRC="$(cat "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js" \
   "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js")"
+SIDEVIEW_SRC="$(cat "$SRC/wall/world-sideview.js")"
 CSS_SRC="$(cat "$SRC/wall/wall.css")"
 # The AUTHORED page files only: the vendored bundle carries its upstream in its
 # own banner and is pinned by hash rather than by this grep. XML namespace URIs
 # (w3.org) are identifiers, never fetched.
-OFFSITE="$(printf '%s' "$PAGE_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' \
+OFFSITE="$(printf '%s\n%s' "$PAGE_SRC" "$SIDEVIEW_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' \
   | grep -v '^https\{0,1\}://www\.w3\.org/' | sort -u | tr '\n' ' ')"
 if [ -z "$OFFSITE" ]; then
   ok "assets: no off-origin URLs in anything the page authors"
@@ -494,6 +495,8 @@ grep_ok "$WALL_JS" ": domWorld;" \
   "sideview: and anything else still gets the DOM wall"
 grep_not "$(cat "$SRC/wall/index.html")" 'world-sideview.js' \
   "sideview: the document never links it either"
+grep_ok "$SIDEVIEW_SRC" 'this.spotId = pendingSpot;' \
+  "sideview: a spotlight queued while the pack loads reaches the first live scene"
 check "sideview: the server serves the new world" \
   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/world-sideview.js")" "200"
 # The packs are not committed, so nothing here may assert a 200 off /private/.
@@ -2080,7 +2083,7 @@ grep_ok "$CSS_SRC" '.stage { transform: none !important; }' \
 # so after this pass the page still contains no unseeded randomness at all.
 # Every authored file the page runs, both worlds included; never wall/vendor/,
 # whose contents are pinned by hash rather than read line by line.
-for authored in wall.js scene.js world-canvas.js; do
+for authored in wall.js scene.js world-canvas.js world-sideview.js; do
   grep_not "$(grep -v '^ *//' "$SRC/wall/$authored")" 'Math.random' \
     "cinema: nothing in $authored is drawn from unseeded randomness"
 done
