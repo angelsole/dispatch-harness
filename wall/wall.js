@@ -469,7 +469,7 @@
   const domWorld = {
     render(scene) {
       blocks = scene.blocks;
-      city.dataset.empty = scene.towers.length ? '0' : '1';
+      city.dataset.empty = scene.quiet ? '1' : '0';
       renderGhost(scene.ghosts);
       renderDistrict(scene.blocks);
       renderLife(scene.street);
@@ -694,13 +694,13 @@
     // whichever body is drawing it. Nothing below reaches past the scene.
     const scene = Scene.buildScene(latest, now());
     const { towers, blocks } = scene;
-    document.body.dataset.quiet = towers.length ? '0' : '1';
+    document.body.dataset.quiet = scene.quiet ? '1' : '0';
     // The standby plate used to fire on an empty skyline. With a district that
     // accretes, "nothing live" is a normal Thursday evening on a week that
     // shipped nine things, and the plate would be saying the wrong sentence over
     // a full city. It now needs a genuinely empty week — nothing standing AND
     // nothing climbing; anything else gets the quiet line instead.
-    document.body.dataset.idle = towers.length ? 'off' : blocks.length ? 'rest' : 'empty';
+    document.body.dataset.idle = scene.idle;
     rest.textContent = blocks.length
       ? 'DISTRICT AT REST · ' + blocks.length + (blocks.length === 1 ? ' SHIP' : ' SHIPS')
         + ' THIS WEEK · NOTHING CLIMBING'

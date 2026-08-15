@@ -364,7 +364,10 @@
       ? snap.floors.length : DEFAULT_FLOORS;
     const week = snap.week && typeof snap.week === 'object' ? snap.week : { ships: 0, life: {} };
     const towers = (Array.isArray(snap.towers) ? snap.towers : [])
-      .map((tower) => towerOf(tower, byId, floors, when));
+      // The server's stable skyline order is itself a scene fact. Carry the
+      // rank explicitly so a renderer never has to infer it from mutable DOM or
+      // display-list position after objects have already been created.
+      .map((tower, rank) => ({ ...towerOf(tower, byId, floors, when), rank }));
     const blocks = (Array.isArray(snap.city) ? snap.city : [])
       .map((record) => blockOf(record, when));
     const ghosts = (Array.isArray(snap.ghost) ? snap.ghost : []).map((g) => ({
@@ -375,6 +378,7 @@
       height: GHOST.baseH + g.storeys * GHOST.storeyH,
     }));
     const plan = nightlifeOf(week.ships);
+    const quiet = towers.length === 0;
     return {
       at: when,
       floors,
@@ -383,7 +387,11 @@
       week: { ships: Math.max(0, Math.floor(Number(week.ships) || 0)) },
       // Nothing climbing. Both worlds step the ground floor back when there is,
       // and the page decides what the chrome says about it.
-      quiet: towers.length === 0,
+      quiet,
+      // The page chrome distinguishes a genuinely empty week from a district
+      // at rest. That distinction belongs to the same scene facts as `quiet`,
+      // not to a second count performed by one renderer's caller.
+      idle: quiet ? (blocks.length ? 'rest' : 'empty') : 'off',
       towers,
       blocks,
       ghosts,

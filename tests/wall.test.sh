@@ -1272,7 +1272,10 @@ if [ -n "$GHOST_LINE" ] && [ -n "$FAR_LINE" ] && [ "$GHOST_LINE" -lt "$FAR_LINE"
 else
   bad "ghost: last week is painted behind every parallax skyline plane"
 fi
-grep_ok "$PAGE_SRC" "towers.length ? 'off' : blocks.length ? 'rest' : 'empty'" \
+# Idle is a scene fact now, shared by either body; keep this earlier structural
+# guard as well as the semantic scene probe below so moving the decision does
+# not weaken the plate's established empty-week rule.
+grep_ok "$(cat "$SRC/wall/scene.js")" "quiet ? (blocks.length ? 'rest' : 'empty') : 'off'" \
   "idle: the plate needs an empty week, not just an empty skyline"
 grep_ok "$CSS_SRC" 'body[data-idle="empty"] .idle' "idle: the full plate is gated on that"
 grep_ok "$CSS_SRC" 'body[data-idle="rest"] .rest' \
@@ -1691,6 +1694,7 @@ const again = S.buildScene(snap, AT);
 const plan = S.nightlifeOf(snap.week.ships);
 console.log(JSON.stringify({
   towers: scene.towers.length === snap.towers.length && snap.towers.length > 0,
+  ranks: scene.towers.every((tower, rank) => tower.rank === rank),
   blocks: scene.blocks.length === snap.city.length,
   ghosts: scene.ghosts.length === snap.ghost.length,
   // Exactly one dedication, and it is not one of the week's ships.
@@ -1712,11 +1716,13 @@ console.log(JSON.stringify({
   stable: JSON.stringify(scene) === JSON.stringify(again),
   // And a different clock is a different city, because ages move.
   ages: JSON.stringify(scene) !== JSON.stringify(S.buildScene(snap, AT + 600)),
+  idle: scene.idle === 'off'
+    && S.buildScene({ city: snap.city, week: snap.week }, AT).idle === 'rest',
   // An empty payload is an empty plain rather than a throw.
   empty: (() => {
     const bare = S.buildScene({}, AT);
     return bare.towers.length === 0 && bare.blocks.length === 0 && bare.quiet === true
-      && bare.landmark.glyph === '冉';
+      && bare.idle === 'empty' && bare.landmark.glyph === '冉';
   })(),
 }));
 JS
@@ -1725,6 +1731,7 @@ printf '%s' "$API" > "$SNAP"
 SCENE="$(node "$SCENE_PROBE" "$SRC/wall/scene.js" "$SNAP" 2>&1)"
 scene_of() { printf '%s' "$SCENE" | jq -r ".$1" 2>/dev/null; }
 check "scene: one tower per tower the server is standing" "$(scene_of towers)" "true"
+check "scene: each tower carries its stable skyline rank"       "$(scene_of ranks)" "true"
 check "scene: one building per ship in the week's city"   "$(scene_of blocks)" "true"
 check "scene: and one silhouette per ship in last week's" "$(scene_of ghosts)" "true"
 check "scene: the dedication is in it, and is not a ship" "$(scene_of landmark)" "冉:fixture"
@@ -1739,6 +1746,7 @@ check "scene: and it carries the cycle the cars share"    "$(scene_of planned)" 
 check "scene: every size in it is semantic, never a pixel" "$(scene_of semantic)" "true"
 check "scene: two calls with equal inputs are the same city" "$(scene_of stable)" "true"
 check "scene: a later clock is a later city"              "$(scene_of ages)" "true"
+check "scene: idle distinguishes live, resting, and empty cities" "$(scene_of idle)" "true"
 check "scene: an empty payload is an empty plain, not a throw" "$(scene_of empty)" "true"
 
 # --- the canvas world -----------------------------------------------------------------
