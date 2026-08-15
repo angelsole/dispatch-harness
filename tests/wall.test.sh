@@ -1706,6 +1706,7 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
   printf '%s\n' "  const S = require(process.argv[2]);"
   printf '%s\n' "  const { storefrontOf, formOf, nightlifeOf, SHOP_GLYPH, FORM_SHARES } = S;"
   printf '%s\n' "  const { MAX_WALKERS, MAX_VEHICLES, GAP_BUSY, MALL_AT, TRAM_AT, OCCUPIED } = S;"
+  printf '%s\n' "  const { OCCUPANT_KINDS, OCCUPANT_SPREAD, BANNER_SLOTS } = S;"
   cat <<'JS'
   const ids = [];
   for (let i = 0; i < 200; i++) ids.push('OLYX-' + (1500 + i));
@@ -1717,6 +1718,8 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
   for (const plan of plans) kinds[plan.shop] = (kinds[plan.shop] || 0) + 1;
   const bays = new Set(plans.map((plan) => plan.bay));
   const neon = plans.filter((plan) => plan.neon).length;
+  const windows = plans.flatMap((plan) => plan.windows);
+  const banners = plans.flatMap((plan) => plan.banners);
   const life = [0, 1, 2, 4, 9, 12, 20, 90].map((n) => {
     const plan = nightlifeOf(n);
     return n + ':' + plan.walkers + 'w' + plan.vehicles + 'v' + plan.gap + 's'
@@ -1769,6 +1772,22 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
     sides: [...new Set(plans.map((plan) => plan.side))].sort().join(','),
     hangUnlinked: new Set(plans.map((plan) =>
       plan.shop + ':' + plan.side + ':' + plan.hang)).size > 40,
+    // Occupants are their own deterministic draw: about one third of the panes,
+    // all five postures, and a bounded slow-beat offset for every one.
+    occupantDensity: (() => {
+      const home = windows.filter((win) => win.who.home).length;
+      return home > windows.length * 0.25 && home < windows.length * 0.42;
+    })(),
+    occupantKinds: [...new Set(windows.map((win) => win.who.kind))].sort().join(','),
+    occupantVocab: [...OCCUPANT_KINDS].sort().join(','),
+    occupantBounded: windows.every((win) => win.who.phase >= 0
+      && win.who.phase < OCCUPANT_SPREAD),
+    // Dressing stays within its contract too: zero to two signs, with every
+    // count and every facade/shoulder/roof slot represented across a district.
+    bannerBounded: plans.every((plan) => plan.banners.length <= 2),
+    bannerCounts: [...new Set(plans.map((plan) => plan.banners.length))].sort().join(','),
+    bannerSlots: [...new Set(banners.map((banner) => banner.slot))].sort().join(','),
+    bannerSlotVocab: Array.from({ length: BANNER_SLOTS }, (_, i) => i).join(','),
     // And the typology, planned the same way and held to the same rules.
     formStable: JSON.stringify(formOf('OLYX-1598')) === JSON.stringify(formOf('OLYX-1598')),
     formDiffers: JSON.stringify(formOf('OLYX-1598')) !== JSON.stringify(formOf('OLYX-1599')),
@@ -1816,6 +1835,18 @@ check "signage: and the lettering is the four curated glyphs, no more" \
 check "signage: signs hang off both sides of a frontage" "$(night_of sides)" "0,1"
 check "signage: and how one hangs is not readable off its shop" \
   "$(night_of hangUnlinked)" "true"
+check "life: roughly a third of the planned panes have somebody home" \
+  "$(night_of occupantDensity)" "true"
+check "life: every authored window posture is represented" \
+  "$(night_of occupantKinds)" "$(night_of occupantVocab)"
+check "life: every occupant beat stays inside its declared spread" \
+  "$(night_of occupantBounded)" "true"
+check "signage: every building stays within the two-banner cap" \
+  "$(night_of bannerBounded)" "true"
+check "signage: the deterministic dressing uses zero, one and two banners" \
+  "$(night_of bannerCounts)" "0,1,2"
+check "signage: facade, shoulder and roof slots all get used" \
+  "$(night_of bannerSlots)" "$(night_of bannerSlotVocab)"
 check "form: the same building is the same type, always" "$(night_of formStable)" "true"
 check "form: two buildings do not get the same type twice" "$(night_of formDiffers)" "true"
 check "form: the vocabulary is six types and closed" \
@@ -1857,6 +1888,9 @@ console.log(JSON.stringify({
   ghosts: scene.ghosts.length === snap.ghost.length,
   // Exactly one dedication, and it is not one of the week's ships.
   landmark: scene.landmark.glyph + ':' + (scene.blocks.some((b) => b.id === '冉') ? 'ship' : 'fixture'),
+  // The noodle bar is the second fixture, with renderer-owned hero geometry.
+  noodle: scene.noodleBar.glyph + ':' + scene.noodleBar.kind + ':'
+    + (scene.blocks.some((b) => b.id === '麵') ? 'ship' : 'fixture'),
   // Every shaft the snapshot's towers carry is resolved, so a renderer never
   // has to go back to the payload to find out what a car is doing.
   shafts: scene.towers.reduce((n, t) => n + t.shafts.length, 0)
@@ -1880,7 +1914,8 @@ console.log(JSON.stringify({
   empty: (() => {
     const bare = S.buildScene({}, AT);
     return bare.towers.length === 0 && bare.blocks.length === 0 && bare.quiet === true
-      && bare.idle === 'empty' && bare.landmark.glyph === '冉';
+      && bare.idle === 'empty' && bare.landmark.glyph === '冉'
+      && bare.noodleBar.glyph === '麵';
   })(),
 }));
 JS
@@ -1893,6 +1928,8 @@ check "scene: each tower carries its stable skyline rank"       "$(scene_of rank
 check "scene: one building per ship in the week's city"   "$(scene_of blocks)" "true"
 check "scene: and one silhouette per ship in last week's" "$(scene_of ghosts)" "true"
 check "scene: the dedication is in it, and is not a ship" "$(scene_of landmark)" "冉:fixture"
+check "scene: the noodle bar is a distinct hero fixture, not a ship" \
+  "$(scene_of noodle)" "麵:noodle:fixture"
 check "scene: every run standing in a tower is resolved"  "$(scene_of shafts)" "true"
 check "scene: a car's floor is a fraction of the ladder"  "$(scene_of levels)" "true"
 check "scene: and it carries its dispatcher's tint"       "$(scene_of crew)" "true"
@@ -2051,6 +2088,8 @@ grep_ok "$CANVAS_SRC" 'this.lightUp(this.noodleNeon);' \
   "canvas: on the noodle bar's own, which nothing is allowed in front of"
 grep_ok "$CANVAS_SRC" 'this.lightUp(this.towerNeonC);' \
   "canvas: and on one shared layer for the whole skyline's tubes"
+grep_ok "$CANVAS_SRC" 'this.cityC.add(this.towerNeonC);' \
+  "canvas: the shared skyline neon stays inside the skyline camera transform"
 check "canvas: five filtered containers, from three call sites and no fourth" \
   "$(printf '%s\n' "$CANVAS_CODE" | grep -c 'this\.lightUp(')" "3"
 

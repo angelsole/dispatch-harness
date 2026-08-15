@@ -779,7 +779,9 @@
         // A missing atlas is a city without people, not a city of magenta boxes:
         // every sprite below is built behind a texture check, so a failed load
         // leaves the drawn city standing and says so once.
-        this.load.on('loaderror', (file) => console.error('wall: cannot load ' + file.src));
+        const reportLoadError = (file) => console.error('wall: cannot load ' + file.src);
+        this.load.once('loaderror', reportLoadError);
+        this.load.once('complete', () => this.load.off('loaderror', reportLoadError));
       }
 
       create() {
@@ -833,6 +835,11 @@
         this.trafficC = this.add.container(0, 0);
         this.cityC = this.add.container(0, 0);
         this.towerNeonC = this.add.container(0, 0);
+        // The skyline camera is the city container's one transform. Its neon
+        // was split out only to share a filter, not to leave the towers: keeping
+        // this layer inside cityC prevents every project sign drifting off its
+        // building while the skyline breathes.
+        this.cityC.add(this.towerNeonC);
         this.hazeC = this.add.container(0, 0);
         this.streetC = this.add.container(0, 0);
         this.lifeC = this.add.container(0, 0);

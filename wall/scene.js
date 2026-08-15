@@ -182,14 +182,17 @@
   const BANNER_COUNTS = [0, 1, 1, 2];
   const BANNER_SPREAD = 71;
 
-  function bannersOf(dressing) {
+  function bannersOf(id) {
     const out = [];
-    const count = BANNER_COUNTS[(dressing >>> 2) % BANNER_COUNTS.length];
+    const domain = id + '·dressing';
+    const count = BANNER_COUNTS[seedOf(domain + '·count') % BANNER_COUNTS.length];
     for (let i = 0; i < count; i++) {
       out.push({
-        pick: (dressing >>> (6 + i * 9)) % 251,   // a prime, so two slots rarely agree
-        slot: (dressing >>> (4 + i * 2)) % BANNER_SLOTS,
-        drift: (dressing >>> (14 + i * 5)) % BANNER_SPREAD,
+        // Separate draws, not overlapping slices of one word: what the prop is,
+        // where it hangs and when it changes are three unrelated facts.
+        pick: seedOf(domain + '·pick' + i) % 251,
+        slot: seedOf(domain + '·slot' + i) % BANNER_SLOTS,
+        drift: seedOf(domain + '·drift' + i) % BANNER_SPREAD,
       });
     }
     return out;
@@ -204,7 +207,6 @@
     const street = seedOf(id);
     const hours = seedOf(id + '·hours');
     const signage = seedOf(id + '·signage');
-    const dressing = seedOf(id + '·dressing');
     const pick = (seed, shift, mod) => (seed >>> shift) % mod;
     const windows = [];
     for (let i = 0; i < OCCUPIED; i++) {
@@ -231,7 +233,7 @@
       // blinks on the same beat is a wallpaper sample.
       side: pick(signage, 0, 2),
       hang: pick(signage, 3, FLICKER_SPREAD),
-      banners: bannersOf(dressing),
+      banners: bannersOf(id),
       windows,
     };
   }
@@ -332,8 +334,7 @@
     x: 0.62,
     storeys: 3,      // a shophouse: two floors of somebody's flat over the bar
     depth: 2,        // the nearest band: the one thing on this wall meant to be watched
-    kind: 'midrise',
-    form: 'shophouse',
+    kind: 'noodle',  // its wider hero frontage and awning are renderer-owned
   };
 
   // --- one project: a tower -----------------------------------------------------
@@ -479,7 +480,6 @@
         storeys: NOODLE_BAR.storeys,
         kind: NOODLE_BAR.kind,
         depth: NOODLE_BAR.depth,
-        form: NOODLE_BAR.form,
       },
       street: streetOf(week.ships),
       // The two ambient samples the sky reads. A renderer re-reads them off its
