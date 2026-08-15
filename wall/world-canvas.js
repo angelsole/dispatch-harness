@@ -168,10 +168,46 @@
     done: 0x3fd984, failed: 0xff5a46, unreviewed: 0xff5a46, unknown: 0x7a878f,
   };
   const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace';
-  // The one colour the neon filter throws. A halo has to be near-white or every
-  // sign under it turns the same colour as every other sign; the hue a room reads
-  // comes from the tube itself, and this is the light coming off it.
-  const NEON = 0xfff0d8;
+  // --- what neon glows like -------------------------------------------------------
+  // A halo is the sign's OWN light: a warm-white glow around a cyan tube is a lamp
+  // behind a sign rather than a sign, and it costs the project tints — the one
+  // thing the skyline's lettering is colour-coded by — their whole meaning. So the
+  // glow is thrown in the sign's colour. A filter per sign would be a render
+  // target per sign, so signs are grouped by hue instead, and this is the entire
+  // vocabulary of hues on the wall: four shops, five project tints, one alarm.
+  const NEON = {
+    warm: 0xffb478,
+    cyan: 0x7fd4ec,
+    mint: 0x9fe8b8,
+    alarm: ALARM,
+  };
+  // Which family a tint belongs to, spelled as a table rather than as a distance
+  // in RGB: there are seven tints on this wall and guessing at them is not a
+  // virtue. The suite holds this against SHOP and SIGN_TINTS, so a new tint that
+  // nobody mapped fails the gate rather than quietly glowing amber.
+  const NEON_FAMILY = {
+    0xff9a5e: 'warm',    // 麵 noodles
+    0xffc27d: 'warm',    // 食 a place that feeds you, the dedication, and one project tint
+    0x7fd4ec: 'cyan',    // 樂 an arcade, and one project tint
+    0x9fe8b8: 'mint',    // 修 a repair bench, and one project tint
+    0xe8e2cf: 'warm',    // bone — a project tint with no hue of its own to keep
+    0x8fb0ff: 'cyan',    // iris — near enough cyan that a cyan halo is its own light
+    0xff2f45: 'alarm',   // a tower asking for a human, and nothing else on this wall
+  };
+  const familyOf = (colour) => NEON_FAMILY[colour] || 'warm';
+  // A shopfront is never an alarm, so the district does not carry that family.
+  const DISTRICT_FAMILIES = ['warm', 'cyan', 'mint'];
+  const TOWER_FAMILIES = ['warm', 'cyan', 'mint', 'alarm'];
+  // How far light travels off a stroke, and how hard — per layer, because it is
+  // a fact about the LETTERING and not about the wall. The skyline's names are
+  // set in a mono face at three-quarters of a rem: thin strokes, wide gaps, and a
+  // six-pixel halo at full strength is what makes them read as tubes. A CJK glyph
+  // in a 12px pixel face is the opposite problem — 麵 has four-pixel strokes four
+  // pixels apart at this size, so any halo that carries into the gaps closes the
+  // character up into an orange brick. It gets a short, soft one: enough to bloom
+  // off the edge, not enough to fill the counters.
+  const SIGN_GLOW = { strength: 1.7, reach: 0.3 };
+  const GLYPH_GLOW = { strength: 1.0, reach: 0.1 };
   // Ark Pixel is a 12px design. A pixel face at a fraction of its em is mush, so
   // every CJK size on this wall snaps to a whole multiple of that em — which also
   // means a sign is the same crispness on a laptop as on the TV.
@@ -820,43 +856,53 @@
         this.skyC.add(this.backdrop);
         this.skyC.add(this.ghostG);
         for (const plane of this.planes) this.skyC.add(plane);
-        // The district, interleaved: one layer of buildings and one layer of the
-        // neon bolted to them, per depth band. Two layers per band rather than
-        // one, because the neon runs under a GPU glow filter and the buildings
-        // must not — and because a sign in the back band still has to be hidden
-        // by a building in the front one, which one shared neon layer over the
-        // whole district could not do. The bands are the sort order, so nothing
-        // in here is ever re-sorted either.
+        // The district, in three passes rather than one. Bodies first, by depth
+        // band, so a building in front still hides one behind it. Then every dark
+        // PLATE the signage is bolted to, unfiltered — a plate inside a glow
+        // container has its own edges lit, which turns a 16px sign into a beige
+        // bar with the lettering lost inside it. Then the lettering and the tubes,
+        // in one filtered layer per colour family, so a cyan sign throws cyan.
         this.districtC = this.add.container(0, 0);
         this.landmarkC = this.add.container(0, 0);
         this.districtC.add(this.landmarkC);
         this.bandC = [];
-        this.bandNeon = [];
         for (let i = 0; i < DEPTHS.length; i++) {
           const body = this.add.container(0, 0);
-          const neon = this.add.container(0, 0);
           this.districtC.add(body);
-          this.districtC.add(neon);
           this.bandC.push(body);
-          this.bandNeon.push(neon);
         }
-        // And in front of the whole district, the noodle bar. It is the one
-        // building on this wall meant to be WATCHED, so nothing gets to stand in
-        // front of it — not the next ship of the week landing on the same plot,
-        // and not a neighbour's sign hanging across its awning.
+        this.districtPlates = this.add.container(0, 0);
+        this.districtC.add(this.districtPlates);
+        this.districtNeon = {};
+        for (const family of DISTRICT_FAMILIES) {
+          this.districtNeon[family] = this.glowLayer(NEON[family], GLYPH_GLOW);
+          this.districtC.add(this.districtNeon[family]);
+        }
+        // And in front of the whole district, the noodle bar, in the same three
+        // passes of its own. It is the one building on this wall meant to be
+        // WATCHED, so nothing gets to stand in front of it — not the next ship of
+        // the week landing on the same plot, and not a neighbour's sign hanging
+        // across its awning.
         this.noodleC = this.add.container(0, 0);
-        this.noodleNeon = this.add.container(0, 0);
+        this.noodlePlates = this.add.container(0, 0);
+        this.noodleNeon = this.glowLayer(SHOP.noodle, GLYPH_GLOW);
         this.districtC.add(this.noodleC);
+        this.districtC.add(this.noodlePlates);
         this.districtC.add(this.noodleNeon);
         this.dawnG = this.add.graphics();
         this.trafficC = this.add.container(0, 0);
         this.cityC = this.add.container(0, 0);
-        this.towerNeonC = this.add.container(0, 0);
-        // The skyline camera is the city container's one transform. Its neon
+        this.towerPlates = this.add.container(0, 0);
+        this.towerNeon = {};
+        // The skyline camera is the city container's one transform. The signage
         // was split out only to share a filter, not to leave the towers: keeping
-        // this layer inside cityC prevents every project sign drifting off its
+        // these layers inside cityC prevents every project sign drifting off its
         // building while the skyline breathes.
-        this.cityC.add(this.towerNeonC);
+        this.cityC.add(this.towerPlates);
+        for (const family of TOWER_FAMILIES) {
+          this.towerNeon[family] = this.glowLayer(NEON[family], SIGN_GLOW);
+          this.cityC.add(this.towerNeon[family]);
+        }
         this.hazeC = this.add.container(0, 0);
         this.streetC = this.add.container(0, 0);
         this.lifeC = this.add.container(0, 0);
@@ -868,13 +914,6 @@
         this.paintHaze();
         this.paintStreet();
         this.paintLife();
-        // Five filtered containers on the whole wall, and no more: three bands of
-        // district neon, the noodle bar's own, and one for the skyline's tubes.
-        // A glow per sign would be a render target per sign; this is five, and
-        // the count is the budget.
-        for (const neon of this.bandNeon) this.lightUp(neon);
-        this.lightUp(this.noodleNeon);
-        this.lightUp(this.towerNeonC);
 
         city = this;
         if (pending) this.apply(pending);
@@ -882,14 +921,34 @@
         this.step(true);
       }
 
-      // Glow that is glow: the engine's own filter, not a stack of ellipses.
-      // WebGL only — a Canvas fallback keeps the ring-stack bloom the tubes are
-      // drawn with and simply goes without the halo.
-      lightUp(container) {
-        if (typeof container.enableFilters !== 'function') return;
-        container.enableFilters();
-        if (!container.filters) return;
-        container.filters.internal.addGlow(NEON, 3.4, 0, 1, false, 6, 9);
+      // Glow that is glow: the engine's own filter, not a stack of ellipses, and
+      // the only place in this file a filter is ever added. Eight of these stand
+      // on the wall — three district families, four skyline families and the
+      // noodle bar's own — which is the budget, because each one is a render
+      // target. WebGL only; a Canvas fallback simply goes without the halo.
+      //
+      // Tight, and never wider than the plate its sign is bolted to: `distance`
+      // is in device pixels, so it is written as a fraction of a rem and grows
+      // with the panel exactly like every other size in this world. Inner
+      // strength stays at zero — the glow belongs outside the stroke, and a
+      // glyph washing towards white is a glyph that has stopped being its colour.
+      glowLayer(colour, glow) {
+        const layer = this.add.container(0, 0);
+        if (typeof layer.enableFilters !== 'function') return layer;
+        layer.enableFilters();
+        if (!layer.filters) return layer;
+        layer.filters.internal.addGlow(colour, glow.strength, 0, 1, false, 6,
+                                       Math.max(2, Math.round(glow.reach * REM)));
+        return layer;
+      }
+
+      // A dark plate for a sign to be bolted to. Every one on this wall is made
+      // here, and every one is handed an UNFILTERED layer: that is the invariant
+      // the suite pins, and it is the difference between a sign and a light box.
+      makePlate(plates) {
+        const g = this.add.graphics();
+        plates.add(g);
+        return g;
       }
 
       // A sprite, or nothing at all if that atlas never arrived. Every sprite in
@@ -1205,16 +1264,23 @@
         };
       }
 
-      // A building, and the neon bolted to it. Two containers rather than one:
-      // the body goes in its depth band, the neon in that band's filtered layer,
-      // and stepBlock moves the pair together so a landing building still settles
+      // A building, its dark signage, and its lit signage. Three containers
+      // rather than one, in three different layers: the body in its depth band,
+      // the plates and the banner sprites in the unfiltered plate layer, and only
+      // the tube and the glyph in the filtered layer for this shop's own colour.
+      // stepBlock moves all three together, so a landing building still settles
       // with its own signs on it.
-      makeBlock(block, band) {
+      makeBlock(block, where) {
         const box = this.measure(block);
         const root = this.add.container(0, 0);
+        const plates = this.add.container(0, 0);
         const neon = this.add.container(0, 0);
-        (band ? band.body : this.bandC[1]).add(root);
-        (band ? band.neon : this.bandNeon[1]).add(neon);
+        const tint = block.shop ? SHOP[block.shop.shop] : DINER;
+        where.body.add(root);
+        where.plates.add(plates);
+        // `where.neon` is a map of colour families for the district, and a single
+        // layer for each of the two fixtures, which own theirs outright.
+        (where.neon[familyOf(tint)] || where.neon).add(neon);
         const points = outline(box.poly, box.x, box.y, box.w, box.h);
         const body = this.add.graphics();
         root.add(body);
@@ -1234,7 +1300,7 @@
         veil.fillPoints(points, true, true);
         veil.setAlpha(box.veil * 0.6);
 
-        const parts = { root, neon, box, block, shop: {} };
+        const parts = { root, plates, neon, box, block, shop: {} };
         this.roofFurniture(root, block, box);
         this.shopfront(parts, block, box);
         this.hangBanners(parts, block, box);
@@ -1297,7 +1363,11 @@
         const draws = (block.shop && block.shop.banners) || [];
         for (const draw of draws) {
           const [key, frames, from] = BANNERS[draw.pick % BANNERS.length];
-          const s = this.figure(parts.neon, SIGNS, key + '/' + (from || 0));
+          // Unfiltered, with the plates: these are already lit pixels drawn by
+          // somebody who knew what a neon sign looks like, in half a dozen hues
+          // apiece. One family colour thrown over a four-colour banner is a
+          // wash, not a halo.
+          const s = this.figure(parts.plates, SIGNS, key + '/' + (from || 0));
           if (!s) continue;
           // Never wider than a share of the frontage it hangs on, whatever the
           // pack thought: a narrow spire gets a narrow sign, same as its glyph.
@@ -1397,19 +1467,22 @@
         }
         g.setAlpha(0.94);
         if (!shop) return;
-        // Everything below is neon, so it goes in the band's filtered layer and
-        // gets a real halo. Its own coloured bloom stays underneath: the filter
-        // throws one near-white light for the whole band, and the hue a room
-        // reads has to come off the tube itself.
+        // The tube, in two pieces in two layers: the wide soft bloom it throws
+        // onto its own bay is a lamp and stays out of the filter, and the lit
+        // tube itself goes in the layer for its colour and gets the tight halo.
+        // Both are stepped together — the pair IS one sign.
         if (shop.neon) {
-          const neon = this.add.graphics();
-          parts.neon.add(neon);
           const nx = left + w * (shop.bay * 0.19);
           const ny = GROUND_Y - 0.52 * REM - 0.15 * REM;
-          glow(neon, tint, nx + w * 0.1, ny, w * 0.22, 0.5 * REM, 0.45, 5);
+          const bloom = this.add.graphics();
+          parts.plates.add(bloom);
+          glow(bloom, tint, nx + w * 0.1, ny, w * 0.22, 0.5 * REM, 0.45, 5);
+          const neon = this.add.graphics();
+          parts.neon.add(neon);
           neon.fillStyle(tint, 1);
           neon.fillRect(nx, ny, Math.max(0.6, w * 0.2), Math.max(0.6, 0.15 * REM));
           parts.shop.neon = neon;
+          parts.shop.bloom = bloom;
           parts.shop.neonPhase = shop.flicker;
         }
         // A hanging vertical sign in the idiom the towers already use, bracketed
@@ -1418,8 +1491,7 @@
         // Ark Pixel at a whole multiple of its own em — a pixel face at 15.7px is
         // a smear, and a shop sign is the smallest lettering on this wall.
         const size = arkSize(Math.max(ARK_EM, Math.min(1.15 * REM, box.w * 0.34)));
-        const plate = this.add.graphics();
-        parts.neon.add(plate);
+        const plate = this.makePlate(parts.plates);
         const px = shop.side ? box.x + box.w - size * 1.3 : box.x;
         const py = GROUND_Y - 0.62 * REM - size * 1.3;
         plate.fillStyle(0x02060a, 0.55);
@@ -1436,11 +1508,13 @@
         parts.shop.glyphPhase = shop.hang;
       }
 
-      // Which pair of layers a building belongs in. Three depth bands, so the
-      // district reads as a city with air in it rather than as a row of bars.
+      // Which set of layers a building belongs in. Three depth bands of bodies,
+      // so the district reads as a city with air in it rather than as a row of
+      // bars; one shared plate layer and one filtered layer per colour family
+      // over the lot of them.
       band(depth) {
         const i = Math.max(0, Math.min(this.bandC.length - 1, depth | 0));
-        return { body: this.bandC[i], neon: this.bandNeon[i] };
+        return { body: this.bandC[i], plates: this.districtPlates, neon: this.districtNeon };
       }
 
       renderDistrict(model) {
@@ -1452,12 +1526,11 @@
           this.landmark = this.makeBlock({
             id: '·landmark', kind: 'landmark', depth: ran.depth, x: ran.x,
             storeys: ran.storeys, crew: hex(DINER), shop: null, shape: null,
-          }, { body: this.landmarkC, neon: this.bandNeon[0] });
+          }, { body: this.landmarkC, plates: this.districtPlates, neon: this.districtNeon });
           this.landmark.fixture = true;
           const box = this.landmark.box;
           const size = arkSize(Math.max(ARK_EM, Math.min(1.6 * REM, box.w * 0.56)));
-          const plate = this.add.graphics();
-          this.landmark.neon.add(plate);
+          const plate = this.makePlate(this.landmark.plates);
           const px = box.x + box.w - size * 0.65;
           const py = box.y + box.h * 0.16;
           plate.fillStyle(0x02060a, 0.6);
@@ -1481,6 +1554,7 @@
           // the whole district with it.
           if (!standing.has(id)) {
             parts.root.destroy();
+            parts.plates.destroy();
             parts.neon.destroy();
             this.blocks.delete(id);
           }
@@ -1501,10 +1575,11 @@
         const parts = this.makeBlock({
           id: '·noodle', kind: spec.kind, depth: spec.depth, x: spec.x,
           storeys: spec.storeys, crew: hex(SHOP.noodle), shop: null, shape: null,
-        }, { body: this.noodleC, neon: this.noodleNeon });
+        }, { body: this.noodleC, plates: this.noodlePlates, neon: this.noodleNeon });
         parts.fixture = true;
         const box = parts.box;
         const root = parts.root;
+        const plates = parts.plates;
         const neon = parts.neon;
         // Every height in here is the COOK's, because he is what the building is
         // for: the room has to be tall enough to stand him up in, and the counter
@@ -1567,9 +1642,10 @@
         // the loudest thing in the building, and the cook has to be that.
         counter.fillStyle(DINER, 0.75);
         counter.fillRect(left, top, wide, Math.max(0.8, 0.09 * REM));
-        // Two lanterns over it, hung off the soffit.
+        // Two lanterns over it, hung off the soffit. Lamps rather than signage,
+        // so they keep the ring-stack bloom and stay out of the filter.
         const lanterns = this.add.graphics();
-        neon.add(lanterns);
+        plates.add(lanterns);
         for (const at of [0.14, 0.8]) {
           const lx = left + wide * at;
           const ly = GROUND_Y - bar * 0.78;
@@ -1582,16 +1658,18 @@
         parts.noodle.lanterns = lanterns;
         // OPEN, and a vertical neon beside it. Both are the pack's own signs, so
         // the bar is lettered in the same hand as the rest of the street.
+        // Sprites with their own hues, so unfiltered with the banners: one family
+        // colour thrown over somebody else's four-colour sign is a wash.
         const [openKey] = NOODLE_SIGNS[0];
         const [stripKey, stripFrames] = NOODLE_SIGNS[1];
-        const open = this.figure(neon, SIGNS, openKey + '/0');
+        const open = this.figure(plates, SIGNS, openKey + '/0');
         if (open) {
           open.setOrigin(0, 1);
           open.setScale(Math.min(ART * 2, bar * 0.8 / Math.max(1, open.height)));
           open.setPosition(box.x + box.w * 0.94, GROUND_Y - bar * 0.1);
           parts.noodle.open = open;
         }
-        const strip = this.figure(neon, SIGNS, stripKey + '/0');
+        const strip = this.figure(plates, SIGNS, stripKey + '/0');
         if (strip) {
           strip.setOrigin(1, 1);
           strip.setScale(Math.min(ART * 2, bar * 0.86 / Math.max(1, strip.height)));
@@ -1601,14 +1679,15 @@
           parts.noodle.stripFrames = stripFrames;
         }
         // And the sign the whole building is: 麵, over the awning, in Ark Pixel,
-        // under the band's glow filter. This is the one piece of lettering on
-        // this wall that is meant to be read from the far side of the room, so it
-        // takes as much of the facade over the shop as that facade has.
+        // throwing its own orange. This is the one piece of lettering on this
+        // wall that is meant to be read from the far side of the room, so it
+        // takes as much of the facade over the shop as that facade has — and its
+        // plate stays dark, in the unfiltered layer, which is what the glyph is
+        // legible against.
         const facade = box.h - bar;
         const size = arkSize(Math.max(ARK_EM * 2,
           Math.min(3.2 * REM, box.w * 0.3, facade * 0.62)));
-        const plate = this.add.graphics();
-        neon.add(plate);
+        const plate = this.makePlate(plates);
         const px = box.x + box.w * 0.5 - size * 0.75;
         const py = GROUND_Y - bar - size * 1.5 - 0.3 * REM;
         plate.fillStyle(0x02060a, 0.72);
@@ -1649,15 +1728,19 @@
           parts[key] = this.add.graphics();
           root.add(parts[key]);
         }
-        // The skyline's own tubes, in the fourth and last filtered container:
-        // a project's name is neon and has to glow like neon, and one shared
-        // layer for the whole skyline is one filter for all of them.
-        parts.neon = this.add.container(0, 0);
-        this.towerNeonC.add(parts.neon);
-        parts.signPlate = this.add.graphics();
-        parts.neon.add(parts.signPlate);
-        // Neon signage: the project's name hung off its tower's shoulder,
-        // vertical, in that project's own neon.
+        // The dark plate the project's name is bolted to, in the unfiltered
+        // layer over the skyline. This is the most important lettering on the
+        // wall — it is how the room knows which repo a tower is — and it is
+        // legible because a bright name sits on a dark plate. A plate inside a
+        // glow container has its own four edges lit, and a sixteen-pixel sign
+        // turns into a beige bar with the name lost inside it.
+        parts.signPlate = this.makePlate(this.towerPlates);
+        // The name itself is neon and glows like neon, in its own project tint.
+        // Which family layer it lives in follows that tint, and moves with it
+        // when the tower raises an alarm — see paintTower.
+        parts.family = '';
+        parts.back = 1;      // how far this tower has stepped back for a beam
+        parts.tube = 1;      // and where its own hum last left the sign
         parts.sign = this.add.text(0, 0, '', {
           fontFamily: MONO, fontSize: Math.max(4, 0.78 * REM) + 'px',
           color: '#7fd4ec', align: 'center',
@@ -1671,7 +1754,6 @@
         parts.labelLit = this.add.text(0, 0, '', {
           fontFamily: MONO, fontSize: Math.max(4, 0.72 * REM) + 'px', color: '#e4fff3',
         });
-        parts.neon.add(parts.sign);
         root.add(parts.label);
         root.add(parts.labelLit);
         parts.sign.setOrigin(0, 0);
@@ -1822,6 +1904,15 @@
           T.signPlate.lineStyle(0.6, rgb(signColour), 0.4);
           T.signPlate.strokeRect(T.sign.x - 0.16 * REM, T.sign.y - 0.3 * REM,
                                  T.sign.width + 0.32 * REM, T.sign.height + 0.6 * REM);
+          // And the tube moves into the layer that throws its own colour. A
+          // tower raising an alarm goes red, which is a different family, so
+          // this is a re-parent rather than a one-off — adding a child to a
+          // container takes it out of whichever one it was in.
+          const family = familyOf(rgb(signColour));
+          if (family !== T.family) {
+            T.family = family;
+            this.towerNeon[family].add(T.sign);
+          }
         }
         T.sweep.setVisible(tower.alarm);
         T.ceiling.setVisible(tower.alarm);
@@ -1974,7 +2065,10 @@
         for (const [project, T] of this.towers) {
           if (!standing.has(project)) {
             T.root.destroy();
-            T.neon.destroy();
+            // Its signage is not inside it: the plate and the tube live in the
+            // shared layers over the skyline and have to leave with the tower.
+            T.signPlate.destroy();
+            T.sign.destroy();
             this.towers.delete(project);
           }
         }
@@ -2028,9 +2122,12 @@
           const keep = T.spot.visible || (T.tower && T.tower.alarm);
           const back = lit && !keep ? 0.6 : 1;
           T.root.setAlpha(back);
-          // The tube lives in the shared glow layer rather than inside the tower,
-          // so it has to step back with its own building by hand.
-          T.neon.setAlpha(back);
+          // The plate and the tube live in shared layers over the skyline rather
+          // than inside the tower, so they step back with their own building by
+          // hand — the sign's own hum times how far back this tower is.
+          T.back = back;
+          T.sign.setAlpha(T.tube * back);
+          T.signPlate.setAlpha(T.tube * back);
         }
       }
 
@@ -2129,7 +2226,11 @@
       stepBlock(parts, phase, at, model) {
         const block = parts.block;
         const shop = parts.shop;
-        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23));
+        if (shop.neon) {
+          const lit = tubeAt(phase, shop.neonPhase, 23);
+          shop.neon.setAlpha(lit);
+          shop.bloom.setAlpha(lit);
+        }
         if (shop.glyph) {
           const lit = tubeAt(phase, shop.glyphPhase, 23);
           shop.glyph.setAlpha(lit);
@@ -2165,8 +2266,11 @@
         const drop = parts.fixture || phase.still ? 0 : Math.max(0, 1 - age / 0.9) * 1.4 * REM;
         parts.root.setAlpha(arriving);
         parts.root.setY(drop);
-        // The neon is in another container so it can be filtered; it still
-        // belongs to this building and settles with it.
+        // The plates and the neon are in other layers — one unfiltered, one
+        // filtered in this shop's own colour — but they belong to this building
+        // and settle with it.
+        parts.plates.setAlpha(arriving);
+        parts.plates.setY(drop);
         parts.neon.setAlpha(arriving);
         parts.neon.setY(drop);
         // The dispatcher's tint cooling out of the sign, on the server's clock.
@@ -2211,8 +2315,9 @@
         const completion = (model && model.completionSeconds) || 0;
         T.facade.setAlpha(facadeAt(phase, tower.drift));
         const tube = tubeAt(phase, tower.drift, 16);
-        T.sign.setAlpha(tube);
-        T.signPlate.setAlpha(tube);
+        T.tube = tube;
+        T.sign.setAlpha(tube * T.back);
+        T.signPlate.setAlpha(tube * T.back);
         if (tower.alarm) {
           T.sweep.setRotation(phase.sweep * Math.PI / 180);
           T.ceiling.setX(phase.ceiling.x);
@@ -2379,5 +2484,8 @@
     // against every frame the committed atlases actually have.
     ASSETS, BANNERS, NOODLE_SIGNS, WALKERS, VEHICLE_KINDS, VEHICLE_SPECS, DRONE,
     OCCUPANT_FRAMES, COOK_FRAMES,
+    // How the neon is grouped, so the suite can hold every tint on this wall
+    // against a family and count the filtered layers without standing a GPU up.
+    NEON, NEON_FAMILY, familyOf, DISTRICT_FAMILIES, TOWER_FAMILIES, SHOP, ALARM,
   };
 }));

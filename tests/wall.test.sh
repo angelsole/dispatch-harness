@@ -2078,20 +2078,83 @@ check "canvas: and it is what every glyph on this wall is set in" \
   "$(printf '%s\n' "$CANVAS_SRC" | grep -c 'fontFamily: ARK')" "3"
 grep_ok "$CANVAS_SRC" 'const arkSize = (px) =>' \
   "canvas: sized in whole multiples of its own em, which is what a pixel face needs"
-# Glow that is glow, and a bounded amount of it: the engine's filter, on
-# containers, counted. A filter per sign would be a render target per sign.
-grep_ok "$CANVAS_SRC" 'container.filters.internal.addGlow(NEON' \
-  "canvas: the neon runs under the engine's own Glow filter"
-grep_ok "$CANVAS_SRC" 'for (const neon of this.bandNeon) this.lightUp(neon);' \
-  "canvas: on the district's neon LAYERS, one per depth band"
-grep_ok "$CANVAS_SRC" 'this.lightUp(this.noodleNeon);' \
-  "canvas: on the noodle bar's own, which nothing is allowed in front of"
-grep_ok "$CANVAS_SRC" 'this.lightUp(this.towerNeonC);' \
-  "canvas: and on one shared layer for the whole skyline's tubes"
-grep_ok "$CANVAS_SRC" 'this.cityC.add(this.towerNeonC);' \
-  "canvas: the shared skyline neon stays inside the skyline camera transform"
-check "canvas: five filtered containers, from three call sites and no fourth" \
-  "$(printf '%s\n' "$CANVAS_CODE" | grep -c 'this\.lightUp(')" "3"
+# Glow that is glow, and glow that is the SIGN'S: the first cut of this put one
+# warm-white filter on a container that also held the dark plate every sign is
+# bolted to, which lit the plate's own four edges — a 16px tower sign turned into
+# a beige bar with the project's name lost inside it, and every sign on the wall
+# glowed the same colour whatever its own was. Both halves of that are pinned
+# here, because both are invisible to a grep for `addGlow`.
+grep_ok "$CANVAS_SRC" 'layer.filters.internal.addGlow(colour, glow.strength, 0, 1, false, 6,' \
+  "canvas: the neon runs under the engine's own Glow filter, at a reach sized to the lettering"
+# The two reaches, because they are the whole difference between a sign and a
+# brick: a mono name has thin strokes and wide gaps and wants a real halo; a CJK
+# glyph in a 12px pixel face has four-pixel strokes four pixels apart, and a halo
+# that carries into those gaps closes 麵 up into a solid orange block.
+grep_ok "$CANVAS_SRC" 'const SIGN_GLOW = { strength: 1.7, reach: 0.3 };' \
+  "canvas: the skyline's names get the long halo"
+grep_ok "$CANVAS_SRC" 'const GLYPH_GLOW = { strength: 1.0, reach: 0.1 };' \
+  "canvas: and a pixel-face glyph gets a short one, so its counters stay open"
+check "canvas: and exactly one filter is ever added, in glowLayer()" \
+  "$(printf '%s\n' "$CANVAS_CODE" | grep -c 'addGlow(')" "1"
+# Every plate on the wall is made by one helper, and that helper is only ever
+# handed an UNFILTERED layer. This is the structural half of the fix: a plate
+# inside a glow container is a light box, not a sign.
+PLATE_LAYERS="$(printf '%s\n' "$CANVAS_CODE" | grep -oE 'makePlate\([^)]*\)' | sort -u)"
+if [ -z "$PLATE_LAYERS" ]; then
+  bad "canvas: plates are made through one helper"
+else
+  ok "canvas: every plate on the wall is made through makePlate()"
+fi
+# The naming is the discipline: a container plates may go in is called `plates`
+# (a building's own) or `<something>Plates` (a shared layer), and nothing else on
+# this wall is. A filtered layer is only ever called `<something>Neon`.
+STRAY_PLATES="$(printf '%s\n' "$PLATE_LAYERS" | grep -vi 'plates' | tr '\n' ' ')"
+check "canvas: and every one of them lands in a plate layer, never in a filtered one" \
+  "$(printf '%s' "$STRAY_PLATES" | tr -d ' ')" ""
+# The filtered layers, and nothing else, come out of glowLayer().
+GLOW_LAYERS="$(printf '%s\n' "$CANVAS_CODE" | grep -oE 'this\.glowLayer\([^)]*\)' | wc -l | tr -d ' ')"
+check "canvas: three call sites build every filtered layer there is" "$GLOW_LAYERS" "3"
+grep_ok "$CANVAS_SRC" 'this.cityC.add(this.towerPlates);' \
+  "canvas: the skyline's plates and tubes stay inside the skyline camera transform"
+# And the colour half, checked against the real tint tables rather than restated:
+# every colour any sign on this wall is ever set in has a family, and the number
+# of filtered layers is the budget.
+NEON_PROBE="$ROOT/neon-probe.js"
+cat > "$NEON_PROBE" <<'JS'
+const C = require(process.argv[2]);
+const S = require(process.argv[3]);
+// Every tint the wall ever letters a sign in: the four shops, the five project
+// signs, and the one red a tower raising an alarm turns.
+const tints = [...new Set([...Object.values(C.SHOP), C.ALARM,
+  ...S.SIGN_TINTS.map((hex) => parseInt(hex.slice(1), 16))])];
+console.log(JSON.stringify({
+  // Nothing glows a colour nobody chose for it.
+  mapped: tints.every((tint) => !!C.NEON_FAMILY[tint]),
+  // And every family a sign can land in is a layer that actually exists.
+  reachable: tints.every((tint) =>
+    (C.DISTRICT_FAMILIES.includes(C.familyOf(tint)) || C.TOWER_FAMILIES.includes(C.familyOf(tint)))
+    && C.NEON[C.familyOf(tint)] !== undefined),
+  // A shopfront is never an alarm, so the district does not carry that family.
+  district: C.DISTRICT_FAMILIES.join(','),
+  tower: C.TOWER_FAMILIES.join(','),
+  // Three district families, four skyline families, and the noodle bar's own.
+  layers: C.DISTRICT_FAMILIES.length + C.TOWER_FAMILIES.length + 1,
+  // The halo is the sign's own light, so no family throws a colour that is not
+  // one of the wall's — a warm white here is what the first cut got wrong.
+  hues: Object.values(C.NEON).every((hue) => hue !== 0xffffff && hue !== 0xfff0d8),
+}));
+JS
+NEONS="$(node "$NEON_PROBE" "$SRC/wall/world-canvas.js" "$SRC/wall/scene.js" 2>&1)"
+neon_of() { printf '%s' "$NEONS" | jq -r ".$1" 2>/dev/null; }
+check "canvas: every tint a sign is lettered in has a glow family" "$(neon_of mapped)" "true"
+check "canvas: and every one of those families is a layer that exists" \
+  "$(neon_of reachable)" "true"
+check "canvas: no family throws the warm white that flooded the first cut" \
+  "$(neon_of hues)" "true"
+check "canvas: a shopfront is never an alarm" "$(neon_of district)" "warm,cyan,mint"
+check "canvas: a tower can be" "$(neon_of tower)" "warm,cyan,mint,alarm"
+check "canvas: eight filtered layers on the wall, and that is the budget" \
+  "$(neon_of layers)" "8"
 
 # Reduced motion. A keyframe grep proves nothing about a GPU, so the claim is
 # made where it can be checked: the whole of this world's motion is one pure
