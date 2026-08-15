@@ -974,13 +974,15 @@
         this.deskSpots = [];
         for (let z = 0; z < ZONES.length; z++) {
           const dx = cell(z, -1);
-          this.stamp(this.mid, 'inside', 11, 6, 2, 2, dx * TILE, DESK * TILE, NIGHT_ROOM);
-          this.tile(this.mid, 'inside', 12, 3, dx * TILE + 4, (DESK - 1) * TILE + 6, NIGHT_ROOM);
+          // A rack against the wall behind, the console desk in front of it,
+          // and the agent seated at that console with the desk over their legs.
+          this.stamp(this.mid, 'inside', 11, 6, 2, 2, dx * TILE, (DESK - 2) * TILE - 4, NIGHT_ROOM);
+          this.stamp(this.mid, 'inside', 11, 12, 2, 2, dx * TILE, DESK * TILE + 4, NIGHT_ROOM);
           this.deskSpots.push({ x: zc(z), y: DESK * TILE + 8 });
           // PUSH is between shifts: its desk is lit and empty, which is a fact
           // about the pipeline and not an omission.
           if (z === ZONES.length - 1) continue;
-          const img = this.add.image(dx * TILE + TILE - SIT_INSET, (DESK + 2) * TILE - 4,
+          const img = this.add.image(dx * TILE + TILE - SIT_INSET, (DESK + 1) * TILE - 3,
             SITTERS[z], 0).setOrigin(0, 0).setTint(NIGHT_PEOPLE);
           this.people.add(img);
           this.sitters.push({ img, delay: z * 0.7 });
