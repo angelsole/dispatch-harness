@@ -47,6 +47,10 @@
 #   ?world=canvas   draw the city with the vendored Phaser 4 in wall/vendor/
 #                   rather than in CSS. Same city, same street; the DOM world is
 #                   the default and never requests the engine.
+#   ?world=topdown  SPIKE: the 3/4 top-down tile city, drawn from the bought art
+#                   packs in wall/private/ (gitignored, served by /private/).
+#                   Add &scene=office for the office floor. Set dressing only —
+#                   it reads the tower count and the alarm, nothing else.
 #   ?cinema=1       start the ambient camera at once (?cinema=0 keeps it off).
 #                   The `c` key toggles it and any other input dismisses it;
 #                   prefers-reduced-motion outranks all three.
@@ -55,7 +59,7 @@
 # only what is already on this machine's disk. Do not port-forward it publicly.
 set -u
 
-usage() { sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
