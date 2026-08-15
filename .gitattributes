@@ -5,9 +5,8 @@
 # wall/THIRD_PARTY.md — read that, not the bytes.
 wall/vendor/** -diff linguist-vendored
 
-# Somebody else's pixels, and the packing metadata that goes with them. Same
-# reasoning: a reviewer should read wall/THIRD_PARTY.md and the licence beside
-# the art, not 1600 lines of frame rectangles. Our own art (wall/assets/own/) is
-# deliberately NOT vendored — its generator is meant to be read.
-wall/assets/warped-city/** -diff linguist-vendored
-wall/assets/ark-pixel/** -diff linguist-vendored
+# Binary art is a blob, but its atlas metadata and licence are reviewable text.
+# Keep those visible in diffs: they are the proof that each named frame stays
+# inside the committed image and that each pack may be redistributed.
+wall/assets/warped-city/*.png -diff linguist-vendored
+wall/assets/ark-pixel/*.woff2 -diff linguist-vendored
