@@ -38,6 +38,9 @@
   // when ?world=canvas asks for them: the DOM wall must never pay 1.4 MB of
   // WebGL for a city it draws in CSS.
   const CANVAS_SCRIPTS = ['vendor/phaser.min.js', 'world-canvas.js'];
+  // The side-view spike's world, loaded the same way behind ?world=sideview and
+  // on the same terms: the DOM wall asks for neither list.
+  const SIDEVIEW_SCRIPTS = ['vendor/phaser.min.js', 'world-sideview.js'];
   // The director. A room that has not touched anything for this long gets the
   // film; the shot bucket is the wall-clock idiom the weather already uses, so
   // two screens in the same room are cutting roughly together.
@@ -1014,10 +1017,13 @@
     return flag === '1' ? 'on' : flag === '0' ? 'off' : null;
   })();
   // Which body the city is drawn in, read once at load in the same idiom and in
-  // the same breath: ?world=canvas hands it to WebGL, anything else keeps the
-  // DOM. Nothing else in the page branches on it.
+  // the same breath: ?world=canvas hands it to WebGL, ?world=sideview hands it
+  // to the side-view spike's Phaser world, anything else keeps the DOM. Nothing
+  // else in the page branches on it.
   const wantsCanvas =
     new URLSearchParams(window.location.search).get('world') === 'canvas';
+  const wantsSideview =
+    new URLSearchParams(window.location.search).get('world') === 'sideview';
 
   // Shot variety off the wall clock rather than off a counter, so two screens
   // opened in the same room are cutting roughly the same film without a byte
@@ -1326,7 +1332,12 @@
   // hands it straight over the moment world-canvas.js is on the page. One frame
   // of empty stage, and then the city — with the DOM world's nodes hidden from
   // the start, so nothing is ever drawn twice or populated by both.
-  function canvasWorld() {
+  // Which scripts and which factory, defaulted to the canvas world's — so a
+  // call with no arguments still means exactly what it has always meant, and the
+  // side-view spike is one more pair of names rather than a second loader.
+  function canvasWorld(sources, global) {
+    const scripts = sources || CANVAS_SCRIPTS;
+    const name = global || 'WallCanvasWorld';
     let live = null;
     let last = null;
     let spotId = '';
@@ -1337,8 +1348,8 @@
       // set the attribute the shared [hidden] rule actually matches.
       if (node) node.setAttribute('hidden', '');
     }
-    loadScripts(CANVAS_SCRIPTS, () => {
-      const factory = window.WallCanvasWorld;
+    loadScripts(scripts, () => {
+      const factory = window[name];
       if (!factory || !window.Phaser) return;
       live = factory.create({ parent: stage, still, clock: () => Date.now() / 1000 + skew });
       if (last) live.render(last);
@@ -1353,7 +1364,8 @@
 
   // --- start of shift -----------------------------------------------------------
 
-  const world = wantsCanvas ? canvasWorld() : domWorld;
+  const world = wantsCanvas ? canvasWorld()
+    : wantsSideview ? canvasWorld(SIDEVIEW_SCRIPTS, 'WallSideviewWorld') : domWorld;
 
   render();
   connect();
