@@ -4,3 +4,10 @@
 # in a pull request. What actually pins the file is its sha256 in
 # wall/THIRD_PARTY.md — read that, not the bytes.
 wall/vendor/** -diff linguist-vendored
+
+# Somebody else's pixels, and the packing metadata that goes with them. Same
+# reasoning: a reviewer should read wall/THIRD_PARTY.md and the licence beside
+# the art, not 1600 lines of frame rectangles. Our own art (wall/assets/own/) is
+# deliberately NOT vendored — its generator is meant to be read.
+wall/assets/warped-city/** -diff linguist-vendored
+wall/assets/ark-pixel/** -diff linguist-vendored
