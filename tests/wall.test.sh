@@ -1765,16 +1765,76 @@ grep_ok "$PAGE_SRC" "if (node) node.setAttribute('hidden', '')" \
   "canvas: the DOM world's layers are hidden rather than deleted"
 # The engine config the owner fixed. Read as declarations, so a renamed option
 # fails here rather than on the TV.
-for option in "type: Phaser.AUTO" "mode: Phaser.Scale.FIT" \
-              "autoCenter: Phaser.Scale.CENTER_BOTH" "width: W" "height: H" \
+for option in "type: Phaser.AUTO" "mode: Phaser.Scale.NONE" \
               "smoothPixelArt: true" "roundPixels: true" \
               "powerPreference: 'low-power'" "fps: { limit: 30 }" \
               "audio: { noAudio: true }" "banner: false"; do
   grep_ok "$CANVAS_SRC" "$option" "canvas: the engine is configured with [$option]"
 done
-check "canvas: on the base grid the owner fixed" \
-  "$(sed -n 's/^  const \([WH]\) = \([0-9]*\);.*/\2/p' "$SRC/wall/world-canvas.js" \
-     | head -2 | tr '\n' 'x' | sed 's/x$//')" "640x360"
+# This is a parity port of a city the DOM draws crisply in vh/rem at native
+# pixels, not a pixel-art sprite game — so there is no base grid to letterbox
+# into. The canvas covers the stage at whatever aspect the viewport has, and its
+# backing store is device pixels: a MacBook is 16:10 and Retina, and both of
+# those used to cost black bars and a soft city.
+for banned in 'Scale.FIT' 'Scale.ENVELOP' 'autoCenter'; do
+  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
+    "canvas: no [$banned] — the world fills the stage rather than fitting inside it"
+done
+grep_ok "$CANVAS_SRC" 'zoom: 1 / DPR' \
+  "canvas: the backing store is device pixels, shown at CSS size"
+grep_ok "$CANVAS_SRC" 'Math.min(window.devicePixelRatio || 1, 2)' \
+  "canvas: at the panel's own ratio, capped at 2 for fill-rate"
+# Every size in the world is derived from the live stage rather than from a
+# constant, and measure() is the only place any of them is written.
+grep_ok "$CANVAS_SRC" 'function measure(cssWidth, cssHeight, ratio)' \
+  "canvas: the grid is measured off the stage, not declared"
+# A resized wall re-measures and lays out again rather than stretching a frame
+# drawn for the old size — and the two ScaleManager calls that do it are
+# order-dependent: setZoom refreshes the CSS size off the backing store, so
+# calling it first leaves the canvas displayed at the size of the previous wall.
+check "canvas: a resize sets the backing store before refreshing the CSS size off it" \
+  "$(printf '%s\n' "$CANVAS_SRC" | grep -oE 'game\.scale\.(resize|setZoom)' \
+     | sed 's/game\.scale\.//' | tr '\n' ' ')" "resize setZoom "
+grep_ok "$CANVAS_SRC" 'city.scene.restart()' \
+  "canvas: and the city is rebuilt for the new stage rather than repositioned"
+grep_ok "$CANVAS_SRC" 'REM = Math.min(26, Math.max(12, cssWidth * 0.0105)) * DPR' \
+  "canvas: a rem is the stylesheet's own clamp, in device pixels"
+GRID_PROBE="$ROOT/grid-probe.js"
+cat > "$GRID_PROBE" <<'JS'
+const C = require(process.argv[2]);
+const shot = (w, h, dpr) => { C.measure(w, h, dpr); return C.grid(); };
+const wide = shot(1920, 1080, 1);
+const retina = shot(1440, 900, 2);
+const capped = shot(1440, 900, 4);
+console.log(JSON.stringify({
+  // The backing store is the stage in device pixels, at any aspect.
+  wide: wide.w + 'x' + wide.h,
+  retina: retina.w + 'x' + retina.h,
+  // Never past 2, however proud the display is of its pixels.
+  capped: capped.w + 'x' + capped.h,
+  // A rem is the same size ON SCREEN in both, which is what makes a name plate
+  // as legible on a laptop as on the TV — it is just drawn with more pixels.
+  remCss: (wide.rem / wide.dpr).toFixed(2) + ' ' + (retina.rem / retina.dpr).toFixed(2),
+  // 16:10 is not letterboxed: the ground line is 9vh off the bottom of the
+  // stage, not of some 16:9 box centred inside it.
+  ground: (retina.h - retina.groundY).toFixed(1) === (9 * retina.h / 100).toFixed(1),
+  // And the sky's own 1600x900 box is covered rather than fitted, so a 16:10
+  // wall crops the painting exactly as `xMidYMid slice` does in the DOM.
+  slice: retina.sky >= retina.w / 1600 && retina.sky >= retina.h / 900
+    && Math.min(retina.skyX, retina.skyY) <= 0,
+}));
+JS
+GRID="$(node "$GRID_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
+grid_of() { printf '%s' "$GRID" | jq -r ".$1" 2>/dev/null; }
+check "canvas: a 1920x1080 wall at dpr 1 is a 1920x1080 backing store" \
+  "$(grid_of wide)" "1920x1080"
+check "canvas: and a 1440x900 laptop at dpr 2 is 2880x1800" "$(grid_of retina)" "2880x1800"
+check "canvas: the ratio is capped at 2, never higher" "$(grid_of capped)" "2880x1800"
+check "canvas: a rem is the same size on screen on both" "$(grid_of remCss)" "20.16 15.12"
+check "canvas: 16:10 is not letterboxed — the ground is 9vh off the stage" \
+  "$(grid_of ground)" "true"
+check "canvas: and the painted sky is sliced to cover, as the DOM slices it" \
+  "$(grid_of slice)" "true"
 # smoothPixelArt sets antialias and pixelArt itself; declaring either would fight it.
 for banned in 'antialias:' 'pixelArt:'; do
   grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
@@ -1813,9 +1873,13 @@ const at = [0, 1, 7.5, 3600, 86399, 1755000000.25];
 const frozen = at.map((t) => JSON.stringify(C.phaseAt(t, { reducedMotion: true })));
 const moving = at.map((t) => JSON.stringify(C.phaseAt(t, {})));
 const rest = C.phaseAt(0, { reducedMotion: true });
+// The skyline is laid out against whatever the stage currently measures, so the
+// probe states the wall it is asking about rather than assuming a base grid.
+C.measure(1920, 1080, 1);
+const WIDE = C.grid().w;
 const roomy = C.towerLayout(Array.from({ length: 5 }, () => ({ widthRem: 5.6 })));
 const crowded = C.towerLayout(Array.from({ length: 20 }, () => ({ widthRem: 5.6 })));
-const bounded = (boxes) => boxes.every((box, i) => box.x >= 0 && box.x + box.w <= C.W + 1e-6
+const bounded = (boxes) => boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE + 1e-6
   && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w));
 console.log(JSON.stringify({
   // Every second of the clock gives the same still frame.
@@ -1841,12 +1905,12 @@ console.log(JSON.stringify({
   parked: rest.cam.city === 1 && rest.cam.sky === 1
     && rest.planes.every((p) => p === 0) && rest.ghost === 0,
   // The hand-written flex row keeps both an ordinary fixture and a genuinely
-  // crowded skyline inside the same 640-wide box without letting towers overlap.
+  // crowded skyline inside the stage without letting towers overlap.
   layout: bounded(roomy) && bounded(crowded),
   // space-evenly leaves a single tower centred in the skyline band.
   centred: (() => {
     const [box] = C.towerLayout([{ widthRem: 5.6 }]);
-    return Math.abs(box.x + box.w / 2 - C.W / 2) < 1e-6;
+    return Math.abs(box.x + box.w / 2 - WIDE / 2) < 1e-6;
   })(),
 }));
 JS

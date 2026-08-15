@@ -33,30 +33,62 @@
   else root.WallCanvasWorld = factory();
 }(typeof globalThis === 'object' ? globalThis : this, function () {
   // --- the grid -----------------------------------------------------------------
-  // 640x360, scaled to the wall by Phaser's FIT. Everything below is wall.css's
-  // own units translated into it once, here: a vh is a hundredth of the height,
-  // a rem is what `clamp(12px, 1.05vw, 26px)` resolves to at this width, and a
-  // px is one CSS pixel on the 1920-wide reference wall.
-  const W = 640;
-  const H = 360;
-  const VW = W / 100;
-  const VH = H / 100;
-  const REM = W * 0.0105;
-  const PX = W / 1920;
-  // The sky's viewBox is 1600x900 — the same 16:9 the grid is — so `slice`
-  // resolves to one exact scale, and the ghost, the planes and the wet street
-  // all land where the stylesheet puts them.
-  const SKY = W / 1600;
+  // The canvas fills #stage at the viewport's own aspect and draws at device
+  // resolution — no base grid, no letterbox — because this is a parity port of
+  // a city the DOM draws crisply in vh/rem at native pixels, not a pixel-art
+  // sprite game. So every number below is in DEVICE pixels, every one of them
+  // is derived from the live stage size, and measure() is the only place any of
+  // them is written. A resize re-measures and lays the city out again rather
+  // than stretching a frame drawn for the old size.
+  let DPR = 1;                        // device pixels per CSS pixel, capped at 2
+  let W = 1920;
+  let H = 1080;
+  let VW = W / 100;
+  let VH = H / 100;
+  let REM = 20.16;                    // html { font-size } out of wall.css
+  let PX = 1;                         // one CSS pixel, in device pixels
+  // The sky's viewBox is 1600x900 under `xMidYMid slice`: cover the box, centred
+  // — so on a viewport that is not 16:9 the painting is cropped exactly the way
+  // the DOM world crops it.
+  let SKY = W / 1600;
+  let SKY_X = 0;
+  let SKY_Y = 0;
 
-  const GROUND = 9 * VH;              // --ground
-  const GROUND_Y = H - GROUND;
-  const CITY_H = 74 * VH;             // .city
-  const HAZE_H = 38 * VH;             // .haze
+  let GROUND = 9 * VH;                // --ground
+  let GROUND_Y = H - GROUND;
+  let CITY_H = 74 * VH;               // .city
+  let HAZE_H = 38 * VH;               // .haze
 
-  const CROWN_H = 2.6 * REM;          // .tower__crown
-  const BASE_LINE = 0.88 * REM;       // one line of .tower__base
-  const BASE_GAP = 0.3 * REM;         // its margin-top
+  let CROWN_H = 2.6 * REM;            // .tower__crown
+  let BASE_LINE = 0.88 * REM;         // one line of .tower__base
+  let BASE_GAP = 0.3 * REM;           // its margin-top
   const CEREMONY = 6;                 // --ceremony, the shipping beat
+
+  // How big the wall is now, and everything wall.css derives from that. The
+  // device-pixel ratio is capped at 2: past that the backing store costs more
+  // fill-rate than the sharpness is worth on a panel nobody stands close to.
+  function measure(cssWidth, cssHeight, ratio) {
+    DPR = Math.min(Math.max(Number(ratio) || 1, 1), 2);
+    PX = DPR;
+    W = Math.max(1, Math.round(cssWidth * DPR));
+    H = Math.max(1, Math.round(cssHeight * DPR));
+    VW = W / 100;
+    VH = H / 100;
+    // html { font-size: clamp(12px, 1.05vw, 26px) } — wall.css, in device px, so
+    // a sign glyph is the same size on screen as the DOM's and is rendered at
+    // the panel's own resolution rather than upscaled into it.
+    REM = Math.min(26, Math.max(12, cssWidth * 0.0105)) * DPR;
+    SKY = Math.max(W / 1600, H / 900);
+    SKY_X = (W - 1600 * SKY) / 2;
+    SKY_Y = (H - 900 * SKY) / 2;
+    GROUND = 9 * VH;
+    GROUND_Y = H - GROUND;
+    CITY_H = 74 * VH;
+    HAZE_H = 38 * VH;
+    CROWN_H = 2.6 * REM;
+    BASE_LINE = 0.88 * REM;
+    BASE_GAP = 0.3 * REM;
+  }
 
   // --- the palette --------------------------------------------------------------
   // wall.css's :root, as integers. Alphas travel separately because that is how
@@ -318,6 +350,8 @@
       facade: frozen ? 0.9 : ramp(WIN_LIVE, loop(t, 26, 0)),
       sweep: frozen ? -12 : -34 + 72 * swing(t, 4.4),
       klaxon: frozen ? 0.8 : 0.28 + 0.72 * swing(t, 1.1),
+      // klaxon-text: the alarm tower's name plate, and the HUD's own count.
+      text: frozen ? 1 : 0.25 + 0.75 * swing(t, 1),
       car: frozen ? 1 : 0.72 + 0.28 * swing(t, 2.6),
       carAlarm: frozen ? 1 : 0.2 + 0.8 * swing(t, 0.9),
     };
@@ -405,15 +439,19 @@
   // the <defs>, the silhouettes out of the same <path> elements the DOM world
   // paints, sampled and then reduced back to their own vertices.
 
+  // One point of the sky's viewBox, on the wall.
+  const skyX = (x) => SKY_X + Number(x) * SKY;
+  const skyY = (y) => SKY_Y + Number(y) * SKY;
+
   function samplePath(node, step) {
     const total = node.getTotalLength();
     const raw = [];
     for (let d = 0; d < total; d += step) {
       const p = node.getPointAtLength(d);
-      raw.push({ x: p.x * SKY, y: p.y * SKY });
+      raw.push({ x: skyX(p.x), y: skyY(p.y) });
     }
     const end = node.getPointAtLength(total);
-    raw.push({ x: end.x * SKY, y: end.y * SKY });
+    raw.push({ x: skyX(end.x), y: skyY(end.y) });
     // These are straight runs, so anything collinear with its neighbours is a
     // sample rather than a corner. Dropping them takes a few thousand points
     // back to the hundred or so the painting actually has.
@@ -464,6 +502,14 @@
     host.className = 'world';
     host.id = 'world';
     parent.append(host);
+
+    const ratio = () => Math.min(window.devicePixelRatio || 1, 2);
+    const stageSize = () => ({
+      w: host.clientWidth || window.innerWidth,
+      h: host.clientHeight || window.innerHeight,
+    });
+    const first = stageSize();
+    measure(first.w, first.h, ratio());
 
     let city = null;          // the running scene, once Phaser has booted it
     let pending = null;       // the last scene handed over before it had
@@ -520,7 +566,7 @@
         // against — then the sky's night gradient over it.
         g.fillStyle(BG, 1);
         g.fillRect(0, 0, W, H);
-        fillGradient(g, gradientOf('night'), 0, 0, W, H);
+        fillGradient(g, gradientOf('night'), skyX(0), skyY(0), 1600 * SKY, 900 * SKY);
         glow(g, 0x2a6f66, W / 2, H, W * 0.65, H * 0.78, 0.42, 12);
         // Thin-line cloud, the same ceiling lit from underneath, and the two
         // rules over the horizon — all read off the <g stroke> groups the DOM
@@ -538,7 +584,7 @@
         const veil = document.querySelector('svg.sky > rect[fill="url(#hazeveil)"]');
         if (veil) {
           fillGradient(g, gradientOf('hazeveil'),
-            Number(veil.getAttribute('x')) * SKY, Number(veil.getAttribute('y')) * SKY,
+            skyX(veil.getAttribute('x')), skyY(veil.getAttribute('y')),
             Number(veil.getAttribute('width')) * SKY, Number(veil.getAttribute('height')) * SKY);
         }
       }
@@ -560,7 +606,7 @@
             this.planes[i].add(wet);
             for (const rect of document.querySelectorAll('.sky__near rect')) {
               fillGradient(wet, gradientOf('wet'),
-                Number(rect.getAttribute('x')) * SKY, Number(rect.getAttribute('y')) * SKY,
+                skyX(rect.getAttribute('x')), skyY(rect.getAttribute('y')),
                 Number(rect.getAttribute('width')) * SKY, Number(rect.getAttribute('height')) * SKY);
             }
             wet.setAlpha(0.7);
@@ -573,8 +619,11 @@
           const top = points.reduce((lo, p) => Math.min(lo, p.y), H);
           const dot = Math.max(0.8, 2 * SKY);
           const alpha = plane.key === 'far' ? 0.32 : 0.42;
-          for (let y = top; y < GROUND_Y; y += 19 * SKY) {
-            for (let x = 0; x < W; x += 15 * SKY) {
+          // The pattern is 15x19 in the sky's own units and tiles from its
+          // origin, so it stays put against the silhouette at any aspect.
+          const first = SKY_Y + Math.floor((top - SKY_Y) / (19 * SKY)) * 19 * SKY;
+          for (let y = first; y < GROUND_Y; y += 19 * SKY) {
+            for (let x = SKY_X; x < W; x += 15 * SKY) {
               if (inside(points, x + 4 * SKY, y + 5 * SKY)) {
                 lit.fillStyle(0xffc98a, 0.45 * alpha);
                 lit.fillRect(x + 3 * SKY, y + 4 * SKY, dot, dot);
@@ -755,7 +804,7 @@
         this.ghostG.clear();
         this.ghostG.fillStyle(0x7fb4c0, 1);
         for (const ghost of ghosts) {
-          this.ghostG.fillRect((ghost.x * 1600 - 20) * SKY, (819 - ghost.height) * SKY,
+          this.ghostG.fillRect(skyX(ghost.x * 1600 - 20), skyY(819 - ghost.height),
                                40 * SKY, ghost.height * SKY);
         }
         this.ghostG.setAlpha(0.14);
@@ -1011,7 +1060,7 @@
         }
         parts.shafts = this.add.container(0, 0);
         root.add(parts.shafts);
-        for (const key of ['halo', 'beacon', 'signPlate']) {
+        for (const key of ['halo', 'beacon', 'signPlate', 'basePlate']) {
           parts[key] = this.add.graphics();
           root.add(parts[key]);
         }
@@ -1054,17 +1103,19 @@
         T.ladder = { x: box.x + box.w * 0.14, w: box.w * 0.72,
                      y: massTop + massH * 0.23, h: massH * 0.77 };
         const key = [tower.shape, tower.crown, tower.heightPct, box.x.toFixed(1),
-                     box.w.toFixed(1), floors].join('|');
+                     box.w.toFixed(1), floors, tower.alarm ? 1 : 0].join('|');
         if (key !== T.key) {
           T.key = key;
           for (const g of ['pool', 'spot', 'sweep', 'ceiling', 'mirror', 'body',
-                           'facade', 'wash']) T[g].clear();
+                           'facade', 'wash', 'basePlate']) T[g].clear();
           T.halo.clear();
           T.beacon.clear();
           const points = outline(poly, box.x, massTop, box.w, massH);
-          // Wet tarmac: every tower stands in a little of its own light.
-          glow(T.pool, 0x8cc4ce, box.x + box.w / 2, GROUND_Y, box.w * 1.1, 2.2 * REM, 0.24, 7);
-          T.pool.setAlpha(0.9);
+          // Wet tarmac: every tower stands in a little of its own light, and it
+          // turns red under an alarm like everything else on that building.
+          glow(T.pool, tower.alarm ? ALARM : 0x8cc4ce, box.x + box.w / 2, GROUND_Y,
+               box.w * 1.1, 2.2 * REM, 0.24, 7);
+          T.pool.setAlpha(tower.alarm ? 1 : 0.9);
           T.body.fillGradientStyle(STONE_LIT, STONE_LIT, STONE, STONE, 1, 1, 1, 1);
           T.body.fillPoints(points, true, true);
           // The lit edge along whatever the silhouette leaves as a roofline.
@@ -1095,8 +1146,7 @@
           T.sweep.setPosition(box.x + box.w / 2, massTop + massH * 0.28);
           glow(T.ceiling, 0xff6068, box.x + box.w / 2, top - 1.5 * VH - 9 * VH,
                22 * VH, 9 * VH, 0.3, 8);
-          T.wash.fillStyle(ALARM, 0.55);
-          T.wash.fillPoints(points, true, true);
+          this.washOf(T.wash, poly, box.x, massTop, box.w, massH);
           // The carousel beam, tower half: out of the low cloud onto the building
           // the brief plate is talking about. A beam has no edges — the shape is
           // wide at the pavement and narrow overhead, it is brightest where it
@@ -1112,7 +1162,10 @@
             const half = box.w * (0.46 - 0.315 * u);
             const a = ramp(SPOT_BEAM, u);
             if (a <= 0) continue;
-            for (const [inset, share] of [[1, 0.34], [0.7, 0.33], [0.4, 0.33]]) {
+            // Three nested widths rather than one flat wedge: they composite
+            // into a bright core with soft sides, which is what wall.css gets
+            // from its horizontal mask.
+            for (const [inset, share] of [[1, 0.5], [0.7, 0.5], [0.4, 0.5]]) {
               T.spot.fillStyle(0xdef8ff, a * share);
               T.spot.fillRect(cx - half * inset, y - foot / rows, half * 2 * inset, foot / rows + 0.5);
             }
@@ -1125,7 +1178,16 @@
           T.sign.setPosition(box.x + box.w + 0.2 * REM, top + h * 0.12);
           T.label.setPosition(cx, GROUND_Y - BASE_LINE);
           T.labelLit.setPosition(cx, GROUND_Y - BASE_LINE);
+          // A tower asking for a human says so at street level too: the name
+          // plate goes solid red with the name in white on it, which is the
+          // loudest sentence this wall has and the one the room reads first.
+          if (tower.alarm) {
+            T.basePlate.fillStyle(ALARM, 1);
+            T.basePlate.fillRect(box.x - 0.4 * REM, GROUND_Y - BASE_LINE - 0.12 * REM,
+                                 box.w + 0.8 * REM, BASE_LINE + 0.24 * REM);
+          }
         }
+        T.basePlate.setVisible(tower.alarm);
         const stacked = tower.label.split('').join('\n');
         if (T.sign.text !== stacked) {
           T.sign.setText(stacked);
@@ -1173,6 +1235,46 @@
           this.paintShaft(S, run, { x: T.ladder.x + wide * i, w: wide,
                                     y: T.ladder.y, h: T.ladder.h });
         });
+      }
+
+      // The klaxon wash. wall.css does it with one inset box-shadow — 4rem of
+      // rgba(190, 0, 20, 0.85) hugging the inside of the mass, plus a 3rem outer
+      // glow — and at the peak of the pulse an alarm tower is unmistakably red
+      // from the far side of a room. Graphics has no inset shadow, so it is
+      // built the way this world already knows how to build a silhouette: the
+      // mass at the shadow's ambient strength, then shells that ramp up to it
+      // down every edge, scanline-clipped so a setback or a taper wears the
+      // wash exactly where its wall is.
+      washOf(g, poly, x, y, w, h) {
+        const depth = Math.max(1, Math.min(4 * REM, w * 0.5, h * 0.5));
+        const rows = 40;
+        const band = h / rows;
+        const shells = 5;
+        for (let i = 0; i < rows; i++) {
+          const t = (i + 0.5) / rows;
+          const fromEdge = Math.min(t * h, (1 - t) * h);   // roofline or pavement
+          for (const [l, r] of spansAt(poly, t)) {
+            const left = x + w * l;
+            const wide = w * (r - l);
+            if (wide <= 0) continue;
+            g.fillStyle(0xbe0014, 0.18);
+            g.fillRect(left, y + i * band, wide, band + 0.5);
+            for (let k = 0; k < shells; k++) {
+              const reach = depth * (1 - k / shells);
+              g.fillStyle(0xbe0014, 0.08);
+              if (fromEdge <= reach) {
+                g.fillRect(left, y + i * band, wide, band + 0.5);
+              } else {
+                const side = Math.min(reach, wide / 2);
+                g.fillRect(left, y + i * band, side, band + 0.5);
+                g.fillRect(left + wide - side, y + i * band, side, band + 0.5);
+              }
+            }
+          }
+        }
+        // And the 3rem the glow reaches off the building into the wet air. Kept
+        // tight: it is an edge on the mass, not a red fog over the district.
+        glow(g, ALARM, x + w / 2, y + h / 2, w / 2 + 3 * REM, h / 2 + 3 * REM, 0.2, 5);
       }
 
       // Roof furniture: a mast, a water tank, a sign rig. Two hash slices pick
@@ -1293,8 +1395,12 @@
             hit = hit || on;
           }
           T.spot.setVisible(hit);
-          T.label.setVisible(!hit);
-          T.labelLit.setVisible(hit);
+          // An alarm's own plate is white on red whether or not the beam is on
+          // it; the beam is what turns an ordinary tower's name white.
+          const white = hit || (T.tower && T.tower.alarm);
+          T.label.setVisible(!white);
+          T.labelLit.setVisible(!!white);
+          if (!white) T.labelLit.setAlpha(1);
           lit = lit || hit;
         }
         // With a beam on one building the rest of the city steps back, which is
@@ -1406,7 +1512,9 @@
         if (tower.alarm) {
           T.sweep.setRotation(phase.sweep * Math.PI / 180);
           T.ceiling.setX(phase.sweep * 0.14 * VH);
-          T.wash.setAlpha(phase.klaxon * 0.4);
+          T.wash.setAlpha(phase.klaxon);
+          T.basePlate.setAlpha(phase.text);
+          T.labelLit.setAlpha(phase.text);
         }
         if (tower.shipped) {
           const age = tower.shippedAge + drift;
@@ -1470,11 +1578,18 @@
     const game = new Phaser.Game({
       type: Phaser.AUTO,
       scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
+        // The canvas covers #stage at the viewport's own aspect — no fixed
+        // grid, no FIT, no letterbox — and its backing store is device pixels.
+        // NONE means Phaser leaves the sizing to us, and `zoom` is what puts a
+        // device-pixel canvas back at CSS size on screen: the buffer is W x H
+        // device pixels, the element is W/DPR x H/DPR CSS pixels, which is
+        // exactly the box the DOM world's layers fill.
+        mode: Phaser.Scale.NONE,
         parent: host,
+        expandParent: false,
         width: W,
         height: H,
+        zoom: 1 / DPR,
       },
       render: {
         // smoothPixelArt sets antialias and pixelArt itself; declaring either
@@ -1488,6 +1603,31 @@
       banner: false,
       backgroundColor: BG,
       scene: CityScene,
+    });
+
+    // A resized wall is re-measured and laid out again rather than stretched:
+    // every size in this world is derived from the stage, so a new stage is a
+    // new city, not the old one scaled. Debounced on the same 400 ms the
+    // director re-frames on — dragging a window edge across a desktop must not
+    // rebuild the district sixty times — and a no-op size change is ignored.
+    let relayout = 0;
+    window.addEventListener('resize', () => {
+      clearTimeout(relayout);
+      relayout = setTimeout(() => {
+        const size = stageSize();
+        const dpr = ratio();
+        if (!size.w || !size.h) return;
+        if (Math.round(size.w * dpr) === W && Math.round(size.h * dpr) === H) return;
+        measure(size.w, size.h, dpr);
+        // Order matters: resize() sets the backing store, and setZoom() then
+        // refreshes the CSS size off it. The other way round leaves the canvas
+        // displayed at whatever size the previous wall was.
+        game.scale.resize(W, H);
+        game.scale.setZoom(1 / DPR);
+        // The whole world is geometry measured off the old stage, so it is
+        // rebuilt from the scene model rather than repositioned piecemeal.
+        if (city) city.scene.restart();
+      }, 400);
     });
 
     // A room that turns motion off mid-shift gets the still frame without a
@@ -1509,8 +1649,16 @@
     };
   }
 
+  // What measure() last worked out, so the suite can ask this world how big it
+  // thinks a given wall is without standing a GPU up to find out.
+  const grid = () => ({
+    w: W, h: H, dpr: DPR, vw: VW, vh: VH, rem: REM, px: PX,
+    sky: SKY, skyX: SKY_X, skyY: SKY_Y,
+    ground: GROUND, groundY: GROUND_Y, cityH: CITY_H, hazeH: HAZE_H,
+  });
+
   return {
-    create, phaseAt, tubeAt, paneAt, facadeAt, walkerAt, vehicleAt,
-    ramp, spansAt, outline, towerLayout, W, H,
+    create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, walkerAt, vehicleAt,
+    ramp, spansAt, outline, towerLayout,
   };
 }));
