@@ -844,12 +844,39 @@ const STATIC = {
   '/wall.css': ['wall.css', 'text/css; charset=utf-8'],
   '/wall.js': ['wall.js', 'text/javascript; charset=utf-8'],
   '/scene.js': ['scene.js', 'text/javascript; charset=utf-8'],
-  // The canvas world, and the engine it draws with. Named rows rather than a
-  // directory route: /vendor/ is one pinned file, and a route that walked a
-  // directory is the path traversal this server has never had.
+  // The canvas world, and the engine it draws with. Named rows, because
+  // /vendor/ is one pinned file and naming it is cheaper than walking anything.
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
 };
+
+// --- the art ------------------------------------------------------------------
+// The canvas world draws with committed atlases and one font, and there are more
+// of those than a named row each would survive. So this is the server's one
+// directory route, and it is written to be boring: decode the tail of the URL
+// once, refuse anything that could climb (`..` in any form, an absolute path, a
+// NUL), resolve it, and then require the RESOLVED path to still sit inside
+// wall/assets — the check that holds however creative the encoding was. Three
+// extensions are servable and nothing else, so the licence texts sitting beside
+// the art are as unreachable as this file is. Everything else 404s, exactly like
+// an unknown page: a 403 would tell a scanner it had found something.
+const ASSET_ROOT = path.join(HERE, 'assets');
+const ASSET_TYPES = {
+  '.png': 'image/png',
+  '.json': 'application/json; charset=utf-8',
+  '.woff2': 'font/woff2',
+};
+
+function assetFile(url) {
+  let rest;
+  try { rest = decodeURIComponent(url.slice('/assets/'.length)); } catch { return ''; }
+  if (!rest || rest.includes('\0') || rest.startsWith('/') || rest.startsWith('\\')) return '';
+  if (rest.split(/[\\/]/).some((part) => part === '..' || part === '')) return '';
+  if (!Object.hasOwn(ASSET_TYPES, path.extname(rest).toLowerCase())) return '';
+  const full = path.resolve(ASSET_ROOT, rest);
+  if (full !== ASSET_ROOT && !full.startsWith(ASSET_ROOT + path.sep)) return '';
+  return full;
+}
 
 const clients = new Set();
 let poller = null;
@@ -937,6 +964,24 @@ function serveStatic(res, entry) {
   });
 }
 
+// A file that got past assetFile() is inside wall/assets and has a servable
+// extension; a file that is not on disk is a 404 rather than a 500, because
+// unlike the STATIC table this route's paths come from outside.
+function serveAsset(res, file) {
+  fs.readFile(file, (err, buf) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('wall: no such page\n');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': ASSET_TYPES[path.extname(file).toLowerCase()],
+      'Cache-Control': 'no-store',
+    });
+    res.end(buf);
+  });
+}
+
 const server = http.createServer((req, res) => {
   try {
     const url = (req.url || '/').split('?')[0];
@@ -947,6 +992,10 @@ const server = http.createServer((req, res) => {
     }
     const entry = STATIC[url];
     if (entry) return serveStatic(res, entry);
+    if (url.startsWith('/assets/')) {
+      const file = assetFile(url);
+      if (file) return serveAsset(res, file);
+    }
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('wall: no such page\n');
   } catch (err) {

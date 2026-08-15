@@ -40,7 +40,8 @@ fi
 # --- the JS parses -----------------------------------------------------------
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
-for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/fixtures/seed.js; do
+for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js \
+         wall/fixtures/seed.js wall/assets/own/make-own.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 # The fixture generator accepts a target for hermetic tests, but must never
@@ -120,6 +121,135 @@ else
 fi
 grep_ok "$(cat "$SRC/.gitattributes")" 'wall/vendor/** -diff linguist-vendored' \
   "assets: the vendored bundle reads as a blob, not as a 1.4 MB diff"
+
+# --- the art -------------------------------------------------------------------
+# Code is pinned by hash because a minified bundle is unreadable and the digest is
+# the only honest thing anyone can say about it. ART is pinned differently: by
+# being HERE, by having a row and a licence, and by being DECLARED — the ASSETS
+# list at the top of world-canvas.js is the whole of what this page can ask for.
+# So the suite holds wall/assets/ to that shape rather than to a checksum: one
+# directory per pack, a manifest row and a licence in each, every loadable file
+# declared, nothing declared that is not committed, no assets path written
+# anywhere but in that list, and no ledger of dead pixels nobody draws.
+echo "== wall: the art is committed, licensed, declared and drawn =="
+ART_PROBE="$ROOT/art-probe.js"
+cat > "$ART_PROBE" <<'JS'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = process.argv[2];
+const dir = path.join(root, 'wall', 'assets');
+const world = require(path.join(root, 'wall', 'world-canvas.js'));
+const manifest = fs.readFileSync(path.join(root, 'wall', 'THIRD_PARTY.md'), 'utf8');
+// Anything a browser can be made to fetch. A licence text is not on this list on
+// purpose: it travels beside the art and is never served.
+const LOADABLE = new Set(['.png', '.json', '.woff2']);
+const LICENCE = /^(licen[cs]e|ofl|copying)/i;
+const bad = [];
+
+const files = [];
+(function walk(at, rel) {
+  for (const name of fs.readdirSync(at).sort()) {
+    const full = path.join(at, name);
+    const key = rel ? rel + '/' + name : name;
+    if (fs.statSync(full).isDirectory()) walk(full, key);
+    else files.push({ key, size: fs.statSync(full).size });
+  }
+}(dir, ''));
+
+const packs = fs.readdirSync(dir).sort();
+for (const pack of packs) {
+  if (!fs.statSync(path.join(dir, pack)).isDirectory()) {
+    bad.push(pack + ': a loose file at the top of wall/assets');
+    continue;
+  }
+  const row = manifest.split('\n').some((line) =>
+    line.startsWith('|') && line.includes('wall/assets/' + pack + '/'));
+  if (!row) bad.push(pack + ': no THIRD_PARTY.md row');
+  if (!fs.readdirSync(path.join(dir, pack)).some((n) => LICENCE.test(n))) {
+    bad.push(pack + ': no licence file beside the art');
+  }
+}
+const declared = world.ASSETS;
+for (const file of files) {
+  if (!LOADABLE.has(path.extname(file.key).toLowerCase())) continue;
+  if (!declared.includes('assets/' + file.key)) bad.push(file.key + ': loadable but not in ASSETS');
+}
+for (const url of declared) {
+  if (!url.startsWith('assets/')) bad.push(url + ': declared but not under assets/');
+  else if (!fs.existsSync(path.join(dir, url.slice('assets/'.length)))) {
+    bad.push(url + ': declared but not committed');
+  }
+}
+// No side doors. Only world-canvas.js may name an asset at all, and only the
+// ones it declared: the DOM wall must not so much as mention the atlases, which
+// is what keeps a wall that did not ask for the canvas world from paying for it.
+for (const name of ['index.html', 'wall.css', 'wall.js', 'scene.js']) {
+  const text = fs.readFileSync(path.join(root, 'wall', name), 'utf8');
+  if (/['"]assets\//.test(text)) bad.push(name + ': names an asset path outside world-canvas.js');
+}
+const canvas = fs.readFileSync(path.join(root, 'wall', 'world-canvas.js'), 'utf8');
+for (const m of canvas.matchAll(/['"](assets\/[^'"]+)['"]/g)) {
+  if (!declared.includes(m[1])) bad.push(m[1] + ': an assets path that is not in ASSETS');
+}
+
+// And the other half of "no dead files": no dead FRAMES either. Every frame this
+// world can ask for has to be in a committed atlas, and every frame in a
+// committed atlas has to be one it can ask for.
+const drawable = new Set();
+for (const who of world.WALKERS) {
+  for (let i = 0; i < who.frames; i++) drawable.add(who.key + '/' + who.move + '/' + i);
+  for (let i = 0; i < who.restFrames; i++) drawable.add(who.key + '/' + who.rest + '/' + i);
+}
+for (const kind of world.VEHICLE_KINDS) drawable.add('vehicle/' + kind);
+for (let i = 0; i < world.DRONE.frames; i++) drawable.add('drone/' + i);
+for (const [key, frames, from] of [...world.BANNERS, ...world.NOODLE_SIGNS]) {
+  for (let i = 0; i < frames; i++) drawable.add(key + '/' + ((from || 0) + i));
+}
+for (let i = 0; i < world.COOK_FRAMES; i++) drawable.add('cook/' + i);
+for (const [kind, n] of Object.entries(world.OCCUPANT_FRAMES)) {
+  for (let i = 0; i < n; i++) drawable.add('occupant/' + kind + '/' + i);
+}
+const packed = new Set();
+for (const url of declared.filter((u) => u.endsWith('.json'))) {
+  const atlas = JSON.parse(fs.readFileSync(path.join(dir, url.slice('assets/'.length)), 'utf8'));
+  for (const key of Object.keys(atlas.frames)) packed.add(key);
+}
+for (const key of drawable) if (!packed.has(key)) bad.push(key + ': drawn, but not in any atlas');
+for (const key of packed) if (!drawable.has(key)) bad.push(key + ': packed, but the city never draws it');
+
+const bytes = files.reduce((total, file) => total + file.size, 0);
+console.log(JSON.stringify({
+  packs: packs.join(','),
+  declared: declared.length,
+  frames: drawable.size,
+  kb: Math.round(bytes / 1024),
+  // A wall someone has to clone. Two megabytes of art is already generous for a
+  // page whose whole point is that it needs nothing but node.
+  budget: bytes <= 2 * 1024 * 1024,
+  bad: bad.join('; '),
+}));
+JS
+ART="$(node "$ART_PROBE" "$SRC" 2>&1)"
+art_of() { printf '%s' "$ART" | jq -r ".$1" 2>/dev/null; }
+check "assets: one directory per pack, and these are the packs" \
+  "$(art_of packs)" "ark-pixel,own,warped-city"
+check "assets: every pack has a manifest row and a licence, every loadable file is declared, and nothing is declared that is not here" \
+  "$(art_of bad)" ""
+check "assets: the whole of wall/assets/ fits in the 2 MB a clone should pay" \
+  "$(art_of budget)" "true"
+if [ "$(art_of kb)" = null ] || [ -z "$(art_of kb)" ]; then
+  bad "assets: the art probe ran ($ART)"
+else
+  ok "assets: $(art_of declared) declared files, $(art_of frames) frames, $(art_of kb) KB"
+fi
+# Our own art is the only art in here nobody else can vouch for, so it carries a
+# third pin: the committed PNG has to be exactly what the pixel grids in its
+# generator draw. Editing the picture without editing the art is not possible.
+if OWN_OUT="$(node "$SRC/wall/assets/own/make-own.js" --check 2>&1)"; then
+  ok "assets: the authored atlas is exactly what its own pixel grids draw"
+else
+  bad "assets: the authored atlas is exactly what its own pixel grids draw ($OWN_OUT)"
+fi
 
 # The crew manifest is gone, and must not creep back: the wall organises around
 # the work. Attribution survives only as a tinted light on the run's own car and
@@ -421,21 +551,49 @@ grep_ok "$PAGE" 'class="sky"' "page: ships the night sky an idle wall is left wi
 check "page: css is served"   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.css")" "200"
 check "page: js is served"    "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.js")"  "200"
 check "page: unknown path 404s" "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/etc/passwd")" "404"
+# The server's one directory route, and the whole of what it promises. `--path-as-is`
+# because curl otherwise resolves the climb itself and the server never sees the
+# case being tested.
+asset_code() {
+  curl -s --path-as-is -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$1"
+}
+check "assets: a climb out of the route 404s"        "$(asset_code '/assets/../server.js')" "404"
+check "assets: and an encoded one 404s too"          "$(asset_code '/assets/%2e%2e/server.js')" "404"
+check "assets: an absolute path inside it 404s"      "$(asset_code '/assets//etc/passwd')" "404"
+check "assets: a licence beside the art is not a servable type" \
+  "$(asset_code '/assets/warped-city/LICENSE.txt')" "404"
+check "assets: nor is the generator that writes our own" \
+  "$(asset_code '/assets/own/make-own.js')" "404"
+check "assets: a file that is not there 404s like any other page" \
+  "$(asset_code '/assets/nope.png')" "404"
+check "assets: and the atlas the city draws people with is served" \
+  "$(asset_code '/assets/warped-city/people.png')" "200"
+check "assets: as an image, not as a download" \
+  "$(curl -s -o /dev/null -w '%{content_type}' \
+     "http://127.0.0.1:$PORT/assets/warped-city/people.png")" "image/png"
+check "assets: and the pixel font as a font" \
+  "$(curl -s -o /dev/null -w '%{content_type}' \
+     "http://127.0.0.1:$PORT/assets/ark-pixel/ark-pixel-12px-proportional-zh_hk.otf.woff2")" \
+  "font/woff2"
 # The other half of the provenance rule: everything the page can pull in has to
 # be a file this server actually serves. Collected from the document's own
-# src/href attributes plus the two scripts wall.js injects for the canvas world
-# — data: URIs and in-document fragments are neither fetched nor served.
+# src/href attributes, the two scripts wall.js injects for the canvas world, and
+# the ASSETS list world-canvas.js declares — data: URIs and in-document fragments
+# are neither fetched nor served.
 ASSETS="$(node -e '
   const fs = require("fs");
   const html = fs.readFileSync(process.argv[1], "utf8");
   const js = fs.readFileSync(process.argv[2], "utf8");
+  const canvas = fs.readFileSync(process.argv[3], "utf8");
   const found = new Set();
   for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) found.add(m[1]);
   const list = (js.match(/const CANVAS_SCRIPTS = \[([^\]]*)\]/) || [, ""])[1];
   for (const m of list.matchAll(/'"'"'([^'"'"']+)'"'"'/g)) found.add(m[1]);
+  const art = (canvas.match(/const ASSETS = \[([^\]]*)\]/) || [, ""])[1];
+  for (const m of art.matchAll(/'"'"'([^'"'"']+)'"'"'/g)) found.add(m[1]);
   const out = [...found].filter((u) => !/^(data:|#|https?:)/.test(u));
   process.stdout.write(out.sort().join(" "));
-' "$SRC/wall/index.html" "$SRC/wall/wall.js")"
+' "$SRC/wall/index.html" "$SRC/wall/wall.js" "$SRC/wall/world-canvas.js")"
 if [ -z "$ASSETS" ]; then
   bad "assets: the page loads at least one file of its own"
 else
@@ -1848,11 +2006,23 @@ for banned in 'antialias:' 'pixelArt:'; do
   grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
     "canvas: [$banned] is left to smoothPixelArt"
 done
-# No image files: this world draws, it does not load. The engine's own loader is
-# never touched, and there is nothing under wall/ for it to touch.
-for banned in 'this.load' 'new Image' 'addBase64' 'toDataURL'; do
-  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
-    "canvas: [$banned] — the city is drawn, and drawn from the scene model"
+# This world used to say "no image files and no loader" and the test for it was a
+# ban on `this.load`. It draws with pixels now — nobody draws a walk cycle with
+# fillRect — so the ban is retired ON PURPOSE and replaced by the rule that
+# actually protects the wall: nothing loads that is not declared. The ASSETS list
+# is checked against the repo, the server and the manifest above; what is left to
+# check here is that the loader is only ever reached inside preload(), and that
+# every OTHER way of getting bytes onto this page is still shut.
+CANVAS_CODE="$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')"
+PRELOAD_SRC="$(printf '%s\n' "$CANVAS_SRC" | awk '/^      preload\(\) \{/,/^      \}$/')"
+check "canvas: every this.load call in the file is inside preload()" \
+  "$(printf '%s\n' "$CANVAS_CODE" | grep -c 'this\.load\.')" \
+  "$(printf '%s\n' "$PRELOAD_SRC" | grep -c 'this\.load\.')"
+grep_ok "$CANVAS_SRC" 'const ASSETS = [' \
+  "canvas: and what it may load is one declared list at the top of the file"
+for banned in 'new Image' 'addBase64' 'toDataURL' 'fetch(' 'XMLHttpRequest'; do
+  grep_not "$CANVAS_CODE" "$banned" \
+    "canvas: [$banned] — there is no way onto this page but the declared list"
 done
 # The sky painting is authored once, in index.html. This world reads that node
 # rather than keeping a second copy of the same skyline.
@@ -1860,8 +2030,29 @@ grep_ok "$CANVAS_SRC" "document.querySelector('.sky__' + plane.key + ' path')" \
   "canvas: the parallax planes are the page's own path data, not a second copy"
 check "canvas: and the three of them stay separately positioned" \
   "$(printf '%s\n' "$CANVAS_SRC" | grep -c "plane.setX(phase.planes\[i\])")" "1"
-grep_ok "$CANVAS_SRC" 'fontFamily: CJK' \
-  "canvas: the lettering declares the same CJK stack the signs do"
+# The lettering moved off the system font stack and onto the committed pixel
+# face. The DOM world keeps its --cjk stack and its two users; this is the canvas
+# world's own pin, and it names the file rather than a family somebody's laptop
+# may or may not have.
+grep_ok "$CANVAS_SRC" \
+  "this.load.font(ARK, asset('ark-pixel-12px-proportional-zh_hk.otf.woff2'), 'woff2')" \
+  "canvas: the CJK face is the committed Ark Pixel, loaded by the engine itself"
+check "canvas: and it is what every glyph on this wall is set in" \
+  "$(printf '%s\n' "$CANVAS_SRC" | grep -c 'fontFamily: ARK')" "3"
+grep_ok "$CANVAS_SRC" 'const arkSize = (px) =>' \
+  "canvas: sized in whole multiples of its own em, which is what a pixel face needs"
+# Glow that is glow, and a bounded amount of it: the engine's filter, on
+# containers, counted. A filter per sign would be a render target per sign.
+grep_ok "$CANVAS_SRC" 'container.filters.internal.addGlow(NEON' \
+  "canvas: the neon runs under the engine's own Glow filter"
+grep_ok "$CANVAS_SRC" 'for (const neon of this.bandNeon) this.lightUp(neon);' \
+  "canvas: on the district's neon LAYERS, one per depth band"
+grep_ok "$CANVAS_SRC" 'this.lightUp(this.noodleNeon);' \
+  "canvas: on the noodle bar's own, which nothing is allowed in front of"
+grep_ok "$CANVAS_SRC" 'this.lightUp(this.towerNeonC);' \
+  "canvas: and on one shared layer for the whole skyline's tubes"
+check "canvas: five filtered containers, from three call sites and no fourth" \
+  "$(printf '%s\n' "$CANVAS_CODE" | grep -c 'this\.lightUp(')" "3"
 
 # Reduced motion. A keyframe grep proves nothing about a GPU, so the claim is
 # made where it can be checked: the whole of this world's motion is one pure
@@ -1895,13 +2086,66 @@ console.log(JSON.stringify({
   // And the same world, asked without that flag, genuinely moves.
   moving: new Set(moving).size === at.length,
   // Every per-object beat derives from that one phase, so freezing it freezes
-  // the neon, the occupied windows, the facades and the population too.
+  // the neon, the occupied windows, the facades and the population too — and,
+  // since the city grew people, every SPRITE FRAME as well. A frame is looked up
+  // from the clock rather than advanced by a playhead, which is the whole reason
+  // there is no Phaser AnimationState anywhere in that file.
   beats: new Set(at.map((t) => {
     const p = C.phaseAt(t, { reducedMotion: true });
     return [C.tubeAt(p, 40, 23), C.tubeAt(p, 3, 16), C.paneAt(p, 1, 55),
-      C.facadeAt(p, 9.4), C.walkerAt(p, 2, false), C.walkerAt(p, 5, true),
-      JSON.stringify(C.vehicleAt(p, 1, { cycle: 96, gap: 32 }))].join('|');
+      C.facadeAt(p, 9.4), C.walkerAt(p, 2, 0), C.walkerAt(p, 5, 2),
+      JSON.stringify(C.vehicleAt(p, 1, { cycle: 96, gap: 32 })),
+      C.walkFrameAt(p, 0, 0), C.walkFrameAt(p, 1, 1), C.walkFrameAt(p, 5, 2),
+      C.vehicleKindAt(p, 1, { cycle: 96, gap: 32 }),
+      JSON.stringify(C.droneAt(p)), C.bannerFrameAt(p, 4, 17),
+      C.cookAt(p), C.occupantAt(p, 9, 3),
+      JSON.stringify(C.steamAt(p, { period: 5.5, delay: 0, rise: 2.4 }))].join('|');
   })).size === 1,
+  // And that still frame is a DIGNIFIED one. Reduced motion is not a pause
+  // button: a walk cycle stopped at frame 7 is a figure balanced on one foot, a
+  // banner stopped mid-blink is a broken sign, and a cook stopped mid-swing is a
+  // man about to lose a finger. Everybody stands, every sign is on its first cel,
+  // and the cook is caught handing a bowl over the counter.
+  dignified: C.walkFrameAt(rest, 0, 0) === 'walker-a/idle/0'
+    && C.walkFrameAt(rest, 1, 1) === 'walker-b/idle/1'
+    && C.walkFrameAt(rest, 5, 2) === 'cop/idle/2'
+    && C.cookAt(rest) === 'cook/3'
+    && C.bannerFrameAt(rest, 4, 17) === 0
+    && C.occupantAt(rest, 9, 3) === 0
+    && C.droneAt(rest).a > 0
+    && C.steamAt(rest, { period: 5.5, delay: 0, rise: 2.4 }).a > 0,
+  // With motion allowed those same frames genuinely cycle — the whole cycle,
+  // not a subset of it, which is what catches a modulo written the wrong way up.
+  cycling: (() => {
+    const walk = new Set();
+    for (let t = 0; t < 4; t += 0.01) walk.add(C.walkFrameAt(C.phaseAt(t, {}), 0, 0));
+    const idle = new Set();
+    for (let t = 0; t < 4; t += 0.01) idle.add(C.walkFrameAt(C.phaseAt(t, {}), 2, 2));
+    const cook = new Set();
+    for (let t = 0; t < 4; t += 0.02) cook.add(C.cookAt(C.phaseAt(t, {})));
+    const who = new Set();
+    for (let t = 0; t < 40; t += 0.5) who.add(C.occupantAt(C.phaseAt(t, {}), 9, 3));
+    // Slot 0 always crosses (a one-ship week must not be one motionless person)
+    // and slot 2 always stands, so both halves of the atlas get used.
+    return walk.size === 16 && idle.size === 3 && cook.size === 4 && who.size === 3
+      && C.walkerAt(C.phaseAt(9, {}), 2, 2) === C.walkerAt(C.phaseAt(400, {}), 2, 2)
+      && C.walkerAt(C.phaseAt(9, {}), 0, 0) !== C.walkerAt(C.phaseAt(400, {}), 0, 0);
+  })(),
+  // All four vehicles turn up over a few minutes, because which car is passing
+  // is a fact about which pass the street is in the middle of rather than a
+  // property of the lane — and the drone is genuinely rare.
+  fleet: (() => {
+    const kinds = new Set();
+    for (let t = 0; t < 2000; t += 7) {
+      kinds.add(C.vehicleKindAt(C.phaseAt(t, {}), 0, { cycle: 96, gap: 32 }));
+    }
+    let up = 0;
+    for (let t = 0; t < 1200; t++) if (C.droneAt(C.phaseAt(t, {})).a > 0) up++;
+    return kinds.size === 4 && up / 1200 > 0.05 && up / 1200 < 0.25;
+  })(),
+  // A person on this wall stands 2.2vh tall whatever the panel is, and every
+  // other pixel this world loads is scaled by the same one number.
+  sized: Math.abs(C.grid().figure / C.grid().vh - 2.2) < 1e-9,
   // CSS removes both animations under reduced motion. A completion stays on
   // its base frame however old it gets, while attribution is a static 0.85
   // until the server-owned sign lifetime expires and then switches off.
@@ -1953,6 +2197,13 @@ check "motion: reduced motion is one frame, at every second of the clock" \
 check "motion: and the same world without it genuinely moves" "$(still_of moving)" "true"
 check "motion: every beat in the world derives from that one phase" \
   "$(still_of beats)" "true"
+check "motion: and a still city stands, it does not freeze mid-stride" \
+  "$(still_of dignified)" "true"
+check "motion: with motion allowed every cycle runs all the way round" \
+  "$(still_of cycling)" "true"
+check "life: all four vehicles pass, and the drone stays rare" "$(still_of fleet)" "true"
+check "life: a person on this wall is 2.2vh tall, whatever the panel" \
+  "$(still_of sized)" "true"
 check "motion: reduced motion keeps completed shafts on their static frame" \
   "$(still_of completionStill)" "true"
 check "motion: and holds attribution steady until its lifetime expires" \

@@ -155,14 +155,56 @@
     return (v ^ (v >>> 16)) >>> 0;
   }
 
-  // Three draws, because a facade's hours have nothing to do with what is selling
-  // downstairs, nor with how the sign over it is hung, and one 32-bit word cannot
-  // carry them all without the slices sharing bits — which is how a district ends
-  // up with every arcade lit on floor three.
+  // Who is behind one of those lit windows. Its own seed per pane, because a
+  // building's hours and its tenants are not the same fact: a window that is on
+  // is not a window with somebody in it, and about a third of them should be.
+  // Five archetypes and no sixth — through a blind at fifty metres a person is a
+  // posture, and a sixth posture is one nobody could tell from the other five.
+  const OCCUPANT_KINDS = ['stand', 'sit', 'lean', 'pace', 'desk'];
+  const OCCUPANT_SPREAD = 53;  // seconds of stagger, so a street does not move as one
+
+  function occupantOf(id, i) {
+    const draw = seedOf(id + '·pane' + i);
+    return {
+      home: draw % 3 === 0,
+      kind: OCCUPANT_KINDS[(draw >>> 5) % OCCUPANT_KINDS.length],
+      phase: (draw >>> 11) % OCCUPANT_SPREAD,
+    };
+  }
+
+  // What is bolted to the front of the building besides its own shop sign. The
+  // four shop kinds stay four kinds — the DRESSING is what varies, so a street of
+  // four signs still reads as a street rather than as four repeated buildings.
+  // Nought to two per block, and `pick` is a draw rather than an index: a
+  // renderer takes it modulo whatever catalogue of banners it happens to own, and
+  // this file never learns the name of a sprite.
+  const BANNER_SLOTS = 3;      // 0 high on the facade, 1 off the shoulder, 2 on the roof
+  const BANNER_COUNTS = [0, 1, 1, 2];
+  const BANNER_SPREAD = 71;
+
+  function bannersOf(dressing) {
+    const out = [];
+    const count = BANNER_COUNTS[(dressing >>> 2) % BANNER_COUNTS.length];
+    for (let i = 0; i < count; i++) {
+      out.push({
+        pick: (dressing >>> (6 + i * 9)) % 251,   // a prime, so two slots rarely agree
+        slot: (dressing >>> (4 + i * 2)) % BANNER_SLOTS,
+        drift: (dressing >>> (14 + i * 5)) % BANNER_SPREAD,
+      });
+    }
+    return out;
+  }
+
+  // Four draws, because a facade's hours have nothing to do with what is selling
+  // downstairs, nor with how the sign over it is hung, nor with what else got
+  // bolted to the front — and one 32-bit word cannot carry them all without the
+  // slices sharing bits, which is how a district ends up with every arcade lit on
+  // floor three.
   function storefrontOf(id) {
     const street = seedOf(id);
     const hours = seedOf(id + '·hours');
     const signage = seedOf(id + '·signage');
+    const dressing = seedOf(id + '·dressing');
     const pick = (seed, shift, mod) => (seed >>> shift) % mod;
     const windows = [];
     for (let i = 0; i < OCCUPIED; i++) {
@@ -170,6 +212,7 @@
         col: pick(hours, i * 9, 7),
         row: pick(hours, i * 9 + 3, 5),
         phase: pick(hours, i * 9 + 6, 8),
+        who: occupantOf(id, i),
       });
     }
     const shop = SHOP_KINDS[pick(street, 0, SHOP_KINDS.length)];
@@ -188,6 +231,7 @@
       // blinks on the same beat is a wallpaper sample.
       side: pick(signage, 0, 2),
       hang: pick(signage, 3, FLICKER_SPREAD),
+      banners: bannersOf(dressing),
       windows,
     };
   }
@@ -268,6 +312,28 @@
     dedication: '冉 — For Ran, who keeps the lights on',
     x: 0.19,       // off the centre, where the towers cluster and the quiet line sits
     storeys: 16,   // matches --storeys on .block--landmark in wall.css
+  };
+
+  // --- the noodle bar -------------------------------------------------------------
+  // And one building in this district is not a ship either. A city you can watch
+  // for a minute needs somewhere something is HAPPENING — not a lit window, not a
+  // sign that stutters, but a person doing a job — and on a street of four shop
+  // signs the noodle bar is the one everybody already understands.
+  //
+  // So it is a fixture on exactly the landmark's terms: never in the ledger,
+  // never in a payload, never counted by the HUD, standing on an empty Monday as
+  // much as on a full Friday. Its plot is fixed and well clear of the dedication
+  // at 0.19 — far enough to the right that the two never share a frontage, near
+  // enough to the middle that a camera holding the street has it in shot. A
+  // `noodle`-kind block the week happens to ship keeps its ordinary shopfront:
+  // this is THE noodle bar, not a second opinion about a shop.
+  const NOODLE_BAR = {
+    glyph: '麵',
+    x: 0.62,
+    storeys: 3,      // a shophouse: two floors of somebody's flat over the bar
+    depth: 2,        // the nearest band: the one thing on this wall meant to be watched
+    kind: 'midrise',
+    form: 'shophouse',
   };
 
   // --- one project: a tower -----------------------------------------------------
@@ -405,6 +471,16 @@
         kind: 'landmark',
         depth: 0,
       },
+      // The other fixture, and on the same terms: in the scene on an empty
+      // ledger exactly as it is on a full one.
+      noodleBar: {
+        glyph: NOODLE_BAR.glyph,
+        x: NOODLE_BAR.x,
+        storeys: NOODLE_BAR.storeys,
+        kind: NOODLE_BAR.kind,
+        depth: NOODLE_BAR.depth,
+        form: NOODLE_BAR.form,
+      },
       street: streetOf(week.ships),
       // The two ambient samples the sky reads. A renderer re-reads them off its
       // own clock between snapshots — these are this frame's, and the resting
@@ -419,10 +495,12 @@
   return {
     buildScene,
     // The pure fabric, exported because both worlds and the suite draw on it.
-    seedOf, storefrontOf, formOf, nightlifeOf, streetOf, crewTint, towerOf, blockOf,
+    seedOf, storefrontOf, occupantOf, bannersOf, formOf, nightlifeOf, streetOf,
+    crewTint, towerOf, blockOf,
     clamp01, wetness, weatherSeed, seededRandom, dawn,
     SHOP_KINDS, SHOP_GLYPH, BAYS, FLICKER_SPREAD, FORM_SHARES, FORM_GRADES,
-    SIGN_TINTS, CREW_TINTS, SYNTHETIC_TINT, UNOWNED_TINT, RAN, GHOST,
+    OCCUPANT_KINDS, OCCUPANT_SPREAD, BANNER_SLOTS, BANNER_SPREAD,
+    SIGN_TINTS, CREW_TINTS, SYNTHETIC_TINT, UNOWNED_TINT, RAN, NOODLE_BAR, GHOST,
     MAX_WALKERS, MAX_VEHICLES, PER_WALKER, PER_VEHICLE, GAP_QUIET, GAP_BUSY,
     BUSY_AT, MALL_AT, TRAM_AT, OCCUPIED, MAX_TOWER_WIDTH_RUNS, DEFAULT_FLOORS,
     RAIN_LAG, DAWN_H, DAWN_RAMP, WEATHER_SEED_MS,
