@@ -1584,6 +1584,179 @@ check "form: what kind of building it is is not readable off its shop" \
 check "form: every footprint grade inside a type gets used" \
   "$(night_of formGrades)" "0,1,2,3"
 
+# --- the director films the city --------------------------------------------------
+# The wall can film itself: a slow camera that holds the skyline, pushes in on
+# something living in it, and comes back out. Two structural claims carry the
+# whole feature — the camera is ONE transform on ONE stage, and the HUD is not
+# on that stage — so they are checked as structure rather than as prose.
+echo "== wall: the camera is one transform on one stage =="
+DIRECTOR_SRC="$(awk '/^  \/\/ --- the director/,/^  \/\/ --- start of shift/' "$SRC/wall/wall.js")"
+grep_ok "$PAGE_SRC" 'id="stage"' "cinema: every world layer shares one stage"
+line_of() { grep -n -- "$2" "$SRC/wall/$1" | head -1 | cut -d: -f1; }
+STAGE_OPEN="$(line_of index.html 'id="stage"')"
+STAGE_CLOSE="$(line_of index.html '<!-- /stage -->')"
+inside() {  # $1 = human name, $2 = marker, $3 = "in" | "out"
+  local at; at="$(line_of index.html "$2")"
+  local where="out"
+  [ -n "$at" ] && [ -n "$STAGE_OPEN" ] && [ -n "$STAGE_CLOSE" ] \
+    && [ "$at" -gt "$STAGE_OPEN" ] && [ "$at" -lt "$STAGE_CLOSE" ] && where="in"
+  check "cinema: $1 is $3 the stage" "$where" "$3"
+}
+# The world rides the camera...
+inside "the painted sky"    'class="sky"'      in
+inside "the week's district" 'id="district"'   in
+inside "the skyline"        'id="city"'        in
+inside "the street life"    'id="life"'        in
+inside "the haze"           'class="haze"'     in
+# ...and everything the room reads does not. A push-in on a shopfront must not
+# scale a word of type, and the rain is the nearest thing there is to the lens.
+inside "the HUD"            'class="hud"'      out
+inside "the brief plate"    'id="brief"'       out
+inside "the comms ticker"   'id="comms"'       out
+inside "the rain"           'id="rain"'        out
+grep_ok "$CSS_SRC" 'transform-origin: 0 0' "cinema: the stage has a fixed camera origin"
+grep_ok "$PAGE_SRC" 'stage.style.transform' \
+  "cinema: the director drives that transform and nothing else"
+grep_not "$DIRECTOR_SRC" 'hud' "cinema: and never reaches for a chrome element"
+# The camera is a long JS-driven transition, not a keyframe: the transform/opacity
+# police above already covers any keyframe this pass might have added.
+grep_ok "$PAGE_SRC" "stage.style.transition = 'transform '" \
+  "cinema: moves are eased transitions, timed per shot"
+grep_ok "$CSS_SRC" '.stage { transform: none !important; }' \
+  "motion: reduced motion parks the camera wide, whatever a session left behind"
+
+# The whole fabric of this city is seeded off a run id or the wall clock. The
+# director is presentation and gets the wall-clock bucket, never a raw draw —
+# so after this pass the page still contains no unseeded randomness at all.
+grep_not "$(grep -v '^ *//' "$SRC/wall/wall.js")" 'Math.random' \
+  "cinema: nothing on this wall is drawn from unseeded randomness"
+grep_ok "$DIRECTOR_SRC" 'seededRandom(bucket)' \
+  "cinema: shot variety reuses the weather's wall-clock bucket"
+
+# Activation, and the two switches that outrank everything else. The decision is
+# one pure function with no DOM in it, so the suite runs the real thing over the
+# whole truth table rather than restating it in prose.
+CINE_PROBE="$ROOT/cinema-probe.js"
+{
+  grep -E '^  const (MAX_ZOOM|CREEP|CINEMA_IDLE_MS|SHOT_SEED_MS|MOVE_MIN|MOVE_MAX|HOLD_MIN|HOLD_MAX|WIDE_HOLD|CUT_MS) = ' \
+    "$SRC/wall/wall.js"
+  # The section reads the query string once at load; nothing else in it touches
+  # the DOM until a shot is cut.
+  printf '%s\n' '  const window = { location: { search: "" } };'
+  printf '%s\n' "$DIRECTOR_SRC"
+  cat <<'JS'
+  const FLAGS = [null, 'on', 'off'];
+  const MANUAL = [null, true, false];
+  const rows = [];
+  for (const forced of FLAGS) for (const manual of MANUAL) for (const idle of [false, true]) {
+    for (const reduced of [false, true]) {
+      rows.push({ forced, manual, idle, reduced, on: wantsCinema({ forced, manual, idle, reduced }) });
+    }
+  }
+  const only = (f) => rows.filter(f);
+  const view = { w: 1600, h: 900 };
+  const frames = [];
+  for (const w of [4, 40, 400, 1600]) for (const h of [3, 30, 300, 900]) {
+    for (const x of [-200, 0, 700, 1580]) for (const y of [-50, 0, 400, 880]) {
+      for (const ax of [0.3, 0.5, 0.7]) {
+        const cam = frameFor({ x, y, w, h }, view, { fillW: 0.5, fillH: 0.6, ax, ay: 0.5 });
+        frames.push({ ...cam, creep: creepFrom(cam, view, 0.03, -0.02) });
+      }
+    }
+  }
+  const legal = (c) => c.s >= 1 && c.x <= 0.001 && c.y <= 0.001
+    && c.x >= view.w * (1 - c.s) - 0.001 && c.y >= view.h * (1 - c.s) - 0.001;
+  console.log(JSON.stringify({
+    // Reduced motion and ?cinema=0 are absolute: nothing talks past either.
+    reducedNever: only((r) => r.reduced).every((r) => !r.on),
+    offNever: only((r) => r.forced === 'off').every((r) => !r.on),
+    // With neither in play: the param forces it on, the key wins over the param,
+    // and an untouched wall waits for the idle timer.
+    onForces: rows.find((r) => !r.reduced && r.forced === 'on' && r.manual === null && !r.idle).on,
+    keyOverridesOn: rows.find((r) => !r.reduced && r.forced === 'on' && r.manual === false).on,
+    keyOverridesIdle: rows.find((r) => !r.reduced && !r.forced && r.manual === true && !r.idle).on,
+    quietEngages: rows.find((r) => !r.reduced && !r.forced && r.manual === null && r.idle).on,
+    busyWaits: rows.find((r) => !r.reduced && !r.forced && r.manual === null && !r.idle).on,
+    // The event transition matters as much as the activation truth table: `c`
+    // must stop a film the idle timer started, and ordinary input must dismiss
+    // one that `c` started instead of leaving a sticky manual override behind.
+    toggleStopsIdle: manualAfterActivity(null, true, true) === false,
+    inputStopsManual: !wantsCinema({
+      reduced: false, forced: null,
+      manual: manualAfterActivity(true, true, false), idle: false,
+    }),
+    idleMinutes: CINEMA_IDLE_MS / 60000,
+    // A shot is always a legal frame: never wider than the wide shot, never
+    // past the lens ceiling, and never showing anything that is not city.
+    framesLegal: frames.every((c) => legal(c) && c.s <= MAX_ZOOM + 0.001),
+    creepLegal: frames.every((c) => legal(c.creep) && c.creep.s >= c.s),
+    // A tiny target saturates the lens; a target the size of the frame is the
+    // wide shot and needs no move at all.
+    tiny: frameFor({ x: 800, y: 450, w: 4, h: 3 }, view, {}).s,
+    whole: frameFor({ x: 0, y: 0, w: view.w, h: view.h }, view, {}),
+    // Alarm beats active beats shipped, and a tower with none of them is not a
+    // shot at all.
+    rank: ['alarm', 'active', 'ready', 'failed'].map((s) => towerRank([s])).join(','),
+    rankPicks: towerRank(['ready', 'alarm', 'active']) === towerRank(['alarm']),
+    rankEmpty: towerRank([]),
+    // Timings: seconds, not frames.
+    moves: MOVE_MIN >= 6000 && MOVE_MAX <= 10000 && MOVE_MIN < MOVE_MAX,
+    holds: HOLD_MIN >= 8000 && HOLD_MAX <= 20000 && WIDE_HOLD >= HOLD_MAX,
+    cutFast: CUT_MS <= 1000,
+  }));
+JS
+} > "$CINE_PROBE"
+CINE="$(node "$CINE_PROBE" 2>&1)"
+cine_of() { printf '%s' "$CINE" | jq -r ".$1" 2>/dev/null; }
+check "cinema: reduced motion never engages the director, ever" \
+  "$(cine_of reducedNever)" "true"
+check "cinema: ?cinema=0 never engages it either" "$(cine_of offNever)" "true"
+check "cinema: ?cinema=1 forces it on"            "$(cine_of onForces)" "true"
+check "cinema: and the c key can still stop a forced film" \
+  "$(cine_of keyOverridesOn)" "false"
+check "cinema: the c key starts one on an untouched wall" \
+  "$(cine_of keyOverridesIdle)" "true"
+check "cinema: a quiet room gets the film by itself" "$(cine_of quietEngages)" "true"
+check "cinema: a room in use does not"               "$(cine_of busyWaits)" "false"
+check "cinema: the c key stops a film the idle timer started" \
+  "$(cine_of toggleStopsIdle)" "true"
+check "cinema: any other input stops a film the c key started" \
+  "$(cine_of inputStopsManual)" "true"
+check "cinema: it takes a minute and a half of quiet" "$(cine_of idleMinutes)" "1.5"
+check "cinema: every framing is inside the city and inside the lens" \
+  "$(cine_of framesLegal)" "true"
+check "cinema: and the drift across a hold stays there too" \
+  "$(cine_of creepLegal)" "true"
+check "cinema: a detail smaller than the lens tops out at the ceiling" \
+  "$(cine_of tiny)" "4"
+check "cinema: framing the whole frame IS the wide shot" \
+  "$(cine_of 'whole | "\(.s),\(.x),\(.y)"')" "1,0,0"
+check "cinema: alarm outranks active outranks shipped" "$(cine_of rank)" "3,2,1,0"
+check "cinema: a tower is worth its most interesting run" "$(cine_of rankPicks)" "true"
+check "cinema: a tower with nothing live in it is not a shot" "$(cine_of rankEmpty)" "0"
+check "cinema: moves take six to ten seconds"  "$(cine_of moves)" "true"
+check "cinema: holds are long, and the wide shot holds longest" "$(cine_of holds)" "true"
+check "cinema: a dismissed film gets the wide shot back inside a second" \
+  "$(cine_of cutFast)" "true"
+
+# Every shot type the brief names exists, and — the wide shot aside, which is
+# always available — each one can say there is nothing to film: an empty
+# district is skyline and towers only, and a landmark behind a tower is no
+# landmark shot at all.
+grep_ok "$DIRECTOR_SRC" "function wideShot(" "cinema: the reel knows the wide shot"
+for kind in towerShot streetShot windowShot landmarkShot; do
+  BODY="$(printf '%s\n' "$DIRECTOR_SRC" | awk -v k="  function $kind(" 'index($0, k) == 1, /^  }$/')"
+  if [ -z "$BODY" ]; then
+    bad "cinema: the reel knows the $kind"
+  elif printf '%s\n' "$BODY" | grep -q 'return null;'; then
+    ok "cinema: the $kind declines when the city is not offering it"
+  else
+    bad "cinema: the $kind declines when the city is not offering it"
+  fi
+done
+grep_ok "$DIRECTOR_SRC" "wideNext = next.kind !== 'establishing'" \
+  "cinema: and the wide shot is what every close shot returns to"
+
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
 check "owner: the synthetic's runs are its own" "$(state_of BOT-2291 owner)" "bot"

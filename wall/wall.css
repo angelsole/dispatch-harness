@@ -115,6 +115,30 @@ body {
 
 .sprite { position: absolute; width: 0; height: 0; }
 
+/* --- the stage: everything the camera can film ------------------------------
+   One wrapper around every world layer — the painted sky, the district, the
+   towers, the haze between them, the street life under them — and exactly one
+   transform on it. The director in wall.js writes that transform and nothing
+   else, which is the whole reason the HUD, the brief plate and the comms
+   ticker live outside: a push-in on a shopfront must never scale a word of
+   type. Fixed and inset 0, so every `position: fixed` layer inside resolves
+   against exactly the box it always did, camera or no camera.
+
+   Its z-index sits under the rain, the two standby lines and all of the
+   chrome, which is where the whole world sat relative to them before. */
+.stage {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  /* The air over the city is not a hit target, and never was: the layers that
+     want a pointer — a tower's shaft title, the landmark's dedication — take
+     it back for themselves further down. */
+  pointer-events: none;
+  /* Fixed origin, so a shot is one piece of arithmetic off the top-left of the
+     frame rather than a guess about where the middle went. */
+  transform-origin: 0 0;
+}
+
 /* --- sky, weather, traffic -------------------------------------------------- */
 
 .sky {
@@ -2214,6 +2238,11 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .boot, .rain, .traffic { display: none; }
+  /* The director never engages here — wall.js refuses before it writes a frame
+     — and this is the belt to that brace: whatever inline transform a session
+     that had motion on left on the stage, a room that turns motion off gets the
+     wide shot back and keeps it. */
+  .stage { transform: none !important; }
   .street { display: none; }
   .tower[data-alarm="1"] .tower__mass::after { opacity: 0.8; }
   .tower[data-alarm="1"] .tower__sweep { transform: rotate(-12deg); }
