@@ -476,7 +476,7 @@
         const plateH = name.length * 7 + 6;
         const plateY = top + cut.crown[3] + 6;
         const plate = this.add.graphics();
-        plate.fillStyle(0x1d1730, 0.86);
+        plate.fillStyle(0x241d38, 0.86);
         plate.fillRect(x - 5, plateY, 11, plateH);
         plate.lineStyle(1, tint, 0.95);
         plate.strokeRect(x - 5.5, plateY - 0.5, 12, plateH + 1);
@@ -488,7 +488,7 @@
         // their y moves, ever.
         const shaftX = x + w / 2 - 3;
         const shaft = this.add.graphics();
-        shaft.fillStyle(0x0f0b1c, 0.55);
+        shaft.fillStyle(0x241d38, 0.55);
         shaft.fillRect(shaftX - 1, top + cut.crown[3], 3, HORIZON - top - cut.crown[3]);
         c.add(shaft);
         const cars = [0, 1].map((k) => {
@@ -660,7 +660,7 @@
         const g = this.add.graphics().setDepth(-2);
         g.fillStyle(ROOM_WALL, 1);
         g.fillRect(v.x, v.y, v.w, v.h);
-        g.fillStyle(0x1c1730, 1);
+        g.fillStyle(0x241d38, 1);
         g.fillRect(v.x, v.y, v.w, WALL_TOP - 12 - v.y);
         g.fillStyle(ROOM_FLOOR, 1);
         g.fillRect(v.x, FLOOR_Y, v.w, GH - FLOOR_Y);
@@ -778,13 +778,17 @@
             g: this.glow(x + glass[0], y + glass[1], glass[2], glass[3],
               piece === 'console' || piece === 'termB' ? GREEN : TEAL, 9),
             delay: i * 5 + 1,
+            // The gate console's glass is ten times the area of a terminal's,
+            // and an additive pool that size stops being a lit screen and starts
+            // being a hole in the wall. Big glass gets less of it.
+            gain: piece === 'console' ? 0.5 : 1,
           });
           // The name plate: a hanging strap, a dark plate, the word. Six of
           // these is what turns a machine room into THIS pipeline's room.
           const plate = this.add.graphics().setDepth(8);
           plate.fillStyle(0x6a5a92, 0.8);
           plate.fillRect(cx - 1, LEDGE_Y + 17, 2, 5);
-          plate.fillStyle(0x1d1730, 0.9);
+          plate.fillStyle(0x241d38, 0.9);
           plate.fillRect(cx - 27, NAME_Y - 4, 54, 13);
           plate.lineStyle(1, 0x7d6aa8, 0.85);
           plate.strokeRect(cx - 27.5, NAME_Y - 4.5, 55, 14);
@@ -810,7 +814,7 @@
             .setOrigin(0.5, 1).setDepth(12).setFlipX(spot.flip);
           // A contact shadow, or the figure is a sticker on a photograph.
           this.add.graphics().setDepth(11)
-            .fillStyle(0x150f26, 0.42).fillRect(spot.x - 10, FLOOR_Y - 2, 20, 3);
+            .fillStyle(0x241d38, 0.42).fillRect(spot.x - 10, FLOOR_Y - 2, 20, 3);
           const ask = spot.asks
             ? this.label(spot.x + 8, FLOOR_Y - 60, '?', WINDOW_WARM, 12).setDepth(13)
             : null;
@@ -824,7 +828,7 @@
         const x = DOOR_X;
         const top = FLOOR_Y - 62;
         const g = this.add.graphics().setDepth(2);
-        g.fillStyle(0x120e22, 1);
+        g.fillStyle(0x241d38, 1);
         g.fillRect(x - 4, top - 4, 42, 66);
         g.lineStyle(1, 0x7d6aa8, 1);
         g.strokeRect(x - 4.5, top - 4.5, 43, 67);
@@ -864,7 +868,7 @@
         if (frozen && !force && this.phase.still) return;
         const phase = phaseAt(clock(), { reducedMotion: frozen });
         this.phase = phase;
-        for (const s of this.screens) s.g.setAlpha(flickerAt(phase, s.delay));
+        for (const s of this.screens) s.g.setAlpha(flickerAt(phase, s.delay) * (s.gain || 1));
         for (const c of this.crew) {
           c.body.setTexture(c.sheet, `idle-${(phase.idle + c.delay) % CREW_IDLE}`);
           if (c.ask) c.ask.setAlpha(phase.ask);
