@@ -17,7 +17,8 @@
 // The rules that are NOT temporary, and that this file keeps:
 //
 //   Integer pixels. The world is a 480x270 logical grid drawn at an INTEGER
-//   camera zoom (4x on a 1920x1080 TV, 8 device pixels on a Retina laptop).
+  //   camera zoom (4x on a 1920x1080 TV, 6 device pixels on a 1440x900@2x
+  //   Retina laptop).
 //   A tile is never scaled by a fraction, and the camera lands on whole
 //   logical pixels.
 //
@@ -227,7 +228,7 @@
   // One rain streak. Seeded off its own index so the field is the same field on
   // two screens, and re-derived per frame rather than integrated — nothing here
   // keeps state, so a browser opened at any second joins the same weather.
-  function rainAt(phase, i, count) {
+  function rainAt(phase, i) {
     const speed = 150 + hash01(i * 5 + 1) * 130;
     const len = 3 + Math.floor(hash01(i * 5 + 2) * 5);
     const x0 = hash01(i * 5 + 3) * (LW + 80) - 40;
@@ -314,10 +315,48 @@
   // not a set of islands — a city block's buildings share walls.
   const ALLEY_W = 2;
 
+  function shopBlock(slot, x, w) {
+    return {
+      kind: 'shop', x, w, h: SHOP_H,
+      roof: Math.floor(hash01(slot * 31 + 5) * ROOFS.length),
+      facade: Math.floor(hash01(slot * 31 + 9) * FACADES.length),
+      sign: Math.floor(hash01(slot * 31 + 13) * SHOP_SIGNS.length),
+    };
+  }
+
+  // A quiet wall still has a district, just no project buildings. Fill its
+  // hero row with shops and keep the same alley the busy composition uses.
+  function districtRow(cols) {
+    const width = Math.max(1, Math.floor(Number(cols) || 1));
+    const hasAlley = width >= SHOP_W * 2 + ALLEY_W;
+    const shopSpace = width - (hasAlley ? ALLEY_W : 0);
+    const shopCount = Math.max(1, Math.floor(shopSpace / SHOP_W));
+    const extra = shopSpace - shopCount * SHOP_W;
+    const alleyAt = Math.floor(shopCount / 2);
+    const out = [];
+    let x = 0;
+    for (let i = 0; i < shopCount; i++) {
+      if (hasAlley && i === alleyAt) {
+        out.push({ kind: 'alley', x, w: ALLEY_W });
+        x += ALLEY_W;
+      }
+      const w = SHOP_W + (i === 0 ? extra : 0);
+      out.push(shopBlock(i, x, w));
+      x += w;
+    }
+    return out;
+  }
+
   function frontRow(count, alarmAt, cols) {
-    const n = Math.max(1, Math.min(count || 1, Math.floor(cols / PROJECT_W)));
+    const requested = Math.max(0, Math.floor(Number(count) || 0));
+    if (requested === 0) return districtRow(cols);
+    // Four tiles is the hero width, but a crowded wall may report more projects
+    // than fit at that size. Narrow them by whole tiles rather than dropping
+    // model entries or scaling the art by a fraction.
+    const n = Math.min(requested, cols);
+    const projectW = Math.max(1, Math.min(PROJECT_W, Math.floor(cols / n)));
     const gaps = new Array(n + 1).fill(0);
-    let spare = cols - n * PROJECT_W;
+    let spare = cols - n * projectW;
     // One gap is kept as an alley rather than filled with a shop: the lane
     // between two buildings is what tells the room this is a BLOCK seen from
     // above and not a painted backdrop.
@@ -334,19 +373,14 @@
     let x = 0;
     for (let i = 0; i <= n; i++) {
       if (gaps[i] >= SHOP_W && i !== alley) {
-        out.push({
-          kind: 'shop', x, w: SHOP_W, h: SHOP_H,
-          roof: Math.floor(hash01(i * 31 + 5) * ROOFS.length),
-          facade: Math.floor(hash01(i * 31 + 9) * FACADES.length),
-          sign: Math.floor(hash01(i * 31 + 13) * SHOP_SIGNS.length),
-        });
+        out.push(shopBlock(i, x, SHOP_W));
       } else if (gaps[i] >= 2) {
         out.push({ kind: 'alley', x, w: gaps[i] });
       }
       x += gaps[i];
       if (i < n) {
         out.push({
-          kind: 'project', index: i, x, w: PROJECT_W, h: PROJECT_H,
+          kind: 'project', index: i, x, w: projectW, h: PROJECT_H,
           alarm: i === alarmAt,
           roof: Math.floor(hash01(i * 17 + 2) * ROOFS.length),
           facade: Math.floor(hash01(i * 17 + 6) * FACADES.length),
@@ -356,7 +390,7 @@
           fascia: hash01(i * 17 + 23) > 0.6 ? Math.floor(hash01(i * 37) * FASCIA.length) : -1,
           tag: hash01(i * 17 + 31) > 0.55 ? Math.floor(hash01(i * 41) * GRAFFITI.length) : -1,
         });
-        x += PROJECT_W;
+        x += projectW;
       }
     }
     return out;
@@ -386,7 +420,7 @@
     const alarmAt = towers.findIndex((tower) => tower && tower.alarm);
     return {
       rows: cityRows(rows),
-      front: frontRow(towers.length || 5, alarmAt, cols),
+      front: frontRow(towers.length, alarmAt, cols),
       back: backRow(cols, rows),
       towers,
     };
@@ -466,8 +500,7 @@
     measure(first.w, first.h, ratio());
 
     let live = null;        // the running scene, once Phaser has booted it
-    let pending = null;     // the last scene model handed over before it had
-    let spotId = '';
+    let pending = null;     // the last scene model handed over before Phaser booted
 
     class TopdownScene extends Phaser.Scene {
       constructor() { super('topdown'); }
@@ -488,7 +521,6 @@
 
       create() {
         this.phase = phaseAt(0, { reducedMotion: true });
-        this.model = null;
         this.planKey = '';
         this.neons = [];      // animated strips: {img, sheetFrames, period, delay}
         this.screens = [];
@@ -847,7 +879,6 @@
             wet.fillRect(cx - 3 - (i % 3), top + i * (tall / 9), 6 + (i % 3) * 2, tall / 9);
           }
         }
-        this.wet = wet;
       }
 
       paintWalkers(R) {
@@ -864,7 +895,7 @@
             .setOrigin(0.5, 1)
             .setTint(lane.behind ? NIGHT_FAR : NIGHT_PEOPLE);
           (lane.behind ? this.backLife : this.people).add(img);
-          this.walkers.push({ img, sheet, lane, i });
+          this.walkers.push({ img, lane, i });
         }
       }
 
@@ -950,7 +981,6 @@
         // A cable run along the floor, zone to zone.
         floor.fillStyle(0x1b2440, 0.9);
         floor.fillRect(0, (PROP - 1) * TILE + 6, LW, 2);
-        this.floorG = floor;
 
         // The bay names, painted on the floor at the front of each bay where
         // nothing on the wall's own chrome can cover them.
@@ -965,20 +995,17 @@
           labels.fillRect(x - 4, y + GLYPH_H + 2, w + 8, 1);
           drawText(labels, ZONES[z], x, y, z === 2 ? 0xffd166 : 0xa8e8ff, 0.95);
         }
-        this.labels = labels;
 
         // The desks, and the agents at them. LimeZu's seated pose is drawn from
         // behind and above, so the desk in front hides the legs and the pose
         // needs nothing but a two-frame breath.
         const SITTERS = ['sitA', 'sitB', 'sitC', 'sitD', 'sitA', 'sitB'];
-        this.deskSpots = [];
         for (let z = 0; z < ZONES.length; z++) {
           const dx = cell(z, -1);
           // A rack against the wall behind, the console desk in front of it,
           // and the agent seated at that console with the desk over their legs.
           this.stamp(this.mid, 'inside', 11, 6, 2, 2, dx * TILE, (DESK - 2) * TILE - 4, NIGHT_ROOM);
           this.stamp(this.mid, 'inside', 11, 12, 2, 2, dx * TILE, DESK * TILE + 4, NIGHT_ROOM);
-          this.deskSpots.push({ x: zc(z), y: DESK * TILE + 8 });
           // PUSH is between shifts: its desk is lit and empty, which is a fact
           // about the pipeline and not an omission.
           if (z === ZONES.length - 1) continue;
@@ -1014,7 +1041,6 @@
         for (let i = 0; i < 6; i++) {
           this.gateLamps.push({ x: gx + 7 + i * Math.floor((gw - 12) / 5), y: gy + 5, bad: i === 4 });
         }
-        this.gate = gate;
 
         // The DEMO screen: the pack's own six-frame wall monitor, on a stand.
         const sx = zx(4) + Math.round(zoneW / 2) - TILE;
@@ -1035,7 +1061,6 @@
         this.roamer = this.add.image(0, (FRONT - 1) * TILE, 'run', 0)
           .setOrigin(0.5, 1).setTint(NIGHT_PEOPLE);
         this.people.add(this.roamer);
-        this.roamRow = (FRONT - 1) * TILE;
 
         // The foreground: a counter along the bottom of the frame with a plant
         // and a bench on it. The depth playbook's rule 12 — every shot gets a
@@ -1048,7 +1073,6 @@
         front.fillRect(0, FRONT * TILE, LW, LH - FRONT * TILE);
         front.fillStyle(0x94a8d8, 0.45);
         front.fillRect(0, FRONT * TILE, LW, 1);
-        this.front = front;
         this.stamp(this.near, 'lz', 1, 51, 3, 2, 2 * TILE, FRONT * TILE - 22, NIGHT_ROOM);
         this.stamp(this.near, 'lz', 14, 44, 1, 3, (COLS - 8) * TILE, FRONT * TILE - 44, NIGHT_ROOM);
         this.stamp(this.near, 'lz', 12, 53, 1, 1, (COLS - 15) * TILE, FRONT * TILE - 14, WARM);
@@ -1084,7 +1108,6 @@
       // --- the frame ------------------------------------------------------------
 
       apply(model) {
-        this.model = model;
         if (office) return;
         const key = planKeyOf(model);
         if (key === this.planKey) return;
@@ -1174,9 +1197,9 @@
         zoom: 1 / DPR,
       },
       render: {
-        // Pixel art at an integer camera zoom: nearest sampling, and every
-        // draw landing on a whole device pixel.
-        pixelArt: true,
+        // Match the established canvas-world renderer config. The camera still
+        // scales by a whole number and every draw lands on a whole device pixel.
+        smoothPixelArt: true,
         roundPixels: true,
         powerPreference: 'low-power',
       },
@@ -1210,8 +1233,7 @@
         if (live) live.apply(model);
       },
       spot(runId) {
-        spotId = runId;
-        if (live) live.spot(spotId);
+        if (live) live.spot(runId);
       },
       tick() { if (live) live.step(true); },
       game,

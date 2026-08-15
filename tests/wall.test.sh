@@ -2050,6 +2050,8 @@ const sample = (t, opts) => {
 const frozen = at.map((t) => sample(t, { reducedMotion: true }));
 const moving = at.map((t) => sample(t, {}));
 const plan = T.frontRow(5, 2, g.cols);
+const quiet = T.frontRow(0, -1, g.cols);
+const crowded = T.frontRow(20, 17, g.cols);
 const far = T.backRow(g.cols, g.rows);
 const heights = {};
 for (const b of plan) heights[b.kind] = b.h;
@@ -2062,6 +2064,12 @@ console.log(JSON.stringify({
   frozen: new Set(frozen).size === 1,
   moving: new Set(moving).size === at.length,
   projects: plan.filter((b) => b.kind === 'project').length,
+  quietProjects: quiet.filter((b) => b.kind === 'project').length,
+  quietDistrict: quiet.some((b) => b.kind === 'shop') && quiet.some((b) => b.kind === 'alley'),
+  crowdedProjects: crowded.filter((b) => b.kind === 'project').length,
+  crowdedAlarms: crowded.filter((b) => b.alarm).length,
+  crowdedInFrame: crowded.every((b) => b.x >= 0 && b.x + b.w <= g.cols),
+  crowdedOrdered: crowded.every((b, i) => i === 0 || b.x >= crowded[i - 1].x + crowded[i - 1].w),
   alarms: plan.filter((b) => b.alarm).length,
   taller: heights.project > heights.shop,
   alley: plan.some((b) => b.kind === 'alley'),
@@ -2082,6 +2090,13 @@ check "topdown: reduced motion is one frame, at every second of the clock" \
   "$(td_of frozen)" "true"
 check "topdown: and the same world without it genuinely moves" "$(td_of moving)" "true"
 check "topdown: one project building per tower the wall reported" "$(td_of projects)" "5"
+check "topdown: a quiet wall invents no project buildings" "$(td_of quietProjects)" "0"
+check "topdown: and keeps district shops around its alley" "$(td_of quietDistrict)" "true"
+check "topdown: a crowded wall still gets one building per project" \
+  "$(td_of crowdedProjects)" "20"
+check "topdown: its alarm still belongs to exactly one project" "$(td_of crowdedAlarms)" "1"
+check "topdown: crowded projects remain in frame" "$(td_of crowdedInFrame)" "true"
+check "topdown: and remain ordered without overlap" "$(td_of crowdedOrdered)" "true"
 check "topdown: and exactly one of them is the alarm" "$(td_of alarms)" "1"
 check "topdown: a project building is taller than the shops around it" \
   "$(td_of taller)" "true"
@@ -2092,6 +2107,8 @@ check "topdown: nothing is laid out past the edge of the grid" "$(td_of inFrame)
 check "topdown: and the terrace runs left to right without overlapping" \
   "$(td_of ordered)" "true"
 check "topdown: everything it loads is a local pack path" "$(td_of local)" "true"
+grep_ok "$TOPDOWN_SRC" 'smoothPixelArt: true' \
+  "topdown: the renderer uses the canvas world's required smooth-pixel config"
 check "topdown: the block is rebuilt for the tower count and the alarm, nothing else" \
   "$(td_of key)" "2:01"
 check "topdown: a tower changing anything else does not rebuild it" \
