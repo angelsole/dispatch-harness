@@ -2182,9 +2182,14 @@ console.log(JSON.stringify({
     for (let t = 0; t < 1200; t++) if (C.droneAt(C.phaseAt(t, {})).a > 0) up++;
     return kinds.size === 4 && up / 1200 > 0.05 && up / 1200 < 0.25;
   })(),
-  // A person on this wall stands 2.2vh tall whatever the panel is, and every
-  // other pixel this world loads is scaled by the same one number.
+  // A person on this wall stands 2.2vh tall whatever the panel is; vehicles keep
+  // their own aspect ratios while normalizing their disparate source scales.
   sized: Math.abs(C.grid().figure / C.grid().vh - 2.2) < 1e-9,
+  vehicleSized: C.VEHICLE_KINDS.every((kind) => {
+    const spec = C.VEHICLE_SPECS[kind];
+    const figures = spec.width * C.vehicleScaleAt('vehicle/' + kind) / C.grid().figure;
+    return figures >= 3.5 && figures <= 4;
+  }),
   // CSS removes both animations under reduced motion. A completion stays on
   // its base frame however old it gets, while attribution is a static 0.85
   // until the server-owned sign lifetime expires and then switches off.
@@ -2243,6 +2248,8 @@ check "motion: with motion allowed every cycle runs all the way round" \
 check "life: all four vehicles pass, and the drone stays rare" "$(still_of fleet)" "true"
 check "life: a person on this wall is 2.2vh tall, whatever the panel" \
   "$(still_of sized)" "true"
+check "life: every vehicle is between 3.5 and 4 pedestrians long" \
+  "$(still_of vehicleSized)" "true"
 check "motion: reduced motion keeps completed shafts on their static frame" \
   "$(still_of completionStill)" "true"
 check "motion: and holds attribution steady until its lifetime expires" \

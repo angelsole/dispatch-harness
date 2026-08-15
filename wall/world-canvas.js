@@ -109,16 +109,17 @@
   let BASE_GAP = 0.3 * REM;           // its margin-top
   const CEREMONY = 6;                 // --ceremony, the shipping beat
 
-  // How big everything drawn from an atlas is, in one number. A person on this
-  // wall stands FIGURE_VH tall — 2.2vh, about 24px on a 1080p TV, which is the
-  // size at which a walk cycle reads from the sofa and a building still towers
+  // How big figures and the atlas's general street art are, in one number. A
+  // person on this wall stands FIGURE_VH tall — 2.2vh, about 24px on a 1080p TV,
+  // where a walk cycle reads from the sofa and a building still towers
   // over it — and walker-a is FIGURE_PX tall inside its own frame. One ratio
   // rather than a scale per sprite, because ansimuz drew a city to one scale: a
-  // car at two people long and a truck at five is his proportion, and re-deciding
-  // it per object is how a street ends up with a bus the size of a shoe.
+  // figure keeps its source proportions. Vehicle frames are the exception: the
+  // four sources have radically different authored scales, so they normalize to
+  // the street's 3.5–4-person length where their catalogue is declared below.
   const FIGURE_VH = 2.2;
   const FIGURE_PX = 51;               // measured off the committed atlas, not guessed
-  let ART = 1;                        // atlas pixel -> device pixel
+  let ART = 1;                        // general atlas pixel -> device pixel
 
   // How big the wall is now, and everything wall.css derives from that. The
   // device-pixel ratio is capped at 2: past that the backing store costs more
@@ -537,6 +538,22 @@
   // a few minutes sees all four, and the wall never has to remember which one it
   // used last.
   const VEHICLE_KINDS = ['red', 'yellow', 'police', 'truck'];
+  // The atlas vehicles were authored at very different source scales (the
+  // compact hover cars are 93–96 px wide; the truck is 257). Keep each sprite's
+  // aspect ratio, but normalize its displayed length to the street's contract:
+  // roughly three and a half to four people, rather than two bikes and a
+  // five-person truck sharing one accidental scale.
+  const VEHICLE_SPECS = {
+    red: { width: 96, figures: 3.5 },
+    yellow: { width: 93, figures: 3.5 },
+    police: { width: 163, figures: 3.8 },
+    truck: { width: 257, figures: 4 },
+  };
+  function vehicleScaleAt(frame) {
+    const kind = String(frame || '').replace(/^vehicle\//, '');
+    const spec = VEHICLE_SPECS[kind] || VEHICLE_SPECS.red;
+    return FIGURE_VH * VH * spec.figures / spec.width;
+  }
   function vehicleKindAt(phase, slot, plan) {
     const pass = phase.still ? 0
       : Math.floor((phase.t + slot * (plan.gap || 0)) / (plan.cycle || 48));
@@ -1134,7 +1151,7 @@
         if (!s) return null;
         const west = slot % 2 === 1;
         s.setOrigin(0.5, 1);
-        s.setScale(ART);
+        s.setScale(vehicleScaleAt('vehicle/red'));
         // Two lanes, both BEHIND every pavement depth: the road is the far side
         // of the strip and the people are the near side of it.
         s.setPosition(0, H - (west ? 7.6 : 6.4) * VH);
@@ -2073,7 +2090,9 @@
             // a mirrored sprite: two cars sliding the same way in opposite
             // liveries is the thing that used to read as a fault.
             vehicle.s.setX(vehicle.west ? W - step.x : step.x);
-            vehicle.s.setFrame(vehicleKindAt(phase, vehicle.slot, model.street));
+            const frame = vehicleKindAt(phase, vehicle.slot, model.street);
+            vehicle.s.setFrame(frame);
+            vehicle.s.setScale(vehicleScaleAt(frame));
           }
         }
         if (this.drone) {
@@ -2343,8 +2362,8 @@
     w: W, h: H, dpr: DPR, vw: VW, vh: VH, rem: REM, px: PX,
     sky: SKY, skyX: SKY_X, skyY: SKY_Y,
     ground: GROUND, groundY: GROUND_Y, cityH: CITY_H, hazeH: HAZE_H,
-    // One number scales every pixel this world loads, so a test can ask how tall
-    // a person is on a given wall without standing a GPU up to find out.
+    // Expose the base art scale so a test can ask how tall a person is on a given
+    // wall without standing a GPU up to find out.
     art: ART, figure: FIGURE_PX * ART,
   });
 
@@ -2353,11 +2372,12 @@
     walkerAt, vehicleAt,
     // The frame beats. Every one is a pure function of the wall clock, which is
     // what keeps join-mid-beat true and reduced motion a single still frame.
-    walkFrameAt, vehicleKindAt, droneAt, bannerFrameAt, cookAt, occupantAt, steamAt,
+    walkFrameAt, vehicleKindAt, vehicleScaleAt, droneAt, bannerFrameAt, cookAt,
+    occupantAt, steamAt,
     ramp, spansAt, outline, towerLayout,
     // The catalogues, so the suite can hold every frame this world can ask for
     // against every frame the committed atlases actually have.
-    ASSETS, BANNERS, NOODLE_SIGNS, WALKERS, VEHICLE_KINDS, DRONE,
+    ASSETS, BANNERS, NOODLE_SIGNS, WALKERS, VEHICLE_KINDS, VEHICLE_SPECS, DRONE,
     OCCUPANT_FRAMES, COOK_FRAMES,
   };
 }));
