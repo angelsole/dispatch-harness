@@ -859,12 +859,14 @@ const STATIC = {
 // STATIC the way every committed file is. Everything else about it is closed:
 // the path is decoded exactly once and rejected if that fails, a traversal, an
 // absolute path or a NUL is refused before the filesystem is touched, the
-// RESOLVED path is re-checked to still be under wall/private/ (which is what
-// actually catches a symlink pointing out of it), only the two extensions the
-// page can use are served, and anything else — including a directory — is a
-// 404 with no detail. Nothing here leaves the origin: the bytes are read off
-// local disk for the TV on the tailnet, like the rest of the wall.
+// lexical path and the filesystem-resolved path are both re-checked to still be
+// under wall/private/ (the latter catches a symlink pointing out of it), only
+// the two extensions the page can use are served, and anything else — including
+// a directory — is a 404 with no detail. Nothing here leaves the origin: the
+// bytes are read off local disk for the TV on the tailnet, like the rest of the
+// wall.
 const PRIVATE = path.join(HERE, 'private');
+const PRIVATE_REAL = fs.realpathSync(PRIVATE);
 const PRIVATE_TYPES = {
   '.png': 'image/png',
   '.json': 'application/json; charset=utf-8',
@@ -892,10 +894,16 @@ function privateFile(urlPath) {
 function servePrivate(res, urlPath) {
   const entry = privateFile(urlPath);
   if (!entry) return notFound(res);
-  fs.readFile(entry.full, (err, buf) => {
-    if (err) return notFound(res);
-    res.writeHead(200, { 'Content-Type': entry.type, 'Cache-Control': 'no-store' });
-    res.end(buf);
+  fs.realpath(entry.full, (resolveErr, real) => {
+    if (resolveErr || !real.startsWith(PRIVATE_REAL + path.sep)) return notFound(res);
+    // Keep the allowlist about the bytes actually opened, not merely the name
+    // of a symlink that led to them.
+    if (!PRIVATE_TYPES[path.extname(real).toLowerCase()]) return notFound(res);
+    fs.readFile(real, (readErr, buf) => {
+      if (readErr) return notFound(res);
+      res.writeHead(200, { 'Content-Type': entry.type, 'Cache-Control': 'no-store' });
+      res.end(buf);
+    });
   });
   return undefined;
 }
