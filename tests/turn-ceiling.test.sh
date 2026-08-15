@@ -211,7 +211,8 @@ dispatch() {  # $1 = run id, $2 = mode, $3 = space-separated VAR=VAL overrides
   printf '%s\n' "$mode" > "$CLAUDE_MODE"
   : > "$CLAUDE_CALLS"; echo 0 > "$ATTEMPTS"
   # shellcheck disable=SC2086
-  env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
+      HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
       CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 \
       $overrides \

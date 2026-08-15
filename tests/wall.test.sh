@@ -40,7 +40,7 @@ fi
 # --- the JS parses -----------------------------------------------------------
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
-for f in wall/server.js wall/wall.js wall/fixtures/seed.js; do
+for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/fixtures/seed.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 # The fixture generator accepts a target for hermetic tests, but must never
@@ -58,25 +58,68 @@ if [ -f "$UNMARKED/important.txt" ]; then
 else
   bad "fixtures: refused seed target is untouched"
 fi
-# The page must not pull anything in from off-origin: the TV may only see the
-# tailnet, so a CDN font or script would render as a blank. XML namespace URIs
-# (w3.org) are identifiers, never fetched.
-PAGE_SRC="$(cat "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js")"
+# --- provenance ----------------------------------------------------------------
+# The doctrine used to be "the city is drawn, not loaded" and the test for it was
+# a ban on binaries. It is now "nothing the wall needs leaves this machine": the
+# page may ship committed, licensed, manifest-listed assets — it vendors a WebGL
+# engine — but every byte it can load has to be in this repo and accounted for.
+# So the binary ban is retired on purpose, and three checks replace it: the
+# authored files reach nowhere off-origin, everything the page can load resolves
+# to a real file this server serves, and everything under wall/vendor/ has a
+# THIRD_PARTY.md row whose hash still matches.
+PAGE_SRC="$(cat "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js" \
+  "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js")"
 CSS_SRC="$(cat "$SRC/wall/wall.css")"
+# The AUTHORED page files only: the vendored bundle carries its upstream in its
+# own banner and is pinned by hash rather than by this grep. XML namespace URIs
+# (w3.org) are identifiers, never fetched.
 OFFSITE="$(printf '%s' "$PAGE_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' \
   | grep -v '^https\{0,1\}://www\.w3\.org/' | sort -u | tr '\n' ' ')"
 if [ -z "$OFFSITE" ]; then
-  ok "assets: no off-origin URLs"
+  ok "assets: no off-origin URLs in anything the page authors"
 else
   bad "assets: off-origin URLs in the page: $OFFSITE"
 fi
-# No image assets either: the city is CSS and inline SVG, so the page renders on
-# a screen that can reach nothing but this server.
-if printf '%s' "$PAGE_SRC" | grep -qiE '\.(png|jpe?g|gif|webp|woff2?)\b'; then
-  bad "assets: the page references a binary asset"
+# Everything under wall/vendor/ that is not documentation is third-party code,
+# and the manifest is the pin: a swapped bundle fails here rather than shipping.
+VENDOR_CHECK="$(node -e '
+  const fs = require("fs"), path = require("path"), crypto = require("crypto");
+  const dir = path.join(process.argv[1], "wall", "vendor");
+  const manifest = fs.readFileSync(path.join(process.argv[1], "wall", "THIRD_PARTY.md"), "utf8");
+  const bad = [];
+  let listed = 0;
+  for (const name of fs.readdirSync(dir).sort()) {
+    if (name.endsWith(".md")) continue;
+    const sum = crypto.createHash("sha256")
+      .update(fs.readFileSync(path.join(dir, name))).digest("hex");
+    const row = manifest.split("\n").find((line) =>
+      line.includes("wall/vendor/" + name) && line.startsWith("|"));
+    if (!row) bad.push(name + ": no THIRD_PARTY.md row");
+    else if (!row.includes(sum)) bad.push(name + ": sha256 " + sum + " is not in its row");
+    else listed++;
+  }
+  process.stdout.write(bad.length ? bad.join("; ") : "ok:" + listed);
+' "$SRC" 2>&1)"
+case "$VENDOR_CHECK" in
+  ok:0) bad "assets: wall/vendor/ carries at least one manifest-listed file" ;;
+  ok:*) ok  "assets: every vendored file has a THIRD_PARTY.md row whose sha256 matches" ;;
+  *)    bad "assets: vendored files disagree with THIRD_PARTY.md ($VENDOR_CHECK)" ;;
+esac
+# And the bundle the doctrine names is the build the manifest names.
+PHASER_SUM="$(node -e '
+  const fs = require("fs"), crypto = require("crypto");
+  process.stdout.write(crypto.createHash("sha256")
+    .update(fs.readFileSync(process.argv[1])).digest("hex"));
+' "$SRC/wall/vendor/phaser.min.js" 2>/dev/null)"
+check "assets: the vendored engine is the pinned Phaser 4.2.1 build" \
+  "$PHASER_SUM" "66348b1b5141e49b7d5ebbe688cddcb502eab1cb00f21c538686a5b2c5abe4de"
+if [ -f "$SRC/wall/vendor/PHASER-LICENSE.md" ]; then
+  ok "assets: its licence travels beside it"
 else
-  ok "assets: the city is drawn, not loaded"
+  bad "assets: its licence travels beside it"
 fi
+grep_ok "$(cat "$SRC/.gitattributes")" 'wall/vendor/** -diff linguist-vendored' \
+  "assets: the vendored bundle reads as a blob, not as a 1.4 MB diff"
 
 # The crew manifest is gone, and must not creep back: the wall organises around
 # the work. Attribution survives only as a tinted light on the run's own car and
@@ -213,22 +256,28 @@ done
 # run-task.sh's owner pin is: run the real code out of the real file rather than
 # restating its numbers here.
 echo "== wall: the weather drifts =="
-grep_ok "$PAGE_SRC" 'function wetness' "weather: rain intensity is a function, not a loop"
+grep_ok "$(cat "$SRC/wall/scene.js")" 'function wetness' \
+  "weather: rain intensity is a function, not a loop"
 grep_ok "$CSS_SRC" 'var(--haze, 1)'      "weather: the street haze reads it, a lag behind"
 grep_ok "$CSS_SRC" 'opacity: var(--dawn, 0)' "weather: and the sky cools toward local dawn"
 check "weather: haze and dawn samples blend instead of stepping each second" \
   "$(printf '%s\n' "$CSS_SRC" | grep -c 'transition: opacity var(--weather-blend) linear')" "2"
 grep_ok "$PAGE_SRC" 'if (still.matches)' \
   "weather: reduced motion leaves both of those unwritten — today's static scene"
-WEATHER_SRC="$(awk '/^  \/\/ --- weather/,/^  \/\/ --- rain/' "$SRC/wall/wall.js")"
+# The weather model moved into the renderer-agnostic scene model when the city
+# grew a second body: both worlds have to read the same sky. That makes it
+# Node-loadable, so the probe below requires the real file instead of awking a
+# section out of it — the same "run the real code" idea, one indirection fewer.
+WEATHER_SRC="$(awk '/^  \/\/ --- weather/,/^  \/\/ --- nightlife/' "$SRC/wall/scene.js")"
 RAIN_SRC="$(awk '/^  \/\/ --- rain/,/^  render\(\);/' "$SRC/wall/wall.js")"
 grep_not "$(printf '%s\n' "$WEATHER_SRC" "$RAIN_SRC" | grep -v '^ *//')" 'Math.random' \
   "weather: neither its state nor its drops rely on unseeded randomness"
 
 PROBE="$ROOT/weather-probe.js"
 {
-  grep -E '^  const (RAIN_LAG|DAWN_H|DAWN_RAMP|WEATHER_SEED_MS) =' "$SRC/wall/wall.js"
-  printf '%s\n' "$WEATHER_SRC"
+  printf '%s\n' "  const S = require(process.argv[2]);"
+  printf '%s\n' "  const { wetness, dawn, seededRandom, weatherSeed } = S;"
+  printf '%s\n' "  const { RAIN_LAG, WEATHER_SEED_MS } = S;"
   cat <<'JS'
   const DAY = 86400;
   let lo = 1, hi = 0, step = 0, dry = -1, fastest = Infinity;
@@ -265,7 +314,7 @@ PROBE="$ROOT/weather-probe.js"
   }));
 JS
 } > "$PROBE"
-WEATHER="$(node "$PROBE" 2>&1)"
+WEATHER="$(node "$PROBE" "$SRC/wall/scene.js" 2>&1)"
 weather_of() { printf '%s' "$WEATHER" | jq -r ".$1" 2>/dev/null; }
 check "weather: intensity never leaves 0..1"        "$(weather_of bounded)"  "true"
 check "weather: it reaches a near-dry spell"        "$(weather_of nearDry)"  "true"
@@ -372,6 +421,40 @@ grep_ok "$PAGE" 'class="sky"' "page: ships the night sky an idle wall is left wi
 check "page: css is served"   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.css")" "200"
 check "page: js is served"    "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/wall.js")"  "200"
 check "page: unknown path 404s" "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/etc/passwd")" "404"
+# The other half of the provenance rule: everything the page can pull in has to
+# be a file this server actually serves. Collected from the document's own
+# src/href attributes plus the two scripts wall.js injects for the canvas world
+# — data: URIs and in-document fragments are neither fetched nor served.
+ASSETS="$(node -e '
+  const fs = require("fs");
+  const html = fs.readFileSync(process.argv[1], "utf8");
+  const js = fs.readFileSync(process.argv[2], "utf8");
+  const found = new Set();
+  for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) found.add(m[1]);
+  const list = (js.match(/const CANVAS_SCRIPTS = \[([^\]]*)\]/) || [, ""])[1];
+  for (const m of list.matchAll(/'"'"'([^'"'"']+)'"'"'/g)) found.add(m[1]);
+  const out = [...found].filter((u) => !/^(data:|#|https?:)/.test(u));
+  process.stdout.write(out.sort().join(" "));
+' "$SRC/wall/index.html" "$SRC/wall/wall.js")"
+if [ -z "$ASSETS" ]; then
+  bad "assets: the page loads at least one file of its own"
+else
+  ok "assets: the page's own loads are [$ASSETS]"
+fi
+for asset in $ASSETS; do
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/$asset")"
+  if [ "$CODE" = 200 ] && [ -f "$SRC/wall/$asset" ]; then
+    ok "assets: $asset is a committed file this server serves"
+  else
+    bad "assets: $asset is a committed file this server serves (http $CODE)"
+  fi
+done
+# And the wall the room actually looks at never asks for the engine: the canvas
+# scripts are injected by wall.js behind ?world=canvas, never linked in the page.
+grep_not "$(cat "$SRC/wall/index.html")" 'vendor/phaser.min.js' \
+  "assets: the DOM wall's document never links the 1.4 MB engine"
+grep_not "$(cat "$SRC/wall/index.html")" 'world-canvas.js' \
+  "assets: nor the canvas world it belongs to"
 
 API="$(get "$PORT" /api/runs)"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
@@ -1189,7 +1272,10 @@ if [ -n "$GHOST_LINE" ] && [ -n "$FAR_LINE" ] && [ "$GHOST_LINE" -lt "$FAR_LINE"
 else
   bad "ghost: last week is painted behind every parallax skyline plane"
 fi
-grep_ok "$PAGE_SRC" "towers.length ? 'off' : blocks.length ? 'rest' : 'empty'" \
+# Idle is a scene fact now, shared by either body; keep this earlier structural
+# guard as well as the semantic scene probe below so moving the decision does
+# not weaken the plate's established empty-week rule.
+grep_ok "$(cat "$SRC/wall/scene.js")" "quiet ? (blocks.length ? 'rest' : 'empty') : 'off'" \
   "idle: the plate needs an empty week, not just an empty skyline"
 grep_ok "$CSS_SRC" 'body[data-idle="empty"] .idle' "idle: the full plate is gated on that"
 grep_ok "$CSS_SRC" 'body[data-idle="rest"] .rest' \
@@ -1332,10 +1418,11 @@ DEEP_NEAR="$(sed -n 's/^\.block\[data-depth="2"\] { --deep: \([0-9.]*\);.*/\1/p'
 # the ceiling above is not a ceiling. Read as the formula, not as a number.
 grep_ok "$FORM_JITTER_CSS" '--jitter-tall: calc(1 - var(--grade)' \
   "district: the footprint jitter inside a form only ever shortens a building"
-# The shortest tower the skyline can stand: the floor of the page's own height
-# ramp, plus the one run it takes to put a tower on the wall at all.
+# The shortest tower the skyline can stand: the floor of the scene model's own
+# height ramp, plus the one run it takes to put a tower on the wall at all. Read
+# out of scene.js since the ramp became a field both worlds are handed.
 TOWER_RAMP="$(sed -n 's/.*Math.min(94, \([0-9]*\) + n \* \([0-9]*\)).*/\1 \2/p' \
-  "$SRC/wall/wall.js" | head -1)"
+  "$SRC/wall/scene.js" | head -1)"
 # Every one of those numbers has to have actually been found: a formula fed an
 # empty field computes zero, and a zero-height landmark would sail through the
 # comparison below rather than failing it.
@@ -1392,7 +1479,8 @@ STRAY_GLYPHS="$(node -e '
   const text = process.argv.slice(1).map((f) => fs.readFileSync(f, "utf8")).join("");
   const stray = [...new Set([...text])].filter((c) => /[一-鿿]/.test(c) && !curated.has(c));
   process.stdout.write(stray.join(""));
-' "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js")"
+' "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js" \
+  "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js")"
 if [ -z "$STRAY_GLYPHS" ]; then
   ok "signage: no lettering beyond the five curated glyphs"
 else
@@ -1452,14 +1540,14 @@ grep_ok "$PAGE_SRC" 'plan.gap * plan.vehicles' \
 # noodle bar is on the same corner after a reload, on the second TV, and on a
 # colleague's laptop — and a whole ticket range does not end up as one long row
 # of arcades.
-NIGHT_SRC="$(awk '/^  \/\/ --- nightlife/,/^  \/\/ --- the street/' "$SRC/wall/wall.js")"
+NIGHT_SRC="$(awk '/^  \/\/ --- nightlife/,/^  \/\/ --- the street/' "$SRC/wall/scene.js")"
 grep_not "$(printf '%s\n' "$NIGHT_SRC" | grep -v '^ *//')" 'Math.random' \
   "life: no unseeded randomness anywhere in the plan"
 NIGHT_PROBE="$ROOT/nightlife-probe.js"
 {
-  grep -E '^  const (MAX_WALKERS|MAX_VEHICLES|PER_WALKER|PER_VEHICLE|GAP_QUIET|GAP_BUSY|BUSY_AT|MALL_AT|TRAM_AT|OCCUPIED) = ' \
-    "$SRC/wall/wall.js"
-  printf '%s\n' "$NIGHT_SRC"
+  printf '%s\n' "  const S = require(process.argv[2]);"
+  printf '%s\n' "  const { storefrontOf, formOf, nightlifeOf, SHOP_GLYPH, FORM_SHARES } = S;"
+  printf '%s\n' "  const { MAX_WALKERS, MAX_VEHICLES, GAP_BUSY, MALL_AT, TRAM_AT, OCCUPIED } = S;"
   cat <<'JS'
   const ids = [];
   for (let i = 0; i < 200; i++) ids.push('OLYX-' + (1500 + i));
@@ -1540,7 +1628,7 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
   }));
 JS
 } > "$NIGHT_PROBE"
-NIGHT="$(node "$NIGHT_PROBE" 2>&1)"
+NIGHT="$(node "$NIGHT_PROBE" "$SRC/wall/scene.js" 2>&1)"
 night_of() { printf '%s' "$NIGHT" | jq -r ".$1" 2>/dev/null; }
 check "life: the week's tempo starts with its first ship" \
   "$(night_of life)" \
@@ -1583,6 +1671,301 @@ check "form: what kind of building it is is not readable off its shop" \
   "$(night_of formUnlinked)" "true"
 check "form: every footprint grade inside a type gets used" \
   "$(night_of formGrades)" "0,1,2,3"
+
+# --- the scene model ----------------------------------------------------------------
+# The city grew a second body, so what the city IS moved out of the renderer and
+# into wall/scene.js: pure, Node-loadable, no document and no clock of its own.
+# Both worlds are handed the same object, which is the only reason they can be
+# the same city — so the contract is exercised against the real fixture payload
+# rather than against a hand-written stub.
+echo "== wall: the scene model is the city, without a renderer =="
+SCENE_SRC="$(cat "$SRC/wall/scene.js")"
+for banned in document window. 'Date.now' 'Math.random'; do
+  grep_not "$(printf '%s\n' "$SCENE_SRC" | grep -v '^ *//')" "$banned" \
+    "scene: no [$banned] anywhere in the model"
+done
+SCENE_PROBE="$ROOT/scene-probe.js"
+cat > "$SCENE_PROBE" <<'JS'
+const S = require(process.argv[2]);
+const snap = JSON.parse(require('node:fs').readFileSync(process.argv[3], 'utf8'));
+const AT = snap.at;
+const scene = S.buildScene(snap, AT);
+const again = S.buildScene(snap, AT);
+const plan = S.nightlifeOf(snap.week.ships);
+console.log(JSON.stringify({
+  towers: scene.towers.length === snap.towers.length && snap.towers.length > 0,
+  ranks: scene.towers.every((tower, rank) => tower.rank === rank),
+  blocks: scene.blocks.length === snap.city.length,
+  ghosts: scene.ghosts.length === snap.ghost.length,
+  // Exactly one dedication, and it is not one of the week's ships.
+  landmark: scene.landmark.glyph + ':' + (scene.blocks.some((b) => b.id === '冉') ? 'ship' : 'fixture'),
+  // Every shaft the snapshot's towers carry is resolved, so a renderer never
+  // has to go back to the payload to find out what a car is doing.
+  shafts: scene.towers.reduce((n, t) => n + t.shafts.length, 0)
+    === snap.towers.reduce((n, t) => n + t.runIds.length, 0),
+  levels: scene.towers.every((t) => t.shafts.every((s) => s.level > 0 && s.level <= 1)),
+  crew: scene.towers.every((t) => t.shafts.every((s) => /^#[0-9a-f]{6}$/.test(s.crew))),
+  street: plan.walkers + 'w' + plan.vehicles + 'v' + plan.gap + 's',
+  planned: scene.street.walkers === plan.walkers && scene.street.vehicles === plan.vehicles
+    && scene.street.cycle === (plan.vehicles ? plan.gap * plan.vehicles : 48),
+  // Semantic sizes only: a height is a percentage of the skyline's own band and
+  // a plot is a fraction of the street. No renderer's pixels in here.
+  semantic: scene.towers.every((t) => t.heightPct > 0 && t.heightPct <= 94)
+    && scene.blocks.every((b) => b.x >= 0 && b.x <= 1 && b.storeys >= 0),
+  // Same inputs, same city — byte for byte.
+  stable: JSON.stringify(scene) === JSON.stringify(again),
+  // And a different clock is a different city, because ages move.
+  ages: JSON.stringify(scene) !== JSON.stringify(S.buildScene(snap, AT + 600)),
+  idle: scene.idle === 'off'
+    && S.buildScene({ city: snap.city, week: snap.week }, AT).idle === 'rest',
+  // An empty payload is an empty plain rather than a throw.
+  empty: (() => {
+    const bare = S.buildScene({}, AT);
+    return bare.towers.length === 0 && bare.blocks.length === 0 && bare.quiet === true
+      && bare.idle === 'empty' && bare.landmark.glyph === '冉';
+  })(),
+}));
+JS
+SNAP="$ROOT/snapshot.json"
+printf '%s' "$API" > "$SNAP"
+SCENE="$(node "$SCENE_PROBE" "$SRC/wall/scene.js" "$SNAP" 2>&1)"
+scene_of() { printf '%s' "$SCENE" | jq -r ".$1" 2>/dev/null; }
+check "scene: one tower per tower the server is standing" "$(scene_of towers)" "true"
+check "scene: each tower carries its stable skyline rank"       "$(scene_of ranks)" "true"
+check "scene: one building per ship in the week's city"   "$(scene_of blocks)" "true"
+check "scene: and one silhouette per ship in last week's" "$(scene_of ghosts)" "true"
+check "scene: the dedication is in it, and is not a ship" "$(scene_of landmark)" "冉:fixture"
+check "scene: every run standing in a tower is resolved"  "$(scene_of shafts)" "true"
+check "scene: a car's floor is a fraction of the ladder"  "$(scene_of levels)" "true"
+check "scene: and it carries its dispatcher's tint"       "$(scene_of crew)" "true"
+check "scene: the street is the week's own plan" \
+  "$(scene_of street)" "$(printf '%s' "$API" | jq -r '.week.ships' \
+    | xargs -I{} node -e 'const p=require(process.argv[2]).nightlifeOf(+process.argv[3]);
+      process.stdout.write(p.walkers+"w"+p.vehicles+"v"+p.gap+"s")' x "$SRC/wall/scene.js" {})"
+check "scene: and it carries the cycle the cars share"    "$(scene_of planned)" "true"
+check "scene: every size in it is semantic, never a pixel" "$(scene_of semantic)" "true"
+check "scene: two calls with equal inputs are the same city" "$(scene_of stable)" "true"
+check "scene: a later clock is a later city"              "$(scene_of ages)" "true"
+check "scene: idle distinguishes live, resting, and empty cities" "$(scene_of idle)" "true"
+check "scene: an empty payload is an empty plain, not a throw" "$(scene_of empty)" "true"
+
+# --- the canvas world -----------------------------------------------------------------
+# The same city, on a GPU, behind ?world=canvas. What is checked here is what a
+# screenshot cannot check: that the page picks a world from the query string and
+# nothing else, that the engine is configured the way the owner fixed it, that
+# the DOM world's nodes are left unpopulated in that mode, and — the one a
+# keyframe grep could never prove about WebGL — that reduced motion genuinely
+# stops the world rather than slowing it down.
+echo "== wall: the city's second body =="
+CANVAS_SRC="$(cat "$SRC/wall/world-canvas.js")"
+grep_ok "$PAGE_SRC" "get('world') === 'canvas'" \
+  "canvas: the world is chosen by the query string, in the idiom ?cinema uses"
+grep_ok "$PAGE_SRC" 'const world = wantsCanvas ? canvasWorld() : domWorld' \
+  "canvas: and the DOM world is what anything else gets"
+grep_ok "$PAGE_SRC" "const CANVAS_SCRIPTS = ['vendor/phaser.min.js', 'world-canvas.js']" \
+  "canvas: the engine is fetched only for the world that needs it"
+grep_ok "$PAGE_SRC" "host.id = 'world'" "canvas: it mounts one box inside the stage"
+grep_ok "$CSS_SRC" '.world { position: fixed; inset: 0;' \
+  "canvas: which fills the stage the DOM world's layers used to"
+# The DOM world's nodes stay in index.html — the structural tests read it by
+# line — but nothing populates them and nothing draws them.
+grep_ok "$PAGE_SRC" "if (node) node.setAttribute('hidden', '')" \
+  "canvas: the DOM world's layers are hidden rather than deleted"
+# The engine config the owner fixed. Read as declarations, so a renamed option
+# fails here rather than on the TV.
+for option in "type: Phaser.AUTO" "mode: Phaser.Scale.NONE" \
+              "smoothPixelArt: true" "roundPixels: true" \
+              "powerPreference: 'low-power'" "fps: { limit: 30 }" \
+              "audio: { noAudio: true }" "banner: false"; do
+  grep_ok "$CANVAS_SRC" "$option" "canvas: the engine is configured with [$option]"
+done
+# This is a parity port of a city the DOM draws crisply in vh/rem at native
+# pixels, not a pixel-art sprite game — so there is no base grid to letterbox
+# into. The canvas covers the stage at whatever aspect the viewport has, and its
+# backing store is device pixels: a MacBook is 16:10 and Retina, and both of
+# those used to cost black bars and a soft city.
+for banned in 'Scale.FIT' 'Scale.ENVELOP' 'autoCenter'; do
+  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
+    "canvas: no [$banned] — the world fills the stage rather than fitting inside it"
+done
+grep_ok "$CANVAS_SRC" 'zoom: 1 / DPR' \
+  "canvas: the backing store is device pixels, shown at CSS size"
+grep_ok "$CANVAS_SRC" 'Math.min(window.devicePixelRatio || 1, 2)' \
+  "canvas: at the panel's own ratio, capped at 2 for fill-rate"
+# Every size in the world is derived from the live stage rather than from a
+# constant, and measure() is the only place any of them is written.
+grep_ok "$CANVAS_SRC" 'function measure(cssWidth, cssHeight, ratio)' \
+  "canvas: the grid is measured off the stage, not declared"
+# A resized wall re-measures and lays out again rather than stretching a frame
+# drawn for the old size — and the two ScaleManager calls that do it are
+# order-dependent: setZoom refreshes the CSS size off the backing store, so
+# calling it first leaves the canvas displayed at the size of the previous wall.
+check "canvas: a resize sets the backing store before refreshing the CSS size off it" \
+  "$(printf '%s\n' "$CANVAS_SRC" | grep -oE 'game\.scale\.(resize|setZoom)' \
+     | sed 's/game\.scale\.//' | tr '\n' ' ')" "resize setZoom "
+grep_ok "$CANVAS_SRC" 'city.scene.restart()' \
+  "canvas: and the city is rebuilt for the new stage rather than repositioned"
+grep_ok "$CANVAS_SRC" 'REM = Math.min(26, Math.max(12, cssWidth * 0.0105)) * DPR' \
+  "canvas: a rem is the stylesheet's own clamp, in device pixels"
+GRID_PROBE="$ROOT/grid-probe.js"
+cat > "$GRID_PROBE" <<'JS'
+const C = require(process.argv[2]);
+const shot = (w, h, dpr) => { C.measure(w, h, dpr); return C.grid(); };
+const wide = shot(1920, 1080, 1);
+const retina = shot(1440, 900, 2);
+const capped = shot(1440, 900, 4);
+console.log(JSON.stringify({
+  // The backing store is the stage in device pixels, at any aspect.
+  wide: wide.w + 'x' + wide.h,
+  retina: retina.w + 'x' + retina.h,
+  // Never past 2, however proud the display is of its pixels.
+  capped: capped.w + 'x' + capped.h,
+  // A rem is the same size ON SCREEN in both, which is what makes a name plate
+  // as legible on a laptop as on the TV — it is just drawn with more pixels.
+  remCss: (wide.rem / wide.dpr).toFixed(2) + ' ' + (retina.rem / retina.dpr).toFixed(2),
+  // 16:10 is not letterboxed: the ground line is 9vh off the bottom of the
+  // stage, not of some 16:9 box centred inside it.
+  ground: (retina.h - retina.groundY).toFixed(1) === (9 * retina.h / 100).toFixed(1),
+  // And the sky's own 1600x900 box is covered rather than fitted, so a 16:10
+  // wall crops the painting exactly as `xMidYMid slice` does in the DOM.
+  slice: retina.sky >= retina.w / 1600 && retina.sky >= retina.h / 900
+    && Math.min(retina.skyX, retina.skyY) <= 0,
+}));
+JS
+GRID="$(node "$GRID_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
+grid_of() { printf '%s' "$GRID" | jq -r ".$1" 2>/dev/null; }
+check "canvas: a 1920x1080 wall at dpr 1 is a 1920x1080 backing store" \
+  "$(grid_of wide)" "1920x1080"
+check "canvas: and a 1440x900 laptop at dpr 2 is 2880x1800" "$(grid_of retina)" "2880x1800"
+check "canvas: the ratio is capped at 2, never higher" "$(grid_of capped)" "2880x1800"
+check "canvas: a rem is the same size on screen on both" "$(grid_of remCss)" "20.16 15.12"
+check "canvas: 16:10 is not letterboxed — the ground is 9vh off the stage" \
+  "$(grid_of ground)" "true"
+check "canvas: and the painted sky is sliced to cover, as the DOM slices it" \
+  "$(grid_of slice)" "true"
+# smoothPixelArt sets antialias and pixelArt itself; declaring either would fight it.
+for banned in 'antialias:' 'pixelArt:'; do
+  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
+    "canvas: [$banned] is left to smoothPixelArt"
+done
+# No image files: this world draws, it does not load. The engine's own loader is
+# never touched, and there is nothing under wall/ for it to touch.
+for banned in 'this.load' 'new Image' 'addBase64' 'toDataURL'; do
+  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
+    "canvas: [$banned] — the city is drawn, and drawn from the scene model"
+done
+# The sky painting is authored once, in index.html. This world reads that node
+# rather than keeping a second copy of the same skyline.
+grep_ok "$CANVAS_SRC" "document.querySelector('.sky__' + plane.key + ' path')" \
+  "canvas: the parallax planes are the page's own path data, not a second copy"
+check "canvas: and the three of them stay separately positioned" \
+  "$(printf '%s\n' "$CANVAS_SRC" | grep -c "plane.setX(phase.planes\[i\])")" "1"
+grep_ok "$CANVAS_SRC" 'fontFamily: CJK' \
+  "canvas: the lettering declares the same CJK stack the signs do"
+
+# Reduced motion. A keyframe grep proves nothing about a GPU, so the claim is
+# made where it can be checked: the whole of this world's motion is one pure
+# function of the wall clock, and asking it for a still frame returns the SAME
+# frame at every second — which is what "nothing tweens, no timer advances
+# state" actually means once there is no stylesheet to inspect.
+grep_ok "$PAGE_SRC" 'factory.create({ parent: stage, still,' \
+  "motion: the canvas world is handed the page's own reduced-motion guard"
+check "motion: and there is exactly one matchMedia on this wall" \
+  "$(printf '%s\n' "$PAGE_SRC" | grep -c "matchMedia('(prefers-reduced-motion: reduce)')")" "1"
+grep_ok "$CANVAS_SRC" 'const frozen = still.matches;' \
+  "motion: which is what its frame loop asks before it advances anything"
+STILL_PROBE="$ROOT/still-probe.js"
+cat > "$STILL_PROBE" <<'JS'
+const C = require(process.argv[2]);
+const at = [0, 1, 7.5, 3600, 86399, 1755000000.25];
+const frozen = at.map((t) => JSON.stringify(C.phaseAt(t, { reducedMotion: true })));
+const moving = at.map((t) => JSON.stringify(C.phaseAt(t, {})));
+const rest = C.phaseAt(0, { reducedMotion: true });
+// The skyline is laid out against whatever the stage currently measures, so the
+// probe states the wall it is asking about rather than assuming a base grid.
+C.measure(1920, 1080, 1);
+const WIDE = C.grid().w;
+const roomy = C.towerLayout(Array.from({ length: 5 }, () => ({ widthRem: 5.6 })));
+const crowded = C.towerLayout(Array.from({ length: 20 }, () => ({ widthRem: 5.6 })));
+const bounded = (boxes) => boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE + 1e-6
+  && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w));
+console.log(JSON.stringify({
+  // Every second of the clock gives the same still frame.
+  frozen: new Set(frozen).size === 1,
+  // And the same world, asked without that flag, genuinely moves.
+  moving: new Set(moving).size === at.length,
+  // Every per-object beat derives from that one phase, so freezing it freezes
+  // the neon, the occupied windows, the facades and the population too.
+  beats: new Set(at.map((t) => {
+    const p = C.phaseAt(t, { reducedMotion: true });
+    return [C.tubeAt(p, 40, 23), C.tubeAt(p, 3, 16), C.paneAt(p, 1, 55),
+      C.facadeAt(p, 9.4), C.walkerAt(p, 2, false), C.walkerAt(p, 5, true),
+      JSON.stringify(C.vehicleAt(p, 1, { cycle: 96, gap: 32 }))].join('|');
+  })).size === 1,
+  // CSS removes both animations under reduced motion. A completion stays on
+  // its base frame however old it gets, while attribution is a static 0.85
+  // until the server-owned sign lifetime expires and then switches off.
+  completionStill: JSON.stringify(C.shaftAt(rest, 0, 40, false))
+    === JSON.stringify(C.shaftAt(rest, 39, 40, false))
+    && C.shaftAt(rest, 39, 40, true).scale === 1.3,
+  signStill: C.signAt(rest, 0, 40) === 0.85 && C.signAt(rest, 39, 40) === 0.85
+    && C.signAt(rest, 40, 40) === 0,
+  // With motion allowed, those same ages really do advance the two beats.
+  timedBeats: C.shaftAt(C.phaseAt(1, {}), 0, 40, false).root
+    !== C.shaftAt(C.phaseAt(1, {}), 40, 40, false).root
+    && C.signAt(C.phaseAt(1, {}), 0, 40) !== C.signAt(C.phaseAt(1, {}), 40, 40),
+  // A still city is a LIT city standing still, which is what wall.css's own
+  // reduced-motion block leaves the DOM world showing: the tubes are on, the
+  // occupied windows are up, the tram sits on its line, and only the two things
+  // that are nothing but motion — the aircraft and the street streaks — are out.
+  lit: C.tubeAt(rest, 40, 23) === 1 && C.paneAt(rest, 0, 12) === 0.85
+    && rest.tram.a > 0 && rest.ships.every((s) => s.a === 0)
+    && rest.street.every((s) => s.a === 0),
+  // And the camera is parked wide rather than held mid push-in.
+  parked: rest.cam.city === 1 && rest.cam.sky === 1
+    && rest.planes.every((p) => p === 0) && rest.ghost === 0,
+  // The sweep and the patch it paints share one alternate phase, but their
+  // ranges are the stylesheet's own distinct keyframes. Reduced motion parks
+  // each at its own resting transform.
+  alarmBeam: (() => {
+    const from = C.phaseAt(0, {});
+    const to = C.phaseAt(4.4, {});
+    return from.sweep === -34 && to.sweep === 38
+      && (from.ceiling.x / C.grid().vh).toFixed(2) === '-7.74'
+      && (to.ceiling.x / C.grid().vh).toFixed(2) === '9.00'
+      && (rest.ceiling.x / C.grid().vh).toFixed(2) === '-2.43'
+      && rest.ceiling.scale === 1;
+  })(),
+  // The hand-written flex row keeps both an ordinary fixture and a genuinely
+  // crowded skyline inside the stage without letting towers overlap.
+  layout: bounded(roomy) && bounded(crowded),
+  // space-evenly leaves a single tower centred in the skyline band.
+  centred: (() => {
+    const [box] = C.towerLayout([{ widthRem: 5.6 }]);
+    return Math.abs(box.x + box.w / 2 - WIDE / 2) < 1e-6;
+  })(),
+}));
+JS
+STILL="$(node "$STILL_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
+still_of() { printf '%s' "$STILL" | jq -r ".$1" 2>/dev/null; }
+check "motion: reduced motion is one frame, at every second of the clock" \
+  "$(still_of frozen)" "true"
+check "motion: and the same world without it genuinely moves" "$(still_of moving)" "true"
+check "motion: every beat in the world derives from that one phase" \
+  "$(still_of beats)" "true"
+check "motion: reduced motion keeps completed shafts on their static frame" \
+  "$(still_of completionStill)" "true"
+check "motion: and holds attribution steady until its lifetime expires" \
+  "$(still_of signStill)" "true"
+check "motion: those completion and cooling beats advance when motion is allowed" \
+  "$(still_of timedBeats)" "true"
+check "motion: a still canvas city is a lit city, not a dark one" "$(still_of lit)" "true"
+check "motion: with the camera parked wide" "$(still_of parked)" "true"
+check "alarm: the canvas sweep and ceiling patch use the DOM keyframe ranges" \
+  "$(still_of alarmBeam)" "true"
+check "canvas: a busy skyline shrinks inside the world without overlapping" \
+  "$(still_of layout)" "true"
+check "canvas: space-evenly keeps a lone tower centred" "$(still_of centred)" "true"
 
 # --- the director films the city --------------------------------------------------
 # The wall can film itself: a slow camera that holds the skyline, pushes in on
@@ -1628,8 +2011,12 @@ grep_ok "$CSS_SRC" '.stage { transform: none !important; }' \
 # The whole fabric of this city is seeded off a run id or the wall clock. The
 # director is presentation and gets the wall-clock bucket, never a raw draw —
 # so after this pass the page still contains no unseeded randomness at all.
-grep_not "$(grep -v '^ *//' "$SRC/wall/wall.js")" 'Math.random' \
-  "cinema: nothing on this wall is drawn from unseeded randomness"
+# Every authored file the page runs, both worlds included; never wall/vendor/,
+# whose contents are pinned by hash rather than read line by line.
+for authored in wall.js scene.js world-canvas.js; do
+  grep_not "$(grep -v '^ *//' "$SRC/wall/$authored")" 'Math.random' \
+    "cinema: nothing in $authored is drawn from unseeded randomness"
+done
 grep_ok "$DIRECTOR_SRC" 'seededRandom(bucket)' \
   "cinema: shot variety reuses the weather's wall-clock bucket"
 

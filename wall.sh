@@ -3,8 +3,10 @@
 # shows what every agent is doing right now, live, read-only: it visualises the
 # run dirs the pipeline already writes and never dispatches anything.
 #
-# Point a fullscreen browser on the TV at this machine's tailnet address. Zero
-# dependencies beyond node (>= 20) and zero build step.
+# Point a fullscreen browser on the TV at this machine's tailnet address. One
+# node (>= 20) server, one static page, and everything the page loads ships in
+# this repo — no build step, no npm at runtime, no CDN, and no request that
+# leaves the machine.
 #
 # The wall is a city at night. Each project is a tower — named by reversing the
 # worktree path run-task.sh records — and each run is a lit car climbing it, its
@@ -41,11 +43,19 @@
 #   WALL_CREW       default roster       (same list as --crew)
 #   WALL_POLL_MS    disk re-read cadence (default: 1000)
 #
+# Query string:
+#   ?world=canvas   draw the city with the vendored Phaser 4 in wall/vendor/
+#                   rather than in CSS. Same city, same street; the DOM world is
+#                   the default and never requests the engine.
+#   ?cinema=1       start the ambient camera at once (?cinema=0 keeps it off).
+#                   The `c` key toggles it and any other input dismisses it;
+#                   prefers-reduced-motion outranks all three.
+#
 # There is no auth: the wall is meant to sit behind your tailnet, and it exposes
 # only what is already on this machine's disk. Do not port-forward it publicly.
 set -u
 
-usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"

@@ -843,6 +843,12 @@ const STATIC = {
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/wall.css': ['wall.css', 'text/css; charset=utf-8'],
   '/wall.js': ['wall.js', 'text/javascript; charset=utf-8'],
+  '/scene.js': ['scene.js', 'text/javascript; charset=utf-8'],
+  // The canvas world, and the engine it draws with. Named rows rather than a
+  // directory route: /vendor/ is one pinned file, and a route that walked a
+  // directory is the path traversal this server has never had.
+  '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
+  '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
 };
 
 const clients = new Set();

@@ -1034,15 +1034,31 @@ wall.sh --city /var/wall/city.jsonl # keep the district's memory somewhere else
 Then point a browser on the TV at `http://<this-machine>:4711/` and put it in
 fullscreen (Chrome: `--kiosk --app=http://<host>:4711/`). With nothing running
 you get the empty city in the rain and no text at all — the wall reports work,
-it does not report people. It is a single dependency-free `node` (≥ 20) server
-plus one static page, drawn entirely in CSS, inline SVG and one small canvas
-(the rain) — no build step, no npm, no image assets, and no request that leaves
-the machine, so it is happy on a tailnet-only screen. Everything that moves
-moves by `transform` or `opacity` on one of two easing curves, and
+it does not report people. It is one dependency-free `node` (≥ 20) server and
+one static page, and **everything the page loads ships in this repo**: the
+DOM/CSS world (the default, drawn in CSS, inline SVG and one small canvas for
+the rain) and, behind `?world=canvas`, a WebGL world drawn with a vendored,
+pinned Phaser 4 (`wall/vendor/`, MIT, licence and sha256 beside it, listed in
+`wall/THIRD_PARTY.md`). No build step, no npm at runtime, no CDN, and no request
+that leaves the machine, so it is happy on a tailnet-only screen. Everything
+that moves moves by `transform` or `opacity` on one of two easing curves, and
 `prefers-reduced-motion` stops the rain, the traffic and the searchlight's
-travel and leaves the same city standing still. There is no auth: keep it off
-the public internet. `wall/fixtures/seed.js` regenerates the staged fixture
-runs.
+travel and leaves the same city standing still — in either world. There is no
+auth: keep it off the public internet. `wall/fixtures/seed.js` regenerates the
+staged fixture runs.
+
+**The query string.** Two switches, both read once at load:
+
+```
+?world=canvas   draw the city with the vendored Phaser 4 instead of with CSS.
+                Same scene, same skyline, same street — the DOM world's layers
+                are left in the page and hidden, and the 1.4 MB engine is only
+                requested by a wall that asked for it. The DOM world is the
+                default and nothing about it changes.
+?cinema=1       start the ambient camera immediately (`?cinema=0` never lets it
+                run); the `c` key toggles it either way, and any other input
+                dismisses it. Both are outranked by prefers-reduced-motion.
+```
 
 **The weather is not a loop.** Rain drifts over tens of minutes between
 near-dry spells and downpours, the street haze thickens and clears several

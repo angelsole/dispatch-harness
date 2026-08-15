@@ -1,0 +1,6 @@
+# The vendored engine is a blob, not a diff. `-diff` keeps 1.4 MB of minified
+# JavaScript out of `git diff` and out of a reviewer's terminal;
+# `linguist-vendored` keeps it out of GitHub's language stats and collapses it
+# in a pull request. What actually pins the file is its sha256 in
+# wall/THIRD_PARTY.md — read that, not the bytes.
+wall/vendor/** -diff linguist-vendored

@@ -1,6 +1,11 @@
 'use strict';
-// Ghost Shift's renderer. Subscribes to /api/stream (SSE), falls back to polling
-// /api/runs, and builds the city: one tower per project, one lit car per run.
+// Ghost Shift's page. Subscribes to /api/stream (SSE), falls back to polling
+// /api/runs, turns each snapshot into a scene model (wall/scene.js) and hands
+// that to a WORLD: the DOM/CSS city this file has always built, or — behind
+// ?world=canvas — the WebGL one in wall/world-canvas.js. The page keeps the
+// clock, the HUD, the brief plate, the comms ticker, the rain and the director;
+// what a tower looks like belongs to whichever world is drawing.
+//
 // Towers and cars are created once and mutated in place — a full re-render
 // would restart every CRT animation, and would teleport a car that is supposed
 // to be seen climbing. No network call ever leaves this origin.
@@ -14,37 +19,25 @@
 // facts, not state — they land once, play one settle, and are furniture.
 
 (function () {
+  // The city's own truth: pure, renderer-agnostic, loaded before this file and
+  // shared byte for byte with the canvas world. Nothing below re-derives a
+  // shop, a typology, a storey count or a crew tint for itself.
+  const Scene = window.WallScene;
+  const {
+    crewTint, seededRandom, wetness, weatherSeed, dawn,
+    RAN, GHOST, RAIN_LAG, OCCUPIED,
+  } = Scene;
+
   const POLL_MS = 2000;    // only used when SSE is unavailable
   const BRIEF_MS = 7000;   // how long one run holds the brief plate
   const SWAP_MS = 200;     // the gap the plate is empty for, mid hand-off
-  const MAX_TOWER_WIDTH_RUNS = 8; // later shafts still render without widening the tower
   const TILT = 0.2;        // how far off vertical the rain falls
   const CEREMONY_S = 6;    // the shipping beat; must match --ceremony in wall.css
-  const RAIN_LAG = 420;    // the haze trails the rain by seven minutes
   const DRY = 0.06;        // a near-dry spell is drips, never a dead canvas
-  const DAWN_H = 6.5;      // local hour the sky is coldest at
-  const DAWN_RAMP = 2.5;   // hours either side of it that the cooling spans
-  const WEATHER_SEED_MS = 15 * 60 * 1000; // nearby screens share a rain field
-  // The ghost lives inside the sky's 1600x900 viewBox so the parallax skyline
-  // can genuinely paint in front of it. These mirror the district's 2.4rem
-  // width and vh height at that reference size.
-  const GHOST_VIEW_W = 1600;
-  const GHOST_GROUND_Y = 819;
-  const GHOST_W = 40;
-  const GHOST_BASE_H = 31;
-  const GHOST_STOREY_H = 17;
-  // The street's ceiling. A wall that runs for a month must never let an
-  // exceptional week put ten thousand walkers on a compositor.
-  const MAX_WALKERS = 6;
-  const MAX_VEHICLES = 3;
-  const PER_WALKER = 4;    // one more silhouette every four ships
-  const PER_VEHICLE = 9;
-  const GAP_QUIET = 48;    // vehicle-cycle length on the week's first ship
-  const GAP_BUSY = 11;
-  const BUSY_AT = 25;      // where the vehicle tempo tops out
-  const MALL_AT = 12;
-  const TRAM_AT = 20;
-  const OCCUPIED = 3;     // windows per building keeping their own hours
+  // The canvas world and the engine behind it, in load order. Only requested
+  // when ?world=canvas asks for them: the DOM wall must never pay 1.4 MB of
+  // WebGL for a city it draws in CSS.
+  const CANVAS_SCRIPTS = ['vendor/phaser.min.js', 'world-canvas.js'];
   // The director. A room that has not touched anything for this long gets the
   // film; the shot bucket is the wall-clock idiom the weather already uses, so
   // two screens in the same room are cutting roughly together.
@@ -59,17 +52,6 @@
 
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-  // Two colour systems, deliberately kept apart: the ACTOR neon (which model
-  // owns the current stage) lights the car and the brief plate, and the CREW
-  // tint (who dispatched the run) only ever lights the lamp under the car and
-  // the name on the plate and the ticker. Desaturated on purpose — a crew tint
-  // must never read as live state. Five well-separated hues rather than many
-  // near-neighbours: two crew members sharing a tint is survivable, two crew
-  // members with tints you cannot tell apart from the sofa is not.
-  const CREW_TINTS = ['#e8cfa6', '#a9c9de', '#e5b3c2', '#b3d4bd', '#c6bce0'];
-  const SYNTHETIC_TINT = '#f2eee2';   // milk-white. Synthetics do not bleed red.
-  const UNOWNED_TINT = '#7c8b96';
-
   const GLYPH = {
     opus: 'g-opus', codex: 'g-codex', gate: 'g-gate', pr: 'g-pr', demo: 'g-demo',
     setup: 'g-setup', sync: 'g-sync', skipped: 'g-skipped', alarm: 'g-alarm',
@@ -81,12 +63,6 @@
   const STATE_GLYPH = { alarm: 'g-alarm', ready: 'g-done', failed: 'g-failed' };
 
   const stage = document.getElementById('stage');
-  const city = document.getElementById('city');
-  const district = document.getElementById('district');
-  const ghostLayer = document.getElementById('ghost');
-  const life = document.getElementById('life');
-  const crowd = document.getElementById('crowd');
-  const road = document.getElementById('road');
   const rest = document.getElementById('rest');
   const counts = document.getElementById('counts');
   const clock = document.getElementById('clock');
@@ -110,18 +86,10 @@
   };
 
   let skew = 0;        // server epoch minus ours, so timers agree with the harness
+  let latest = null;            // the last snapshot the server pushed, verbatim
   let runs = [];
-  let towers = [];
-  let floors = 6;
-  let blocks = [];              // this week's buildings, newest included
-  let landmark = null;          // the one fixture in the district; not a run
-  let ghosts = [];              // last week's, as bare silhouettes
-  let week = { ships: 0, life: {} };
-  let signSeconds = 0;           // supplied with the first server snapshot
-  let ghostKey = '';            // the silhouette layer is rebuilt only when it changes
+  let signSeconds = 0;          // supplied with the first server snapshot
   let skyline = new Set();      // the run ids the server is standing in the city
-  const towerEls = new Map();   // project -> tower elements (incl. its shafts)
-  const blockEls = new Map();   // run id -> building element, built once and left alone
   let plateId = '';             // the run currently holding the brief plate
   let plateSince = 0;
   let swapTimer = 0;            // set while the plate is empty between two runs
@@ -129,17 +97,6 @@
   const commsSeen = new Map();  // run id -> the line already drawn for it
 
   const now = () => Math.floor(Date.now() / 1000) + skew;
-
-  // A crew member keeps the same tint whoever else is on the wall, so the room
-  // learns "the pale blue lamp is Reinier" — an index into the current runs
-  // would repaint everyone every time somebody's queue emptied.
-  function crewTint(run) {
-    if (run.ownerKind === 'synthetic') return SYNTHETIC_TINT;
-    if (run.ownerKind === 'unowned') return UNOWNED_TINT;
-    let h = 0;
-    for (let i = 0; i < run.owner.length; i++) h = (h * 31 + run.owner.charCodeAt(i)) >>> 0;
-    return CREW_TINTS[h % CREW_TINTS.length];
-  }
 
   function dur(secs) {
     if (!isFinite(secs) || secs < 0) return '--';
@@ -187,6 +144,25 @@
 
   const isLive = (run) => run.state === 'active' || run.state === 'alarm';
 
+  // --- the DOM world ----------------------------------------------------------
+  // The city as elements: everything from here down to the seam is ONE renderer
+  // — the CSS/SVG body this wall has always had — and it is the default. It is
+  // handed a scene and asked to paint it; it decides nothing about the city and
+  // reads nothing off the snapshot. The other body (world-canvas.js) implements
+  // the same three methods against a GPU.
+
+  const city = document.getElementById('city');
+  const district = document.getElementById('district');
+  const ghostLayer = document.getElementById('ghost');
+  const life = document.getElementById('life');
+  const crowd = document.getElementById('crowd');
+  const road = document.getElementById('road');
+  let landmark = null;          // the one fixture in the district; not a run
+  let ghostKey = '';            // the silhouette layer is rebuilt only when it changes
+  let blocks = [];              // the scene's buildings, kept so the second hand can age them
+  const towerEls = new Map();   // project -> tower elements (incl. its shafts)
+  const blockEls = new Map();   // run id -> building element, built once and left alone
+
   // --- one run: a car in a shaft ---------------------------------------------
 
   function makeShaft() {
@@ -207,27 +183,22 @@
     S.root.dataset.actor = run.actorKey;
     S.root.title = run.id + ' — ' + run.stage;   // for a desk browser; the TV never hovers
     // Half a floor up from the slab it stopped on, so a car reads as standing
-    // on that floor rather than balancing on the line between two. The same
-    // number twice: a percentage for the lift, a factor for the lit column.
-    const level = (run.floor + 0.55) / floors;
-    S.root.style.setProperty('--pos', (level * 100).toFixed(2) + '%');
-    S.root.style.setProperty('--lvl', level.toFixed(4));
-    S.root.style.setProperty('--crew', crewTint(run));
+    // on that floor rather than balancing on the line between two. The scene
+    // works that out; the same number lands twice here, as a percentage for
+    // the lift and as a factor for the lit column.
+    S.root.style.setProperty('--pos', (run.level * 100).toFixed(2) + '%');
+    S.root.style.setProperty('--lvl', run.level.toFixed(4));
+    S.root.style.setProperty('--crew', run.crew);
     // --age fast-forwards the completion animation, so a browser opening
     // halfway through a flare joins the city where it already is. Written once
     // per state change: rewriting it every frame would restart the animation.
     if (S.state !== run.state) {
       S.state = run.state;
-      S.root.style.setProperty('--age', String(Math.max(0, now() - (run.since || now()))));
+      S.root.style.setProperty('--age', String(run.age));
     }
   }
 
   // --- one project: a tower ---------------------------------------------------
-
-  // Neon stock for the vertical project signs: cold noir hues only — red stays
-  // reserved for alarms. Which sign a project gets rides the same hash slices
-  // that pick its silhouette, so the colour is stable run to run.
-  const SIGN_TINTS = ['#7fd4ec', '#ffc27d', '#9fe8b8', '#e8e2cf', '#8fb0ff'];
 
   function makeTower() {
     const root = el('section', 'tower');
@@ -257,8 +228,7 @@
     return { root, shafts, base, sign, ready: '', shaftEls: new Map() };
   }
 
-  function paintTower(T, tower, byId) {
-    const n = tower.runIds.length;
+  function paintTower(T, tower, floors) {
     T.root.dataset.project = tower.project;
     T.root.dataset.shape = String(tower.shape);
     T.root.dataset.crown = String(tower.crown);
@@ -269,7 +239,7 @@
     // moment — hence the one shared --age, written once when the tower gains a
     // shipped run so a late-joining browser lands mid-beat instead of replaying
     // it, and never rewritten, which is what keeps it to once per run.
-    const shipped = tower.runIds.find((id) => (byId.get(id) || {}).state === 'ready') || '';
+    const shipped = tower.shipped;
     if (shipped !== T.ready) {
       // Dropping the selector before changing --age gives each shipped run its
       // own animation timeline. Without the reflow, a second run shipping from
@@ -277,30 +247,28 @@
       // run's completed animation instead of receiving a ceremony.
       T.root.dataset.ready = '0';
       T.ready = shipped;
-      const run = byId.get(shipped);
-      if (run) T.root.style.setProperty('--age', String(Math.max(0, now() - (run.since || now()))));
+      if (shipped) T.root.style.setProperty('--age', String(tower.shippedAge));
       void T.root.offsetWidth;
     }
     T.root.dataset.ready = shipped ? '1' : '0';
-    // A tower grows gently with the work standing in it — enough that a busy
-    // repo reads as the tall one, not enough to turn the skyline into a chart.
-    T.root.style.height = Math.min(94, 48 + n * 8) + '%';
-    T.root.style.width = (3.4 + Math.min(n, MAX_TOWER_WIDTH_RUNS) * 2.2).toFixed(1) + 'rem';
+    // How tall and how wide are the scene's, in its own semantic units: a
+    // percentage of the skyline band and a count of run-widths.
+    T.root.style.height = tower.heightPct + '%';
+    T.root.style.width = tower.widthRem.toFixed(1) + 'rem';
     T.root.style.setProperty('--floors', String(floors));
     T.base.dataset.label = tower.label;
     T.sign.textContent = tower.label;
-    T.root.style.setProperty('--sign', SIGN_TINTS[(tower.shape * 7 + tower.crown) % SIGN_TINTS.length]);
-    T.root.style.setProperty('--drift', ((tower.shape * 3.1 + tower.crown * 5.7) % 17).toFixed(1) + 's');
+    T.root.style.setProperty('--sign', tower.sign);
+    T.root.style.setProperty('--drift', tower.drift.toFixed(1) + 's');
 
+    const standing = new Set(tower.shafts.map((s) => s.id));
     for (const [id, S] of T.shaftEls) {
-      if (!tower.runIds.includes(id)) { S.root.remove(); T.shaftEls.delete(id); }
+      if (!standing.has(id)) { S.root.remove(); T.shaftEls.delete(id); }
     }
     let cursor = null;
-    for (const id of tower.runIds) {
-      const run = byId.get(id);
-      if (!run) continue;
-      let S = T.shaftEls.get(id);
-      if (!S) { S = makeShaft(); T.shaftEls.set(id, S); }
+    for (const run of tower.shafts) {
+      let S = T.shaftEls.get(run.id);
+      if (!S) { S = makeShaft(); T.shaftEls.set(run.id, S); }
       paintShaft(S, run);
       cursor = place(T.shafts, S.root, cursor);
     }
@@ -353,23 +321,23 @@
     B.root.dataset.depth = String(b.depth);
     B.root.style.setProperty('--x', (b.x * 100).toFixed(2) + '%');
     B.root.style.setProperty('--storeys', String(b.storeys));
-    B.root.style.setProperty('--crew', crewTint(b));
+    B.root.style.setProperty('--crew', b.crew);
     // What kind of building this is, on top of what family it belongs to. The
     // same write-once pass and the same rule as the shop under it: a typology is
     // a fact about the run id, so the district is the same city after a reload.
-    const shape = formOf(b.id);
+    const shape = b.shape;
     B.root.dataset.form = shape.form;
     B.root.style.setProperty('--grade', String(shape.grade));
     // Same idiom as the completion moment: a browser opening this afternoon
     // fast-forwards a building that landed this morning to where it already is,
     // rather than replaying every settle in the week at once.
-    const age = paintStaticSign(B, b);
-    B.root.style.setProperty('--age', String(age));
+    paintStaticSign(B, b);
+    B.root.style.setProperty('--age', String(b.age));
     B.root.title = b.id + (b.project ? ' — ' + b.project : '');
     // And its nightlife, written in the same breath and for the same reason:
     // which shop is under this building and which of its windows are still up is
     // a fact about the run id, so it survives a reload rather than being redealt.
-    const night = storefrontOf(b.id);
+    const night = b.shop;
     B.root.dataset.shop = night.shop;
     B.root.dataset.neon = night.neon ? '1' : '0';
     B.root.style.setProperty('--bay', String(night.bay));
@@ -390,20 +358,10 @@
   }
 
   // --- the landmark -------------------------------------------------------------
-  // One building in this district is not a ship. Ran pays for the subscription
-  // every run on this wall is spent from, so the city carries the name in the
-  // idiom the street already speaks: a tall back-band tower with a vertical tube
-  // down its shoulder reading 冉.
-  //
-  // It is a fixture, not a fact about the week: never in wall-city.jsonl, never
-  // in an /api/runs payload, never counted by the HUD. The page stands it up
-  // once — on an empty Monday as much as on a full Friday — and then leaves it
-  // alone, exactly like every building around it.
-  const RAN = {
-    glyph: '冉',
-    dedication: '冉 — For Ran, who keeps the lights on',
-    x: 0.19,   // off the centre, where the towers cluster and the quiet line sits
-  };
+  // The dedication the scene carries, as elements. It is a fixture rather than a
+  // fact about the week — never in wall-city.jsonl, never in an /api/runs
+  // payload, never counted by the HUD — so this world stands it up once, on an
+  // empty Monday as much as on a full Friday, and then leaves it alone.
 
   function makeLandmark() {
     const root = el('div', 'block block--landmark');
@@ -421,7 +379,7 @@
     return root;
   }
 
-  function renderDistrict() {
+  function renderDistrict(blocks) {
     // Built before the first block and never rebuilt: the dedication is what the
     // week arrives into. Placement leaves it alone too — place() inserts every
     // block ahead of it, so it settles as the last child and never moves again.
@@ -443,7 +401,7 @@
   // Last week, flattened: a height and a plot, drawn once per change of shape.
   // No windows, no signs, no types — if you can tell what shipped last week from
   // this layer, it is doing too much.
-  function renderGhost() {
+  function renderGhost(ghosts) {
     const key = ghosts.map((g) => g.x + ':' + g.storeys).join(',');
     if (key === ghostKey) return;
     ghostKey = key;
@@ -453,139 +411,19 @@
     ghostLayer.toggleAttribute('hidden', ghosts.length === 0);
     for (const g of ghosts) {
       const shape = svgEl('rect', 'ghost__block');
-      const height = GHOST_BASE_H + g.storeys * GHOST_STOREY_H;
-      shape.setAttribute('x', (g.x * GHOST_VIEW_W - GHOST_W / 2).toFixed(2));
-      shape.setAttribute('y', String(GHOST_GROUND_Y - height));
-      shape.setAttribute('width', String(GHOST_W));
-      shape.setAttribute('height', String(height));
+      shape.setAttribute('x', (g.x * GHOST.viewW - GHOST.w / 2).toFixed(2));
+      shape.setAttribute('y', String(GHOST.groundY - g.height));
+      shape.setAttribute('width', String(GHOST.w));
+      shape.setAttribute('height', String(g.height));
       ghostLayer.append(shape);
     }
   }
 
-  // --- nightlife ----------------------------------------------------------------
-  // What is under a building at one in the morning. Every one of these is a pure
-  // function of the run id, planned the way the server plans a plot: a polynomial
-  // over the id put through murmur3's finaliser, so OLYX-1631 and OLYX-1632 do
-  // not end up with the same shop, and the noodle bar is on the same corner after
-  // a reload, on the second TV and on a colleague's laptop.
-  //
-  // The whole vocabulary of the street is four signs. More would be a theme park;
-  // fewer would be a pattern the room notices.
-  const SHOP_KINDS = ['noodle', 'diner', 'arcade', 'repair'];
-  // And what each of those signs actually says, one character each: 麵 noodles,
-  // 食 a place that feeds you, 樂 an arcade, 修 a repair bench. Four glyphs, each
-  // the shop it hangs over — a sign that means nothing is texture, and this city
-  // does not do texture. Nothing outside this map is ever lettered.
-  const SHOP_GLYPH = { noodle: '麵', diner: '食', arcade: '樂', repair: '修' };
-  const BAYS = 5;            // shopfronts along a building's base
-  const FLICKER_SPREAD = 89; // seconds of stagger, so no two neons ever stutter together
-
-  // This is deliberately page-owned. `week.life` is an established API shape;
-  // nightlife is presentation, and the existing ship count is all the page
-  // needs to plan it without changing the server contract.
-  function nightlifeOf(ships) {
-    const n = Math.max(0, Math.floor(Number(ships) || 0));
-    if (n === 0) return { walkers: 0, vehicles: 0, gap: 0, mall: false, tram: false };
-    const busy = Math.min(1, (n - 1) / (BUSY_AT - 1));
-    return {
-      walkers: Math.min(MAX_WALKERS, 1 + Math.floor(n / PER_WALKER)),
-      vehicles: Math.min(MAX_VEHICLES, 1 + Math.floor(n / PER_VEHICLE)),
-      gap: Math.round(GAP_QUIET - (GAP_QUIET - GAP_BUSY) * busy),
-      mall: n >= MALL_AT,
-      tram: n >= TRAM_AT,
-    };
-  }
-
-  function seedOf(text) {
-    let h = 0;
-    for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) >>> 0;
-    let v = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
-    v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35) >>> 0;
-    return (v ^ (v >>> 16)) >>> 0;
-  }
-
-  // Three draws, because a facade's hours have nothing to do with what is selling
-  // downstairs, nor with how the sign over it is hung, and one 32-bit word cannot
-  // carry them all without the slices sharing bits — which is how a district ends
-  // up with every arcade lit on floor three.
-  function storefrontOf(id) {
-    const street = seedOf(id);
-    const hours = seedOf(id + '·hours');
-    const signage = seedOf(id + '·signage');
-    const pick = (seed, shift, mod) => (seed >>> shift) % mod;
-    const windows = [];
-    for (let i = 0; i < OCCUPIED; i++) {
-      windows.push({
-        col: pick(hours, i * 9, 7),
-        row: pick(hours, i * 9 + 3, 5),
-        phase: pick(hours, i * 9 + 6, 8),
-      });
-    }
-    const shop = SHOP_KINDS[pick(street, 0, SHOP_KINDS.length)];
-    return {
-      shop,
-      // What the sign says is the shop, never a draw: the glyph is a translation
-      // of the row underneath it, not a second opinion about what is down there.
-      glyph: SHOP_GLYPH[shop],
-      // One building in three carries the extra neon tube. All of them would be
-      // Piccadilly; the small glyph identifying each shop is separate.
-      neon: pick(street, 2, 3) === 0,
-      bay: pick(street, 4, BAYS),
-      flicker: pick(street, 7, FLICKER_SPREAD),
-      // Which shoulder of the frontage the sign is bracketed to, and when its
-      // own tube stumbles: a street where every sign hangs the same way and
-      // blinks on the same beat is a wallpaper sample.
-      side: pick(signage, 0, 2),
-      hang: pick(signage, 3, FLICKER_SPREAD),
-      windows,
-    };
-  }
-
-  // --- building typologies ------------------------------------------------------
-  // How much shipped is the storey count, and it always was. What KIND of
-  // building that is, is this: a district where the diff only ever moves one
-  // number reads as a picket fence of identical slabs, however carefully the
-  // storeys are scaled. So every block also draws a typology — and the draw is
-  // weighted, because a real city is mostly low and wide with a few towers
-  // standing in it, not a chart sorted by height.
-  //
-  // Six types and no seventh, on their own domain-separated seed, exactly like
-  // the shop underneath: same id, same building, on both screens and tomorrow.
-  // The shape is the page's business — the server has never heard of it.
-  //
-  // The draw is spelled as shares rather than as probabilities, because what is
-  // in this list IS the skyline's distribution and it should be readable as one:
-  //   shophouse  low and wide, two to four floors over a shopfront row
-  //   warehouse  short, wide, sawtooth roof
-  //   tank       mid-rise carrying a water tower
-  //   slab       the district's existing look, family roofline and all
-  //   setback    a tower that steps in as it climbs
-  //   mast       thin, tall, one antenna
-  const FORM_SHARES = [
-    'shophouse', 'shophouse', 'shophouse', 'shophouse',
-    'warehouse', 'warehouse',
-    'tank', 'tank',
-    'slab', 'slab',
-    'setback',
-    'mast',
-  ];
-  const FORM_GRADES = 4;   // footprint nudges inside one type
-
-  function formOf(id) {
-    const draw = seedOf(id + '·form');
-    return {
-      form: FORM_SHARES[draw % FORM_SHARES.length],
-      // A second slice off the same word, taken high so it cannot shadow the
-      // type itself: two shophouses side by side are not the same shophouse.
-      grade: (draw >>> 12) % FORM_GRADES,
-    };
-  }
-
   // --- the street ---------------------------------------------------------------
-  // The population, planned from the week's ship count. Walkers and cars are
-  // created and removed rather than hidden, so a plain with nothing on it costs
-  // the page nothing, and every lane and phase comes from the slot index alone —
-  // two screens standing side by side have the same street.
+  // The population the scene planned, as elements. Walkers and cars are created
+  // and removed rather than hidden, so a plain with nothing on it costs the page
+  // nothing, and every phase comes from the slot index alone — two screens
+  // standing side by side have the same street.
 
   function populate(parent, cls, want, dress) {
     while (parent.childElementCount > want) parent.lastElementChild.remove();
@@ -598,8 +436,7 @@
     }
   }
 
-  function renderLife() {
-    const plan = nightlifeOf(week.ships);
+  function renderLife(plan) {
     populate(crowd, 'life__walker', plan.walkers, (node, slot) => {
       // Two in three are people; the rest are the small service robots that do
       // the other half of a night shift. They cross the other way.
@@ -610,11 +447,7 @@
     populate(road, 'life__car', plan.vehicles, (node, slot) => {
       node.dataset.way = slot % 2 ? 'west' : 'east';
     });
-    // Each car shares a cycle long enough to keep consecutive pass starts one
-    // planned gap apart. Merely giving every car a `gap`-long loop would turn
-    // three cars at the cap into a pass every few seconds.
-    const vehicleCycle = plan.vehicles ? plan.gap * plan.vehicles : GAP_QUIET;
-    life.style.setProperty('--vehicle-cycle', vehicleCycle + 's');
+    life.style.setProperty('--vehicle-cycle', plan.cycle + 's');
     [...road.children].forEach((node, slot) => {
       node.style.setProperty('--vehicle-delay', (-slot * plan.gap) + 's');
     });
@@ -624,6 +457,66 @@
     // more. One building standing is all it takes for the ground floor to be lit.
     life.hidden = blocks.length === 0;
   }
+
+  // --- the seam ----------------------------------------------------------------
+  // What a world is, and the whole of it. Everything above is one implementation
+  // of these three methods; world-canvas.js is the other.
+  //
+  //   render(scene)  the city, from the scene model
+  //   spot(runId)    which run the brief plate is talking about ('' for none)
+  //   tick(at)       the second hand: whatever ages on the clock alone
+
+  const domWorld = {
+    render(scene) {
+      blocks = scene.blocks;
+      city.dataset.empty = scene.quiet ? '1' : '0';
+      renderGhost(scene.ghosts);
+      renderDistrict(scene.blocks);
+      renderLife(scene.street);
+      for (const [project, T] of towerEls) {
+        if (!scene.towers.some((t) => t.project === project)) {
+          T.root.remove();
+          towerEls.delete(project);
+        }
+      }
+      let cursor = null;
+      for (const tower of scene.towers) {
+        let T = towerEls.get(tower.project);
+        if (!T) { T = makeTower(); towerEls.set(tower.project, T); }
+        paintTower(T, tower, scene.floors);
+        cursor = place(city, T.root, cursor);
+      }
+    },
+
+    // The plate and the skyline tell the same story twice, so they are lit
+    // together: the featured run's car gets the searchbeam and its building gets
+    // named in light. One glance has to connect the two.
+    spot(runId) {
+      let lit = false;
+      for (const T of towerEls.values()) {
+        let hit = false;
+        for (const [id, S] of T.shaftEls) {
+          const on = id === runId;
+          S.root.dataset.spot = on ? '1' : '0';
+          hit = hit || on;
+        }
+        T.root.dataset.spot = hit ? '1' : '0';
+        lit = lit || hit;
+      }
+      // With a beam on one building the rest of the city steps back, which is
+      // what turns "brighter" into "that one".
+      city.dataset.spot = lit ? '1' : '0';
+    },
+
+    // Reduced motion disables the cooling animation. Keep its static state
+    // honest by dropping the tint when the same server-owned lifetime expires.
+    tick() {
+      for (const b of blocks) {
+        const B = blockEls.get(b.id);
+        if (B) paintStaticSign(B, b);
+      }
+    },
+  };
 
   // --- the brief plate --------------------------------------------------------
   // Towers cannot carry type you can read from meters away, so one run at a
@@ -723,25 +616,10 @@
     }
   }
 
-  // The plate and the skyline tell the same story twice, so they are lit
-  // together: the featured run's car gets the searchbeam and its building gets
-  // named in light. One glance has to connect the two.
-  function applySpot() {
-    let lit = false;
-    for (const T of towerEls.values()) {
-      let hit = false;
-      for (const [id, S] of T.shaftEls) {
-        const on = id === plateId;
-        S.root.dataset.spot = on ? '1' : '0';
-        hit = hit || on;
-      }
-      T.root.dataset.spot = hit ? '1' : '0';
-      lit = lit || hit;
-    }
-    // With a beam on one building the rest of the city steps back, which is
-    // what turns "brighter" into "that one".
-    city.dataset.spot = lit ? '1' : '0';
-  }
+  // Whichever body is drawing gets told which run the plate is on. The plate and
+  // the skyline tell the same story twice and are lit together — one glance has
+  // to connect the two — but what "lit" looks like is the world's business.
+  function applySpot() { world.spot(plateId); }
 
   // --- the comms ticker --------------------------------------------------------
   // The tail of every live run's feed.log, in one line across the bottom: the
@@ -812,34 +690,23 @@
   // --- the whole wall ----------------------------------------------------------
 
   function render() {
-    const byId = new Map(runs.map((r) => [r.id, r]));
-    city.dataset.empty = towers.length ? '0' : '1';
-    document.body.dataset.quiet = towers.length ? '0' : '1';
+    // One snapshot and one clock in, the whole city out — and then straight into
+    // whichever body is drawing it. Nothing below reaches past the scene.
+    const scene = Scene.buildScene(latest, now());
+    const { towers, blocks } = scene;
+    document.body.dataset.quiet = scene.quiet ? '1' : '0';
     // The standby plate used to fire on an empty skyline. With a district that
     // accretes, "nothing live" is a normal Thursday evening on a week that
     // shipped nine things, and the plate would be saying the wrong sentence over
     // a full city. It now needs a genuinely empty week — nothing standing AND
     // nothing climbing; anything else gets the quiet line instead.
-    document.body.dataset.idle = towers.length ? 'off' : blocks.length ? 'rest' : 'empty';
+    document.body.dataset.idle = scene.idle;
     rest.textContent = blocks.length
       ? 'DISTRICT AT REST · ' + blocks.length + (blocks.length === 1 ? ' SHIP' : ' SHIPS')
         + ' THIS WEEK · NOTHING CLIMBING'
       : '';
 
-    renderGhost();
-    renderDistrict();
-    renderLife();
-
-    for (const [project, T] of towerEls) {
-      if (!towers.some((t) => t.project === project)) { T.root.remove(); towerEls.delete(project); }
-    }
-    let cursor = null;
-    for (const tower of towers) {
-      let T = towerEls.get(tower.project);
-      if (!T) { T = makeTower(); towerEls.set(tower.project, T); }
-      paintTower(T, tower, byId);
-      cursor = place(city, T.root, cursor);
-    }
+    world.render(scene);
 
     counts.textContent = '';
     counts.hidden = towers.length === 0 && blocks.length === 0;
@@ -876,24 +743,17 @@
     // both age on this clock, so both are re-read here rather than waiting for
     // a run somewhere to move.
     tickComms();
-    // Reduced-motion disables the cooling animation. Keep its static state
-    // honest by dropping the tint when the same server-owned lifetime expires.
-    for (const b of blocks) {
-      const B = blockEls.get(b.id);
-      if (B) paintStaticSign(B, b);
-    }
+    // Whatever ages on the clock alone rather than on something moving on disk.
+    world.tick(now());
     paintSky();
   }
 
   function apply(snapshot) {
     skew = (snapshot.at || 0) - Math.floor(Date.now() / 1000);
+    latest = snapshot;
     runs = Array.isArray(snapshot.runs) ? snapshot.runs : [];
-    towers = Array.isArray(snapshot.towers) ? snapshot.towers : [];
-    floors = Array.isArray(snapshot.floors) && snapshot.floors.length ? snapshot.floors.length : 6;
-    blocks = Array.isArray(snapshot.city) ? snapshot.city : [];
-    ghosts = Array.isArray(snapshot.ghost) ? snapshot.ghost : [];
-    week = snapshot.week && typeof snapshot.week === 'object' ? snapshot.week : { ships: 0, life: {} };
-    skyline = new Set(towers.flatMap((t) => t.runIds));
+    const standing = Array.isArray(snapshot.towers) ? snapshot.towers : [];
+    skyline = new Set(standing.flatMap((t) => t.runIds));
     // The completion moment is the server's number; the page only animates it.
     if (snapshot.completionSeconds > 0) {
       document.documentElement.style.setProperty('--completion', snapshot.completionSeconds + 's');
@@ -932,45 +792,12 @@
     src.addEventListener('error', () => setLink('lost'));
   }
 
-  // --- weather --------------------------------------------------------------------
-  // The weather drifts instead of looping: identical rain at 09:00 and at 21:00
-  // is a screensaver, and a room stops seeing a screensaver by week two.
-  // Everything here is a pure function of the wall clock, so two TVs opened side
-  // by side read the same sky without a byte crossing the network to agree on
-  // it, and an hour later they have drifted together. A wall-clock-seeded
-  // generator places individual drops; it never decides how hard it is raining.
-
-  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
-
-  // Two slow sines whose periods do not divide each other (~69 and ~181
-  // minutes), so the sky takes most of a day to come back round. The clamp is
-  // the point rather than a safety rail: it is what gives the city sustained
-  // downpours and sustained near-dry spells instead of a sine that never rests.
-  function wetness(t) {
-    return clamp01(0.5 + 0.4 * Math.sin(t / 660) + 0.2 * Math.sin(t / 1730 + 2.1));
-  }
-
-  // Individual drops use a small deterministic generator too. The coarse
-  // wall-clock seed makes nearby screens opened together share the same rain
-  // field, while a later visit does not replay one permanent arrangement.
-  function weatherSeed(ms) { return Math.floor(ms / WEATHER_SEED_MS) >>> 0; }
-
-  function seededRandom(seed) {
-    let state = seed >>> 0;
-    return () => {
-      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-      return state / 4294967296;
-    };
-  }
-
-  // How near the local clock is to dawn, 0 to 1. Read off the browser and never
-  // the server: the harness has no idea which room the screen is in, and a wall
-  // in another timezone still has to cool at its own sunrise.
-  function dawn(d) {
-    const hour = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
-    const gap = Math.abs(hour - DAWN_H);
-    return clamp01(1 - Math.min(gap, 24 - gap) / DAWN_RAMP);
-  }
+  // --- the sky's ambient vars -------------------------------------------------
+  // The weather model itself lives in scene.js, because both bodies of the world
+  // have to read the same sky: it is a pure function of the wall clock, so two
+  // TVs opened side by side agree without a byte crossing the network. What is
+  // left here is the DOM world's half — two custom properties on the root — and
+  // the seeded generator that places individual drops for the rain canvas.
 
   // The two things the canvas cannot draw: how thick the street haze is — which
   // follows the rain several minutes behind, because wet air clears long after
@@ -1186,6 +1013,11 @@
     const flag = new URLSearchParams(window.location.search).get('cinema');
     return flag === '1' ? 'on' : flag === '0' ? 'off' : null;
   })();
+  // Which body the city is drawn in, read once at load in the same idiom and in
+  // the same breath: ?world=canvas hands it to WebGL, anything else keeps the
+  // DOM. Nothing else in the page branches on it.
+  const wantsCanvas =
+    new URLSearchParams(window.location.search).get('world') === 'canvas';
 
   // Shot variety off the wall clock rather than off a counter, so two screens
   // opened in the same room are cutting roughly the same film without a byte
@@ -1469,7 +1301,59 @@
     stirred();
   }
 
+  // --- the other body ------------------------------------------------------------
+  // The canvas world, and the engine it needs, are fetched only when the query
+  // string asked for them: an ordinary wall must not pay 1.4 MB of WebGL for a
+  // city it draws in CSS. They load in order, one after the other, because
+  // world-canvas.js reads `Phaser` off the window the moment it is parsed.
+
+  function loadScripts(sources, done) {
+    let i = 0;
+    const next = () => {
+      if (i === sources.length) { done(); return; }
+      const tag = document.createElement('script');
+      tag.src = sources[i++];
+      tag.addEventListener('load', next);
+      // A missing bundle is a dark city, not a broken page: the wall keeps its
+      // clock, its plate and its ticker, and says so in the console once.
+      tag.addEventListener('error', () => console.error('wall: cannot load ' + tag.src));
+      document.head.append(tag);
+    };
+    next();
+  }
+
+  // The canvas world before its engine has landed: it holds the last scene and
+  // hands it straight over the moment world-canvas.js is on the page. One frame
+  // of empty stage, and then the city — with the DOM world's nodes hidden from
+  // the start, so nothing is ever drawn twice or populated by both.
+  function canvasWorld() {
+    let live = null;
+    let last = null;
+    let spotId = '';
+    for (const sel of ['svg.sky', '#district', '.dawn', '.haze', '.traffic',
+                       '.street', '#life', '#city']) {
+      const node = document.querySelector(sel);
+      // SVG elements do not consistently reflect the HTML `hidden` property;
+      // set the attribute the shared [hidden] rule actually matches.
+      if (node) node.setAttribute('hidden', '');
+    }
+    loadScripts(CANVAS_SCRIPTS, () => {
+      const factory = window.WallCanvasWorld;
+      if (!factory || !window.Phaser) return;
+      live = factory.create({ parent: stage, still, clock: () => Date.now() / 1000 + skew });
+      if (last) live.render(last);
+      live.spot(spotId);
+    });
+    return {
+      render(scene) { last = scene; if (live) live.render(scene); },
+      spot(runId) { spotId = runId; if (live) live.spot(runId); },
+      tick(at) { if (live) live.tick(at); },
+    };
+  }
+
   // --- start of shift -----------------------------------------------------------
+
+  const world = wantsCanvas ? canvasWorld() : domWorld;
 
   render();
   connect();
