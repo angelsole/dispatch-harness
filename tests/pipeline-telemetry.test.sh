@@ -193,7 +193,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   printf '# fixture task\n' > "$RUN/brief.md"
   : > "$PROMPTS"
   # shellcheck disable=SC2086
-  env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES \
+  env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       TEST_GATE_CMD="$TEST_GATE_CMD" \
