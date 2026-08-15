@@ -146,10 +146,8 @@
       road: Math.floor(loop(t, 2.4) * FRAMES) % FRAMES,
       water: Math.floor(loop(t, 3.2) * FRAMES) % FRAMES,
       idle: Math.floor(loop(t, 1.6) * 10) % 10,
-      alarm: frozen ? 1 : 0.34 + 0.66 * swing(t, 2.2),
       klaxon: frozen ? 0.55 : 0.2 + 0.8 * swing(t, 1.1),
       ask: frozen ? 1 : (swing(t, 1.4) > 0.35 ? 1 : 0.15),
-      lamp: frozen ? 1 : 0.6 + 0.4 * swing(t, 1.9),
     };
   }
 
@@ -345,7 +343,10 @@
         this.frameCamera();
         this.phase = phaseAt(0, { reducedMotion: true });
         this.towers = [];
-        this.spotId = '';
+        // wall.js can identify the featured run before the pack textures finish
+        // loading. Carry that queued choice into the first live scene instead
+        // of waiting for the plate to rotate before highlighting any tower.
+        this.spotId = pendingSpot;
         const v = this.view;
 
         // Back to front. The project towers go in FRONT of the district and
@@ -606,8 +607,7 @@
     // stations because the pipeline has six floors, and the wall has said so
     // since the first tower was drawn.
 
-    // The room's elevation, top to bottom. Six stations because the pipeline has
-    // six floors, and the wall has said so since the first tower was drawn.
+    // The room's elevation, top to bottom.
     const STATIONS = ['SETUP', 'IMPLEMENT', 'GATE', 'REVIEW', 'DEMO', 'PUSH'];
     const STATION_X = [64, 132, 200, 268, 336, 404];
     const STATION_KIT = ['termA', 'termB', 'console', 'termC', 'termA', 'termB'];
