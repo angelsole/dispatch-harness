@@ -367,6 +367,31 @@
     (phase.still ? 0.85 : ramp(OCCUPANCY, loop(phase.t, PANE_PERIODS[slot] || 97, delay)));
   const facadeAt = (phase, drift) =>
     (phase.still ? phase.facade : ramp(WIN_LIVE, loop(phase.t, 26, drift * 1.9)));
+  // CSS removes the completion and sign-cooling animations under reduced
+  // motion. Their resting states are not the last keyframes: a finished shaft
+  // stays fully present until the server takes it down, and a crew sign stays
+  // at 0.85 until its server-owned lifetime expires, then switches off. Keep
+  // those two rules explicit so the once-a-second wall tick cannot quietly
+  // animate a world whose periodic phase is frozen.
+  function signAt(phase, age, span) {
+    if (phase.still) return age < span ? 0.85 : 0;
+    return ramp(SIGN_COOL, once(age, span || 1));
+  }
+
+  function shaftAt(phase, age, span, spotted) {
+    if (phase.still) {
+      return { root: 1, column: spotted ? 1 : 0.8, car: 1, scale: spotted ? 1.3 : 1 };
+    }
+    const u = once(age, span);
+    return {
+      // lights-out is on the whole shaft in CSS, so its opacity also multiplies
+      // the child's flare instead of fading only the column behind it.
+      root: ramp(LIGHTS_OUT, u),
+      column: spotted ? 1 : 0.8,
+      car: ramp(FLARE_ALPHA, u),
+      scale: ramp(FLARE_SCALE, u),
+    };
+  }
   // A walker's crossing, and the machines that do the other half of a night
   // shift going the other way. Parked mid-street when the room asks for
   // stillness, which is what wall.css does with a fixed translate per slot.
@@ -1496,7 +1521,7 @@
         parts.root.setY(phase.still ? 0 : Math.max(0, 1 - age / 0.9) * 1.4 * REM);
         // The dispatcher's tint cooling out of the sign, on the server's clock.
         if (model) {
-          parts.sign.setAlpha(ramp(SIGN_COOL, once(age, model.signSeconds || 1)));
+          parts.sign.setAlpha(signAt(phase, age, model.signSeconds));
         }
       }
 
@@ -1538,12 +1563,14 @@
           if (run.state === 'ready' || run.state === 'failed') {
             // The completion moment: the car flares where it stopped and the
             // shaft goes dark behind it before the run leaves the skyline.
-            const u = once(run.age + drift, completion);
-            S.col.setAlpha(0.8 * ramp(LIGHTS_OUT, u));
-            S.car.setAlpha(ramp(FLARE_ALPHA, u));
-            S.car.setScale(ramp(FLARE_SCALE, u));
+            const state = shaftAt(phase, run.age + drift, completion, S.halo.visible);
+            S.root.setAlpha(state.root);
+            S.col.setAlpha(state.column);
+            S.car.setAlpha(state.car);
+            S.car.setScale(state.scale);
           } else {
-            S.col.setAlpha(0.8);
+            S.root.setAlpha(1);
+            S.col.setAlpha(S.halo.visible ? 1 : 0.8);
             S.car.setScale(S.halo.visible ? 1.3 : 1);
             S.car.setAlpha(run.state === 'alarm' ? phase.carAlarm
               : run.state === 'active' ? phase.car : 1);
@@ -1658,7 +1685,8 @@
   });
 
   return {
-    create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, walkerAt, vehicleAt,
+    create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
+    walkerAt, vehicleAt,
     ramp, spansAt, outline, towerLayout,
   };
 }));

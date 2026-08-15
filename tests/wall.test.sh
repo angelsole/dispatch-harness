@@ -1894,6 +1894,18 @@ console.log(JSON.stringify({
       C.facadeAt(p, 9.4), C.walkerAt(p, 2, false), C.walkerAt(p, 5, true),
       JSON.stringify(C.vehicleAt(p, 1, { cycle: 96, gap: 32 }))].join('|');
   })).size === 1,
+  // CSS removes both animations under reduced motion. A completion stays on
+  // its base frame however old it gets, while attribution is a static 0.85
+  // until the server-owned sign lifetime expires and then switches off.
+  completionStill: JSON.stringify(C.shaftAt(rest, 0, 40, false))
+    === JSON.stringify(C.shaftAt(rest, 39, 40, false))
+    && C.shaftAt(rest, 39, 40, true).scale === 1.3,
+  signStill: C.signAt(rest, 0, 40) === 0.85 && C.signAt(rest, 39, 40) === 0.85
+    && C.signAt(rest, 40, 40) === 0,
+  // With motion allowed, those same ages really do advance the two beats.
+  timedBeats: C.shaftAt(C.phaseAt(1, {}), 0, 40, false).root
+    !== C.shaftAt(C.phaseAt(1, {}), 40, 40, false).root
+    && C.signAt(C.phaseAt(1, {}), 0, 40) !== C.signAt(C.phaseAt(1, {}), 40, 40),
   // A still city is a LIT city standing still, which is what wall.css's own
   // reduced-motion block leaves the DOM world showing: the tubes are on, the
   // occupied windows are up, the tram sits on its line, and only the two things
@@ -1921,6 +1933,12 @@ check "motion: reduced motion is one frame, at every second of the clock" \
 check "motion: and the same world without it genuinely moves" "$(still_of moving)" "true"
 check "motion: every beat in the world derives from that one phase" \
   "$(still_of beats)" "true"
+check "motion: reduced motion keeps completed shafts on their static frame" \
+  "$(still_of completionStill)" "true"
+check "motion: and holds attribution steady until its lifetime expires" \
+  "$(still_of signStill)" "true"
+check "motion: those completion and cooling beats advance when motion is allowed" \
+  "$(still_of timedBeats)" "true"
 check "motion: a still canvas city is a lit city, not a dark one" "$(still_of lit)" "true"
 check "motion: with the camera parked wide" "$(still_of parked)" "true"
 check "canvas: a busy skyline shrinks inside the world without overlapping" \
