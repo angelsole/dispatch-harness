@@ -275,6 +275,7 @@
   const BEZEL = { x: 172, y: 74, w: 76, h: 52 };
   const WORKER = { x: 96, y: 74 };                       // the sprite's origin
   const LAMP = { x: 60, y: DESK_Y - BOX.lamp.y - BOX.lamp.h };
+  const RAIN_SPEED = 6;                                  // room px / second
 
   // --- the beat -----------------------------------------------------------
   // Every cycle in the room, from one reading of the wall clock: which sprite
@@ -287,9 +288,16 @@
   // one: both lights come back at full.
   function beatAt(t, reduced) {
     const at = reduced ? 0 : t;
+    const cameraPhase = ((at % 12) + 12) % 12;
     return {
       t: at,
       frame: Math.floor(at * 5.5),
+      // The gate advances by 750 ms. Give the hands one unambiguous pose per
+      // sample instead of letting a faster loop alias back onto the same one.
+      hands: Math.floor(at / 0.75) & 1,
+      // A continuous twelve-second push and return. The camera never cuts at
+      // the seam; it only reverses direction, like an operator finding focus.
+      push: cameraPhase < 6 ? cameraPhase / 6 : (12 - cameraPhase) / 6,
       glow: reduced ? 1 : 0.5 + 0.5 * Math.sin(at * 1.7),
       tube: reduced ? 1 : 0.5 + 0.5 * Math.sin(at * 0.9 + 1),
     };
@@ -325,9 +333,18 @@
     const still = opts.still;
     const clock = opts.clock;
     const random = opts.random;
-    const ctx = canvas.getContext('2d');
+    const out = canvas.getContext('2d');
     canvas.width = W;
     canvas.height = H;
+    out.imageSmoothingEnabled = false;
+
+    // Draw the authored 320x180 room unchanged, then let a second 320x180
+    // buffer act as the lens. Cropping whole source pixels keeps every edge
+    // hard while allowing the shot to push toward the monitor.
+    const sceneCanvas = document.createElement('canvas');
+    sceneCanvas.width = W;
+    sceneCanvas.height = H;
+    const ctx = sceneCanvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
 
     // One offscreen buffer the size of a character sprite. The actor tint is
@@ -384,7 +401,7 @@
       }
       const drops = [];
       for (let i = 0; i < 26; i++) {
-        drops.push({ x: draw() * (HOLE.w + 12) - 8, off: draw(), speed: 26 + draw() * 30, len: 3 + Math.floor(draw() * 4) });
+        drops.push({ x: draw() * (HOLE.w + 12) - 8, off: draw(), len: 3 + Math.floor(draw() * 4) });
       }
       return { blocks, drops };
     })();
@@ -575,8 +592,13 @@
       }
       // Rain, from the dry side of the glass.
       for (const d of CITY.drops) {
-        const y = ((d.off + (beat.t * d.speed) / HOLE.h) % 1) * (HOLE.h + d.len) - d.len;
-        box(HOLE.x + d.x + y * 0.18, HOLE.y + y, 1, d.len, ICE, 0.26);
+        const travel = HOLE.h + d.len;
+        const distance = ((d.off * travel + beat.t * RAIN_SPEED) % travel + travel) % travel;
+        const y = distance - d.len;
+        // Every streak shares one velocity. Its seed chooses only where it is
+        // on that vector, so consecutive frames show rain falling rather than
+        // a new scatter of bright pixels.
+        box(HOLE.x + d.x + distance * 0.18, HOLE.y + y, 1, d.len, ICE, 0.26);
       }
       ctx.restore();
       // The glass itself: what the room leaves on it, and the sill's wet edge.
@@ -689,9 +711,9 @@
     // dive from the wide shot lands on a figure the room already recognises.
     function worker(v, beat) {
       const frames = v.alarm
-        ? [art.wait1, art.wait2, art.wait1, art.wait2]
+        ? [art.wait1, art.wait2]
         : [art.type0, art.type1, art.type2, art.type3];
-      const img = frames[(v.alarm ? Math.floor(beat.frame / 4) : beat.frame) % frames.length];
+      const img = frames[v.alarm ? beat.hands : beat.frame % frames.length];
       if (!img.complete || !img.naturalWidth) return;
       const tint = v.alarm ? ALARM : ACTOR[v.actorKey] || SAGE;
       tintCtx.clearRect(0, 0, 64, 64);
@@ -731,10 +753,12 @@
 
     // A run asking for a human turns the room over to the alarm, the same way
     // its tower turns the searchlight on outside.
-    function alarmWash(beat) {
-      box(0, 0, W, FLOOR_Y, ALARM, 0.035 + 0.02 * beat.glow);
-      box(0, FLOOR_Y, W, H - FLOOR_Y, ALARM, 0.025 + 0.015 * beat.glow);
-      box(0, SOFFIT, W, 2, ALARM, 0.2 + 0.2 * beat.glow);
+    function alarmWash() {
+      // The alarm is a fact, not a frame in a flicker cycle. Keep its room-wide
+      // colour steady and leave the smaller monitor bloom to breathe inside it.
+      box(0, 0, W, FLOOR_Y, ALARM, 0.05);
+      box(0, FLOOR_Y, W, H - FLOOR_Y, ALARM, 0.036);
+      box(0, SOFFIT, W, 2, ALARM, 0.31);
     }
 
     // The floor in front of the desk, catching what the two lights spill past
@@ -771,8 +795,31 @@
       monitor(view, beat);
       worker(view, beat);
       nameplate(view);
-      if (view.alarm) alarmWash(beat);
+      if (view.alarm) alarmWash();
       nearPlane();
+      present(beat);
+    }
+
+    function present(beat) {
+      out.clearRect(0, 0, W, H);
+      out.imageSmoothingEnabled = false;
+      const push = beat.push;
+      if (push <= 0) {
+        out.drawImage(sceneCanvas, 0, 0);
+        return;
+      }
+
+      // At the end of the push the monitor and the worker share the middle of
+      // the shot. The outer pillar and shelf move out first, making the three
+      // room planes do visible camera work without adding another object.
+      const zoom = 1 + push * 0.14;
+      const sw = Math.round(W / zoom);
+      const sh = Math.round(H / zoom);
+      const cx = W / 2 + (BEZEL.x + BEZEL.w / 2 - W / 2) * push * 0.48;
+      const cy = H / 2 + (BEZEL.y + BEZEL.h / 2 - H / 2) * push * 0.4;
+      const sx = Math.max(0, Math.min(W - sw, Math.round(cx - sw / 2)));
+      const sy = Math.max(0, Math.min(H - sh, Math.round(cy - sh / 2)));
+      out.drawImage(sceneCanvas, sx, sy, sw, sh, 0, 0, W, H);
     }
 
     function frame() {

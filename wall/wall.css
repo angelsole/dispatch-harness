@@ -961,6 +961,10 @@ body[data-idle="rest"] .rest { display: block; }
   opacity: 0;
 }
 .tower[data-alarm="1"] .tower__mass::after { animation: tower-klaxon 1.1s var(--ease-io) infinite; }
+.tower[data-alarm="1"] .tower__windows::after {
+  background: rgba(255, 47, 69, 0.2);
+  opacity: 1;
+}
 .tower[data-alarm="1"] .tower__pool {
   background: radial-gradient(58% 100% at 50% 0%, rgba(255, 47, 69, 0.24), transparent 72%);
   opacity: 1;
@@ -2941,8 +2945,8 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.58; }
   100% { opacity: 0; transform: translate3d(var(--reach), 0, 0) scale(1.1); }
 }
 @keyframes tower-klaxon {
-  0%, 100% { opacity: 0.28; }
-  50% { opacity: 1; }
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.84; }
 }
 @keyframes plate-klaxon {
   0%, 100% { opacity: 0.18; }
