@@ -246,8 +246,10 @@ body {
        does, which is what the board has and what a band by definition has not.
        The street layer is drawn over this, so the lamps at either end keep
        their pools; what goes dark is the ground they are lying on. */
-    radial-gradient(32% 104% at 0% 72%, rgba(1, 4, 8, 0.68), transparent 76%),
-    radial-gradient(30% 104% at 100% 72%, rgba(1, 4, 8, 0.64), transparent 76%),
+    radial-gradient(32% 104% at 0% 72%,
+      color-mix(in srgb, var(--bg) 68%, transparent), transparent 76%),
+    radial-gradient(30% 104% at 100% 72%,
+      color-mix(in srgb, var(--bg) 64%, transparent), transparent 76%),
     /* the body of it, over the district and well clear of the frame edges */
     radial-gradient(46% 54% at 50% 56%,
       rgba(96, 152, 178, 0.15), rgba(72, 120, 148, 0.05) 52%, transparent 80%),
