@@ -27,11 +27,10 @@
 //   one pixel grid and no shape has a soft edge. Light is BANDED — a stack of
 //   flat rects, not a gradient — for the same reason.
 //
-//   Nothing keeps its own clock. Every moving thing is a pure function of the
-//   wall clock, so two screens in a room are on the same frame and a browser
-//   opening mid-hold joins the beat where it already is. Reduced motion draws
-//   one frame at a pinned phase and never starts a loop: a still room is a LIT
-//   room standing still.
+//   Nothing keeps its own clock. Every moving thing is a pure function of one
+//   frame clock that starts with the room hold, so the lens, hands, CRT and rain
+//   all advance together. Reduced motion draws one frame at a pinned phase and
+//   never starts a loop: a still room is a LIT room standing still.
 //
 //   The palette is the lock. Every colour below is one of the 32 in
 //   .creative/palette.png, which is also what every sprite in wall/assets/room
@@ -278,28 +277,35 @@
   const RAIN_SPEED = 6;                                  // room px / second
 
   // --- the beat -----------------------------------------------------------
-  // Every cycle in the room, from one reading of the wall clock: which sprite
+  // Every cycle in the room, from one reading of the frame clock: which sprite
   // frame the worker is on, how hard the tube is glowing, how the strip light
-  // is failing. Nothing in here keeps state, so two screens opened an hour
-  // apart are on the same frame — and asking for it with `reduced` returns the
-  // SAME answer at every second of the clock, which is what "reduced motion is
-  // a still frame, not a slower one" has to mean once the room is a canvas and
-  // there is no stylesheet left to inspect. It is a lit still, never a dark
-  // one: both lights come back at full.
-  function beatAt(t, reduced) {
+  // is failing. No channel keeps an independent phase: every one receives the
+  // same elapsed beat. Asking for it with `reduced` returns the SAME answer at
+  // every second of the clock, which is what "reduced motion is a still frame,
+  // not a slower one" has to mean once the room is a canvas and there is no
+  // stylesheet left to inspect. It is a lit still, never a dark one: both
+  // lights come back at full.
+  function beatAt(t, reduced, startedAt) {
     const at = reduced ? 0 : t;
-    const cameraPhase = ((at % 12) + 12) % 12;
+    const origin = Number.isFinite(startedAt) ? startedAt : 0;
+    const elapsed = reduced ? 0 : Math.max(0, at - origin);
     return {
-      t: at,
-      frame: Math.floor(at * 5.5),
+      t: elapsed,
+      elapsed,
+      frame: Math.floor(elapsed * 5.5),
       // The gate advances by 750 ms. Give the hands one unambiguous pose per
       // sample instead of letting a faster loop alias back onto the same one.
-      hands: Math.floor(at / 0.75) & 1,
-      // A continuous twelve-second push and return. The camera never cuts at
-      // the seam; it only reverses direction, like an operator finding focus.
-      push: cameraPhase < 6 ? cameraPhase / 6 : (12 - cameraPhase) / 6,
-      glow: reduced ? 1 : 0.5 + 0.5 * Math.sin(at * 1.7),
-      tube: reduced ? 1 : 0.5 + 0.5 * Math.sin(at * 0.9 + 1),
+      hands: Math.floor(elapsed / 0.75) & 1,
+      // One deliberate move per room hold. An epoch-anchored triangle can hit
+      // its turning point anywhere in a six-frame contact sheet, which makes a
+      // continuous push read as a jump. Starting with the shot makes every
+      // capture travel in the same direction, then the lens simply holds.
+      push: Math.min(1, elapsed / 12),
+      // The CRT sweep shares that shot clock. It crosses several authored
+      // pixels between gate samples, slowly enough to be followed tile to tile.
+      scan: Math.floor(elapsed * 4) % (SCREEN.h + 8) - 4,
+      glow: reduced ? 1 : 0.5 + 0.5 * Math.sin(elapsed * 1.7),
+      tube: reduced ? 1 : 0.5 + 0.5 * Math.sin(elapsed * 0.9 + 1),
     };
   }
 
@@ -362,6 +368,7 @@
     let view = null;
     let running = false;
     let scale = 1;
+    let motionStartedAt = null;
 
     for (const key of Object.keys(SPRITES)) {
       const img = new Image();
@@ -668,6 +675,12 @@
       for (let y = SCREEN.y; y < SCREEN.y + SCREEN.h; y += 3) {
         box(SCREEN.x, y, SCREEN.w, 1, NIGHT, 0.16);
       }
+      // One brighter retrace travels down the tube. Unlike a flicker it has a
+      // position that can be followed across the contact sheet.
+      const scanY = SCREEN.y + beat.scan;
+      if (scanY >= SCREEN.y && scanY < SCREEN.y + SCREEN.h) {
+        box(SCREEN.x + 1, scanY, SCREEN.w - 2, 1, PALE, 0.24);
+      }
     }
 
     // The dispatcher, in the only two places the wide city lets crew colour
@@ -730,9 +743,15 @@
       tintCtx.fillRect(48, 0, 16, 64);
       tintCtx.globalAlpha = 1;
       tintCtx.globalCompositeOperation = 'source-over';
-      // The shadow they sit in, then the figure.
+      // The shadow they sit in, then the figure. Keep the head and shoulders
+      // planted while the lower arm/keyboard band drops one pixel on the key
+      // beat; this reads at 4x without making the whole worker bob.
       box(WORKER.x + 2, DESK_Y - 3, 60, 4, NIGHT, 0.45);
-      ctx.drawImage(tintPad, WORKER.x, WORKER.y);
+      const split = 40;
+      ctx.drawImage(tintPad, 0, 0, 64, split,
+        WORKER.x, WORKER.y, 64, split);
+      ctx.drawImage(tintPad, 0, split, 64, 64 - split,
+        WORKER.x, WORKER.y + split + beat.hands, 64, 64 - split);
     }
 
     // The near plane. Nothing here is a fact — it is the room's own depth, and
@@ -774,7 +793,7 @@
 
     function paint() {
       if (!ready || !view) return;
-      const beat = beatAt(clock(), still.matches);
+      const beat = beatAt(clock(), still.matches, motionStartedAt);
       ctx.clearRect(0, 0, W, H);
       backWall(beat);
       nightCity(beat);
@@ -855,6 +874,7 @@
       // room turns that into its own view and nothing else.
       show(run, floors) {
         view = viewOf(run, floors);
+        if (motionStartedAt === null) motionStartedAt = clock();
         canvas.dataset.on = '1';
         measure();
         paint();
@@ -862,6 +882,7 @@
       },
       hide() {
         running = false;
+        motionStartedAt = null;
         delete canvas.dataset.on;
       },
       get holding() { return canvas.dataset.on === '1'; },

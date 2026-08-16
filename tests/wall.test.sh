@@ -2322,6 +2322,7 @@ const still = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
 const moving = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
   JSON.stringify(R.beatAt(t, false)));
 const sampledHands = [0, 0.75, 1.5, 2.25].map((t) => R.beatAt(t, false).hands).join(",");
+const shotClock = [100, 100.75, 101.5, 102.25].map((t) => R.beatAt(t, false, 100));
 console.log(JSON.stringify({
   hero: hero.id,
   // A blocked run shows the alarm, not the stage it stopped on — and the floor
@@ -2345,7 +2346,9 @@ console.log(JSON.stringify({
   moves: new Set(moving).size === moving.length,
   lit: R.beatAt(0, true).glow === 1 && R.beatAt(0, true).tube === 1,
   handCadence: sampledHands,
-  camera: [0, 3, 6, 9, 12].map((t) => R.beatAt(t, false).push).join(","),
+  camera: [0, 3, 6, 9, 12, 15].map((t) => R.beatAt(t, false).push).join(","),
+  scan: [0, 0.75, 1.5, 2.25].map((t) => R.beatAt(t, false).scan).join(","),
+  shotClock: shotClock.map((b) => b.elapsed).join(","),
   // The actor neon a worker is tinted with is the city's own, on the lock.
   tints: ["opus", "codex", "gate", "alarm"].map((k) => R.ACTOR[k]).join(","),
   onLock: Object.values(R.ACTOR).every((c) => R.LOCK.includes(c)),
@@ -2372,8 +2375,12 @@ check "room: and the same room without it genuinely moves" "$(room_of moves)" "t
 check "room: a still room is a LIT room standing still" "$(room_of lit)" "true"
 check "room: the waiting hands change on every gate sample" \
   "$(room_of handCadence)" "0,1,0,1"
-check "room: the camera pushes in and returns without a cut" \
-  "$(room_of camera)" "0,0.5,1,0.5,0"
+check "room: the camera pushes in one direction and holds without a cut" \
+  "$(room_of camera)" "0,0.25,0.5,0.75,1,1"
+check "room: the CRT retrace travels down on the gate clock" \
+  "$(room_of scan)" "-4,-1,2,5"
+check "room: that gate clock starts with the shot, not the server epoch" \
+  "$(room_of shotClock)" "0,0.75,1.5,2.25"
 check "room: the worker's tint is the city's own actor neon" \
   "$(room_of tints)" "#4c9dff,#3fd984,#e0a23c,#ff2f45"
 check "room: every one of them is on the palette lock" "$(room_of onLock)" "true"
