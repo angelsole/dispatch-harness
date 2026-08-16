@@ -2680,6 +2680,34 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.58; }
    phosphor being written for the first time. */
 .comms__line[data-new="1"] { animation: glyph-decay 1.5s var(--ease-io); }
 
+/* --- the room -----------------------------------------------------------------
+   Where the dive lands. wall/room.js draws one floor of one tower on a 320x180
+   backing store; everything here does is put that store on the wall at a WHOLE
+   multiple of its own size (room.js writes the width and height in px, this
+   centres it and turns interpolation off), and cross-fade it in over the city
+   the camera has just pushed into.
+
+   Above the plate and the ticker because it is saying the same things they are,
+   in the room's own type — and under the CRT overlays, because the room is what
+   this screen is showing and the phosphor is the screen. */
+.room {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 30;
+  pointer-events: none;
+  /* The whole point of the integer scale: nearest-neighbour, so one authored
+     pixel is a square block of four (or nine) and never a blur between two. */
+  image-rendering: pixelated;
+  background: #010306;
+  opacity: 0;
+  /* Long enough to read as a dissolve rather than a cut, short enough that the
+     push-in it lands on is still moving underneath. Opacity only. */
+  transition: opacity 900ms var(--ease-io);
+  transform: translate3d(-50%, -50%, 0);
+}
+.room[data-on="1"] { opacity: 1; }
+
 /* --- CRT overlays ---------------------------------------------------------- */
 
 .crt {
