@@ -468,11 +468,22 @@
       node.append(el('i'));
     });
     populate(road, 'life__car', plan.vehicles, (node, slot) => {
+      // Which way it is driving, which is also which side of the road it is
+      // on: westbound is the far side, smaller and behind the near traffic.
       node.dataset.way = slot % 2 ? 'west' : 'east';
+      // The cab itself. The pass is still one transform and one opacity on the
+      // element above it; this is the body that transform is carrying.
+      node.append(el('i'));
     });
     life.style.setProperty('--vehicle-cycle', plan.cycle + 's');
+    // One planned gap between consecutive passes, and half a cycle of head
+    // start on top: the same fast-forward the district's buildings and the
+    // completion moment get. Without it a freshly opened browser watches an
+    // empty road for most of a minute before the first car arrives, which is
+    // exactly what every screenshot of this wall has been catching.
     [...road.children].forEach((node, slot) => {
-      node.style.setProperty('--vehicle-delay', (-slot * plan.gap) + 's');
+      node.style.setProperty('--vehicle-delay',
+        (-(slot * plan.gap + plan.cycle * 0.5)).toFixed(1) + 's');
     });
     life.dataset.tram = plan.tram ? '1' : '0';
     life.dataset.mall = plan.mall ? '1' : '0';

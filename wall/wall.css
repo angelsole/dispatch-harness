@@ -1292,19 +1292,22 @@ body[data-idle="rest"] .rest { display: block; }
   left: -26%;
   right: -26%;
   top: 100%;
-  height: 2.4rem;
+  height: 3rem;
   pointer-events: none;
   background:
     /* the pool on the flagstones directly in front of the counters... */
-    radial-gradient(50% 58% at 50% 0%,
+    radial-gradient(50% 46% at 50% 0%,
       color-mix(in srgb, var(--shop) 74%, transparent),
       color-mix(in srgb, var(--shop) 24%, transparent) 44%, transparent 80%),
     /* ...and the frontage itself, upside down in the wet, which is the half of
-       a lit street the district has never drawn */
+       a lit street the district has never drawn — the reach carries it across
+       the kerb and out onto the roadway, because that is where a wet road puts
+       the shop behind it */
     linear-gradient(180deg,
       color-mix(in srgb, var(--shop) 46%, transparent) 0,
-      color-mix(in srgb, var(--shop) 12%, transparent) 32%,
-      transparent 66%);
+      color-mix(in srgb, var(--shop) 15%, transparent) 30%,
+      color-mix(in srgb, var(--shop) 6%, transparent) 58%,
+      transparent 84%);
 }
 
 /* The extra neon tube over one shop bay. A third of the buildings carry one —
@@ -1721,10 +1724,17 @@ body[data-idle="rest"] .rest { display: block; }
       color-mix(in srgb, var(--shop-diner) 20%, transparent) 0 calc(var(--kerb) + 0.4vh),
       color-mix(in srgb, var(--shop-diner) 9%, transparent) calc(var(--kerb) + 1.4vh),
       transparent var(--kerbline)),
+    /* the wet on the tarmac: the one thing that keeps the roadway a surface
+       rather than a gap, and what a dark car crossing it is dark against */
+    linear-gradient(0deg,
+      transparent 0 calc(var(--kerb) + 1.5vh),
+      color-mix(in srgb, var(--edge) 9%, transparent) calc(var(--kerb) + 2.2vh),
+      color-mix(in srgb, var(--edge) 5%, transparent) var(--verge),
+      transparent calc(var(--verge) + 0.3vh)),
     /* and the roadway between them, darker than either pavement */
     linear-gradient(0deg,
       transparent 0 calc(var(--kerb) + 1.4vh),
-      color-mix(in srgb, var(--bg) 58%, transparent) calc(var(--kerb) + 1.7vh) var(--verge),
+      color-mix(in srgb, var(--bg) 46%, transparent) calc(var(--kerb) + 1.7vh) var(--verge),
       transparent calc(var(--verge) + 0.3vh));
   transition: opacity var(--spot-in) var(--ease);
 }
@@ -1811,6 +1821,12 @@ body[data-idle="rest"] .rest { display: block; }
    reads "a person" and moves on. */
 .life__walker {
   --slot: 0;
+  /* How long one crossing takes. At 132s a silhouette covered the frame in
+     about a minute, which is a jog: a person walking home crosses a 1280-wide
+     wall in something closer to two. The stagger is a fraction of the same
+     number rather than a fixed count of seconds, so slowing the walk spreads
+     the crowd out along it instead of bunching everybody at the left edge. */
+  --walk: 240s;
   position: absolute;
   left: 0;
   /* On the near pavement, in four ranks: the nearest plane on this layer, and
@@ -1818,9 +1834,9 @@ body[data-idle="rest"] .rest { display: block; }
   bottom: calc(var(--kerb) + var(--depth, 0) * 0.36vh);
   width: 0.3rem;
   height: 0.72rem;
-  opacity: 0.86;
-  animation: commute 132s linear infinite;
-  animation-delay: calc(var(--slot) * -21s);
+  opacity: 0.92;
+  animation: commute var(--walk) linear infinite;
+  animation-delay: calc(var(--slot) * var(--walk) / -6.3);
 }
 /* Standing on the wet pavement rather than hovering over it: the same body,
    upside down, short and faint. Hung off the walker rather than off the body
@@ -1849,9 +1865,9 @@ body[data-idle="rest"] .rest { display: block; }
 /* The other half of a night shift: the small service robots, squatter and
    slower, going the other way and bobbing on their own beat. */
 .life__walker[data-kind="robot"] {
+  --walk: 320s;
   width: 0.4rem;
   height: 0.42rem;
-  animation-duration: 176s;
   animation-direction: reverse;
 }
 .life__walker[data-kind="robot"] i {
@@ -1862,72 +1878,140 @@ body[data-idle="rest"] .rest { display: block; }
   animation: trundle 2.3s var(--ease-io) infinite;
 }
 
-/* A car, now and then. The whole pass is a slice at the end of a long
-   cycle, so the street is mostly empty street: a vehicle is an event on the week
-   that shipped one thing and ordinary traffic on the week that shipped twenty. */
+/* A car, now and then. The whole pass is a slice of a long cycle, so the street
+   is mostly empty street: a vehicle is an event on the week that shipped one
+   thing and ordinary traffic on the week that shipped twenty.
+
+   It is a car and not a streak. Two pixels of light travelling along a dark
+   road is a scratch on the panel from three metres; what the room reads as a
+   vehicle is a body — a bonnet, a cabin and a boot, dark against the wet, with
+   its own lamps at either end. So the element that moves is the car-sized box
+   (43 x 10 px, the module's own figure), the cab is drawn inside it, and the
+   beam and the reflection ride along with both. Still one transform and one
+   opacity for the whole pass. */
 .life__car {
   --slot: 0;
+  --car: var(--shop-diner);
   position: absolute;
   left: 0;
-  bottom: calc(var(--kerb) + 1.9vh);   /* the near lane of the roadway */
+  bottom: calc(var(--kerb) + 1.5vh);   /* the near side, against the kerb */
   width: 3.2rem;
-  height: 0.14rem;
-  border-radius: 0.14rem;
-  mix-blend-mode: screen;
-  background: linear-gradient(90deg, transparent,
-    color-mix(in srgb, var(--shop-diner) 20%, transparent) 42%, var(--shop-diner));
-  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop-diner) 50%, transparent);
+  height: 0.74rem;
   opacity: 0;
   animation: prowl var(--vehicle-cycle) linear infinite;
   animation-delay: var(--vehicle-delay, 0s);
 }
+/* The cab. A profile, not a lozenge: low bonnet, cabin stepped up over the
+   middle, boot behind it — and the two windows that make it a thing with
+   somebody in it rather than a wedge. */
+.life__car i {
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(0 58%, 5% 40%, 21% 34%, 33% 4%, 64% 4%, 79% 34%,
+                     96% 42%, 100% 60%, 100% 100%, 0 100%);
+  background:
+    /* its lamps: the headlight at the nose and a smaller one at the tail. Amber
+       and cyan rather than the red a tail light would really be — on this wall
+       red is an alarm, and nothing else is allowed to borrow it. Drawn into the
+       body rather than hung off it, because the profile above is a clip-path
+       and a clip-path takes a box-shadow with it. */
+    radial-gradient(0.16rem 0.14rem at 96% 76%,
+      color-mix(in srgb, var(--car) 40%, #fff) 0 58%, transparent 72%),
+    radial-gradient(0.12rem 0.11rem at 4% 78%,
+      color-mix(in srgb, var(--car) 78%, transparent) 0 58%, transparent 74%),
+    /* the glass, and the pillar between the two panes */
+    linear-gradient(90deg,
+      transparent 0 36%,
+      color-mix(in srgb, var(--win-b) 88%, transparent) 36% 48%,
+      transparent 48% 52%,
+      color-mix(in srgb, var(--win-b) 72%, transparent) 52% 62%,
+      transparent 62%),
+    /* the street's own light along the roof and the shoulder */
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--car) 34%, var(--stone-warm)) 0 0.07rem,
+      var(--stone) 0.14rem);
+}
 /* What a car actually is on a wet street: a beam thrown down the road ahead of
-   it and the same light lying in the tarmac under it. Both ride inside the car,
-   so the pass is still one transform and one opacity — and both are what turn a
-   two-pixel bar into something driving past. */
+   it, hot at the lamp and gone a car's length later, plus the same light lying
+   in the tarmac under it. Both ride inside the car, so the pass is still one
+   transform and one opacity. */
 .life__car::before {
   content: "";
   position: absolute;
   left: 88%;
-  top: -0.42rem;
-  width: 3.4rem;
+  bottom: -0.14rem;
+  width: 3.6rem;
   height: 0.9rem;
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--shop-diner) 30%, transparent),
-    color-mix(in srgb, var(--shop-diner) 8%, transparent) 46%, transparent 82%);
+  background:
+    radial-gradient(0.5rem 0.42rem at 6% 58%,
+      color-mix(in srgb, var(--car) 62%, transparent), transparent 76%),
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--car) 30%, transparent),
+      color-mix(in srgb, var(--car) 8%, transparent) 48%, transparent 84%);
 }
 .life__car::after {
   content: "";
   position: absolute;
-  left: 6%;
-  right: 2%;
-  top: 0.2rem;
-  height: 1.1rem;
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--shop-diner) 26%, transparent), transparent 74%);
-  opacity: 0.8;
+  left: 4%;
+  right: 0;
+  top: 100%;
+  height: 1.2rem;
+  background:
+    /* the lamp itself, smeared down the wet — the brightest thing a car puts
+       on a road at night is not the car */
+    radial-gradient(0.5rem 100% at 94% 0%,
+      color-mix(in srgb, var(--car) 52%, transparent), transparent 74%),
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--car) 32%, transparent), transparent 72%);
+  opacity: 0.85;
 }
+/* Driving the other way, so the beam is out of the other end and the whole car
+   is cold — a headlight is the colour of its own car. It is also on the far
+   side of the road: smaller, and drawn behind the near traffic, which is the
+   only depth cue a flat elevation gets to use. */
 .life__car[data-way="west"] {
-  bottom: calc(var(--kerb) + 2.8vh);   /* and the far one */
-  background: linear-gradient(90deg, var(--shop-arcade),
-    color-mix(in srgb, var(--shop-arcade) 18%, transparent) 58%, transparent);
-  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop-arcade) 40%, transparent);
+  --car: var(--shop-arcade);
+  bottom: calc(var(--kerb) + 2.5vh);
+  width: 2.7rem;
+  height: 0.6rem;
   animation-direction: reverse;
 }
-/* Driving the other way, so the beam is out of the other end and both it and
-   the reflection are cold — a headlight is the colour of its own car. */
+.life__car[data-way="west"] i {
+  clip-path: polygon(0 58%, 4% 42%, 21% 34%, 36% 4%, 67% 4%, 79% 34%,
+                     95% 40%, 100% 60%, 100% 100%, 0 100%);
+  background:
+    radial-gradient(0.16rem 0.14rem at 4% 76%,
+      color-mix(in srgb, var(--car) 40%, #fff) 0 58%, transparent 72%),
+    radial-gradient(0.12rem 0.11rem at 96% 78%,
+      color-mix(in srgb, var(--car) 78%, transparent) 0 58%, transparent 74%),
+    linear-gradient(90deg,
+      transparent 0 38%,
+      color-mix(in srgb, var(--win-b) 72%, transparent) 38% 48%,
+      transparent 48% 52%,
+      color-mix(in srgb, var(--win-b) 88%, transparent) 52% 64%,
+      transparent 64%),
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--car) 34%, var(--stone-warm)) 0 0.07rem,
+      var(--stone) 0.14rem);
+}
 .life__car[data-way="west"]::before {
   left: auto;
   right: 88%;
-  background: linear-gradient(270deg,
-    color-mix(in srgb, var(--shop-arcade) 26%, transparent),
-    color-mix(in srgb, var(--shop-arcade) 7%, transparent) 46%, transparent 82%);
+  background:
+    radial-gradient(0.5rem 0.42rem at 94% 58%,
+      color-mix(in srgb, var(--car) 62%, transparent), transparent 76%),
+    linear-gradient(270deg,
+      color-mix(in srgb, var(--car) 30%, transparent),
+      color-mix(in srgb, var(--car) 8%, transparent) 48%, transparent 84%);
 }
 .life__car[data-way="west"]::after {
-  left: 2%;
-  right: 6%;
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--shop-arcade) 22%, transparent), transparent 74%);
+  left: 0;
+  right: 4%;
+  background:
+    radial-gradient(0.5rem 100% at 6% 0%,
+      color-mix(in srgb, var(--car) 52%, transparent), transparent 74%),
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--car) 32%, transparent), transparent 72%);
 }
 
 /* The mall: a big week puts one wide over-lit block at the end of the street.
@@ -2014,7 +2098,16 @@ body[data-idle="rest"] .rest { display: block; }
     color-mix(in srgb, var(--shop-arcade) 26%, transparent), transparent 76%);
   opacity: 0.7;
 }
-.life[data-tram="1"] .life__tram { animation: tramline 96s linear infinite; }
+/* Slow, because a tram is: 96s put a seventy-pixel vehicle across the frame in
+   half a minute, which reads as a train. This is the pace of a thing that stops
+   at corners — and it is already out on the line when the page opens, the same
+   fast-forward every other timeline on this wall gets, because a tram whose
+   first crossing is two minutes after a browser loads is a tram nobody on the
+   far side of the room has ever seen. */
+.life[data-tram="1"] .life__tram {
+  animation: tramline 210s linear infinite;
+  animation-delay: -136s;
+}
 
 /* Nightlife never competes with work. The instant anything is climbing, the
    ground floor drops back and the skyline keeps the room's eye — but it drops a
@@ -2702,11 +2795,16 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.58; }
   0%, 100% { transform: translate3d(0, 0, 0) rotate(-3deg); }
   50% { transform: translate3d(0, -0.04rem, 0) rotate(3deg); }
 }
-/* One car pass, at the end of a long wait. The wait is the point: on a
-   quiet week this is nothing for forty seconds and then somebody drives home. */
+/* One car pass, at the end of a wait. The wait is still the point — on a quiet
+   week this is nothing and then somebody drives home — but the pass itself used
+   to be 38% of the cycle, which at the tempo a busy week plans is a car across
+   the frame in nineteen seconds. That is a car being fired past, and two
+   consecutive frames of the wall could never catch the same one twice. Sixty
+   per cent of the cycle puts it at the speed a car is actually driven at, and
+   a room that looks twice sees the same car further down the same road. */
 @keyframes prowl {
-  0%, 62% { opacity: 0; transform: translate3d(-8vw, 0, 0); }
-  66%, 92% { opacity: 0.7; }
+  0%, 40% { opacity: 0; transform: translate3d(-8vw, 0, 0); }
+  44%, 94% { opacity: 0.92; }
   100% { opacity: 0; transform: translate3d(114vw, 0, 0); }
 }
 /* Steam off a vent: up, out, and gone. Never a loop you can see repeat, because
