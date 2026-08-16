@@ -2432,6 +2432,39 @@ console.log(JSON.stringify({
   // The actor neon a worker is tinted with is the city's own, on the lock.
   tints: ["opus", "codex", "gate", "alarm"].map((k) => R.ACTOR[k]).join(","),
   onLock: Object.values(R.ACTOR).every((c) => R.LOCK.includes(c)),
+  // The typing loop, sampled the way the gate samples: four poses at 300 ms is
+  // a 1.2 s cycle against a 750 ms sample, so no two consecutive tiles of a
+  // contact sheet catch the same pose. A loop and not a ping-pong: one full
+  // cycle visits every pose once, in order, and comes back round.
+  typingCadence: [0, 0.75, 1.5, 2.25, 3, 3.75]
+    .map((t) => R.beatAt(t, false).typing).join(","),
+  typingLoops: Array.from({ length: R.TYPE_FRAMES + 1 },
+    (_, i) => R.beatAt((i * R.TYPE_MS) / 1000, false).typing).join(","),
+  typingNeverStalls: [0, 0.75, 1.5, 2.25, 3, 3.75]
+    .map((t) => R.beatAt(t, false).typing)
+    .every((pose, i, all) => i === 0 || pose !== all[i - 1]),
+  // The push only ever goes in. A lens that eased back, even by a rounding
+  // error, is the cut the whole shot exists to avoid.
+  pushNeverBacks: (() => {
+    let last = -1;
+    for (let t = 0; t <= 24; t += 0.05) {
+      const p = R.beatAt(t, false).push;
+      if (p < last - 1e-9) return false;
+      last = p;
+    }
+    return true;
+  })(),
+  // Who is at the desk, in colour. A blocked run reaches the room with its
+  // actor key rewritten to `alarm`; the room tints the person with the neon of
+  // the floor work stopped on instead, because in here the alarm belongs to the
+  // monitor and the person is a person. Never stone, never the alarm red.
+  blockedTint: R.tintOf(seen),
+  workingTint: R.tintOf(gate),
+  blockedNotAlarm: R.tintOf(seen) !== R.ACTOR.alarm,
+  everyWorkerIsAnActor: api.runs.every((run) => {
+    const tint = R.tintOf(R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS));
+    return Object.values(R.ACTOR).includes(tint);
+  }),
   // And every sprite the room asks for is a file that was committed.
   sprites: Object.values(R.SPRITES).length,
 }));
@@ -2464,8 +2497,45 @@ check "room: that gate clock starts with the shot, not the server epoch" \
 check "room: the worker's tint is the city's own actor neon" \
   "$(room_of tints)" "#4c9dff,#3fd984,#e0a23c,#ff2f45"
 check "room: every one of them is on the palette lock" "$(room_of onLock)" "true"
+check "room: the typing hands land on a different pose in every gate frame" \
+  "$(room_of typingCadence)" "0,2,1,3,2,0"
+check "room: and never repeat one frame to the next" \
+  "$(room_of typingNeverStalls)" "true"
+check "room: the hands loop rather than ping-pong" "$(room_of typingLoops)" "0,1,2,3,0"
+check "room: the lens never eases back, at any second of the hold" \
+  "$(room_of pushNeverBacks)" "true"
+check "room: a blocked worker wears the neon of the floor work stopped on" \
+  "$(room_of blockedTint)" "#4c9dff"
+check "room: a working one wears their own" "$(room_of workingTint)" "#e0a23c"
+check "room: the alarm red is for the monitor, never for the jacket" \
+  "$(room_of blockedNotAlarm)" "true"
+check "room: every run in the city puts an actor at that desk" \
+  "$(room_of everyWorkerIsAnActor)" "true"
 check "room: and every sprite it asks for is one this repo committed" \
   "$(room_of sprites)" "13"
+
+# The room's clock. rAF timestamps only ever go forward; Date.now() plus the
+# server skew is re-measured on every snapshot and steps in both directions,
+# which is what turned a twelve-second push into a jump cut half way through a
+# six-frame contact sheet. So the room is handed no clock at all.
+ROOM_SRC="$(cat "$SRC/wall/room.js")"
+ROOM_CODE="$(grep -v '^ *//' "$SRC/wall/room.js")"
+grep_not "$ROOM_CODE" 'Date.now' "room: nothing in here reads the wall clock"
+grep_not "$ROOM_CODE" 'skew'     "room: nor the server skew that moves under it"
+grep_ok "$ROOM_SRC" 'paint(ts / 1000);' \
+  "room: the loop draws at the timestamp rAF hands it"
+grep_ok "$ROOM_SRC" 'cancelAnimationFrame(raf);' \
+  "room: and a stopped room cancels the frame it had already queued"
+grep_ok "$PAGE_SRC" 'Room.create({ canvas: roomCanvas, still, random: seededRandom });' \
+  "room: the page hands it a canvas and a seed, and no clock"
+# The still planes are drawn once per run rather than at the display's refresh:
+# the wall, the window, the plate, the floor and the desk are facts about a run,
+# and forty rectangles of wall grain a frame is work with no picture in it.
+grep_ok "$ROOM_SRC" 'function bakePlanes(v) {' \
+  "room: the still planes are baked, not redrawn every frame"
+for plane in plateBack plateMid plateFront; do
+  grep_ok "$ROOM_SRC" "ctx.drawImage($plane, 0, 0);" "room: and $plane is composited in"
+done
 
 # The route the sprites come down. A directory route is the path traversal this
 # server has never had, so the fence is checked from both sides: the real

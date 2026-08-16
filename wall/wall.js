@@ -1015,12 +1015,11 @@
     const run = roomRun();
     if (!run) return;
     if (!room) {
-      room = Room.create({
-        canvas: roomCanvas,
-        still,
-        clock: () => Date.now() / 1000 + skew,
-        random: seededRandom,
-      });
+      // No clock is handed over. The city outside runs on the server's epoch
+      // plus a skew re-measured on every snapshot; the room runs on the frame
+      // clock, because a shot that is one continuous push may not be told the
+      // time has moved by a second and a half between two frames.
+      room = Room.create({ canvas: roomCanvas, still, random: seededRandom });
     }
     // Re-shown on every snapshot rather than once: the hero can hand over, and
     // the stage under it can climb a floor, while the room is still up. The
