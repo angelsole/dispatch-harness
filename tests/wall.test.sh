@@ -40,7 +40,7 @@ fi
 # --- the JS parses -----------------------------------------------------------
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
-for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js \
+for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/room.js \
          wall/fixtures/seed.js wall/fixtures/city.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
@@ -69,7 +69,7 @@ fi
 # to a real file this server serves, and everything under wall/vendor/ has a
 # THIRD_PARTY.md row whose hash still matches.
 PAGE_SRC="$(cat "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js" \
-  "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js")"
+  "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js" "$SRC/wall/room.js")"
 CSS_SRC="$(cat "$SRC/wall/wall.css")"
 # The AUTHORED page files only: the vendored bundle carries its upstream in its
 # own banner and is pinned by hash rather than by this grep. XML namespace URIs
@@ -121,6 +121,112 @@ else
 fi
 grep_ok "$(cat "$SRC/.gitattributes")" 'wall/vendor/** -diff linguist-vendored' \
   "assets: the vendored bundle reads as a blob, not as a 1.4 MB diff"
+
+# The room's sprites are the other half of the same doctrine. They were not
+# written by somebody else — they were generated for this repo, by tools this
+# machine drives — so they get their own manifest rather than a THIRD_PARTY.md
+# row, pinned by the same idea: every committed file has a row, every row
+# carries the hash it was committed at, and a sprite that changes without its
+# row changing fails here rather than shipping.
+ASSET_CHECK="$(node -e '
+  const fs = require("fs"), path = require("path"), crypto = require("crypto");
+  const dir = path.join(process.argv[1], "wall", "assets");
+  const manifest = fs.readFileSync(path.join(dir, "MANIFEST.md"), "utf8").split("\n");
+  const bad = [];
+  let listed = 0;
+  const walk = (at) => {
+    for (const name of fs.readdirSync(at).sort()) {
+      const full = path.join(at, name);
+      if (fs.statSync(full).isDirectory()) { walk(full); continue; }
+      if (name.endsWith(".md")) continue;
+      const rel = path.relative(dir, full).split(path.sep).join("/");
+      const sum = crypto.createHash("sha256").update(fs.readFileSync(full)).digest("hex");
+      const row = manifest.find((line) => line.startsWith("|") && line.includes("`" + rel + "`"));
+      if (!row) bad.push(rel + ": no MANIFEST.md row");
+      else if (!row.includes(sum)) bad.push(rel + ": sha256 " + sum + " is not in its row");
+      else listed++;
+    }
+  };
+  walk(dir);
+  process.stdout.write(bad.length ? bad.join("; ") : "ok:" + listed);
+' "$SRC" 2>&1)"
+case "$ASSET_CHECK" in
+  ok:0) bad "assets: wall/assets/ carries at least one manifest-listed file" ;;
+  ok:*) ok  "assets: every committed sprite has a MANIFEST.md row whose sha256 matches" ;;
+  *)    bad "assets: committed sprites disagree with MANIFEST.md ($ASSET_CHECK)" ;;
+esac
+
+# And the palette is a lock, not a suggestion: every pixel of every sprite is
+# one of the 32 in .creative/palette.png, and the room draws with that same 32
+# rather than a copy that has drifted from it. Both claims are checked against
+# the real files, with a PNG reader written here out of node's own zlib — this
+# wall has no dependencies and is not about to grow one for a test.
+PALETTE_CHECK="$(node -e '
+  const fs = require("fs"), path = require("path"), zlib = require("zlib");
+  // 8-bit truecolour PNGs only, with or without alpha, which is what the
+  // post-pass writes and what the palette itself is.
+  function decode(buf) {
+    const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
+    const depth = buf[24], type = buf[25];
+    if (depth !== 8 || (type !== 2 && type !== 6)) throw new Error("png " + depth + "/" + type);
+    const parts = [];
+    for (let at = 8; at + 8 <= buf.length;) {
+      const len = buf.readUInt32BE(at);
+      if (buf.toString("ascii", at + 4, at + 8) === "IDAT") parts.push(buf.subarray(at + 8, at + 8 + len));
+      at += 12 + len;
+    }
+    const raw = zlib.inflateSync(Buffer.concat(parts));
+    const bpp = type === 6 ? 4 : 3, stride = w * bpp;
+    const out = Buffer.alloc(h * stride);
+    for (let y = 0; y < h; y++) {
+      const filter = raw[y * (stride + 1)];
+      for (let x = 0; x < stride; x++) {
+        const a = x >= bpp ? out[y * stride + x - bpp] : 0;
+        const b = y > 0 ? out[(y - 1) * stride + x] : 0;
+        const c = x >= bpp && y > 0 ? out[(y - 1) * stride + x - bpp] : 0;
+        let v = raw[y * (stride + 1) + 1 + x];
+        if (filter === 1) v += a;
+        else if (filter === 2) v += b;
+        else if (filter === 3) v += (a + b) >> 1;
+        else if (filter === 4) {
+          const p = a + b - c;
+          const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+          v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+        }
+        out[y * stride + x] = v & 255;
+      }
+    }
+    return { w, h, bpp, px: out };
+  }
+  const hex = (r, g, b) => "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
+  const root = process.argv[1];
+  const lockPng = decode(fs.readFileSync(path.join(root, ".creative", "palette.png")));
+  const lock = new Set();
+  for (let i = 0; i < lockPng.w * lockPng.h; i++) {
+    lock.add(hex(lockPng.px[i * lockPng.bpp], lockPng.px[i * lockPng.bpp + 1], lockPng.px[i * lockPng.bpp + 2]));
+  }
+  const room = require(path.join(root, "wall", "room.js"));
+  const bad = [];
+  if (room.LOCK.length !== lock.size || room.LOCK.some((c) => !lock.has(c))) {
+    bad.push("room.js draws with a palette that is not the lock");
+  }
+  const dir = path.join(root, "wall", "assets", "room");
+  for (const name of fs.readdirSync(dir).sort()) {
+    if (!name.endsWith(".png")) continue;
+    const img = decode(fs.readFileSync(path.join(dir, name)));
+    const stray = new Set();
+    for (let i = 0; i < img.w * img.h; i++) {
+      const at = i * img.bpp;
+      if (img.bpp === 4 && img.px[at + 3] === 0) continue;   // transparent is no colour
+      const c = hex(img.px[at], img.px[at + 1], img.px[at + 2]);
+      if (!lock.has(c)) stray.add(c);
+    }
+    if (stray.size) bad.push(name + ": " + [...stray].join(","));
+  }
+  process.stdout.write(bad.length ? bad.join("; ") : "ok:" + lock.size);
+' "$SRC" 2>&1)"
+check "assets: every sprite is quantised to the 32-colour lock, and so is the room" \
+  "$PALETTE_CHECK" "ok:32"
 
 # The crew manifest is gone, and must not creep back: the wall organises around
 # the work. Attribution survives only as a tinted light on the run's own car and
@@ -464,6 +570,9 @@ grep_not "$(cat "$SRC/wall/index.html")" 'world-canvas.js' \
   "assets: nor the canvas world it belongs to"
 
 API="$(get "$PORT" /api/runs)"
+# Kept on disk as well: the room probe further down runs the real renderer's
+# arithmetic over this exact payload rather than a restatement of it.
+printf '%s' "$API" > "$ROOT/api.json"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
 check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "11"
 for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1673 OLYX-1598 \
@@ -1487,7 +1596,7 @@ STRAY_GLYPHS="$(node -e '
   const stray = [...new Set([...text])].filter((c) => /[一-鿿]/.test(c) && !curated.has(c));
   process.stdout.write(stray.join(""));
 ' "$SRC/wall/index.html" "$SRC/wall/wall.css" "$SRC/wall/wall.js" \
-  "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js")"
+  "$SRC/wall/scene.js" "$SRC/wall/world-canvas.js" "$SRC/wall/room.js")"
 if [ -z "$STRAY_GLYPHS" ]; then
   ok "signage: no lettering beyond the five curated glyphs"
 else
@@ -1855,12 +1964,10 @@ for banned in 'antialias:' 'pixelArt:'; do
   grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
     "canvas: [$banned] is left to smoothPixelArt"
 done
-# No image files: this world draws, it does not load. The engine's own loader is
-# never touched, and there is nothing under wall/ for it to touch.
-for banned in 'this.load' 'new Image' 'addBase64' 'toDataURL'; do
-  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
-    "canvas: [$banned] — the city is drawn, and drawn from the scene model"
-done
+# The loader ban that used to stand here is retired: "the city is drawn, not
+# loaded" was replaced by "nothing the wall needs leaves this machine", and the
+# room now loads committed, palette-locked, manifest-hashed sprites. Provenance
+# is enforced above instead, by the off-origin ban and the two manifests.
 # The sky painting is authored once, in index.html. This world reads that node
 # rather than keeping a second copy of the same skyline.
 grep_ok "$CANVAS_SRC" "document.querySelector('.sky__' + plane.key + ' path')" \
@@ -2020,7 +2127,7 @@ grep_ok "$CSS_SRC" '.stage { transform: none !important; }' \
 # so after this pass the page still contains no unseeded randomness at all.
 # Every authored file the page runs, both worlds included; never wall/vendor/,
 # whose contents are pinned by hash rather than read line by line.
-for authored in wall.js scene.js world-canvas.js; do
+for authored in wall.js scene.js world-canvas.js room.js; do
   grep_not "$(grep -v '^ *//' "$SRC/wall/$authored")" 'Math.random' \
     "cinema: nothing in $authored is drawn from unseeded randomness"
 done
@@ -2138,7 +2245,7 @@ check "cinema: a dismissed film gets the wide shot back inside a second" \
 # district is skyline and towers only, and a landmark behind a tower is no
 # landmark shot at all.
 grep_ok "$DIRECTOR_SRC" "function wideShot(" "cinema: the reel knows the wide shot"
-for kind in towerShot streetShot windowShot landmarkShot; do
+for kind in towerShot streetShot windowShot landmarkShot roomShot; do
   BODY="$(printf '%s\n' "$DIRECTOR_SRC" | awk -v k="  function $kind(" 'index($0, k) == 1, /^  }$/')"
   if [ -z "$BODY" ]; then
     bad "cinema: the reel knows the $kind"
@@ -2150,6 +2257,165 @@ for kind in towerShot streetShot windowShot landmarkShot; do
 done
 grep_ok "$DIRECTOR_SRC" "wideNext = next.kind !== 'establishing'" \
   "cinema: and the wide shot is what every close shot returns to"
+
+# --- the dive -------------------------------------------------------------------
+# Every other shot stops at the glass. The dive goes through it: the camera
+# pushes into the lit storey of the spotlit run, the room fades up over it at
+# full frame, holds, and the wall comes back out. Two halves to check — that the
+# reel really carries it, and that what it lands on is the truth about that run.
+echo "== wall: the camera goes inside =="
+grep_ok "$DIRECTOR_SRC" "kinds = ['tower', 'street', 'window', 'room']" \
+  "dive: the room is one of the shots a rotation can offer"
+grep_ok "$DIRECTOR_SRC" ".shaft[data-spot=\"1\"] .shaft__work" \
+  "dive: and it goes through the lit storey of the run the beam is already on"
+grep_ok "$DIRECTOR_SRC" 'if (next.enter) next.enter();' \
+  "dive: the cross-fade happens where the push lands, not where it started"
+grep_ok "$DIRECTOR_SRC" 'if (next.leave) next.leave();' \
+  "dive: and the wall comes back out of it before the next cut"
+grep_ok "$PAGE_SRC" "roomHold(false);" \
+  "dive: somebody walking in takes the room away with the film"
+grep_ok "$PAGE_SRC" "roomParams.get('shot') === 'room'" \
+  "dive: ?shot=room is read once at load, in the idiom ?cinema uses"
+grep_ok "$DIRECTOR_SRC" 'if (forcedRoom) {' \
+  "dive: and that still parks the camera instead of filming under the room"
+ROOM_HOLD="$(sed -n 's/^  const ROOM_MIN = \([0-9]*\), ROOM_MAX = \([0-9]*\);.*/\1 \2/p' "$SRC/wall/wall.js")"
+if [ -n "$ROOM_HOLD" ] && awk "BEGIN { split(\"$ROOM_HOLD\", h, \" \");
+     exit !(h[1] >= 15000 && h[2] <= 20000 && h[1] < h[2]) }"; then
+  ok "dive: the room holds fifteen to twenty seconds (${ROOM_HOLD}ms)"
+else
+  bad "dive: the room holds fifteen to twenty seconds (got [$ROOM_HOLD])"
+fi
+# The room is a canvas at the room's own scale. A push-in that scaled its pixels
+# would undo the whole point of authoring it on a 320x180 grid, so it lives
+# outside the stage exactly like the plate and the rain do.
+inside "the room" 'id="room"' out
+grep_ok "$CSS_SRC" 'image-rendering: pixelated' \
+  "dive: and it is scaled by nearest neighbour, never interpolated"
+grep_ok "$CSS_SRC" '.room[data-on="1"] { opacity: 1; }' \
+  "dive: the wall cross-fades into it on opacity alone"
+
+# What the room says. Run through the real file against the real fixture
+# payload, because "the monitor shows the stage in one word" is a claim about
+# arithmetic over a run, not about a stylesheet.
+ROOM_PROBE="$ROOT/room-probe.js"
+cat > "$ROOM_PROBE" <<'JS'
+const R = require(process.argv[2]);
+const api = JSON.parse(require("fs").readFileSync(process.argv[3], "utf8"));
+const FLOORS = api.floors;
+const by = (id) => api.runs.find((r) => r.id === id);
+// The plate's hero, which is what a dive with no run named lands on: alarms
+// first, then actives — the same queue wall.js hands the beam.
+const alarms = api.runs.filter((r) => r.state === "alarm");
+const hero = (alarms.length ? alarms : api.runs.filter((r) => r.state === "active"))[0];
+const view = (id) => R.viewOf({ ...by(id), crew: "#e8cfa6" }, FLOORS);
+const seen = view(hero.id);
+const gate = view("OLYX-1660");
+// Every string the room can be asked to draw, in the face that draws it.
+const missing = [];
+for (const run of api.runs) {
+  const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
+  for (const ch of v.word + v.id) if (!R.BIG.rows[ch]) missing.push("BIG:" + ch);
+  for (const ch of v.repo + v.owner + v.floorName) if (!R.SMALL.rows[ch]) missing.push("SMALL:" + ch);
+}
+const still = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
+  JSON.stringify(R.beatAt(t, true)));
+const moving = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
+  JSON.stringify(R.beatAt(t, false)));
+console.log(JSON.stringify({
+  hero: hero.id,
+  // A blocked run shows the alarm, not the stage it stopped on — and the floor
+  // plate still says which floor that was.
+  word: seen.word,
+  plate: seen.floor + "/" + seen.floors + " " + seen.floorName,
+  repo: seen.repo,
+  owner: seen.owner,
+  alarm: seen.alarm,
+  // A run that is merely working says its stage in one word.
+  gateWord: gate.word,
+  gateAlarm: gate.alarm,
+  gateActor: gate.actorKey,
+  // Nothing the room draws is missing a glyph...
+  missing: missing.join(","),
+  // ...and no stage in the ladder is too wide for the tube it is drawn on.
+  fits: FLOORS.every((name) => R.widthOf(R.BIG, name) <= 64),
+  // Reduced motion is ONE frame at every second of the clock, and a lit one:
+  // both lights come back at full rather than going out.
+  frozen: new Set(still).size === 1,
+  moves: new Set(moving).size === moving.length,
+  lit: R.beatAt(0, true).glow === 1 && R.beatAt(0, true).tube === 1,
+  // The actor neon a worker is tinted with is the city's own, on the lock.
+  tints: ["opus", "codex", "gate", "alarm"].map((k) => R.ACTOR[k]).join(","),
+  onLock: Object.values(R.ACTOR).every((c) => R.LOCK.includes(c)),
+  // And every sprite the room asks for is a file that was committed.
+  sprites: Object.values(R.SPRITES).length,
+}));
+JS
+ROOM="$(node "$ROOM_PROBE" "$SRC/wall/room.js" "$ROOT/api.json" 2>&1)"
+room_of() { printf '%s' "$ROOM" | jq -r ".$1" 2>/dev/null; }
+check "room: the dive lands on the run the plate is pinned to" "$(room_of hero)" "OLYX-1642"
+check "room: a blocked run's monitor asks for a human" "$(room_of word)" "NEEDS INPUT"
+check "room: and its wall plate still says which floor that is" \
+  "$(room_of plate)" "1/6 IMPLEMENT"
+check "room: the repo is named"  "$(room_of repo)" "OLYXBASE"
+check "room: so is the dispatcher" "$(room_of owner)" "REINIER"
+check "room: a working run gets its stage in one word" "$(room_of gateWord)" "GATE"
+check "room: and is not drawn as an alarm" "$(room_of gateAlarm)" "false"
+check "room: the worker is the actor that owns the stage" "$(room_of gateActor)" "gate"
+check "room: nothing it draws is missing a glyph" "$(room_of missing)" ""
+check "room: no stage in the ladder overruns the tube" "$(room_of fits)" "true"
+check "room: reduced motion is one frame at every second of the clock" \
+  "$(room_of frozen)" "true"
+check "room: and the same room without it genuinely moves" "$(room_of moves)" "true"
+check "room: a still room is a LIT room standing still" "$(room_of lit)" "true"
+check "room: the worker's tint is the city's own actor neon" \
+  "$(room_of tints)" "#4c9dff,#3fd984,#e0a23c,#ff2f45"
+check "room: every one of them is on the palette lock" "$(room_of onLock)" "true"
+check "room: and every sprite it asks for is one this repo committed" \
+  "$(room_of sprites)" "13"
+
+# The route the sprites come down. A directory route is the path traversal this
+# server has never had, so the fence is checked from both sides: the real
+# function over the paths an attacker would try, and the running server over the
+# ones a browser would send.
+GUARD="$(node -e '
+  const S = require(process.argv[1]);
+  const path = require("path");
+  const inside = (u) => { const f = S.assetOf(u); return f ? path.relative(S.ASSETS, f) : ""; };
+  console.log(JSON.stringify({
+    plain: inside("/assets/room/worker-type-0.png"),
+    up: inside("/assets/../server.js"),
+    deep: inside("/assets/room/../../server.js"),
+    encoded: inside("/assets/%2e%2e/server.js"),
+    doubled: inside("/assets/%252e%252e/server.js"),
+    absolute: inside("/assets//etc/passwd"),
+    tilde: inside("/assets/~/.ssh/id_rsa"),
+    markdown: inside("/assets/MANIFEST.md"),
+    script: inside("/assets/room/evil.js"),
+    naked: inside("/assets/room/"),
+    dotfile: inside("/assets/.git/config"),
+    elsewhere: inside("/wall.css"),
+  }));
+' "$SRC/wall/server.js" 2>&1)"
+guard_of() { printf '%s' "$GUARD" | jq -r ".$1" 2>/dev/null; }
+check "assets: a plain sprite path resolves under wall/assets" \
+  "$(guard_of plain)" "room/worker-type-0.png"
+for probe in up deep encoded doubled absolute tilde markdown script naked dotfile elsewhere; do
+  check "assets: [$probe] is refused by the guard" "$(guard_of "$probe")" ""
+done
+check "assets: the room's sprites are served" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" "200"
+check "assets: as image/png" \
+  "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" \
+  "image/png"
+# Over the wire, only the paths a client will actually transmit: curl collapses
+# a literal `..` before it sends, so the raw-traversal cases are the probe's
+# above — this half proves the guard is wired into the server at all, and that
+# the manifest and the directory itself are not readable through it.
+for hostile in /assets/%2e%2e/server.js /assets/MANIFEST.md /assets/room/ \
+               /assets/room/nope.png /assets/room/wall.js; do
+  check "assets: [$hostile] 404s" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$hostile")" "404"
+done
 
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
