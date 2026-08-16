@@ -1267,7 +1267,11 @@ body[data-idle="rest"] .rest { display: block; }
   left: -1%;
   right: -1%;
   bottom: 0;
-  height: calc(var(--storey) * 2);
+  /* Two district storeys, scaled by the band this building stands in: a far
+     ground floor is a shorter ground floor, and without that the district
+     grows one ribbon of light at a fixed height the whole way across, which is
+     the even density this city fails on. */
+  height: calc(var(--storey) * 2 * var(--deep));
   background:
     /* the counters, and the doorways between them */
     repeating-linear-gradient(90deg,
@@ -1804,7 +1808,7 @@ body[data-idle="rest"] .rest { display: block; }
     /* the lantern itself: a small hot box, the one thing up here that is a
        light rather than lit */
     radial-gradient(0.4rem 0.23rem at 50% 0.26rem,
-      #fff6e4 0 60%,
+      #fff 0 60%,
       color-mix(in srgb, var(--shop-diner) 92%, #fff) 60% 80%, transparent 86%)
       left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
     /* the hood over it, so a lantern is a fitting rather than a floating dot */
