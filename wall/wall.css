@@ -122,7 +122,7 @@ body {
      same thing said louder. A glow is a shape: the light comes off where the
      city is, and either side of that there is night. */
   background:
-    radial-gradient(58% 26% at 50% calc(100% - var(--ground)), rgba(54, 110, 130, 0.26), rgba(28, 58, 78, 0.07) 52%, transparent 76%),
+    radial-gradient(58% 26% at 50% calc(100% - var(--ground)), rgba(58, 116, 134, 0.26), rgba(30, 62, 84, 0.07) 52%, transparent 76%),
     linear-gradient(180deg, #02050b 0%, #051222 62%, var(--bg) 100%);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace;
@@ -252,11 +252,11 @@ body {
       color-mix(in srgb, var(--bg) 64%, transparent), transparent 76%),
     /* the body of it, over the district and well clear of the frame edges */
     radial-gradient(46% 54% at 50% 56%,
-      rgba(96, 152, 178, 0.15), rgba(72, 120, 148, 0.05) 52%, transparent 80%),
+      rgba(126, 196, 196, 0.15), rgba(58, 116, 134, 0.05) 52%, transparent 80%),
     /* and two thinner pockets either side, so it reads as weather rather than
        as one more shape drawn on the city */
-    radial-gradient(26% 40% at 19% 62%, rgba(84, 138, 166, 0.1), transparent 76%),
-    radial-gradient(24% 36% at 81% 60%, rgba(84, 138, 166, 0.09), transparent 76%);
+    radial-gradient(26% 40% at 19% 62%, rgba(90, 170, 170, 0.1), transparent 76%),
+    radial-gradient(24% 36% at 81% 60%, rgba(90, 170, 170, 0.09), transparent 76%);
 }
 /* The two banks that drift through it. They ride above the kerb rather than
    across it: fog lying on the road is the one place this layer may not go, or
@@ -267,7 +267,7 @@ body {
   bottom: 4vh;
   width: 70%;
   height: 24vh;
-  background: radial-gradient(50% 50% at 50% 50%, rgba(104, 158, 186, 0.09), transparent 70%);
+  background: radial-gradient(50% 50% at 50% 50%, rgba(126, 196, 196, 0.09), transparent 70%);
   animation: drift 47s linear infinite;
 }
 .haze i:nth-child(2) {
@@ -2213,7 +2213,7 @@ body[data-idle="rest"] .rest { display: block; }
      unbroken bright line in the picture, running the full width under the whole
      district — the top edge of the band everything else was accused of being. */
   background:
-    radial-gradient(30% 100% at 50% 50%, rgba(170, 225, 220, 0.42), transparent 86%)
+    radial-gradient(30% 100% at 50% 50%, rgba(140, 205, 200, 0.42), transparent 86%)
       left var(--lamp-x) center / var(--lamp-gap) 100% repeat-x,
     linear-gradient(90deg, transparent,
       rgba(140, 205, 200, 0.035) 12%, rgba(140, 205, 200, 0.035) 88%, transparent);
