@@ -40,7 +40,8 @@ fi
 # --- the JS parses -----------------------------------------------------------
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
-for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/fixtures/seed.js; do
+for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js \
+         wall/fixtures/seed.js wall/fixtures/city.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 # The fixture generator accepts a target for hermetic tests, but must never
@@ -2418,6 +2419,161 @@ if [ -n "$FIX" ]; then
   fi
 else
   bad "fixtures: server starts against wall/fixtures/runs"
+fi
+
+# --- the fixtures come with a week ----------------------------------------------
+# The demo, and the scene the visual gate renders, is `--runs wall/fixtures/runs`
+# against a ledger that does not exist yet. The staged run dirs give that a full
+# skyline; the district under it is fed by the ledger instead, and the fixtures
+# ship one shipped run into it — a plain. So the repo's OWN fixtures, with no
+# ledger, seed a week first. Nothing else in the world does: the guard is the
+# whole feature, because a live wall's memory is not ours to invent.
+echo "== wall: the fixtures' own week =="
+grep_not "$(grep -v '^ *//' "$SRC/wall/fixtures/city.js")" 'Math.random' \
+  "fixtures: the seeded district is drawn from no randomness at all"
+FIXCITY_PROBE="$ROOT/fixture-city-probe.js"
+cat > "$FIXCITY_PROBE" <<'JS'
+const w = require(process.argv[2]);
+const { cityRecords } = require(process.argv[3]);
+const staged = new Set(require('node:fs').readdirSync(process.argv[4])
+  .filter((entry) => !entry.startsWith('.')));
+const now = Number(process.argv[5]);
+const records = cityRecords(now, w.weekStartOf);
+
+const start = w.weekStartOf(now);
+const end = w.weekEndOf(now);
+const previous = w.weekStartOf(start - 1);
+const standing = records.filter((r) => r.epoch >= start && r.epoch < end);
+const behind = records.filter((r) => r.epoch >= previous && r.epoch < start);
+const uniq = (list) => [...new Set(list)].sort().join(',');
+const storeys = standing.map((r) => w.storeysOf(r));
+
+// The minute is the quantum, so the whole of one minute is one city.
+const base = now - (now % 60);
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+console.log(JSON.stringify({
+  count: records.length,
+  standing: standing.length,
+  behind: behind.length,
+  outside: records.length - standing.length - behind.length,
+  ahead: records.filter((r) => r.epoch > now).length,
+  distinct: new Set(records.map((r) => r.id)).size,
+  // A seeded id that collided with a staged run dir would shadow it under the
+  // ledger's first-sighting rule, and the demo would stop showing a discovery.
+  collisions: records.filter((r) => staged.has(r.id)).length,
+  // Every line has to survive the ledger's own parser with nothing coerced: a
+  // record the wall would rewrite is not the district this file describes.
+  valid: records.every((r) => {
+    const rec = w.recordOf(r);
+    return rec !== null && rec.id === r.id && rec.epoch === r.epoch && rec.repo === r.repo
+      && rec.owner === r.owner && rec.insertions === r.insertions
+      && rec.deletions === r.deletions;
+  }),
+  chronological: records.every((r, i) => i === 0 || records[i - 1].epoch <= r.epoch),
+  depths: uniq(standing.map((r) => w.plotOf(r.id).depth)),
+  kinds: uniq(standing.map((r) => w.kindOf(r.repo))),
+  owners: uniq(records.map((r) => r.owner)),
+  storeys: Math.min(...storeys) + '..' + Math.max(...storeys),
+  // No two buildings on one plot: same depth band, a footprint apart at least.
+  crowded: standing.some((a) => standing.some((b) => a.id !== b.id
+    && w.plotOf(a.id).depth === w.plotOf(b.id).depth
+    && Math.abs(w.plotOf(a.id).x - w.plotOf(b.id).x) < 0.03)),
+  stable: same(cityRecords(now, w.weekStartOf), records),
+  sameMinute: same(cityRecords(base, w.weekStartOf), cityRecords(base + 59, w.weekStartOf)),
+}));
+JS
+FIXCITY="$(node "$FIXCITY_PROBE" "$SRC/wall/server.js" "$SRC/wall/fixtures/city.js" \
+  "$SRC/wall/fixtures/runs" "$(date +%s)" 2>&1)"
+fixcity_of() { printf '%s' "$FIXCITY" | jq -r ".$1" 2>/dev/null; }
+check "seed: a week's worth of memory, not a token building" \
+  "$(fixcity_of count)" "28"
+check "seed: most of it is this week's district"  "$(fixcity_of standing)" "21"
+check "seed: and the rest is last week's ghost"   "$(fixcity_of behind)" "7"
+check "seed: nothing lands outside the two windows the wall can draw" \
+  "$(fixcity_of outside)" "0"
+check "seed: nor in a future the fixtures have not had yet" "$(fixcity_of ahead)" "0"
+check "seed: every ticket is its own building"    "$(fixcity_of distinct)" "28"
+check "seed: and none of them shadows a staged run" "$(fixcity_of collisions)" "0"
+check "seed: every record is one the ledger stores verbatim" "$(fixcity_of valid)" "true"
+check "seed: the ledger it lays down reads as a chronicle" \
+  "$(fixcity_of chronological)" "true"
+check "seed: the district fills all three depth bands" "$(fixcity_of depths)" "0,1,2"
+check "seed: and every family the wall can draw" \
+  "$(fixcity_of kinds)" "industrial,infra,midrise,residential,spire"
+check "seed: the crew and the synthetic both shipped" \
+  "$(fixcity_of owners)" "angel,bot,emre,reinier"
+check "seed: heights span the whole of the scale" "$(fixcity_of storeys)" "3..14"
+check "seed: no two buildings stand on one plot"  "$(fixcity_of crowded)" "false"
+check "seed: the same clock draws the same city"  "$(fixcity_of stable)" "true"
+check "seed: and so does anywhere in the same minute" "$(fixcity_of sameMinute)" "true"
+
+# End to end: the wall the demo and the visual gate actually start.
+serve "$SRC/wall/fixtures/runs" "$ROOT/fixture-week.log"; FW="$PORT_OUT"
+FW_CITY="$CITY_OUT"
+if [ -n "$FW" ]; then
+  FWAPI="$(get "$FW" /api/runs)"
+  FW_STANDING="$(printf '%s' "$FWAPI" | jq '.city | length')"
+  if [ "$FW_STANDING" -ge 20 ]; then
+    ok "fixtures: the demo opens on a district, not a plain ($FW_STANDING buildings)"
+  else
+    bad "fixtures: the demo opens on a district, not a plain (only $FW_STANDING)"
+  fi
+  check "fixtures: standing across all three depth bands" \
+    "$(printf '%s' "$FWAPI" | jq -r '[.city[].depth] | unique | join(",")')" "0,1,2"
+  FW_KINDS="$(printf '%s' "$FWAPI" | jq '[.city[].kind] | unique | length')"
+  if [ "$FW_KINDS" -ge 4 ]; then
+    ok "fixtures: in $FW_KINDS different families"
+  else
+    bad "fixtures: in at least four different families (got $FW_KINDS)"
+  fi
+  FW_GHOSTS="$(printf '%s' "$FWAPI" | jq '.ghost | length')"
+  if [ "$FW_GHOSTS" -gt 0 ]; then
+    ok "fixtures: with last week standing behind it ($FW_GHOSTS silhouettes)"
+  else
+    bad "fixtures: with last week standing behind it"
+  fi
+  check "fixtures: and it says so once, in the house voice" \
+    "$(grep -c "seeding the city's memory" "$ROOT/fixture-week.log")" "1"
+  # The seed is a ledger like any other: the demo restarted on it finds the
+  # district it left, and does not pour a second one on top.
+  serve "$SRC/wall/fixtures/runs" "$ROOT/fixture-week2.log" --city "$FW_CITY"
+  FW_TWO="$PORT_OUT"
+  if [ -n "$FW_TWO" ]; then
+    check "fixtures: a restart on the same ledger stands the same city up" \
+      "$(get "$FW_TWO" /api/runs | jq '.city | length')" "$FW_STANDING"
+    check "fixtures: and seeds nothing a second time" \
+      "$(grep -c "seeding the city's memory" "$ROOT/fixture-week2.log")" "0"
+  else
+    bad "fixtures: a second wall starts against the seeded ledger"
+  fi
+else
+  bad "fixtures: server starts against the repo's fixtures with no ledger"
+fi
+
+# The guard, from the other side. $RUNS is a byte-identical copy of the same
+# fixtures staged somewhere else — which is what every real deployment looks
+# like — and an existing ledger is a wall with its own history. Neither is
+# seeded, so the only building either can have is the one it discovered.
+serve "$RUNS" "$ROOT/elsewhere.log"; ELSEWHERE="$PORT_OUT"
+if [ -n "$ELSEWHERE" ]; then
+  check "guard: fixtures staged anywhere else are a plain, exactly as before" \
+    "$(get "$ELSEWHERE" /api/runs | jq '[.city[] | select(.id != "OLYX-1598")] | length')" "0"
+  check "guard: and nothing was seeded into them" \
+    "$(grep -c "seeding the city's memory" "$ROOT/elsewhere.log")" "0"
+else
+  bad "guard: server starts against a copy of the fixtures elsewhere"
+fi
+PRIOR_CITY="$ROOT/prior-city.jsonl"
+: > "$PRIOR_CITY"
+serve "$SRC/wall/fixtures/runs" "$ROOT/prior.log" --city "$PRIOR_CITY"; PRIOR="$PORT_OUT"
+if [ -n "$PRIOR" ]; then
+  check "guard: a ledger that already exists is never seeded into" \
+    "$(get "$PRIOR" /api/runs | jq '[.city[] | select(.id != "OLYX-1598")] | length')" "0"
+  check "guard: not even an empty one" \
+    "$(grep -c "seeding the city's memory" "$ROOT/prior.log")" "0"
+else
+  bad "guard: server starts against the fixtures with a ledger already there"
 fi
 
 # --- flags --------------------------------------------------------------------
