@@ -773,12 +773,15 @@ function pruneLedger(before) {
 // and a demo restarted on the same ledger finds the district it left.
 const FIXTURE_RUNS = path.join(HERE, 'fixtures', 'runs');
 
+function realPath(file) {
+  try { return fs.realpathSync(file); } catch { return ''; }
+}
+
 // Resolved rather than compared as text: --runs is commonly relative (the visual
 // gate passes `wall/fixtures/runs`), and $TMPDIR on macOS is a symlink, so two
 // spellings of one directory must not read as two directories.
 function samePath(a, b) {
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-  return real(a) === real(b);
+  return (realPath(a) || path.resolve(a)) === (realPath(b) || path.resolve(b));
 }
 
 function seedFixtureCity(at) {
@@ -915,12 +918,9 @@ const STATIC = {
 // symlink committed under wall/assets is a perfectly ordinary segment with a
 // perfectly ordinary extension whose contents are somewhere else entirely, and
 // `..` is not the only way out of a directory.
-function realOf(file) {
-  try { return fs.realpathSync(file); } catch { return ''; }
-}
 // The root itself is resolved once, so a checkout under a symlinked path (a
 // /tmp worktree on macOS, say) is not a checkout whose sprites all 404.
-const ASSETS = realOf(path.join(HERE, 'assets')) || path.join(HERE, 'assets');
+const ASSETS = realPath(path.join(HERE, 'assets')) || path.join(HERE, 'assets');
 const ASSET_TYPES = {
   '.png': 'image/png',
   '.json': 'application/json; charset=utf-8',
@@ -945,7 +945,7 @@ function assetOf(url) {
   // And the same question once more of the file that is actually there. A path
   // that does not exist has no real path and is refused here rather than in
   // readFile, which is the same 404 one syscall earlier.
-  const real = realOf(full);
+  const real = realPath(full);
   if (!real || !real.startsWith(ASSETS + path.sep)) return '';
   return real;
 }

@@ -2623,7 +2623,7 @@ FENCE_GUARD="$(node -e '
 ' "$FENCE/wall/server.js" 2>&1)"
 fence_of() { printf '%s' "$FENCE_GUARD" | jq -r ".$1" 2>/dev/null; }
 check "assets: a symlink pointing out of wall/assets is refused" "$(fence_of escape)" ""
-check "assets: and so is a real file reached through a symlinked directory" \
+check "assets: an in-root symlink resolves to the canonical asset" \
   "$(fence_of through)" "room/probe.json"
 check "assets: a committed .json under wall/assets still resolves" \
   "$(fence_of json)" "room/probe.json"
