@@ -750,6 +750,49 @@ function pruneLedger(before) {
   return true;
 }
 
+// --- the fixtures' own memory ---------------------------------------------------
+// `wall.sh --runs wall/fixtures/runs` is the demo, and the scene the visual gate
+// renders. The staged run dirs give it a full skyline; the district under them
+// comes from the ledger instead, and the fixtures contain exactly one
+// `done: ready` — so the one thing the demo could never show was the half of the
+// wall that accretes. When this server is serving the repo's OWN fixtures and
+// has no ledger yet, it lays a week of memory down before it listens.
+//
+// Both halves of that condition are the guard. A real deployment is any other
+// --runs, and a wall that already has a ledger has its own history: neither is
+// ever touched, and there is no flag to make them be. The seed goes in through
+// the ordinary append, so every later rule — one line per run id, Monday's
+// rollover, a restart reading the city back off disk — applies to it unchanged,
+// and a demo restarted on the same ledger finds the district it left.
+const FIXTURE_RUNS = path.join(HERE, 'fixtures', 'runs');
+
+// Resolved rather than compared as text: --runs is commonly relative (the visual
+// gate passes `wall/fixtures/runs`), and $TMPDIR on macOS is a symlink, so two
+// spellings of one directory must not read as two directories.
+function samePath(a, b) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(a) === real(b);
+}
+
+function seedFixtureCity(at) {
+  if (!samePath(RUNS, FIXTURE_RUNS) || fs.existsSync(CITY_FILE)) return;
+  let records;
+  try {
+    records = require('./fixtures/city.js').cityRecords(at, weekStartOf)
+      .map(recordOf)
+      .filter(Boolean);
+  } catch (err) {
+    // A fixture module that is missing or broken costs the demo its district,
+    // never the wall its start.
+    console.error(`[wall] fixtures: no city to seed (${err.message})`);
+    return;
+  }
+  // appendRecord has already said why it could not write; a half-laid district
+  // is loaded off the file like any other ledger on the first poll.
+  for (const record of records) if (!appendRecord(record)) return;
+  console.error(`[wall] fixtures: seeding the city's memory (${records.length} buildings)`);
+}
+
 // Discovery. A run dir is how the wall FINDS a ship; the ledger is how it
 // remembers one. Only this week's finishes are ever recorded — the ledger is
 // what the wall witnessed, and it does not backfill a history it did not see.
@@ -967,6 +1010,7 @@ server.on('error', (err) => {
 // finish epoch and a diff, so tests/wall.test.sh calls them directly instead of
 // staging a run dir per rule. Nothing listens in that mode.
 if (require.main === module) {
+  seedFixtureCity(Math.floor(Date.now() / 1000));
   server.listen(PORT, HOST, () => {
     // The bound port, not the requested one: --port 0 asks the OS for a free one,
     // which is how tests and a second wall on the same box stay collision-free.
