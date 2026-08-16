@@ -1051,11 +1051,12 @@ body[data-idle="rest"] .rest { display: block; }
   --belt: 4;
   --crew: #e8cfa6;
   --age: 0;
-  /* How much of this frontage is awake at one in the morning, 0.06 to 1.
-     --flicker is a slice of the same street seed that already picked the shop
-     under this building, the bay its tube hangs over and whether it has one, so
-     this is a fact about the run id like everything else down here: the same
-     building is shuttered on the second TV and shuttered again tomorrow.
+  /* How much of this frontage is awake at one in the morning, 0.03 to 1.
+     --awake-seed is the normalized slice of the same street seed that already
+     picked the shop under this building, the bay its tube hangs over and whether
+     it has one, so this is a fact about the run id like everything else down
+     here: the same building is shuttered on the second TV and shuttered again
+     tomorrow. The fixed default is the landmark's own steady baseline.
 
      Without it every building on the street ran its ground floor at full and
      the district grew a strip of small bright windows edge to edge — even
@@ -1069,8 +1070,8 @@ body[data-idle="rest"] .rest { display: block; }
      is the same even density one stop down. This curve is mostly off with a few
      genuinely open, which is what a street looks like at this hour — and what
      makes its light read as pools rather than as a strip. Two multiplications. */
-  --lit: calc(var(--flicker, 78) / 88);
-  --awake: calc(0.03 + var(--lit) * var(--lit) * var(--lit) * 0.97);
+  --awake-seed: 0.8864;
+  --awake: calc(0.03 + var(--awake-seed) * var(--awake-seed) * var(--awake-seed) * 0.97);
   /* How wide this building actually is, named rather than inlined: everything
      hung on the frontage is sized off it instead of in rem, which is the only
      way a sign on a low deck on pylons and a sign on a spire both stay signs. */
