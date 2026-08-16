@@ -2423,7 +2423,7 @@ console.log(JSON.stringify({
   // A run that is merely working says its stage in one word.
   gateWord: gate.word,
   gateAlarm: gate.alarm,
-  gateActor: gate.actorKey,
+  gateActor: gate.workActorKey,
   // Nothing the room draws is missing a glyph...
   missing: missing.join(","),
   // ...and no stage in the ladder is too wide for the tube it is drawn on.
@@ -2462,10 +2462,10 @@ console.log(JSON.stringify({
     }
     return true;
   })(),
-  // Who is at the desk, in colour. A blocked run reaches the room with its
-  // actor key rewritten to `alarm`; the room tints the person with the neon of
-  // the floor work stopped on instead, because in here the alarm belongs to the
-  // monitor and the person is a person. Never stone, never the alarm red.
+  // Who is at the desk, in colour. The server preserves the work actor while
+  // actorKey becomes the wide city's alarm light, so the room consumes domain
+  // attribution instead of duplicating the floor ladder. Never stone, never red.
+  blockedActor: seen.workActorKey,
   blockedTint: R.tintOf(seen),
   workingTint: R.tintOf(gate),
   blockedNotAlarm: R.tintOf(seen) !== R.ACTOR.alarm,
@@ -2515,6 +2515,8 @@ check "room: the lens never eases back, at any second of the hold" \
 check "room: a blocked worker wears the neon of the floor work stopped on" \
   "$(room_of blockedTint)" "#4c9dff"
 check "room: a working one wears their own" "$(room_of workingTint)" "#e0a23c"
+check "room: blocked actor attribution comes from the run snapshot" \
+  "$(room_of blockedActor)" "opus"
 check "room: the alarm red is for the monitor, never for the jacket" \
   "$(room_of blockedNotAlarm)" "true"
 check "room: every run in the city puts an actor at that desk" \
@@ -2802,6 +2804,8 @@ check "actor: terminal needs_input keeps the blocking attribution" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .actor')" "needs input"
 check "floor: terminal needs_input stays where work stopped" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .floor')" "3"
+check "actor: terminal needs_input preserves who was working on that floor" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .workActorKey')" "codex"
 check "alarm: terminal needs_input raises its project's searchlight" \
   "$(printf '%s' "$API" | jq -r '.towers[] | select(.project=="input-project") | .alarm')" "1"
 check "project: long repo basenames are not truncated or merged" \

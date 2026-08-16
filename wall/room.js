@@ -336,6 +336,9 @@
       floor: Math.max(0, Math.min(ladder.length - 1, run.floor || 0)),
       floors: ladder.length,
       actorKey: run.actorKey || 'unknown',
+      // The server owns stage/floor attribution. In an alarm actorKey is the
+      // red status light, while workActorKey is the person behind the alert.
+      workActorKey: run.workActorKey || (alarm ? 'unknown' : run.actorKey) || 'unknown',
       actor: (run.actor || '').toUpperCase(),
       owner: (run.owner || '').toUpperCase(),
       crew: snap(run.crew || '#e8cfa6'),
@@ -346,20 +349,11 @@
     };
   }
 
-  // The ladder's own actors, one per floor. A blocked run reaches this file with
-  // its actor key rewritten to `alarm`, which is the right answer outside — out
-  // there the CAR is the status light and a blocked one is red whatever was
-  // running. In here the monitor is what carries the alarm and the person is a
-  // person, so the room reads who was working off the floor they stopped on.
-  // Six floors, six actors: that is where the floors came from.
-  const FLOOR_ACTOR = ['setup', 'opus', 'gate', 'codex', 'demo', 'pr'];
-
   // What the person at the desk is tinted with: an actor neon, always — the same
   // colour that run's car is lit with out in the city. Never stone (which says
   // "this person is scenery" about the one person the shot is of) and never the
   // alarm red, which belongs to the things that raise the alarm.
-  const tintOf = (v) =>
-    ACTOR[v.alarm ? FLOOR_ACTOR[v.floor] || 'unknown' : v.actorKey] || SAGE;
+  const tintOf = (v) => ACTOR[v.workActorKey] || SAGE;
 
   // --- the drawing --------------------------------------------------------
 

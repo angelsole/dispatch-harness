@@ -197,6 +197,12 @@ const FLOOR_OF = {
   pr: 5,
 };
 
+// The actor whose work each floor represents. Alarm runs deliberately replace
+// actorKey with `alarm` for the wide city's status light; workActorKey preserves
+// who is sitting inside that floor so interior views do not need their own copy
+// of the pipeline ladder.
+const FLOOR_ACTOR = ['setup', 'opus', 'gate', 'codex', 'demo', 'pr'];
+
 // A finished run parks at the floor it stopped on, not at the roof: a
 // `done: gate_failed` burnout two floors down is the honest picture, and only a
 // run that actually shipped lights the rooftop. Anything unrecognised (a future
@@ -348,6 +354,7 @@ function readRun(id, current) {
     state,
     actor,
     actorKey,
+    workActorKey: state === 'alarm' ? FLOOR_ACTOR[floor] || 'unknown' : actorKey,
     floor,
     floorName: FLOORS[floor] || FLOORS[0],
     activity: firstLine(path.join(dir, 'activity')).slice(0, 160),
