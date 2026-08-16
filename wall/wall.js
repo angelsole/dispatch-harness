@@ -315,13 +315,24 @@
     // The ground floor: a lit shopfront row and matching glyph under every
     // building, plus the established one-in-three neon tube over a bay.
     const shop = el('i', 'block__shop');
-    const glyph = el('i', 'block__glyph');
-    shop.append(el('i', 'block__neon'), glyph);
+    shop.append(el('i', 'block__neon'));
     mass.append(occupancy, shop);
+    // The hanging sign is bracketed to the building, not painted on the shop
+    // row inside it — which is also the only way it survives: everything inside
+    // .block__mass is cut by the typology's roofline clip-path and washed by
+    // the depth veil, and a sign that is hazed like a distant wall is not a
+    // sign, it is texture.
+    const glyph = el('i', 'block__glyph');
+    // What that ground floor puts on the pavement in front of it. It hangs off
+    // the building rather than off the shop row inside it because a typology
+    // cuts its own roofline out of .block__mass with a clip-path, and a
+    // clip-path takes the descendants with it: for every form the district
+    // draws, the light this street is lit by was being clipped off at the kerb.
+    const spill = el('i', 'block__spill');
     // The sign is the only thing on a building that names anybody: a small neon
     // in the dispatcher's own crew tint, cooling to the district's neutral
     // within --sign-life of landing. No zones, no lanes, nothing cumulative.
-    root.append(el('i', 'block__crown'), mass, el('i', 'block__sign'));
+    root.append(el('i', 'block__crown'), mass, spill, glyph, el('i', 'block__sign'));
     return { root, glyph, occupants };
   }
 
@@ -388,9 +399,11 @@
     root.title = RAN.dedication;
     const mass = el('i', 'block__mass');
     // The district's own facade grid and its lit ground floor, wholesale: a
-    // monument is still a building on this street, not a graphic laid over it.
+    // monument is still a building on this street, not a graphic laid over it —
+    // including the light it lays on the pavement in front of it.
     mass.append(el('i', 'tower__windows block__windows'), el('i', 'block__shop'));
-    root.append(el('i', 'block__crown'), mass, el('i', 'landmark__sign', RAN.glyph));
+    root.append(el('i', 'block__crown'), mass, el('i', 'block__spill'),
+                el('i', 'landmark__sign', RAN.glyph));
     return root;
   }
 
@@ -460,11 +473,22 @@
       node.append(el('i'));
     });
     populate(road, 'life__car', plan.vehicles, (node, slot) => {
+      // Which way it is driving, which is also which side of the road it is
+      // on: westbound is the far side, smaller and behind the near traffic.
       node.dataset.way = slot % 2 ? 'west' : 'east';
+      // The cab itself. The pass is still one transform and one opacity on the
+      // element above it; this is the body that transform is carrying.
+      node.append(el('i'));
     });
     life.style.setProperty('--vehicle-cycle', plan.cycle + 's');
+    // One planned gap between consecutive passes, and half a cycle of head
+    // start on top: the same fast-forward the district's buildings and the
+    // completion moment get. Without it a freshly opened browser watches an
+    // empty road for most of a minute before the first car arrives, which is
+    // exactly what every screenshot of this wall has been catching.
     [...road.children].forEach((node, slot) => {
-      node.style.setProperty('--vehicle-delay', (-slot * plan.gap) + 's');
+      node.style.setProperty('--vehicle-delay',
+        (-(slot * plan.gap + plan.cycle * 0.5)).toFixed(1) + 's');
     });
     life.dataset.tram = plan.tram ? '1' : '0';
     life.dataset.mall = plan.mall ? '1' : '0';
