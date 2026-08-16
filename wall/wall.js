@@ -25,7 +25,7 @@
   const Scene = window.WallScene;
   const {
     crewTint, seededRandom, wetness, weatherSeed, dawn,
-    RAN, GHOST, RAIN_LAG, OCCUPIED,
+    RAN, GHOST, RAIN_LAG, OCCUPIED, FLICKER_SPREAD,
   } = Scene;
 
   const POLL_MS = 2000;    // only used when SSE is unavailable
@@ -34,6 +34,7 @@
   const TILT = 0.2;        // how far off vertical the rain falls
   const CEREMONY_S = 6;    // the shipping beat; must match --ceremony in wall.css
   const DRY = 0.06;        // a near-dry spell is drips, never a dead canvas
+  const FLICKER_MAX = Math.max(1, FLICKER_SPREAD - 1);
   // The canvas world and the engine behind it, in load order. Only requested
   // when ?world=canvas asks for them: the DOM wall must never pay 1.4 MB of
   // WebGL for a city it draws in CSS.
@@ -372,6 +373,9 @@
     B.root.dataset.neon = night.neon ? '1' : '0';
     B.root.style.setProperty('--bay', String(night.bay));
     B.root.style.setProperty('--flicker', String(night.flicker));
+    // The scene owns the seed's range; CSS only owns the curve that turns the
+    // normalized draw into frontage light.
+    B.root.style.setProperty('--awake-seed', String(night.flicker / FLICKER_MAX));
     // The lettering rides the same write-once pass as everything else on this
     // building: a glyph is a fact about the shop, so it is set here and never
     // touched again.

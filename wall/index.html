@@ -92,10 +92,12 @@
       <stop offset="86%" stop-color="#061d23"/>
       <stop offset="100%" stop-color="#0a2b29"/>
     </linearGradient>
-    <!-- the glow the city throws back up at its own cloud ceiling -->
-    <radialGradient id="cityglow" cx="50%" cy="100%" r="78%">
-      <stop offset="0%" stop-color="#2a6f66" stop-opacity="0.5"/>
-      <stop offset="48%" stop-color="#12333c" stop-opacity="0.24"/>
+    <!-- the glow the city throws back up at its own cloud ceiling. Tight, and
+         under half the frame: at r=78% this was lighting the sky from edge to
+         edge, which is a grey wash rather than a city with lights in it. -->
+    <radialGradient id="cityglow" cx="50%" cy="100%" r="52%">
+      <stop offset="0%" stop-color="#2a6f66" stop-opacity="0.36"/>
+      <stop offset="48%" stop-color="#12333c" stop-opacity="0.15"/>
       <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
@@ -110,11 +112,16 @@
       <stop offset="0%" stop-color="#04090e"/>
       <stop offset="100%" stop-color="#010305"/>
     </linearGradient>
-    <!-- atmospheric perspective: the wet air sitting between the depth planes -->
-    <linearGradient id="hazeveil" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#2a5a62" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#2a5a62" stop-opacity="0.14"/>
-    </linearGradient>
+    <!-- atmospheric perspective: the wet air sitting between the depth planes.
+         A dome off the horizon rather than a bar across it — as a flat vertical
+         ramp over an 1840-wide rect this was a wall of grey the full width of
+         the picture, and the far band it is supposed to push back sat in front
+         of it rather than behind. -->
+    <radialGradient id="hazeveil" cx="50%" cy="100%" r="64%">
+      <stop offset="0%" stop-color="#2a5a62" stop-opacity="0.12"/>
+      <stop offset="56%" stop-color="#2a5a62" stop-opacity="0.045"/>
+      <stop offset="100%" stop-color="#2a5a62" stop-opacity="0"/>
+    </radialGradient>
     <!-- distant windows: cold amber and cyan, too small to read as anything
          but depth -->
     <pattern id="farlights" width="15" height="19" patternUnits="userSpaceOnUse">
@@ -187,8 +194,12 @@
     <use href="#farline" fill="url(#farlights)" opacity="0.32"/>
   </g>
   <rect x="-120" y="500" width="1840" height="400" fill="url(#hazeveil)"/>
-  <g fill="none" stroke="#5f9c9c" stroke-width="1" opacity="0.12">
-    <path d="M0 700h1600M0 760h1600"/>
+  <!-- Two elevated roadways behind the district. They used to run the full
+       1600 and read as rules across the horizon — the one drawing on this page
+       with no end to it, which is what a band is. Now they start and stop where
+       something could plausibly carry them. -->
+  <g fill="none" stroke="#5f9c9c" stroke-width="1" opacity="0.1">
+    <path d="M96 700h868M392 760h712"/>
   </g>
 
   <!-- Mid block: closer, darker, its windows a touch larger. Same reading order,
