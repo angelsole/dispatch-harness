@@ -1,0 +1,107 @@
+[
+  {
+    "id": "facade-brick",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "prompt": "weathered brick apartment facade with two lit windows and a ledge"
+  },
+  {
+    "id": "facade-concrete",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "prompt": "stained concrete tower facade with a narrow band of lit windows"
+  },
+  {
+    "id": "facade-glass",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "prompt": "office block facade of dark glass panels, a few floors still working"
+  },
+  {
+    "id": "facade-shopfront",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "prompt": "ground floor shopfront with an awning and a lit window, roller shutter beside it"
+  },
+  {
+    "id": "facade-vent",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "prompt": "service wall with ducting, a grille and a steam vent, no windows"
+  },
+  {
+    "id": "facade-fireescape",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "prompt": "tenement wall with an iron fire escape across two lit windows"
+  },
+  {
+    "id": "prop-acunit",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "background_removal_task": "remove_simple_background",
+    "prompt": "rooftop air conditioning unit with vents and a rusted grille"
+  },
+  {
+    "id": "prop-signblank",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "background_removal_task": "remove_simple_background",
+    "prompt": "blank hanging neon sign tube on a bracket, unlit glass, no lettering"
+  },
+  {
+    "id": "tileset-pavement",
+    "tool": "pixellab.tileset",
+    "tile_size": 16,
+    "lower": "wet asphalt road with worn lane markings",
+    "upper": "cracked concrete pavement with a kerb"
+  },
+  {
+    "id": "courier",
+    "tool": "pixellab.character4",
+    "width": 32,
+    "height": 32,
+    "template_id": "mannequin",
+    "prompt": "night shift courier in a hooded rain slicker with a shoulder bag"
+  },
+  {
+    "id": "courier-idle",
+    "tool": "pixellab.animate",
+    "from": "courier#south",
+    "frame_count": 4,
+    "no_background": true,
+    "prompt": "standing still, breathing, shoulders shifting under the rain"
+  },
+  {
+    "id": "rd-tile-asphalt",
+    "tool": "rd.tile",
+    "width": 16,
+    "height": 16,
+    "prompt": "wet asphalt with puddles and worn road paint"
+  },
+  {
+    "id": "rd-tile-gravel",
+    "tool": "rd.tile",
+    "width": 16,
+    "height": 16,
+    "prompt": "gravel and broken paving over a drain grate"
+  },
+  {
+    "id": "rd-facade-lowres",
+    "tool": "rd.image",
+    "width": 32,
+    "height": 32,
+    "prompt_style": "rd_plus__low_res",
+    "prompt": "narrow apartment facade with a balcony and one lit window"
+  }
+]
