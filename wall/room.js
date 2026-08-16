@@ -68,15 +68,13 @@
   const SAGE = '#79907e';
   const ICE = '#96c3c8';
   const MINT = '#a9d9c6';
-  const CLAY = '#4f4441';
-  const AMBER = '#e0a23c';
+  const RUST = '#531820';
   const GLOW = '#ffc27d';
   const WORK = '#ffc680';
   const EMBER = '#ff9a5e';
   const CYAN = '#7ad6ec';
   const PALE = '#deeaee';
   const BONE = '#e6dfc8';
-  const DEEP = '#4e7168';
   const ALARM = '#ff2f45';
 
   // The 32 as numbers, for snapping a colour the rest of the wall owns — a
@@ -621,7 +619,7 @@
       box(192, BEZEL.y + BEZEL.h + 4, 36, 2, STEEL);
       // The tube. Never black: a monitor with nothing on it is a room with
       // nobody in it, which is the one thing this shot may not say.
-      box(SCREEN.x, SCREEN.y, SCREEN.w, SCREEN.h, v.alarm ? '#531820' : '#0a1220');
+      box(SCREEN.x, SCREEN.y, SCREEN.w, SCREEN.h, v.alarm ? RUST : STONE);
       box(SCREEN.x, SCREEN.y, SCREEN.w, 1, tint, 0.25);
       const cx = SCREEN.x + SCREEN.w / 2;
       const bright = 0.86 + 0.14 * beat.glow;
