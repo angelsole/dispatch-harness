@@ -103,5 +103,112 @@
     "height": 32,
     "prompt_style": "rd_plus__low_res",
     "prompt": "narrow apartment facade with a balcony and one lit window"
+  },
+  {
+    "id": "room-wall",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": false,
+    "view": "side",
+    "outline": "lineless",
+    "shading": "flat shading",
+    "detail": "low detail",
+    "seed": 17432,
+    "prompt": "a flat dark interior wall surface, one plain painted concrete panel with a horizontal joint line and faint grime, seen straight from the front, nothing hanging on it, no window, no text, no signs"
+  },
+  {
+    "id": "room-floor",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": false,
+    "view": "high top-down",
+    "outline": "lineless",
+    "shading": "flat shading",
+    "detail": "low detail",
+    "seed": 17433,
+    "prompt": "a flat dark interior floor surface seen from above, worn grey vinyl floor tiles with faint scuffs, nothing standing on it, no text, no signs"
+  },
+  {
+    "id": "room-desk",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 128,
+    "height": 48,
+    "no_background": true,
+    "view": "side",
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "medium detail",
+    "seed": 17430,
+    "prompt": "one plain office desk seen straight from the front, flat rectangular table top, panel front, a drawer unit at one end, cable tray underneath, empty top, no text, no letters, no signs, nothing else in the picture"
+  },
+  {
+    "id": "room-lamp",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "background_removal_task": "remove_simple_background",
+    "prompt": "small angled desk lamp with a hooded shade and a weighted base, side elevation, warm bulb"
+  },
+  {
+    "id": "room-window",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 112,
+    "height": 72,
+    "no_background": true,
+    "view": "side",
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "medium detail",
+    "seed": 17431,
+    "prompt": "one empty rectangular industrial window frame seen straight from the front, thick metal frame with a vertical mullion, a rolled up venetian blind across the top and a sill at the bottom, completely hollow and empty in the middle, no glass, no view, no text, nothing else in the picture"
+  },
+  {
+    "id": "room-plant",
+    "tool": "pixellab.image",
+    "width": 32,
+    "height": 48,
+    "no_background": true,
+    "background_removal_task": "remove_simple_background",
+    "prompt": "tall potted office plant with broad drooping leaves in a dark tub, silhouette read"
+  },
+  {
+    "id": "room-worker",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 64,
+    "height": 64,
+    "no_background": true,
+    "view": "side",
+    "direction": "south",
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "medium detail",
+    "seed": 17420,
+    "prompt": "one person seated at a keyboard, facing the viewer, hunched forward, both forearms out in front resting on a keyboard, dark hooded work jacket, over-ear headphones, head and torso and arms only, plain single figure, no desk, no monitor, no room, no background"
+  },
+  {
+    "id": "room-worker-type",
+    "tool": "pixellab.animate",
+    "from": "room-worker",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17421,
+    "prompt": "typing on the keyboard, fingers and forearms working up and down, shoulders shifting, head steady"
+  },
+  {
+    "id": "room-worker-wait",
+    "tool": "pixellab.animate",
+    "from": "room-worker",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17422,
+    "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
   }
 ]

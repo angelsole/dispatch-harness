@@ -326,6 +326,14 @@
      rasterised at the wrong size when one is running. -->
 <canvas class="rain" id="rain" aria-hidden="true"></canvas>
 
+<!-- THE ROOM. Where the dive lands: one floor of one tower, from the inside,
+     drawn by wall/room.js on its own 320x180 grid and shown at a whole-number
+     multiple of it. Outside the stage for the same reason the plate is —
+     the camera's transform must never scale a room pixel, and the push-in that
+     brings the wall here is happening on the stage underneath while this fades
+     up over it. -->
+<canvas class="room" id="room" aria-hidden="true"></canvas>
+
 <header class="hud">
   <span class="hud__mark">◤</span>
   <span class="hud__name">GHOST SHIFT</span>
@@ -402,6 +410,7 @@
      behind it — only when ?world=canvas asked for it, so an ordinary wall never
      requests a byte of vendor/. -->
 <script src="scene.js"></script>
+<script src="room.js"></script>
 <script src="wall.js"></script>
 </body>
 </html>

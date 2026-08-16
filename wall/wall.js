@@ -45,6 +45,10 @@
   const SHOT_SEED_MS = 10 * 60 * 1000;
   const MOVE_MIN = 6000, MOVE_MAX = 10000;   // how long the camera takes to arrive
   const HOLD_MIN = 8000, HOLD_MAX = 20000;   // how long it stays once it has
+  // The dive holds longer than an ordinary close shot: there is a person in
+  // there working on a named ticket, and the room needs long enough to be read
+  // rather than glanced at.
+  const ROOM_MIN = 15000, ROOM_MAX = 20000;
   const WIDE_HOLD = 20000;  // the establishing shot holds longest of all
   const CUT_MS = 700;       // the ease home when somebody touches the room
   const MAX_ZOOM = 4;       // the lens's ceiling; past this the city is pixels
@@ -658,7 +662,9 @@
   // Whichever body is drawing gets told which run the plate is on. The plate and
   // the skyline tell the same story twice and are lit together — one glance has
   // to connect the two — but what "lit" looks like is the world's business.
-  function applySpot() { world.spot(plateId); }
+  // The room is the same story a third time, so it moves with the other two:
+  // whichever run the beam is on is the run the dive is for.
+  function applySpot() { world.spot(plateId); roomPaint(); }
 
   // --- the comms ticker --------------------------------------------------------
   // The tail of every live run's feed.log, in one line across the bottom: the
@@ -959,6 +965,67 @@
     start();
   }
 
+  // --- the room -----------------------------------------------------------------
+  // Where the dive lands. The wide city says a job is running; the room says who
+  // is running it and how far it has got — one floor of one tower, from the
+  // inside, at pixel-art scale.
+  //
+  // It is a canvas OUTSIDE the stage, like the rain and the plate: the camera's
+  // transform is scaling the city underneath while this fades up over it, and a
+  // room whose pixels were scaled by that transform would be a blur. wall/room.js
+  // owns everything the room looks like; this half only decides WHICH run it is
+  // showing and WHEN it is up.
+  //
+  // Two ways in. ?shot=room is the still: the room at full frame, no camera, for
+  // the visual gate and for a human who wants to look at it. The other is the
+  // director's own dive, which pushes into the hero run's lit window first — see
+  // roomShot() below.
+
+  const Room = window.WallRoom;
+  const roomCanvas = document.getElementById('room');
+  // Read once at load, in the idiom ?cinema and ?world already use.
+  const roomParams = new URLSearchParams(window.location.search);
+  const forcedRoom = roomParams.get('shot') === 'room';
+  const wantedRun = roomParams.get('run') || '';
+
+  let room = null;      // the renderer, built the first time the wall asks for it
+  let roomOn = false;   // whether the room is what this wall is showing now
+
+  // Which run the dive is for: whichever the query string named, else the one
+  // holding the brief plate — alarms first, then actives, which is the same
+  // hero the spotlight is already on out in the city.
+  function roomRun() {
+    const named = wantedRun && runs.find((r) => r.id === wantedRun);
+    return named || runs.find((r) => r.id === plateId) || plateQueue()[0] || null;
+  }
+
+  // Show the room, or take it away. Safe to call before a snapshot has landed:
+  // the room simply has nothing to draw yet, and the next one paints it.
+  function roomPaint() {
+    if (!roomOn || !Room || !roomCanvas) return;
+    const run = roomRun();
+    if (!run) return;
+    if (!room) {
+      room = Room.create({
+        canvas: roomCanvas,
+        still,
+        clock: () => Date.now() / 1000 + skew,
+        random: seededRandom,
+      });
+    }
+    // Re-shown on every snapshot rather than once: the hero can hand over, and
+    // the stage under it can climb a floor, while the room is still up. The
+    // dispatcher's tint is worked out here rather than in there — the room draws
+    // the city's colours, it does not decide any of them.
+    room.show({ ...run, crew: crewTint(run) }, latest && latest.floors);
+  }
+
+  function roomHold(on) {
+    roomOn = on;
+    if (on) { roomPaint(); return; }
+    if (room) room.hide();
+  }
+
   // --- the director ---------------------------------------------------------
   // The wall can film itself. A slow camera holds the whole skyline, then goes
   // and looks at something living in it — the tower somebody is waiting on, a
@@ -1225,6 +1292,35 @@
     return shot('landmark', frameFor(rect, view, { fillW: 0.44, fillH: 0.7, ax: 0.5, ay: 0.48 }), view);
   }
 
+  // THE DIVE. Every other shot here stops at the glass. This one goes through
+  // it: the camera pushes into the lit storey of the run the wall is already
+  // spotlighting, and at the end of that push the room fades up over it at full
+  // frame — a person, at a desk, working on the ticket the plate just named.
+  // The push underneath keeps creeping while the room holds, so coming back out
+  // is a pull-back from where the dive left off rather than a cut.
+  //
+  // No spotlit run, no dive: on an empty wall, and in the canvas world where
+  // there are no storeys to film, this shot simply is not on offer.
+  function roomShot(view, cam) {
+    const lit = city.querySelector('.shaft[data-spot="1"] .shaft__work');
+    if (!lit) return null;
+    const r = stageRect(lit, cam);
+    if (!(r.w > 0) || !(r.h > 0)) return null;
+    // The storey itself is a few pixels of light. What the push frames is the
+    // window around it — enough facade to know which building this is, held on
+    // the centre line so the room lands on the same middle.
+    const rect = { x: r.x + r.w / 2 - 24, w: 48, y: r.y + r.h / 2 - 14, h: 28 };
+    const cell = frameFor(rect, view, { fillW: 0.42, fillH: 0.42, ax: 0.5, ay: 0.5 });
+    return {
+      kind: 'room', cam: cell,
+      move: span(MOVE_MIN, MOVE_MAX),
+      hold: span(ROOM_MIN, ROOM_MAX),
+      creep: creepFrom(cell, view, 0.01, 0.008),
+      enter: () => roomHold(true),
+      leave: () => roomHold(false),
+    };
+  }
+
   // A close shot's timing, one place: the move eases in over seconds, the hold
   // is long, and the drift across that hold is small and always inward.
   function shot(kind, cam, view) {
@@ -1236,14 +1332,17 @@
     };
   }
 
-  const SHOTS = { tower: towerShot, street: streetShot, window: windowShot, landmark: landmarkShot };
+  const SHOTS = {
+    tower: towerShot, street: streetShot, window: windowShot,
+    landmark: landmarkShot, room: roomShot,
+  };
 
   function detailShot(view, cam) {
     if (!queue.length) {
       // One rotation of what the city can currently offer, shuffled. The
       // landmark is deliberately not in every rotation — a dedication the camera
       // visits every ninety seconds stops being a dedication.
-      const kinds = ['tower', 'street', 'window'];
+      const kinds = ['tower', 'street', 'window', 'room'];
       if (draw() < 0.45) kinds.push('landmark');
       queue = shuffled(kinds);
     }
@@ -1283,8 +1382,15 @@
     moveCamera(next.cam, move, 'var(--ease-io)');
     shotTimer = setTimeout(() => {
       if (!filming) return;
+      // The push has landed. A shot that has somewhere further to take the wall
+      // — so far only the dive — arrives here and goes inside; the drift under
+      // it carries on either way.
+      if (next.enter) next.enter();
       moveCamera(next.creep, next.hold, 'linear');
-      shotTimer = setTimeout(nextShot, next.hold);
+      shotTimer = setTimeout(() => {
+        if (next.leave) next.leave();
+        nextShot();
+      }, next.hold);
     }, move);
   }
 
@@ -1301,7 +1407,10 @@
       nextShot();
       return;
     }
-    // Somebody is in the room. Come home quickly and get out of the way.
+    // Somebody is in the room. Come home quickly and get out of the way — and
+    // if the film was inside a dive when they arrived, come back out of it: the
+    // shot's own leave hook is on a timer this just cancelled.
+    roomHold(false);
     delete document.body.dataset.shot;
     moveCamera({ s: 1, x: 0, y: 0 }, CUT_MS, 'var(--ease)');
   }
@@ -1318,6 +1427,15 @@
 
   function director() {
     document.body.dataset.cinema = '0';
+    // ?shot=room is the still: the room, at full frame, held, with the camera
+    // parked at the wide shot behind it. Nothing on this wall moves except the
+    // room's own loop — which is what makes it the frame the gate can measure
+    // and a human can stare at. Reduced motion takes the loop, not the room.
+    if (forcedRoom) {
+      document.body.dataset.shot = 'room';
+      roomHold(true);
+      return;
+    }
     for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart']) {
       window.addEventListener(ev, stirred, { passive: true });
     }

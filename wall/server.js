@@ -891,8 +891,55 @@ const STATIC = {
   // directory route: /vendor/ is one pinned file, and a route that walked a
   // directory is the path traversal this server has never had.
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
+  '/room.js': ['room.js', 'text/javascript; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
 };
+
+// The room's sprites. A directory rather than a named row per file, because the
+// room is a set that grows a frame at a time and a table of forty rows is a
+// table nobody updates — but a directory route is the path traversal this
+// server has never had, so it is fenced on all four sides: the path must be a
+// plain relative one under wall/assets, every segment must be an ordinary name
+// (no dots, no separators, no encoded ones), the extension must be on the list,
+// and the resolved file must still be inside ASSETS after resolve() has had its
+// say. Anything else is a 404, never a read.
+const ASSETS = path.join(HERE, 'assets');
+const ASSET_TYPES = {
+  '.png': 'image/png',
+  '.json': 'application/json; charset=utf-8',
+};
+const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9]+)?$/;
+
+// The url path under /assets/, or '' when it is not one this server will read.
+function assetOf(url) {
+  if (!url.startsWith('/assets/')) return '';
+  const rest = url.slice('/assets/'.length);
+  // Decoding first is the point: %2e%2e is the traversal a raw string compare
+  // waves through. A malformed escape is not a path.
+  let decoded;
+  try { decoded = decodeURIComponent(rest); } catch { return ''; }
+  const parts = decoded.split('/');
+  if (!parts.length || !parts.every((part) => SEGMENT.test(part))) return '';
+  const type = ASSET_TYPES[path.extname(parts[parts.length - 1]).toLowerCase()];
+  if (!type) return '';
+  const full = path.resolve(ASSETS, ...parts);
+  if (full !== path.join(ASSETS, ...parts)) return '';
+  if (!full.startsWith(ASSETS + path.sep)) return '';
+  return full;
+}
+
+function serveAsset(res, file, type) {
+  fs.readFile(file, (err, buf) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('wall: no such asset\n');
+    }
+    // Committed, content-addressed by the manifest and never rewritten in
+    // place, so the TV may keep them for a shift.
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'max-age=3600' });
+    return res.end(buf);
+  });
+}
 
 const clients = new Set();
 let poller = null;
@@ -990,6 +1037,8 @@ const server = http.createServer((req, res) => {
     }
     const entry = STATIC[url];
     if (entry) return serveStatic(res, entry);
+    const asset = assetOf(url);
+    if (asset) return serveAsset(res, asset, ASSET_TYPES[path.extname(asset).toLowerCase()]);
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('wall: no such page\n');
   } catch (err) {
@@ -1028,4 +1077,5 @@ if (require.main === module) {
 module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
   shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
+  assetOf, ASSETS,
 };

@@ -31,7 +31,12 @@ VISUAL_URL='http://127.0.0.1:{port}'
 # One shot, six frames: a 3x2 contact sheet of 640x360 tiles is the cheap end
 # of the vision-token sweet spot, and six consecutive frames are what make the
 # continuity axis answerable at all.
-VISUAL_SHOTS=("wide|/?world=$VISUAL_WORLD|750")
+# Two shots now: the city, and the room the camera dives into. ?shot=room is the
+# still of that dive — the room at full frame with the camera parked — so the
+# gate measures the destination without having to wait out a reel. Same frames,
+# same thresholds: a room may be darker than the skyline but it may not be
+# blacker, and its type and its worker have to survive the same downscale.
+VISUAL_SHOTS=("wide|/?world=$VISUAL_WORLD|750" "room|/?world=$VISUAL_WORLD&shot=room|750")
 VISUAL_FRAMES=6
 VISUAL_WAIT_MS=750
 VISUAL_SETTLE_MS=3000
@@ -61,9 +66,10 @@ VISUAL_REAL_WAIT_MS=250
 
 # Ready means "the city is drawn", in whichever world is drawing it: a DOM
 # tower, or the WebGL canvas (the rain canvas is always there and proves
-# nothing). Never wait on networkidle here — the wall polls every second, so
-# idle never comes.
-VISUAL_READY_JS='!!document.querySelector(".tower, canvas:not(#rain)")'
+# nothing, and neither does the room's, which exists from the first byte of the
+# document — the room says so itself once its sprites are in). Never wait on
+# networkidle here — the wall polls every second, so idle never comes.
+VISUAL_READY_JS='!!document.querySelector(".tower, .room[data-ready], canvas:not(#rain):not(#room)")'
 
 # No palette lock yet — the wall is anti-aliased CSS and WebGL, not pixel art,
 # so a palette LUT would fail every frame for being what it is. The palette
