@@ -48,6 +48,12 @@
      with — pale amber, dirty white, cold cyan. */
   --stone: #0a1220;
   --stone-lit: #15202e;
+  /* Two more steps of the same masonry, off the ramp the reference stills were
+     sampled from: the pier and the service deck between two lit bays, and the
+     podium the street's own light falls on. A facade needs stone that is not
+     one flat value or its structure disappears into the night behind it. */
+  --stone-mid: #101e2a;
+  --stone-warm: #1d2930;
   --win-a: rgba(255, 198, 128, 0.52);
   --win-b: rgba(222, 234, 238, 0.4);
   --win-c: rgba(122, 214, 236, 0.34);
@@ -477,6 +483,26 @@ body[data-idle="rest"] .rest { display: block; }
      have to agree on where a floor is. */
   --row: 0.44rem;
   --col: 0.3rem;
+  /* One whole floor: the lit band plus the spandrel over it. Everything that
+     counts storeys — a service deck, the podium, the floors a car has lit —
+     counts in this, so every one of them lands on a window rather than
+     halfway through one. */
+  --storey: calc(var(--row) * 2);
+  /* And how those bays are grouped, which is the whole difference between a
+     building and a chart of dots. A facade has structure in it: piers carrying
+     the bays in twos and threes, a service deck every so many storeys, a
+     podium at the bottom that is not the shaft, and one line where the
+     silhouette above already changes its mind. Every one of these shifts with
+     data-shape below, so a repo keeps its own building. */
+  --bays: 3;             /* how many bays stand between two piers */
+  --pier: 0.26rem;       /* and how much masonry that pier is */
+  --belt: 5;             /* a plant deck every N storeys */
+  --podium: 3;           /* how many storeys of lobby the street sees */
+  --break: 9%;           /* where the mechanical floor cuts the shaft */
+  /* The stair and lift stack, on the buildings whose hash says they show it:
+     a windowless spine with one landing light per floor down the middle. */
+  --core: transparent;
+  --core-lit: transparent;
   position: relative;
   height: 50%;
   flex: 0 1 auto;
@@ -586,14 +612,41 @@ body[data-idle="rest"] .rest { display: block; }
   clip-path: polygon(14% 0, 86% 0, 100% 100%, 0 100%);
 }
 
-/* Ambient windows: three lit stripe layers in three different colours with
-   opaque masonry bands painted over every other row, which leaves a grid of
-   small rectangles in amber, dirty white and cyan. */
+/* Ambient windows: three lit stripe layers in three different colours, and the
+   masonry that groups them into a building. The three colours are the same
+   pale amber, dirty white and cold cyan they always were; what is over them is
+   the structure — spandrels across every other row, piers carrying the bays in
+   twos to fives, a plant deck every few storeys, and the stack down the middle
+   on the buildings that show one. An even grid of identical bays is a
+   dashboard; a facade is what the masonry between the lights does. */
 .tower__windows {
   position: absolute;
   inset: 0;
   background:
-    repeating-linear-gradient(0deg, transparent 0 var(--row), var(--stone) var(--row) calc(var(--row) * 2)),
+    /* The plant deck: one solid storey every --belt, lit along its own sill.
+       This is the line the eye counts floors in — a facade with no interval in
+       it has no scale, and a tower with no scale is a bar. */
+    repeating-linear-gradient(0deg,
+      transparent 0 calc(var(--storey) * (var(--belt) - 1)),
+      var(--edge) calc(var(--storey) * (var(--belt) - 1)) calc(var(--storey) * (var(--belt) - 1) + 0.22rem),
+      var(--stone-mid) calc(var(--storey) * (var(--belt) - 1) + 0.22rem) calc(var(--storey) * var(--belt))),
+    /* The spandrels: masonry over every other row, i.e. the floor slab and the
+       wall under the sill of the storey above it. */
+    repeating-linear-gradient(0deg, transparent 0 var(--row), var(--stone) var(--row) var(--storey)),
+    /* The piers: the structure the bays hang between, so a wall of glass reads
+       as two-and-a-gap or four-and-a-gap rather than as even density. */
+    repeating-linear-gradient(90deg,
+      var(--stone-mid) 0 var(--pier),
+      transparent var(--pier) calc(var(--pier) + var(--col) * var(--bays))),
+    /* The stair and lift stack: blind masonry with one landing light in it,
+       cut into floors by the spandrels above. Transparent on a building whose
+       hash does not give it one. */
+    linear-gradient(90deg,
+      transparent 0 calc(50% - var(--col) * 1.5),
+      var(--core) calc(50% - var(--col) * 1.5) calc(50% - var(--col) * 0.5),
+      var(--core-lit) calc(50% - var(--col) * 0.5) calc(50% + var(--col) * 0.5),
+      var(--core) calc(50% + var(--col) * 0.5) calc(50% + var(--col) * 1.5),
+      transparent calc(50% + var(--col) * 1.5)),
     repeating-linear-gradient(90deg,
       var(--win-a) 0 var(--col), transparent var(--col) calc(var(--col) * 3.2)),
     repeating-linear-gradient(90deg,
@@ -615,12 +668,80 @@ body[data-idle="rest"] .rest { display: block; }
   opacity: 0;
   transition: opacity var(--spot-in) var(--ease);
 }
-/* Storey height and bay width shift with the silhouette, so two towers of the
-   same shape family still read as two different buildings. */
-.tower[data-shape="1"] { --row: 0.36rem; --col: 0.24rem; }
-.tower[data-shape="2"] { --row: 0.5rem; --col: 0.34rem; }
-.tower[data-shape="3"] { --row: 0.4rem; --col: 0.42rem; }
-.tower[data-shape="4"] { --row: 0.56rem; --col: 0.26rem; }
+/* Storey height, bay width AND the rhythm the bays are grouped in shift with
+   the silhouette, so two towers of the same shape family still read as two
+   different buildings — and a tower of another family reads as another kind of
+   building rather than as the same wallpaper at another size. The break is put
+   where each clip-path above already changes the outline, so the mechanical
+   floor and the setback are the same event seen twice. */
+.tower[data-shape="1"] {              /* ziggurat: narrow bays in pairs */
+  --row: 0.36rem; --col: 0.24rem;
+  --bays: 2; --pier: 0.22rem; --belt: 4; --podium: 4; --break: 14%;
+}
+.tower[data-shape="2"] {              /* chamfered cap: wide four-bay office floors */
+  --row: 0.5rem; --col: 0.34rem;
+  --bays: 4; --pier: 0.3rem; --belt: 6; --podium: 3; --break: 13%;
+}
+.tower[data-shape="3"] {              /* offset setback: deep spandrels, ribbon glazing */
+  --row: 0.4rem; --col: 0.42rem;
+  --bays: 2; --pier: 0.34rem; --belt: 3; --podium: 2; --break: 21%;
+}
+.tower[data-shape="4"] {              /* battered slab: a long five-bay run */
+  --row: 0.56rem; --col: 0.26rem;
+  --bays: 5; --pier: 0.24rem; --belt: 7; --podium: 2; --break: 30%;
+}
+/* The other half of the hash already picks the roof furniture; here it decides
+   whether this building wears its service stack on the front. Half the repos
+   do, which is what keeps two towers of one shape apart. */
+.tower[data-crown="1"], .tower[data-crown="3"] {
+  --core: var(--stone);
+  --core-lit: var(--win-b);
+}
+
+/* The mechanical floor: one deep grille storey with a lit sill top and bottom,
+   standing exactly where the silhouette steps. A tower that changes width
+   without a floor at the change reads as a shape cut out of paper. */
+.tower__belt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--break);
+  height: calc(var(--storey) * 1.3);
+  pointer-events: none;
+  background:
+    /* Louvres: a plant deck is grille, never glass. */
+    repeating-linear-gradient(90deg,
+      var(--stone) 0 calc(var(--col) * 0.6),
+      transparent calc(var(--col) * 0.6) calc(var(--col) * 1.7)),
+    linear-gradient(0deg,
+      var(--edge) 0 0.22rem,
+      var(--stone-warm) 0.22rem calc(100% - 0.22rem),
+      var(--edge) calc(100% - 0.22rem) 100%);
+}
+
+/* The podium: the storeys the street actually stands in front of. A lobby is
+   double-height glass with a canopy over it and warmer light behind it than
+   anything in the shaft above — the one part of a tower a person has ever been
+   inside, and the reason a building has a bottom instead of just stopping. */
+.tower__podium {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--storey) * var(--podium));
+  pointer-events: none;
+  background:
+    /* The canopy, and the sill light under it. */
+    linear-gradient(0deg,
+      transparent 0 calc(100% - 0.24rem),
+      var(--edge) calc(100% - 0.24rem) 100%),
+    /* Lobby glazing: one tall bay where the shaft has two short ones, and a
+       mullion between them, or a lit ground floor is one bar of light. */
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--win-a) 46%, transparent) 0 calc(var(--col) * 1.3),
+      transparent calc(var(--col) * 1.3) calc(var(--col) * 2.8)),
+    linear-gradient(0deg, var(--stone) 0 16%, var(--stone-warm));
+}
 
 /* The shaft region: the part of the mass every silhouette above keeps solid,
    so a car on the top floor is never clipped away by a setback or a taper.
@@ -836,6 +957,14 @@ body[data-idle="rest"] .rest { display: block; }
   --jitter-tall: 1;
   --row: 0.3rem;        /* the facade grid, a storey finer than a tower's */
   --col: 0.2rem;
+  /* The same three facts a tower's facade is built out of, at the district's
+     own pitch: a whole floor, the bays a pier carries, and how often a deck
+     interrupts them. A typology below replaces the frontage outright; these are
+     what the ones that do not — and the landmark — are drawn with. */
+  --storey: calc(var(--row) * 2);
+  --bays: 2;
+  --pier: 0.18rem;
+  --belt: 4;
   --crew: #e8cfa6;
   --age: 0;
   /* How wide this building actually is, named rather than inlined: everything
@@ -947,6 +1076,94 @@ body[data-idle="rest"] .rest { display: block; }
 /* The facade is the towers' own window grid at the district's pitch, dimmer:
    these are the backdrop, and a lit shaft in front of them has to win. */
 .block__windows { opacity: 0.46; }
+
+/* --- and what a type's frontage says it is -----------------------------------
+   The typology already owns the footprint and the roofline. It owns the face
+   too, or a shed and a spire are the same building at two sizes: a shophouse
+   has bays under an awning, a warehouse has four tall lights and a door big
+   enough to back a lorry into, a setback has balconies, a mast has a slot.
+   `slab` declares none, exactly as it declares no roofline — it is the
+   district's existing look, and that is the whole point of it. */
+
+/* A terrace of bays over a shop row, with the awning line the whole terrace
+   shares. Two-storey openings: a shophouse is not an office. */
+.block[data-form="shophouse"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg,
+      transparent 0 calc(var(--row) * 1.5), var(--stone) calc(var(--row) * 1.5) calc(var(--storey) * 1.25)),
+    /* the awning, over the shop row and under the first floor */
+    linear-gradient(0deg,
+      transparent 0 calc(var(--storey) * 1.1),
+      var(--edge) calc(var(--storey) * 1.1) calc(var(--storey) * 1.1 + 0.2rem),
+      transparent calc(var(--storey) * 1.1 + 0.2rem)),
+    repeating-linear-gradient(90deg,
+      var(--win-a) 0 calc(var(--col) * 1.6),
+      transparent calc(var(--col) * 1.6) calc(var(--col) * 3.1)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.58;
+}
+
+/* Four tall lights down a long dark wall, and the loading door under them. A
+   warehouse is mostly wall — the openings are the exception, which is exactly
+   what the towers' even grid could never say. */
+.block[data-form="warehouse"] .block__windows {
+  background:
+    repeating-linear-gradient(90deg,
+      transparent 0 calc(var(--col) * 3.4),
+      var(--win-b) calc(var(--col) * 3.4) calc(var(--col) * 4.6),
+      transparent calc(var(--col) * 4.6) calc(var(--col) * 8)),
+    linear-gradient(0deg, var(--stone-mid) 0 calc(var(--storey) * 1.2), var(--stone) calc(var(--storey) * 1.2)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.5;
+}
+.block[data-form="warehouse"] .block__windows::before {
+  content: "";
+  position: absolute;
+  left: 24%;
+  width: 34%;
+  bottom: 0;
+  height: calc(var(--storey) * 1.1);
+  background: var(--stone);
+  border-top: 0.2rem solid color-mix(in srgb, var(--win-a) 60%, transparent);
+}
+
+/* A tower that steps in as it climbs, drawn as what you would actually see on
+   one: a balcony slab per storey, glass behind it, and nothing else. */
+.block[data-form="setback"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg,
+      transparent 0 calc(var(--row) * 1.2),
+      var(--edge) calc(var(--row) * 1.2) calc(var(--row) * 1.2 + 0.18rem),
+      var(--stone) calc(var(--row) * 1.2 + 0.18rem) var(--storey)),
+    repeating-linear-gradient(90deg,
+      var(--win-c) 0 calc(var(--col) * 2.2),
+      transparent calc(var(--col) * 2.2) calc(var(--col) * 2.9)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.54;
+}
+
+/* Plant, not people: a stair tower up one shoulder and a few small lights on
+   the rest of it. */
+.block[data-form="tank"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 var(--row), var(--stone) var(--row) calc(var(--storey) * 1.4)),
+    linear-gradient(90deg,
+      transparent 0 68%, var(--stone-mid) 68% 82%, transparent 82%),
+    repeating-linear-gradient(90deg,
+      var(--win-a) 0 var(--col), transparent var(--col) calc(var(--col) * 4.4)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.44;
+}
+
+/* Thin, tall and mostly stair: one slot of light the whole way up. */
+.block[data-form="mast"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 calc(var(--row) * 0.8), var(--stone) calc(var(--row) * 0.8) var(--storey)),
+    linear-gradient(90deg,
+      transparent 0 36%, var(--win-b) 36% 64%, transparent 64%),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.5;
+}
 
 /* --- the ground floor, from the first ship ----------------------------------
    The district used to stand dark until the week's tenth ship, which made a

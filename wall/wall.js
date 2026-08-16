@@ -210,6 +210,12 @@
     crown.append(el('div', 'tower__halo'), el('div', 'tower__beacon'));
     const mass = el('div', 'tower__mass');
     const windows = el('i', 'tower__windows');
+    // The two pieces of masonry the window grid cannot draw, because neither of
+    // them repeats: the mechanical floor at the height the silhouette steps,
+    // and the lobby at the bottom. Both are the building rather than a layer
+    // over it, so they sit under the ladder and over the facade.
+    const belt = el('i', 'tower__belt');
+    const podium = el('i', 'tower__podium');
     // The shipping cascade goes over the facade and under the ladder: the light
     // climbs the windows, never the shafts. Its child is the travelling glow;
     // the wrapper holds the storey mask still while that glow moves behind it.
@@ -217,7 +223,7 @@
     cascade.append(el('i'));
     const slabs = el('i', 'tower__floors');
     const shafts = el('div', 'tower__shafts');
-    mass.append(windows, cascade, slabs, shafts);
+    mass.append(windows, belt, podium, cascade, slabs, shafts);
     const sign = el('div', 'tower__sign');
     // The wet-tarmac reflection reuses the window-grid styling wholesale (same
     // class, same per-shape storey variables) and restyles itself via the
