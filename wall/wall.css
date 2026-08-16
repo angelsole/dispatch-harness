@@ -216,9 +216,22 @@ body {
   pointer-events: none;
   opacity: var(--haze, 1);
   transition: opacity var(--weather-blend) linear;
+  /* A veil, not a lid. This used to close on near-black at the bottom edge,
+     which took the whole ground floor of the city with it: the shopfronts, the
+     pavement they light and the street in front of them were all under a slab
+     at nine tenths black, and the room read the bottom third of the frame as
+     the edge of the picture. Wet air lit from underneath by a street is lighter
+     down there, not darker — so the fog keeps its body in the middle distance,
+     where it buys depth between the district and the towers, and thins over the
+     ground the city is actually lit from. */
   background:
-    linear-gradient(0deg, rgba(90, 170, 170, 0.09), transparent 58%),
-    linear-gradient(0deg, rgba(1, 4, 8, 0.92), transparent 72%);
+    linear-gradient(0deg, rgba(90, 170, 170, 0.1), transparent 58%),
+    linear-gradient(0deg,
+      rgba(3, 11, 17, 0.34) 0 5vh,
+      rgba(2, 8, 13, 0.6) 11vh,
+      rgba(1, 5, 9, 0.66) 17vh,
+      rgba(1, 4, 8, 0.34) 27vh,
+      transparent 72%);
 }
 .haze i {
   position: absolute;
@@ -1055,13 +1068,20 @@ body[data-idle="rest"] .rest { display: block; }
   background: linear-gradient(180deg, var(--stone-lit), var(--stone) 46%);
   border-top: 1px solid var(--edge);
 }
-/* Atmospheric perspective: the wet air between this building and the room. */
+/* Atmospheric perspective: the wet air between this building and the room. It
+   thins out over the ground floor, because the light down there is between the
+   room and the haze rather than behind it — a far building has to read as far
+   by losing contrast, never by going out, and the far band of this district was
+   losing its shopfronts entirely. */
 .block__mass::after {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(0deg, rgba(22, 56, 64, 0.6), rgba(16, 42, 50, 0.34));
+  background: linear-gradient(0deg,
+    rgba(22, 56, 64, 0.1) 0 calc(var(--storey) * 0.9),
+    rgba(22, 56, 64, 0.62) calc(var(--storey) * 2.6),
+    rgba(16, 42, 50, 0.34));
   opacity: var(--veil);
 }
 .block[data-kind="residential"] .block__mass {
@@ -1212,25 +1232,79 @@ body[data-idle="rest"] .rest { display: block; }
   height: 0.44rem;
   background: linear-gradient(90deg,
     var(--win-a) 0 14%, transparent 14% 30%,
-    color-mix(in srgb, var(--shop-diner) 42%, transparent) 30% 52%, transparent 52% 66%,
+    color-mix(in srgb, var(--shop) 66%, transparent) 30% 52%, transparent 52% 66%,
     var(--win-a) 66% 88%, transparent 88% 100%);
-  box-shadow: 0 0.16rem 0.8rem color-mix(in srgb, var(--shop-diner) 26%, transparent);
+  box-shadow: 0 0.16rem 0.8rem color-mix(in srgb, var(--shop) 38%, transparent);
   opacity: 0.94;
   transition: opacity var(--spot-in) var(--ease);
 }
-/* And what that row puts on the wet pavement in front of it, in its own shop's
-   colour. The street's own lit band is even because a terrace is even; this is
-   what makes it a row of shops rather than a strip light — a pool per frontage,
-   on the plot the run id already chose. */
+/* The canopy over that row. A shopfront on this street is a lit counter under
+   something: an awning on a terrace, a loading hood on a shed. It is drawn as
+   the deck plus the light caught on its underside, which is what makes the row
+   read as a depth rather than as a strip light stuck on a wall. */
 .block__shop::after {
   content: "";
   position: absolute;
-  left: -20%;
-  right: -20%;
+  left: -6%;
+  right: -6%;
+  bottom: 0.4rem;
+  height: 0.24rem;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--shop) 30%, var(--stone-warm)) 0 60%,
+      color-mix(in srgb, var(--shop) 62%, transparent) 60%);
+  box-shadow: 0 0.1rem 0.3rem color-mix(in srgb, var(--shop) 30%, transparent);
+}
+/* A terrace hangs a proper awning: wider, striped, and low enough over the
+   counter that the light under it is a room rather than a doorway. */
+.block[data-form="shophouse"] .block__shop::after {
+  left: -9%;
+  right: -9%;
+  bottom: 0.46rem;
+  height: 0.3rem;
+  background:
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--shop) 34%, var(--stone-warm)) 0 0.26rem,
+      var(--stone-warm) 0.26rem 0.52rem),
+    linear-gradient(180deg, transparent 0 62%, color-mix(in srgb, var(--shop) 70%, transparent) 62%);
+}
+/* A shed does not: one flat hood over the door, in the building's own stone. */
+.block[data-form="warehouse"] .block__shop::after {
+  left: 18%;
+  right: 18%;
+  bottom: 0.5rem;
+  height: 0.22rem;
+  background: linear-gradient(180deg, var(--stone-warm) 0 55%,
+    color-mix(in srgb, var(--shop) 46%, transparent) 55%);
+}
+
+/* And what that row puts on the wet pavement in front of it, in its own shop's
+   colour. The street's own lit band is even because a terrace is even; this is
+   what makes it a row of shops rather than a strip light — a pool per frontage,
+   on the plot the run id already chose.
+
+   Hung off the building rather than off the shop row: every typology cuts its
+   own roofline out of .block__mass with a clip-path, and a clip-path clips the
+   descendants too, so for five of the six forms this light was being cut off
+   flush with the kerb and the street it was meant to be lighting never saw it. */
+.block__spill {
+  position: absolute;
+  left: -26%;
+  right: -26%;
   top: 100%;
-  height: 1.2rem;
-  background: radial-gradient(58% 100% at 50% 0%,
-    color-mix(in srgb, var(--shop) 32%, transparent), transparent 76%);
+  height: 2.4rem;
+  pointer-events: none;
+  background:
+    /* the pool on the flagstones directly in front of the counters... */
+    radial-gradient(50% 58% at 50% 0%,
+      color-mix(in srgb, var(--shop) 74%, transparent),
+      color-mix(in srgb, var(--shop) 24%, transparent) 44%, transparent 80%),
+    /* ...and the frontage itself, upside down in the wet, which is the half of
+       a lit street the district has never drawn */
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--shop) 46%, transparent) 0,
+      color-mix(in srgb, var(--shop) 12%, transparent) 32%,
+      transparent 66%);
 }
 
 /* The extra neon tube over one shop bay. A third of the buildings carry one —
@@ -1587,6 +1661,19 @@ body[data-idle="rest"] .rest { display: block; }
      --verge the far one; every lane below is placed off them. */
   --kerb: 4vh;
   --verge: calc(var(--ground) - 1.4vh);
+  /* The lamp standards down the near kerb, as a rhythm rather than as objects:
+     one every --lamp-gap, --lamp-h tall, struck from --lamp-x. The posts (in
+     .life__lamps) and the light they lay on the pavement (below) are drawn off
+     these same three numbers, so a lamp and its pool can never drift apart —
+     and the whole row costs two elements' worth of gradients rather than one
+     element per lamp. */
+  --lamp-gap: 16vw;
+  --lamp-h: 3.1rem;
+  --lamp-x: 5vw;
+  /* The near kerb line: where the pavement the room stands on stops and the
+     roadway starts. Named because the lamps stand on it, the pools break on it
+     and the near lane runs against it. */
+  --kerbline: calc(var(--kerb) + 1.5vh);
   /* And the ground itself, which the street had none of: a walker, a headlight
      and a tram were all floating in the same black. A wet city at night is
      mostly what its lights are lying on — the pavement the shopfronts spill
@@ -1594,36 +1681,94 @@ body[data-idle="rest"] .rest { display: block; }
      them. It is a plane rather than a prop: nothing here is an object, so
      nothing here has to mean a run. */
   background:
+    /* What a standard puts on the pavement it stands on. This is the light the
+       room actually reads the street by: a 4 px walker is never going to carry
+       the ground floor on its own brightness, so the ground is lit and the
+       walker is the dark shape crossing it. */
+    radial-gradient(44% 118% at 50% 0%,
+      color-mix(in srgb, var(--win-a) 92%, transparent),
+      color-mix(in srgb, var(--win-a) 30%, transparent) 44%,
+      transparent 82%)
+      left var(--lamp-x) bottom 0 / var(--lamp-gap) var(--kerbline) repeat-x,
+    /* and the same lamp lying in the wet roadway on the other side of the kerb,
+       shorter and dimmer, because tarmac is a poorer mirror than a flagstone */
+    radial-gradient(16% 100% at 50% 100%,
+      color-mix(in srgb, var(--win-a) 46%, transparent), transparent 78%)
+      left var(--lamp-x) bottom var(--kerbline) / var(--lamp-gap) 2.4vh repeat-x,
     /* the far kerb, where the buildings' own pavement stops */
     linear-gradient(0deg,
       transparent 0 var(--verge),
-      color-mix(in srgb, var(--edge) 30%, transparent) var(--verge) calc(var(--verge) + 0.22rem),
+      color-mix(in srgb, var(--edge) 42%, transparent) var(--verge) calc(var(--verge) + 0.22rem),
       transparent calc(var(--verge) + 0.22rem)),
-    /* the pavement under the shopfronts, wet, holding their light. This is what
-       a person crossing it is a silhouette against — at four pixels wide a
-       walker is never going to carry the street on its own brightness. */
+    /* the pavement under the shopfronts, wet, holding their light — as a base
+       tone only. It used to carry the whole far side of the street, which made
+       an even bar of light the length of the frame; what a terrace of shops
+       actually lays on a pavement is a pool per frontage, and that is the
+       buildings' own job (.block__spill). This is the wet the pools sit in. */
     linear-gradient(0deg,
-      transparent 0 calc(var(--verge) - 0.4vh),
-      color-mix(in srgb, var(--shop-diner) 22%, transparent) calc(var(--ground) + 0.4vh),
-      color-mix(in srgb, var(--shop-diner) 8%, transparent) calc(var(--ground) + 1.6vh),
+      transparent 0 calc(var(--verge) - 0.6vh),
+      color-mix(in srgb, var(--shop-diner) 14%, transparent) calc(var(--ground) + 0.4vh),
+      color-mix(in srgb, var(--shop-diner) 5%, transparent) calc(var(--ground) + 1.6vh),
       transparent calc(var(--ground) + 3vh)),
     /* the near kerb, on the room's side of the roadway */
     linear-gradient(0deg,
-      transparent 0 calc(var(--kerb) + 1.5vh),
-      color-mix(in srgb, var(--edge) 26%, transparent)
-        calc(var(--kerb) + 1.5vh) calc(var(--kerb) + 1.5vh + 0.22rem),
-      transparent calc(var(--kerb) + 1.5vh + 0.22rem)),
+      transparent 0 var(--kerbline),
+      color-mix(in srgb, var(--edge) 40%, transparent)
+        var(--kerbline) calc(var(--kerbline) + 0.22rem),
+      transparent calc(var(--kerbline) + 0.22rem)),
     /* the near pavement, lit off the same street a stop lower */
     linear-gradient(0deg,
-      color-mix(in srgb, var(--shop-diner) 13%, transparent) 0 calc(var(--kerb) + 0.4vh),
-      color-mix(in srgb, var(--shop-diner) 5%, transparent) calc(var(--kerb) + 1.4vh),
-      transparent calc(var(--kerb) + 1.5vh)),
+      color-mix(in srgb, var(--shop-diner) 20%, transparent) 0 calc(var(--kerb) + 0.4vh),
+      color-mix(in srgb, var(--shop-diner) 9%, transparent) calc(var(--kerb) + 1.4vh),
+      transparent var(--kerbline)),
     /* and the roadway between them, darker than either pavement */
     linear-gradient(0deg,
       transparent 0 calc(var(--kerb) + 1.4vh),
-      color-mix(in srgb, var(--bg) 74%, transparent) calc(var(--kerb) + 1.7vh) var(--verge),
+      color-mix(in srgb, var(--bg) 58%, transparent) calc(var(--kerb) + 1.7vh) var(--verge),
       transparent calc(var(--verge) + 0.3vh));
   transition: opacity var(--spot-in) var(--ease);
+}
+
+/* The standards. One element for the whole row, struck on the same --lamp-gap
+   the pools above are: a lamp is a column, a lantern and the cone under it, and
+   what makes it mean something is that it is lighting a pavement people walk
+   on. Nothing here glows for decoration — take the walkers away and this row of
+   lights is the only reason the bottom of the frame is a place. */
+.life__lamps {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--kerbline);
+  height: var(--lamp-h);
+  background:
+    /* the lantern itself: a small hot box, the one thing up here that is a
+       light rather than lit */
+    radial-gradient(0.34rem 0.19rem at 50% 0.24rem,
+      #fff6e4 0 58%,
+      color-mix(in srgb, var(--shop-diner) 92%, #fff) 58% 78%, transparent 84%)
+      left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
+    /* the hood over it, so a lantern is a fitting rather than a floating dot */
+    linear-gradient(180deg,
+      transparent 0 0.02rem,
+      color-mix(in srgb, var(--stone-warm) 82%, var(--win-a)) 0.02rem 0.1rem,
+      transparent 0.1rem)
+      left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
+    /* the wet air around it */
+    radial-gradient(1.1rem 0.8rem at 50% 0.26rem,
+      color-mix(in srgb, var(--shop-diner) 56%, transparent), transparent 74%)
+      left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
+    /* the cone it throws down its own column */
+    radial-gradient(30% 100% at 50% 0%,
+      color-mix(in srgb, var(--shop-diner) 24%, transparent), transparent 74%)
+      left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
+    /* and the column, dark against the district behind it with the street's own
+       light down the side that faces the road */
+    linear-gradient(90deg,
+      transparent 0 calc(50% - 0.14rem),
+      var(--stone-warm) calc(50% - 0.14rem) calc(50% + 0.02rem),
+      color-mix(in srgb, var(--win-a) 52%, var(--stone-warm)) calc(50% + 0.02rem) calc(50% + 0.14rem),
+      transparent calc(50% + 0.14rem))
+      left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x;
 }
 .life__crowd, .life__road { position: absolute; inset: 0; }
 
@@ -1827,13 +1972,23 @@ body[data-idle="rest"] .rest { display: block; }
   height: 0.46rem;
   border-radius: 0.1rem;
   /* A tram is a lit room going past, not a lozenge: windows down its side with
-     the posts between them, over the body colour it always had. */
+     the posts between them, a dark sill under them and a roof over them, over
+     the body colour it always had. At seventy pixels long it is the biggest
+     lit thing at street level, so it is the one that has to say "vehicle"
+     rather than "bar of light". */
   background:
+    /* the roof, and the sill the windows sit on */
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--stone-warm) 88%, var(--win-b)) 0 0.08rem,
+      transparent 0.08rem calc(100% - 0.1rem),
+      color-mix(in srgb, var(--stone) 80%, var(--win-b)) calc(100% - 0.1rem)),
+    /* the lit saloon, in bays with the posts between them */
     repeating-linear-gradient(90deg,
-      color-mix(in srgb, var(--win-b) 92%, transparent) 0 0.34rem,
-      transparent 0.34rem 0.62rem),
-    linear-gradient(90deg, rgba(120, 190, 200, 0.45), rgba(200, 240, 240, 0.7));
-  box-shadow: 0 0 0.7rem rgba(140, 210, 215, 0.35);
+      color-mix(in srgb, var(--win-b) 96%, #fff) 0 0.3rem,
+      color-mix(in srgb, var(--stone-warm) 70%, transparent) 0.3rem 0.46rem),
+    linear-gradient(90deg, rgba(120, 190, 200, 0.5), rgba(200, 240, 240, 0.78));
+  box-shadow: 0 0 0.7rem rgba(140, 210, 215, 0.4),
+              0 0.16rem 0.9rem rgba(140, 210, 215, 0.24);
   opacity: 0;
 }
 /* Its headlight down the rail ahead of it... */
@@ -1862,11 +2017,16 @@ body[data-idle="rest"] .rest { display: block; }
 .life[data-tram="1"] .life__tram { animation: tramline 96s linear infinite; }
 
 /* Nightlife never competes with work. The instant anything is climbing, the
-   whole ground floor — street, shopfronts, lit windows — drops a stop, and the
-   skyline keeps the room's eye. The city goes on; it just stops talking. */
-body[data-quiet="0"] .life { opacity: 0.5; }
-body[data-quiet="0"] .block__shop { opacity: 0.45; }
-body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
+   ground floor drops back and the skyline keeps the room's eye — but it drops a
+   stop, not the two it used to. At half opacity the street was not receding, it
+   was switching off: on a wall that is almost never quiet, "step back" had
+   become "the bottom third of the frame is dark whenever anything is running",
+   which is the one thing this layer exists not to be. The city goes on; it just
+   stops talking. */
+body[data-quiet="0"] .life { opacity: 0.86; }
+body[data-quiet="0"] .block__shop { opacity: 0.74; }
+body[data-quiet="0"] .block__spill { opacity: 0.8; }
+body[data-quiet="0"] .block__occupancy { opacity: 0.58; }
 
 /* --- one run: a lit car in its shaft --------------------------------------- */
 
