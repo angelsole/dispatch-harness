@@ -906,15 +906,23 @@ body[data-idle="rest"] .rest { display: block; }
   background: #fff;
   box-shadow: 0 0 1.2rem 0.5rem var(--alarm), 0 0 4rem 1.4rem rgba(255, 47, 69, 0.6);
 }
+/* One direction, slowly. This used to be a 4.4-second alternating swing, which
+   is the right gesture at the wrong speed: sampled every couple of seconds — a
+   contact sheet, a photograph, a room glancing up twice — a beam that reverses
+   twice in nine seconds reads as a beam jittering on the spot rather than as a
+   searchlight sweeping. It now travels one way across its arc over
+   twenty-six seconds and picks the arc up again behind the tower, and the
+   opacity that carries it round is in the keyframes so a parked wall (reduced
+   motion, below) still finds the beam drawn. */
 .tower[data-alarm="1"] .tower__sweep {
   opacity: 1;
-  animation: sweep 4.4s var(--ease-io) infinite alternate;
+  animation: sweep 26s linear infinite;
 }
 /* A beam has to land on something. The ceiling over this city is low, so the
    sweep paints a soft patch on the overcast just above the roof it comes out
-   of. Same duration, same curve, same alternate as the sweep itself — this is
+   of. Same duration, same curve, same direction as the sweep itself — this is
    the other end of one beam, not a second animation that happens to rhyme. The
-   throw is asymmetric because the sweep is: tan(-34°) against tan(38°). */
+   throw is asymmetric because the sweep is: tan(-40°) against tan(44°). */
 .tower__ceiling {
   --reach: 9vh;
   position: absolute;
@@ -932,7 +940,7 @@ body[data-idle="rest"] .rest { display: block; }
 }
 .tower[data-alarm="1"] .tower__ceiling {
   opacity: 1;
-  animation: ceiling 4.4s var(--ease-io) infinite alternate;
+  animation: ceiling 26s linear infinite;
 }
 .tower__mass::after {
   content: "";
@@ -2836,16 +2844,22 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.58; }
   62%, 94% { opacity: 0.62; }
   100% { opacity: 0; transform: translate3d(116vw, 0, 0); }
 }
+/* One pass of the beam across its arc, always the same way round. The lamp
+   carries on turning through the last tenth of the cycle, which is where it
+   goes behind the tower and comes back to the near side — the fade is the beam
+   passing behind the building it is bolted to, not a cut. */
 @keyframes sweep {
-  from { transform: rotate(-34deg); }
-  to { transform: rotate(38deg); }
+  0% { opacity: 0; transform: rotate(-40deg); }
+  8%, 90% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(44deg); }
 }
-/* The patch the sweep paints overhead. Two keyframes and no more, so it stays
-   in lockstep with the rotation that throws it; the stretch is the beam getting
-   longer as it leans. */
+/* The patch the sweep paints overhead. The same four keyframes at the same
+   percentages, so it stays in lockstep with the rotation that throws it; the
+   stretch is the beam getting longer as it leans. */
 @keyframes ceiling {
-  from { transform: translate3d(calc(var(--reach) * -0.86), 0, 0) scale(0.94); }
-  to { transform: translate3d(var(--reach), 0, 0) scale(1.1); }
+  0% { opacity: 0; transform: translate3d(calc(var(--reach) * -0.86), 0, 0) scale(0.94); }
+  8%, 90% { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--reach), 0, 0) scale(1.1); }
 }
 @keyframes tower-klaxon {
   0%, 100% { opacity: 0.28; }
