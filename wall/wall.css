@@ -48,9 +48,19 @@
      with — pale amber, dirty white, cold cyan. */
   --stone: #0a1220;
   --stone-lit: #15202e;
+  /* Two more steps of the same masonry, off the ramp the reference stills were
+     sampled from: the pier and the service deck between two lit bays, and the
+     podium the street's own light falls on. A facade needs stone that is not
+     one flat value or its structure disappears into the night behind it. */
+  --stone-mid: #101e2a;
+  --stone-warm: #1d2930;
   --win-a: rgba(255, 198, 128, 0.52);
   --win-b: rgba(222, 234, 238, 0.4);
   --win-c: rgba(122, 214, 236, 0.34);
+  /* The same amber with the night taken out of it: the colour of the one
+     window on the skyline that has a person behind it rather than a building
+     around it. Ambient light is the city; this is somebody working. */
+  --win-work: #ffc680;
   --edge: rgba(150, 195, 200, 0.45);
 
   /* The ground floor after dark. Four signs are the whole vocabulary of this
@@ -325,6 +335,20 @@ body {
   opacity: 0;
   animation: streak 143s linear infinite;
 }
+/* The wet road under it. This is the nearest plane there is, so its reflection
+   is the longest and the softest thing on the wall — the pass reads as light on
+   tarmac rather than as a scratch on the panel. */
+.street__car::after {
+  content: "";
+  position: absolute;
+  left: 4%;
+  right: 0;
+  top: 0.24rem;
+  height: 1.8rem;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--win-work) 30%, transparent), transparent 72%);
+  opacity: 0.85;
+}
 .street__car--b {
   --lum: 0.5;
   bottom: 6.4vh;
@@ -334,6 +358,12 @@ body {
   animation-duration: 197s;
   animation-delay: -84s;
   animation-direction: reverse;
+}
+.street__car--b::after {
+  left: 0;
+  right: 4%;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--win-c) 76%, transparent), transparent 72%);
 }
 
 /* --- top chrome ------------------------------------------------------------ */
@@ -477,6 +507,26 @@ body[data-idle="rest"] .rest { display: block; }
      have to agree on where a floor is. */
   --row: 0.44rem;
   --col: 0.3rem;
+  /* One whole floor: the lit band plus the spandrel over it. Everything that
+     counts storeys — a service deck, the podium, the floors a car has lit —
+     counts in this, so every one of them lands on a window rather than
+     halfway through one. */
+  --storey: calc(var(--row) * 2);
+  /* And how those bays are grouped, which is the whole difference between a
+     building and a chart of dots. A facade has structure in it: piers carrying
+     the bays in twos and threes, a service deck every so many storeys, a
+     podium at the bottom that is not the shaft, and one line where the
+     silhouette above already changes its mind. Every one of these shifts with
+     data-shape below, so a repo keeps its own building. */
+  --bays: 3;             /* how many bays stand between two piers */
+  --pier: 0.26rem;       /* and how much masonry that pier is */
+  --belt: 5;             /* a plant deck every N storeys */
+  --podium: 3;           /* how many storeys of lobby the street sees */
+  --break: 9%;           /* where the mechanical floor cuts the shaft */
+  /* The stair and lift stack, on the buildings whose hash says they show it:
+     a windowless spine with one landing light per floor down the middle. */
+  --core: transparent;
+  --core-lit: transparent;
   position: relative;
   height: 50%;
   flex: 0 1 auto;
@@ -586,14 +636,41 @@ body[data-idle="rest"] .rest { display: block; }
   clip-path: polygon(14% 0, 86% 0, 100% 100%, 0 100%);
 }
 
-/* Ambient windows: three lit stripe layers in three different colours with
-   opaque masonry bands painted over every other row, which leaves a grid of
-   small rectangles in amber, dirty white and cyan. */
+/* Ambient windows: three lit stripe layers in three different colours, and the
+   masonry that groups them into a building. The three colours are the same
+   pale amber, dirty white and cold cyan they always were; what is over them is
+   the structure — spandrels across every other row, piers carrying the bays in
+   twos to fives, a plant deck every few storeys, and the stack down the middle
+   on the buildings that show one. An even grid of identical bays is a
+   dashboard; a facade is what the masonry between the lights does. */
 .tower__windows {
   position: absolute;
   inset: 0;
   background:
-    repeating-linear-gradient(0deg, transparent 0 var(--row), var(--stone) var(--row) calc(var(--row) * 2)),
+    /* The plant deck: one solid storey every --belt, lit along its own sill.
+       This is the line the eye counts floors in — a facade with no interval in
+       it has no scale, and a tower with no scale is a bar. */
+    repeating-linear-gradient(0deg,
+      transparent 0 calc(var(--storey) * (var(--belt) - 1)),
+      var(--edge) calc(var(--storey) * (var(--belt) - 1)) calc(var(--storey) * (var(--belt) - 1) + 0.22rem),
+      var(--stone-mid) calc(var(--storey) * (var(--belt) - 1) + 0.22rem) calc(var(--storey) * var(--belt))),
+    /* The spandrels: masonry over every other row, i.e. the floor slab and the
+       wall under the sill of the storey above it. */
+    repeating-linear-gradient(0deg, transparent 0 var(--row), var(--stone) var(--row) var(--storey)),
+    /* The piers: the structure the bays hang between, so a wall of glass reads
+       as two-and-a-gap or four-and-a-gap rather than as even density. */
+    repeating-linear-gradient(90deg,
+      var(--stone-mid) 0 var(--pier),
+      transparent var(--pier) calc(var(--pier) + var(--col) * var(--bays))),
+    /* The stair and lift stack: blind masonry with one landing light in it,
+       cut into floors by the spandrels above. Transparent on a building whose
+       hash does not give it one. */
+    linear-gradient(90deg,
+      transparent 0 calc(50% - var(--col) * 1.5),
+      var(--core) calc(50% - var(--col) * 1.5) calc(50% - var(--col) * 0.5),
+      var(--core-lit) calc(50% - var(--col) * 0.5) calc(50% + var(--col) * 0.5),
+      var(--core) calc(50% + var(--col) * 0.5) calc(50% + var(--col) * 1.5),
+      transparent calc(50% + var(--col) * 1.5)),
     repeating-linear-gradient(90deg,
       var(--win-a) 0 var(--col), transparent var(--col) calc(var(--col) * 3.2)),
     repeating-linear-gradient(90deg,
@@ -615,12 +692,84 @@ body[data-idle="rest"] .rest { display: block; }
   opacity: 0;
   transition: opacity var(--spot-in) var(--ease);
 }
-/* Storey height and bay width shift with the silhouette, so two towers of the
-   same shape family still read as two different buildings. */
-.tower[data-shape="1"] { --row: 0.36rem; --col: 0.24rem; }
-.tower[data-shape="2"] { --row: 0.5rem; --col: 0.34rem; }
-.tower[data-shape="3"] { --row: 0.4rem; --col: 0.42rem; }
-.tower[data-shape="4"] { --row: 0.56rem; --col: 0.26rem; }
+/* Storey height, bay width AND the rhythm the bays are grouped in shift with
+   the silhouette, so two towers of the same shape family still read as two
+   different buildings — and a tower of another family reads as another kind of
+   building rather than as the same wallpaper at another size. The break is put
+   where each clip-path above already changes the outline, so the mechanical
+   floor and the setback are the same event seen twice. */
+.tower[data-shape="1"] {              /* ziggurat: narrow bays in pairs */
+  --row: 0.36rem; --col: 0.24rem;
+  --bays: 2; --pier: 0.22rem; --belt: 4; --podium: 4; --break: 14%;
+}
+.tower[data-shape="2"] {              /* chamfered cap: wide four-bay office floors */
+  --row: 0.5rem; --col: 0.34rem;
+  --bays: 4; --pier: 0.3rem; --belt: 6; --podium: 3; --break: 13%;
+}
+.tower[data-shape="3"] {              /* offset setback: deep spandrels, ribbon glazing */
+  --row: 0.4rem; --col: 0.42rem;
+  --bays: 2; --pier: 0.34rem; --belt: 3; --podium: 2; --break: 21%;
+}
+.tower[data-shape="4"] {              /* battered slab: a long five-bay run */
+  --row: 0.56rem; --col: 0.26rem;
+  --bays: 5; --pier: 0.24rem; --belt: 7; --podium: 2; --break: 30%;
+}
+/* The other half of the hash already picks the roof furniture; here it decides
+   whether this building wears its service stack on the front. Half the repos
+   do, which is what keeps two towers of one shape apart. */
+.tower[data-crown="1"], .tower[data-crown="3"] {
+  --core: var(--stone);
+  --core-lit: var(--win-b);
+}
+
+/* The mechanical floor: one deep grille storey with a lit sill top and bottom,
+   standing exactly where the silhouette steps. A tower that changes width
+   without a floor at the change reads as a shape cut out of paper. */
+.tower__belt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--break);
+  height: calc(var(--storey) * 1.3);
+  pointer-events: none;
+  /* Lit along the sill above and the sill below, the way a deck reads from the
+     street; the grille sits inside them rather than combing through them, or
+     the whole floor is a row of battlements. */
+  border-top: 0.22rem solid var(--edge);
+  border-bottom: 0.22rem solid var(--edge);
+  background:
+    /* Louvres: a plant deck is grille, never glass. */
+    repeating-linear-gradient(90deg,
+      var(--stone) 0 calc(var(--col) * 0.6),
+      transparent calc(var(--col) * 0.6) calc(var(--col) * 1.7)),
+    linear-gradient(0deg, var(--stone-warm), var(--stone-warm));
+  /* After the shorthand, which would otherwise reset it to the border box. */
+  background-clip: padding-box;
+}
+
+/* The podium: the storeys the street actually stands in front of. A lobby is
+   double-height glass with a canopy over it and warmer light behind it than
+   anything in the shaft above — the one part of a tower a person has ever been
+   inside, and the reason a building has a bottom instead of just stopping. */
+.tower__podium {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--storey) * var(--podium));
+  pointer-events: none;
+  background:
+    /* The canopy, and the sill light under it. */
+    linear-gradient(0deg,
+      transparent 0 calc(100% - 0.24rem),
+      var(--edge) calc(100% - 0.24rem) 100%),
+    /* Lobby glazing: one tall bay where the shaft has two short ones, and a
+       mullion between them, or a lit ground floor is one bar of light. */
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--win-a) 46%, transparent) 0 calc(var(--col) * 1.3),
+      transparent calc(var(--col) * 1.3) calc(var(--col) * 2.8)),
+    linear-gradient(0deg, var(--stone) 0 16%, var(--stone-warm));
+}
 
 /* The shaft region: the part of the mass every silhouette above keeps solid,
    so a car on the top floor is never clipped away by a setback or a taper.
@@ -836,6 +985,14 @@ body[data-idle="rest"] .rest { display: block; }
   --jitter-tall: 1;
   --row: 0.3rem;        /* the facade grid, a storey finer than a tower's */
   --col: 0.2rem;
+  /* The same three facts a tower's facade is built out of, at the district's
+     own pitch: a whole floor, the bays a pier carries, and how often a deck
+     interrupts them. A typology below replaces the frontage outright; these are
+     what the ones that do not — and the landmark — are drawn with. */
+  --storey: calc(var(--row) * 2);
+  --bays: 2;
+  --pier: 0.22rem;
+  --belt: 4;
   --crew: #e8cfa6;
   --age: 0;
   /* How wide this building actually is, named rather than inlined: everything
@@ -948,6 +1105,94 @@ body[data-idle="rest"] .rest { display: block; }
    these are the backdrop, and a lit shaft in front of them has to win. */
 .block__windows { opacity: 0.46; }
 
+/* --- and what a type's frontage says it is -----------------------------------
+   The typology already owns the footprint and the roofline. It owns the face
+   too, or a shed and a spire are the same building at two sizes: a shophouse
+   has bays under an awning, a warehouse has four tall lights and a door big
+   enough to back a lorry into, a setback has balconies, a mast has a slot.
+   `slab` declares none, exactly as it declares no roofline — it is the
+   district's existing look, and that is the whole point of it. */
+
+/* A terrace of bays over a shop row, with the awning line the whole terrace
+   shares. Two-storey openings: a shophouse is not an office. */
+.block[data-form="shophouse"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg,
+      transparent 0 calc(var(--row) * 1.5), var(--stone) calc(var(--row) * 1.5) calc(var(--storey) * 1.25)),
+    /* the awning, over the shop row and under the first floor */
+    linear-gradient(0deg,
+      transparent 0 calc(var(--storey) * 1.1),
+      var(--edge) calc(var(--storey) * 1.1) calc(var(--storey) * 1.1 + 0.22rem),
+      transparent calc(var(--storey) * 1.1 + 0.22rem)),
+    repeating-linear-gradient(90deg,
+      var(--win-a) 0 calc(var(--col) * 1.6),
+      transparent calc(var(--col) * 1.6) calc(var(--col) * 3.1)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.58;
+}
+
+/* Four tall lights down a long dark wall, and the loading door under them. A
+   warehouse is mostly wall — the openings are the exception, which is exactly
+   what the towers' even grid could never say. */
+.block[data-form="warehouse"] .block__windows {
+  background:
+    repeating-linear-gradient(90deg,
+      transparent 0 calc(var(--col) * 3.4),
+      var(--win-b) calc(var(--col) * 3.4) calc(var(--col) * 4.6),
+      transparent calc(var(--col) * 4.6) calc(var(--col) * 8)),
+    linear-gradient(0deg, var(--stone-mid) 0 calc(var(--storey) * 1.2), var(--stone) calc(var(--storey) * 1.2)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.5;
+}
+.block[data-form="warehouse"] .block__windows::before {
+  content: "";
+  position: absolute;
+  left: 24%;
+  width: 34%;
+  bottom: 0;
+  height: calc(var(--storey) * 1.1);
+  background: var(--stone);
+  border-top: 0.22rem solid color-mix(in srgb, var(--win-a) 60%, transparent);
+}
+
+/* A tower that steps in as it climbs, drawn as what you would actually see on
+   one: a balcony slab per storey, glass behind it, and nothing else. */
+.block[data-form="setback"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg,
+      transparent 0 calc(var(--row) * 1.2),
+      var(--edge) calc(var(--row) * 1.2) calc(var(--row) * 1.2 + 0.22rem),
+      var(--stone) calc(var(--row) * 1.2 + 0.22rem) var(--storey)),
+    repeating-linear-gradient(90deg,
+      var(--win-c) 0 calc(var(--col) * 2.2),
+      transparent calc(var(--col) * 2.2) calc(var(--col) * 2.9)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.54;
+}
+
+/* Plant, not people: a stair tower up one shoulder and a few small lights on
+   the rest of it. */
+.block[data-form="tank"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 var(--row), var(--stone) var(--row) calc(var(--storey) * 1.4)),
+    linear-gradient(90deg,
+      transparent 0 68%, var(--stone-mid) 68% 82%, transparent 82%),
+    repeating-linear-gradient(90deg,
+      var(--win-a) 0 var(--col), transparent var(--col) calc(var(--col) * 4.4)),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.44;
+}
+
+/* Thin, tall and mostly stair: one slot of light the whole way up. */
+.block[data-form="mast"] .block__windows {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 calc(var(--row) * 0.8), var(--stone) calc(var(--row) * 0.8) var(--storey)),
+    linear-gradient(90deg,
+      transparent 0 36%, var(--win-b) 36% 64%, transparent 64%),
+    linear-gradient(0deg, var(--stone), var(--stone));
+  opacity: 0.5;
+}
+
 /* --- the ground floor, from the first ship ----------------------------------
    The district used to stand dark until the week's tenth ship, which made a
    Tuesday that shipped one thing look like a mausoleum. It does not any more:
@@ -972,6 +1217,20 @@ body[data-idle="rest"] .rest { display: block; }
   box-shadow: 0 0.16rem 0.8rem color-mix(in srgb, var(--shop-diner) 26%, transparent);
   opacity: 0.94;
   transition: opacity var(--spot-in) var(--ease);
+}
+/* And what that row puts on the wet pavement in front of it, in its own shop's
+   colour. The street's own lit band is even because a terrace is even; this is
+   what makes it a row of shops rather than a strip light — a pool per frontage,
+   on the plot the run id already chose. */
+.block__shop::after {
+  content: "";
+  position: absolute;
+  left: -20%;
+  right: -20%;
+  top: 100%;
+  height: 1.2rem;
+  background: radial-gradient(58% 100% at 50% 0%,
+    color-mix(in srgb, var(--shop) 32%, transparent), transparent 76%);
 }
 
 /* The extra neon tube over one shop bay. A third of the buildings carry one —
@@ -1320,6 +1579,50 @@ body[data-idle="rest"] .rest { display: block; }
   height: calc(var(--ground) + 5vh);
   overflow: hidden;
   pointer-events: none;
+  /* Where the street actually is. The buildings' feet are at --ground and the
+     comms ticker covers the last 3.6vh of the frame, so everything this layer
+     draws has to live between the two — the population used to be planned
+     under the ticker, which is why a street with six people and three cars on
+     it read as an empty plain. --kerb is the near edge of that window and
+     --verge the far one; every lane below is placed off them. */
+  --kerb: 4vh;
+  --verge: calc(var(--ground) - 1.4vh);
+  /* And the ground itself, which the street had none of: a walker, a headlight
+     and a tram were all floating in the same black. A wet city at night is
+     mostly what its lights are lying on — the pavement the shopfronts spill
+     across, the kerb the light stops at, and a roadway darker than either of
+     them. It is a plane rather than a prop: nothing here is an object, so
+     nothing here has to mean a run. */
+  background:
+    /* the far kerb, where the buildings' own pavement stops */
+    linear-gradient(0deg,
+      transparent 0 var(--verge),
+      color-mix(in srgb, var(--edge) 30%, transparent) var(--verge) calc(var(--verge) + 0.22rem),
+      transparent calc(var(--verge) + 0.22rem)),
+    /* the pavement under the shopfronts, wet, holding their light. This is what
+       a person crossing it is a silhouette against — at four pixels wide a
+       walker is never going to carry the street on its own brightness. */
+    linear-gradient(0deg,
+      transparent 0 calc(var(--verge) - 0.4vh),
+      color-mix(in srgb, var(--shop-diner) 22%, transparent) calc(var(--ground) + 0.4vh),
+      color-mix(in srgb, var(--shop-diner) 8%, transparent) calc(var(--ground) + 1.6vh),
+      transparent calc(var(--ground) + 3vh)),
+    /* the near kerb, on the room's side of the roadway */
+    linear-gradient(0deg,
+      transparent 0 calc(var(--kerb) + 1.5vh),
+      color-mix(in srgb, var(--edge) 26%, transparent)
+        calc(var(--kerb) + 1.5vh) calc(var(--kerb) + 1.5vh + 0.22rem),
+      transparent calc(var(--kerb) + 1.5vh + 0.22rem)),
+    /* the near pavement, lit off the same street a stop lower */
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--shop-diner) 13%, transparent) 0 calc(var(--kerb) + 0.4vh),
+      color-mix(in srgb, var(--shop-diner) 5%, transparent) calc(var(--kerb) + 1.4vh),
+      transparent calc(var(--kerb) + 1.5vh)),
+    /* and the roadway between them, darker than either pavement */
+    linear-gradient(0deg,
+      transparent 0 calc(var(--kerb) + 1.4vh),
+      color-mix(in srgb, var(--bg) 74%, transparent) calc(var(--kerb) + 1.7vh) var(--verge),
+      transparent calc(var(--verge) + 0.3vh));
   transition: opacity var(--spot-in) var(--ease);
 }
 .life__crowd, .life__road { position: absolute; inset: 0; }
@@ -1329,12 +1632,16 @@ body[data-idle="rest"] .rest { display: block; }
 .life__vent {
   position: absolute;
   left: 18%;
-  bottom: 0.6vh;
+  bottom: calc(var(--kerb) + 0.4vh);
   width: 2.4rem;
   height: 3.6rem;
   border-radius: 50%;
+  /* Lit from the shopfront it is standing under, not from nowhere: a plume is
+     only ever the colour of what is throwing light through it, and on this
+     street that is a warm sign a metre away. */
   background: radial-gradient(58% 46% at 50% 100%,
-    var(--win-b), color-mix(in srgb, var(--edge) 20%, transparent) 56%, transparent 78%);
+    color-mix(in srgb, var(--shop-diner) 46%, var(--win-b)),
+    color-mix(in srgb, var(--edge) 20%, transparent) 56%, transparent 78%);
   opacity: 0;
   transform-origin: 50% 100%;
   animation: steam 11s var(--ease-io) infinite;
@@ -1361,19 +1668,37 @@ body[data-idle="rest"] .rest { display: block; }
   --slot: 0;
   position: absolute;
   left: 0;
-  bottom: calc(1.4vh + var(--depth, 0) * 0.9vh);
+  /* On the near pavement, in four ranks: the nearest plane on this layer, and
+     the one the room's eye lands on first. */
+  bottom: calc(var(--kerb) + var(--depth, 0) * 0.36vh);
   width: 0.3rem;
   height: 0.72rem;
-  opacity: 0.62;
+  opacity: 0.86;
   animation: commute 132s linear infinite;
   animation-delay: calc(var(--slot) * -21s);
+}
+/* Standing on the wet pavement rather than hovering over it: the same body,
+   upside down, short and faint. Hung off the walker rather than off the body
+   inside it, so the reflection stays on the ground while the gait bobs. */
+.life__walker::after {
+  content: "";
+  position: absolute;
+  left: -0.06rem;
+  right: -0.06rem;
+  top: 100%;
+  height: 0.42rem;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--shop-diner) 34%, transparent), transparent 76%);
+  opacity: 0.55;
 }
 .life__walker i {
   position: absolute;
   inset: 0;
   border-radius: 0.11rem 0.11rem 0 0;
   background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 95%, transparent) 52%,
-    color-mix(in srgb, var(--shop-diner) 55%, transparent));
+    color-mix(in srgb, var(--shop-diner) 78%, transparent));
+  /* The feet stay on the pavement; everything above them is the stride. */
+  transform-origin: 50% 100%;
   animation: trudge 1.1s var(--ease-io) infinite;
 }
 /* The other half of a night shift: the small service robots, squatter and
@@ -1399,7 +1724,7 @@ body[data-idle="rest"] .rest { display: block; }
   --slot: 0;
   position: absolute;
   left: 0;
-  bottom: 3.2vh;
+  bottom: calc(var(--kerb) + 1.9vh);   /* the near lane of the roadway */
   width: 3.2rem;
   height: 0.14rem;
   border-radius: 0.14rem;
@@ -1411,12 +1736,53 @@ body[data-idle="rest"] .rest { display: block; }
   animation: prowl var(--vehicle-cycle) linear infinite;
   animation-delay: var(--vehicle-delay, 0s);
 }
+/* What a car actually is on a wet street: a beam thrown down the road ahead of
+   it and the same light lying in the tarmac under it. Both ride inside the car,
+   so the pass is still one transform and one opacity — and both are what turn a
+   two-pixel bar into something driving past. */
+.life__car::before {
+  content: "";
+  position: absolute;
+  left: 88%;
+  top: -0.42rem;
+  width: 3.4rem;
+  height: 0.9rem;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--shop-diner) 30%, transparent),
+    color-mix(in srgb, var(--shop-diner) 8%, transparent) 46%, transparent 82%);
+}
+.life__car::after {
+  content: "";
+  position: absolute;
+  left: 6%;
+  right: 2%;
+  top: 0.2rem;
+  height: 1.1rem;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--shop-diner) 26%, transparent), transparent 74%);
+  opacity: 0.8;
+}
 .life__car[data-way="west"] {
-  bottom: 4.3vh;
+  bottom: calc(var(--kerb) + 2.8vh);   /* and the far one */
   background: linear-gradient(90deg, var(--shop-arcade),
     color-mix(in srgb, var(--shop-arcade) 18%, transparent) 58%, transparent);
   box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop-arcade) 40%, transparent);
   animation-direction: reverse;
+}
+/* Driving the other way, so the beam is out of the other end and both it and
+   the reflection are cold — a headlight is the colour of its own car. */
+.life__car[data-way="west"]::before {
+  left: auto;
+  right: 88%;
+  background: linear-gradient(270deg,
+    color-mix(in srgb, var(--shop-arcade) 26%, transparent),
+    color-mix(in srgb, var(--shop-arcade) 7%, transparent) 46%, transparent 82%);
+}
+.life__car[data-way="west"]::after {
+  left: 2%;
+  right: 6%;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--shop-arcade) 22%, transparent), transparent 74%);
 }
 
 /* The mall: a big week puts one wide over-lit block at the end of the street.
@@ -1425,7 +1791,7 @@ body[data-idle="rest"] .rest { display: block; }
 .life__mall {
   position: absolute;
   right: 3%;
-  bottom: 2.6vh;
+  bottom: var(--verge);        /* at the far kerb, where a building would stand */
   width: 21vw;
   height: 4vh;
   background:
@@ -1445,7 +1811,7 @@ body[data-idle="rest"] .rest { display: block; }
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 6vh;
+  bottom: calc(var(--verge) + 0.1vh);   /* the tram runs the far side of the road */
   height: 1px;
   background: linear-gradient(90deg, transparent,
     rgba(140, 205, 200, 0.26) 12%, rgba(140, 205, 200, 0.26) 88%, transparent);
@@ -1455,14 +1821,43 @@ body[data-idle="rest"] .rest { display: block; }
 .life[data-tram="1"] .life__rail { opacity: 1; }
 .life__tram {
   position: absolute;
-  bottom: 6.1vh;
+  bottom: calc(var(--verge) + 0.2vh);
   left: 0;
   width: 5.2rem;
   height: 0.46rem;
   border-radius: 0.1rem;
-  background: linear-gradient(90deg, rgba(120, 190, 200, 0.45), rgba(200, 240, 240, 0.7));
+  /* A tram is a lit room going past, not a lozenge: windows down its side with
+     the posts between them, over the body colour it always had. */
+  background:
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--win-b) 92%, transparent) 0 0.34rem,
+      transparent 0.34rem 0.62rem),
+    linear-gradient(90deg, rgba(120, 190, 200, 0.45), rgba(200, 240, 240, 0.7));
   box-shadow: 0 0 0.7rem rgba(140, 210, 215, 0.35);
   opacity: 0;
+}
+/* Its headlight down the rail ahead of it... */
+.life__tram::before {
+  content: "";
+  position: absolute;
+  left: 96%;
+  top: -0.2rem;
+  width: 2.6rem;
+  height: 0.86rem;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--win-b) 30%, transparent), transparent 78%);
+}
+/* ...and the lit room, again, in the wet street under it. */
+.life__tram::after {
+  content: "";
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  top: 100%;
+  height: 0.8rem;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--shop-arcade) 26%, transparent), transparent 76%);
+  opacity: 0.7;
 }
 .life[data-tram="1"] .life__tram { animation: tramline 96s linear infinite; }
 
@@ -1503,7 +1898,36 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, var(--accent) 30%, transparent);
-  mask-image: repeating-linear-gradient(0deg, #000 0 0.44rem, transparent 0.44rem 0.88rem);
+  /* The tower's own storey pitch, not a number that happened to match one of
+     the five: a lit floor has to land on a row of windows on every silhouette,
+     exactly as the shipping cascade's mask does. */
+  -webkit-mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
+  mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
+  transform: scaleY(calc(1 / var(--lvl)));
+  transform-origin: 50% 100%;
+  transition: transform var(--climb) var(--ease-io);
+}
+
+/* The same climb spread onto the building. A run does not happen in a shaft, it
+   happens in an office either side of one — so the storeys the car has passed
+   keep their windows on, in the actor's own neon turned right down. The actor
+   neon lights the car and this; the crew tint stays on the lamp under it.
+   Width in per cent of the shaft, so a tower with four runs in it spreads each
+   of them a quarter as far and the bands never become one wash. */
+.shaft__band {
+  position: absolute;
+  inset: 0 -34%;
+  overflow: hidden;
+  transform: scaleY(var(--lvl));
+  transform-origin: 50% 100%;
+  transition: transform var(--climb) var(--ease-io), opacity var(--spot-in) var(--ease);
+}
+.shaft__glow {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  -webkit-mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
+  mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
   transform: scaleY(calc(1 / var(--lvl)));
   transform-origin: 50% 100%;
   transition: transform var(--climb) var(--ease-io);
@@ -1574,6 +1998,35 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   background: var(--accent);
   opacity: 0.75;
   box-shadow: 0 0 0.7rem var(--accent);
+}
+
+/* The storey the car is standing on, with somebody still at a desk on it. One
+   row of the tower's own windows, warm — the window colours are warm, and this
+   is the one light on the skyline that is a person rather than a machine: the
+   actor's neon is the car's and the crew's tint is the lamp's, so neither of
+   them may claim this. It rides in the lift, so it is always the floor the run
+   has actually reached, and it arrives there on the same eased climb.
+
+   Lit as a fact and shimmering as an ornament: reduced motion silences the
+   shimmer and leaves the floor lit, because somebody is still working on it. */
+.shaft__work {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: calc(var(--col) * 9);
+  height: var(--row);
+  margin: 0 0 calc(var(--row) * -0.5) calc(var(--col) * -4.5);
+  background: repeating-linear-gradient(90deg,
+    var(--win-work) 0 var(--col), transparent var(--col) calc(var(--col) * 2.1));
+  opacity: 0;
+}
+.shaft[data-state="active"] .shaft__work,
+.shaft[data-state="alarm"] .shaft__work {
+  opacity: 0.92;
+  animation: at-the-desk 3.4s var(--ease-io) infinite;
+  /* Off its neighbours' beat, on the age the run already carries: two windows
+     breathing in unison is a dashboard blinking. */
+  animation-delay: calc(var(--age, 0) * -1s);
 }
 
 /* The carousel spotlight, car half: the bloom the beam makes where it lands.
@@ -2005,6 +2458,14 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   0%, 100% { opacity: 0.72; }
   50% { opacity: 1; }
 }
+/* Somebody at a desk on the floor the car stopped at: a few seconds of nothing
+   much, the way a room with one person in it reads from across a street. Never
+   a blink — a window that switches is a fault light, and this is a person. */
+@keyframes at-the-desk {
+  0%, 100% { opacity: 0.92; }
+  36% { opacity: 0.58; }
+  68% { opacity: 1; }
+}
 @keyframes car-klaxon {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
@@ -2067,9 +2528,14 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   from { transform: translate3d(-108vw, 0, 0); }
   to { transform: translate3d(108vw, 0, 0); }
 }
+/* A stride, not a hover: two beats to the cycle, because a person rises once
+   per step and there are two steps in a stride. At four pixels wide that bob
+   is the whole difference between somebody walking home and a lit speck. */
 @keyframes trudge {
-  0%, 100% { transform: translate3d(0, 0, 0); }
-  50% { transform: translate3d(0, -0.1rem, 0); }
+  0%, 100% { transform: translate3d(0, 0, 0) scaleY(1); }
+  25% { transform: translate3d(0, -0.12rem, 0) scaleY(1.05); }
+  50% { transform: translate3d(0, 0, 0) scaleY(0.96); }
+  75% { transform: translate3d(0, -0.12rem, 0) scaleY(1.05); }
 }
 /* A machine walks differently: no bob, a slight list either side of level. */
 @keyframes trundle {
@@ -2136,13 +2602,16 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   60%, 96% { opacity: var(--lum); }
   100% { opacity: 0; transform: translate3d(120vw, 0, 0) scale(var(--z)); }
 }
-/* Nothing for almost the whole cycle, then one fast pass: the crossing is 3% of
-   a very long loop, which is what makes a ground vehicle an event rather than
-   traffic. */
+/* Nothing for most of the cycle, then one pass: a ground vehicle is still an
+   event rather than traffic — the loop is minutes long and unchanged — but the
+   crossing itself used to be three per cent of it, four seconds of a hundred
+   and forty-three, which meant the street in front of the city was empty in
+   nineteen stills out of twenty. Thirteen per cent is one car driving past at a
+   speed a car drives at, and a room that looks up sometimes sees it. */
 @keyframes streak {
-  0%, 96.4% { opacity: 0; transform: translate3d(0, 0, 0); }
-  96.9%, 98.9% { opacity: var(--lum); }
-  99.4%, 100% { opacity: 0; transform: translate3d(128vw, 0, 0); }
+  0%, 86.6% { opacity: 0; transform: translate3d(0, 0, 0); }
+  87.6%, 97.6% { opacity: var(--lum); }
+  99.6%, 100% { opacity: 0; transform: translate3d(128vw, 0, 0); }
 }
 @keyframes flicker {
   0%, 92%, 100% { opacity: 0; }

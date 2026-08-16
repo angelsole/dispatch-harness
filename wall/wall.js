@@ -167,14 +167,23 @@
 
   function makeShaft() {
     const root = el('div', 'shaft');
+    // The floors this run has already been through, twice. The column is the
+    // run's own bay, bright; the band is the tower's windows either side of it,
+    // at a third of that — a building is lit as high as its work has climbed,
+    // and a building with nothing running in it is dark. Both are the same
+    // scaleY the car's height drives, so a stage change lights the next storey
+    // without re-inserting a node or restarting an animation.
+    const band = el('i', 'shaft__band');
+    band.append(el('i', 'shaft__glow'));
     const col = el('i', 'shaft__col');
     col.append(el('i', 'shaft__lit'));
     const rail = el('i', 'shaft__rail');
     // Everything that rides with the car goes in the lift: one transform moves
-    // the car, its crew lamp and the spotlight bloom together.
+    // the car, its crew lamp, the storey somebody is working on and the
+    // spotlight bloom together.
     const lift = el('i', 'shaft__lift');
-    lift.append(el('i', 'shaft__halo'), el('i', 'shaft__car'));
-    root.append(col, rail, lift);
+    lift.append(el('i', 'shaft__halo'), el('i', 'shaft__work'), el('i', 'shaft__car'));
+    root.append(band, col, rail, lift);
     return { root, state: '' };
   }
 
@@ -210,6 +219,12 @@
     crown.append(el('div', 'tower__halo'), el('div', 'tower__beacon'));
     const mass = el('div', 'tower__mass');
     const windows = el('i', 'tower__windows');
+    // The two pieces of masonry the window grid cannot draw, because neither of
+    // them repeats: the mechanical floor at the height the silhouette steps,
+    // and the lobby at the bottom. Both are the building rather than a layer
+    // over it, so they sit under the ladder and over the facade.
+    const belt = el('i', 'tower__belt');
+    const podium = el('i', 'tower__podium');
     // The shipping cascade goes over the facade and under the ladder: the light
     // climbs the windows, never the shafts. Its child is the travelling glow;
     // the wrapper holds the storey mask still while that glow moves behind it.
@@ -217,7 +232,7 @@
     cascade.append(el('i'));
     const slabs = el('i', 'tower__floors');
     const shafts = el('div', 'tower__shafts');
-    mass.append(windows, cascade, slabs, shafts);
+    mass.append(windows, belt, podium, cascade, slabs, shafts);
     const sign = el('div', 'tower__sign');
     // The wet-tarmac reflection reuses the window-grid styling wholesale (same
     // class, same per-shape storey variables) and restyles itself via the
