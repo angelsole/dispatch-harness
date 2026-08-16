@@ -1191,8 +1191,11 @@ body[data-idle="rest"] .rest { display: block; }
 /* The facade is the towers' own window grid at the district's pitch, dimmer:
    these are the backdrop, and a lit shaft in front of them has to win. Dimmer
    than the skyline, not absent from it — under the old veil these frontages
-   were a rumour, which is what made twenty buildings read as one dark band. */
-.block__windows { opacity: 0.56; }
+   were a rumour, which is what made twenty buildings read as one dark band.
+   And it follows the building's own hours: a frontage whose shop is shut has
+   fewer floors up over it, which is the difference between a row of buildings
+   at one value and a district. */
+.block__windows { opacity: calc(0.34 + 0.24 * var(--awake)); }
 
 /* --- and what a type's frontage says it is -----------------------------------
    The typology already owns the footprint and the roofline. It owns the face
