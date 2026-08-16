@@ -1040,9 +1040,9 @@ body[data-idle="rest"] .rest { display: block; }
 
 /* Three depth bands, so the district reads as a city with air in it rather than
    as a row of bars. Far is smaller, hazier and stacked behind. */
-.block[data-depth="0"] { --deep: 0.74; --veil: 0.62; z-index: 1; }
-.block[data-depth="1"] { --deep: 0.92; --veil: 0.34; z-index: 2; }
-.block[data-depth="2"] { --deep: 1.12; --veil: 0.12; z-index: 3; }
+.block[data-depth="0"] { --deep: 0.74; --veil: 0.5; z-index: 1; }
+.block[data-depth="1"] { --deep: 0.92; --veil: 0.28; z-index: 2; }
+.block[data-depth="2"] { --deep: 1.12; --veil: 0.1; z-index: 3; }
 
 /* Repo family, as a building you can name from the sofa: agent work is
    residential, the two data repos are industrial blocks, valoryx is an
@@ -1130,8 +1130,10 @@ body[data-idle="rest"] .rest { display: block; }
 }
 
 /* The facade is the towers' own window grid at the district's pitch, dimmer:
-   these are the backdrop, and a lit shaft in front of them has to win. */
-.block__windows { opacity: 0.46; }
+   these are the backdrop, and a lit shaft in front of them has to win. Dimmer
+   than the skyline, not absent from it — under the old veil these frontages
+   were a rumour, which is what made twenty buildings read as one dark band. */
+.block__windows { opacity: 0.56; }
 
 /* --- and what a type's frontage says it is -----------------------------------
    The typology already owns the footprint and the roofline. It owns the face
@@ -1156,7 +1158,7 @@ body[data-idle="rest"] .rest { display: block; }
       var(--win-a) 0 calc(var(--col) * 1.6),
       transparent calc(var(--col) * 1.6) calc(var(--col) * 3.1)),
     linear-gradient(0deg, var(--stone), var(--stone));
-  opacity: 0.58;
+  opacity: 0.68;
 }
 
 /* Four tall lights down a long dark wall, and the loading door under them. A
@@ -1170,7 +1172,7 @@ body[data-idle="rest"] .rest { display: block; }
       transparent calc(var(--col) * 4.6) calc(var(--col) * 8)),
     linear-gradient(0deg, var(--stone-mid) 0 calc(var(--storey) * 1.2), var(--stone) calc(var(--storey) * 1.2)),
     linear-gradient(0deg, var(--stone), var(--stone));
-  opacity: 0.5;
+  opacity: 0.6;
 }
 .block[data-form="warehouse"] .block__windows::before {
   content: "";
@@ -1195,7 +1197,7 @@ body[data-idle="rest"] .rest { display: block; }
       var(--win-c) 0 calc(var(--col) * 2.2),
       transparent calc(var(--col) * 2.2) calc(var(--col) * 2.9)),
     linear-gradient(0deg, var(--stone), var(--stone));
-  opacity: 0.54;
+  opacity: 0.64;
 }
 
 /* Plant, not people: a stair tower up one shoulder and a few small lights on
@@ -1208,7 +1210,7 @@ body[data-idle="rest"] .rest { display: block; }
     repeating-linear-gradient(90deg,
       var(--win-a) 0 var(--col), transparent var(--col) calc(var(--col) * 4.4)),
     linear-gradient(0deg, var(--stone), var(--stone));
-  opacity: 0.44;
+  opacity: 0.54;
 }
 
 /* Thin, tall and mostly stair: one slot of light the whole way up. */
@@ -1218,7 +1220,7 @@ body[data-idle="rest"] .rest { display: block; }
     linear-gradient(90deg,
       transparent 0 36%, var(--win-b) 36% 64%, transparent 64%),
     linear-gradient(0deg, var(--stone), var(--stone));
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 /* --- the ground floor, from the first ship ----------------------------------
@@ -1246,6 +1248,32 @@ body[data-idle="rest"] .rest { display: block; }
   opacity: 0.94;
   transition: opacity var(--spot-in) var(--ease);
 }
+/* The storey the counters are in. The row above is the shopfronts themselves —
+   six pixels of sign strip — and until now that strip was the whole of a lit
+   ground floor: a building landed, gained a bright line at its feet and stayed
+   a dark slab above it. This is the room behind the glass, two district storeys
+   of it, bayed by the doorways between the units and falling off upward the way
+   a lit interior does. It is what turns twenty silhouettes into a street with
+   shops on it. */
+.block__shop::before {
+  content: "";
+  position: absolute;
+  left: -1%;
+  right: -1%;
+  bottom: 0;
+  height: calc(var(--storey) * 2);
+  background:
+    /* the counters, and the doorways between them */
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--win-a) 46%, transparent) 0 calc(var(--col) * 2.4),
+      transparent calc(var(--col) * 2.4) calc(var(--col) * 4)),
+    /* and the light of the room they stand in */
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--shop) 34%, transparent),
+      color-mix(in srgb, var(--shop) 10%, transparent) 54%,
+      transparent 92%);
+}
+
 /* The canopy over that row. A shopfront on this street is a lit counter under
    something: an awning on a terrace, a loading hood on a shed. It is drawn as
    the deck plus the light caught on its underside, which is what makes the row
@@ -1366,16 +1394,24 @@ body[data-idle="rest"] .rest { display: block; }
   writing-mode: vertical-rl;
   font-family: var(--cjk);
   /* Off the facade, never in rem, and capped: a wide low deck does not get a
-     billboard, and a narrow spire still gets strokes you can tell apart. */
-  font-size: min(0.78rem, var(--facade) * 0.3);
+     billboard, and a narrow spire still gets strokes you can tell apart. The
+     floor is the point of the clamp — a character is a sign or it is texture,
+     and 0.3 of a stair tower's frontage was two and a half pixels of smear. */
+  font-size: clamp(0.56rem, var(--facade) * 0.32, 0.78rem);
+  font-weight: 700;
   line-height: 1;
-  padding: 0.14em 0.18em;
-  color: var(--shop);
-  background: rgba(2, 6, 10, 0.55);
-  border: 1px solid color-mix(in srgb, var(--shop) 34%, transparent);
-  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--shop) 18%, transparent);
-  text-shadow: 0 0 0.4rem var(--shop),
-               0 0 1.1rem color-mix(in srgb, var(--shop) 55%, transparent);
+  padding: 0.16em 0.2em;
+  /* The character is the brightest thing on the frontage, and the board behind
+     it is dark enough to make it so: at this size the room reads the lit panel
+     first and the word in it second, which is exactly what a shop sign does
+     from across a street. */
+  color: color-mix(in srgb, var(--shop) 50%, #fff);
+  background: rgba(2, 6, 10, 0.72);
+  border: 1px solid color-mix(in srgb, var(--shop) 62%, transparent);
+  box-shadow: 0 0 0.7rem color-mix(in srgb, var(--shop) 32%, transparent),
+              inset 0 0 0.4rem color-mix(in srgb, var(--shop) 22%, transparent);
+  text-shadow: 0 0 0.35rem var(--shop),
+               0 0 1rem color-mix(in srgb, var(--shop) 60%, transparent);
 }
 /* Which shoulder the bracket is bolted to, off the run id: a street where every
    sign hangs the same way is a wallpaper sample. */

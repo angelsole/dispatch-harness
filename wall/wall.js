@@ -315,9 +315,14 @@
     // The ground floor: a lit shopfront row and matching glyph under every
     // building, plus the established one-in-three neon tube over a bay.
     const shop = el('i', 'block__shop');
-    const glyph = el('i', 'block__glyph');
-    shop.append(el('i', 'block__neon'), glyph);
+    shop.append(el('i', 'block__neon'));
     mass.append(occupancy, shop);
+    // The hanging sign is bracketed to the building, not painted on the shop
+    // row inside it — which is also the only way it survives: everything inside
+    // .block__mass is cut by the typology's roofline clip-path and washed by
+    // the depth veil, and a sign that is hazed like a distant wall is not a
+    // sign, it is texture.
+    const glyph = el('i', 'block__glyph');
     // What that ground floor puts on the pavement in front of it. It hangs off
     // the building rather than off the shop row inside it because a typology
     // cuts its own roofline out of .block__mass with a clip-path, and a
@@ -327,7 +332,7 @@
     // The sign is the only thing on a building that names anybody: a small neon
     // in the dispatcher's own crew tint, cooling to the district's neutral
     // within --sign-life of landing. No zones, no lanes, nothing cumulative.
-    root.append(el('i', 'block__crown'), mass, spill, el('i', 'block__sign'));
+    root.append(el('i', 'block__crown'), mass, spill, glyph, el('i', 'block__sign'));
     return { root, glyph, occupants };
   }
 
