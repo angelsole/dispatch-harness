@@ -882,8 +882,8 @@ body[data-idle="rest"] .rest { display: block; }
 .city[data-spot="1"] .tower:not([data-spot="1"]):not([data-alarm="1"]) { opacity: 0.6; }
 
 /* The klaxon searchlight. A run needs a human, and this is the wall's loudest
-   sentence: one narrow beam sweeping out of the alarm tower. Its red stays in
-   the beam instead of becoming an ambient colour across the night sky. */
+   sentence: a beam sweeping out of that tower's roof plus a red wash on the
+   whole building. It must be the first thing seen from the far side of a room. */
 .tower__sweep {
   position: absolute;
   left: 50%;
@@ -896,12 +896,11 @@ body[data-idle="rest"] .rest { display: block; }
   mix-blend-mode: screen;
   background: conic-gradient(from -32deg at 50% 100%,
     transparent 0deg,
-    rgba(255, 47, 69, 0.08) 1deg,
-    rgba(255, 47, 69, 0.56) 3deg,
-    rgba(255, 47, 69, 0.56) 4deg,
-    rgba(255, 47, 69, 0.08) 7deg,
-    transparent 8deg);
-  mask-image: radial-gradient(58% 58% at 50% 100%, #000 6%, transparent 70%);
+    rgba(255, 60, 80, 0.16) 3deg,
+    rgba(255, 90, 90, 0.62) 9deg,
+    rgba(255, 60, 80, 0.16) 15deg,
+    transparent 19deg);
+  mask-image: radial-gradient(58% 58% at 50% 100%, #000 6%, transparent 82%);
   transform-origin: 50% 100%;
 }
 /* The lamp the beam comes out of, so the searchlight has a visible source. */
@@ -929,9 +928,11 @@ body[data-idle="rest"] .rest { display: block; }
   opacity: 1;
   animation: sweep 26s linear infinite;
 }
-/* The sweep used to carry a second, broad red patch across the cloud ceiling.
-   Keep its timed endpoint in the night ramp instead: the narrow cone itself is
-   the only alarm colour allowed into the sky. */
+/* A beam has to land on something. The ceiling over this city is low, so the
+   sweep paints a soft patch on the overcast just above the roof it comes out
+   of. Same duration, same curve, same direction as the sweep itself — this is
+   the other end of one beam, not a second animation that happens to rhyme. The
+   throw is asymmetric because the sweep is: tan(-40°) against tan(44°). */
 .tower__ceiling {
   --reach: 9vh;
   position: absolute;
@@ -943,7 +944,7 @@ body[data-idle="rest"] .rest { display: block; }
   pointer-events: none;
   mix-blend-mode: screen;
   background: radial-gradient(50% 50% at 50% 50%,
-    rgba(21, 32, 46, 0.18), rgba(10, 18, 32, 0.08) 46%, transparent 74%);
+    rgba(255, 96, 104, 0.3), rgba(255, 60, 80, 0.11) 46%, transparent 74%);
   opacity: 0;
   transform: translate3d(0, 0, 0);
 }
@@ -960,10 +961,6 @@ body[data-idle="rest"] .rest { display: block; }
   opacity: 0;
 }
 .tower[data-alarm="1"] .tower__mass::after { animation: tower-klaxon 1.1s var(--ease-io) infinite; }
-.tower[data-alarm="1"] .tower__windows::after {
-  background: rgba(255, 47, 69, 0.2);
-  opacity: 1;
-}
 .tower[data-alarm="1"] .tower__pool {
   background: radial-gradient(58% 100% at 50% 0%, rgba(255, 47, 69, 0.24), transparent 72%);
   opacity: 1;
@@ -2944,8 +2941,8 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.58; }
   100% { opacity: 0; transform: translate3d(var(--reach), 0, 0) scale(1.1); }
 }
 @keyframes tower-klaxon {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 0.84; }
+  0%, 100% { opacity: 0.28; }
+  50% { opacity: 1; }
 }
 @keyframes plate-klaxon {
   0%, 100% { opacity: 0.18; }
