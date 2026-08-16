@@ -2204,6 +2204,23 @@ CINE_PROBE="$ROOT/cinema-probe.js"
     moves: MOVE_MIN >= 6000 && MOVE_MAX <= 10000 && MOVE_MIN < MOVE_MAX,
     holds: HOLD_MIN >= 8000 && HOLD_MAX <= 20000 && WIDE_HOLD >= HOLD_MAX,
     cutFast: CUT_MS <= 1000,
+    // Leaving a shot, which every exit shares. The dive is the one shot that
+    // puts something on the wall the camera cannot take back off it, so the
+    // hook has to run whether the hold ended, the wall was resized, `c` was
+    // pressed or somebody walked in — and exactly once.
+    ...(() => {
+      const left = [];
+      current = { kind: 'room', leave: () => left.push('room') };
+      shotTimer = 7;
+      leaveShot();
+      const once = left.join(',');
+      leaveShot();
+      return {
+        leavesOnce: once === 'room' && left.join(',') === 'room',
+        leaveClearsTimer: shotTimer === 0,
+        leaveForgetsShot: current === null,
+      };
+    })(),
   }));
 JS
 } > "$CINE_PROBE"
@@ -2239,6 +2256,22 @@ check "cinema: moves take six to ten seconds"  "$(cine_of moves)" "true"
 check "cinema: holds are long, and the wide shot holds longest" "$(cine_of holds)" "true"
 check "cinema: a dismissed film gets the wide shot back inside a second" \
   "$(cine_of cutFast)" "true"
+check "cinema: leaving a shot runs its own leave hook exactly once" \
+  "$(cine_of leavesOnce)" "true"
+check "cinema: and cancels the timer the next cut was waiting on" \
+  "$(cine_of leaveClearsTimer)" "true"
+check "cinema: after which there is no shot left to leave" \
+  "$(cine_of leaveForgetsShot)" "true"
+# One exit, three call sites: the hold ending, the engage/disengage switch that
+# `c` and a hand on the mouse both come through, and the resize. A resize that
+# cancelled the timer and cut straight to the next shot is how a dive used to
+# leave its room covering the shot after it.
+check "cinema: every path out of a shot goes through leaveShot" \
+  "$(printf '%s\n' "$DIRECTOR_SRC" | grep -cF 'leaveShot();')" "3"
+grep_ok "$DIRECTOR_SRC" 'reframe = setTimeout(() => { leaveShot(); nextShot(); }, 400);' \
+  "cinema: a resize leaves the shot it re-frames away from"
+grep_not "$DIRECTOR_SRC" 'clearTimeout(shotTimer); nextShot();' \
+  "cinema: and nothing cancels a shot's timer behind its back"
 
 # Every shot type the brief names exists, and — the wide shot aside, which is
 # always available — each one can say there is nothing to film: an empty
@@ -2278,6 +2311,53 @@ grep_ok "$PAGE_SRC" "roomParams.get('shot') === 'room'" \
   "dive: ?shot=room is read once at load, in the idiom ?cinema uses"
 grep_ok "$DIRECTOR_SRC" 'if (forcedRoom) {' \
   "dive: and that still parks the camera instead of filming under the room"
+
+# Whose room it is. The plate hands over every seven seconds and a dive is a
+# six-to-ten second push onto a fifteen-to-twenty second hold, so a room that
+# kept asking the plate would enter one run's window and finish on somebody
+# else's ticket. Run the real chooser out of the real file, the way the cinema
+# probe runs the real activation rules.
+ROOM_PAGE_SRC="$(awk '/^  \/\/ --- the room ---/,/^  \/\/ --- the director ---/' "$SRC/wall/wall.js")"
+ROOM_PIN="$ROOT/room-pin.js"
+{
+  printf '%s\n' '  const window = { location: { search: "" } };'
+  printf '%s\n' '  const document = { getElementById: () => null };'
+  printf '%s\n' '  const still = { matches: false };'
+  printf '%s\n' '  const seededRandom = () => () => 0.5;'
+  printf '%s\n' '  const crewTint = () => "#e8cfa6";'
+  printf '%s\n' '  let latest = null;'
+  printf '%s\n' '  let runs = [{ id: "A", state: "alarm" }, { id: "B", state: "active" }];'
+  printf '%s\n' '  let plateId = "A";'
+  printf '%s\n' '  const plateQueue = () => runs.filter((r) => r.state === "alarm");'
+  printf '%s\n' "$ROOM_PAGE_SRC"
+  cat <<'JS'
+  const of = () => (roomRun() || { id: '' }).id;
+  const seen = {};
+  seen.plate = of();                       // no dive yet: the room follows the plate
+  pinnedRun = 'A';                         // the dive pins the window it chose
+  seen.pinned = of();
+  plateId = 'B';                           // the plate hands over mid-hold
+  seen.held = of();
+  runs = [{ id: 'B', state: 'active' }];   // and the pinned run finishes mid-hold
+  seen.vanished = of();
+  runs = [{ id: 'A', state: 'alarm' }, { id: 'B', state: 'active' }];
+  pinnedRun = '';                          // the dive is over
+  seen.released = of();
+  console.log(JSON.stringify(seen));
+JS
+} > "$ROOM_PIN"
+PIN="$(node "$ROOM_PIN" 2>&1)"
+pin_of() { printf '%s' "$PIN" | jq -r ".$1" 2>/dev/null; }
+check "dive: with no dive up, the room is whoever holds the plate" "$(pin_of plate)" "A"
+check "dive: the dive shows the run whose window it went through" "$(pin_of pinned)" "A"
+check "dive: and keeps showing it when the plate hands over mid-hold" "$(pin_of held)" "A"
+check "dive: a pinned run that finishes mid-hold falls back to the plate" \
+  "$(pin_of vanished)" "B"
+check "dive: and the plate has the room back once the dive is over" \
+  "$(pin_of released)" "B"
+grep_ok "$DIRECTOR_SRC" 'const dived = plateId;' \
+  "dive: the run is read once, where the window is chosen"
+
 ROOM_HOLD="$(sed -n 's/^  const ROOM_MIN = \([0-9]*\), ROOM_MAX = \([0-9]*\);.*/\1 \2/p' "$SRC/wall/wall.js")"
 if [ -n "$ROOM_HOLD" ] && awk "BEGIN { split(\"$ROOM_HOLD\", h, \" \");
      exit !(h[1] >= 15000 && h[2] <= 20000 && h[1] < h[2]) }"; then
