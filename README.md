@@ -1094,6 +1094,15 @@ neutral within six hours, so by the next morning the week is simply the week's.
 `--crew` (or `WALL_CREW`) is still accepted so existing launch scripts keep
 working, but a declared roster no longer puts anything on screen.
 
+**The look is a contract.** How the wall is allowed to look lives in
+`.creative/`: `bible.md` is what the city is and its do/don'ts, `rubric.md` the
+six axes a render is graded on, `proportions.md` the module and every measured
+element, `palette.png` the 32-colour lock, `refs/` the frozen reference board,
+and `visual.conf.sh` what to serve, which shots, and one threshold per check.
+Renders are graded against it by the creative harness (`/dispatch-pixel`,
+`~/.claude/creative-harness`); changing the contract is its own PR signed off by
+the owner, never a side effect of a feature.
+
 #### Runs from any machine (`HARNESS_MIRROR`)
 
 The wall reads the run dirs of the machine that serves it, so a run dispatched
