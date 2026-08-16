@@ -1045,7 +1045,10 @@ that moves moves by `transform` or `opacity` on one of two easing curves, and
 `prefers-reduced-motion` stops the rain, the traffic and the searchlight's
 travel and leaves the same city standing still — in either world. There is no
 auth: keep it off the public internet. `wall/fixtures/seed.js` regenerates the
-staged fixture runs.
+staged fixture runs, and serving *those* fixtures with no ledger yet seeds a
+week's district to stand under them (`wall/fixtures/city.js`) — so the demo opens
+on a city that has shipped rather than on an empty plain. Any other `--runs`, or
+a ledger that already exists, is never seeded into.
 
 **The query string.** Two switches, both read once at load:
 

@@ -25,7 +25,8 @@
 # The city's memory is one append-only JSONL ledger the wall owns (--city, by
 # default beside the runs dir). Run dirs only ever DISCOVER a ship: cleanup.sh
 # and mirror removal delete them, and a building has to outlive that. Deleting
-# the ledger razes the city; nothing else does.
+# the ledger razes the city; nothing else does. Serving the repo's own fixtures
+# with no ledger yet seeds a week's district into it, so the demo has one.
 #
 # Usage:
 #   wall.sh                             serve ~/.claude/harness/runs on :4711
@@ -55,7 +56,7 @@
 # only what is already on this machine's disk. Do not port-forward it publicly.
 set -u
 
-usage() { sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
