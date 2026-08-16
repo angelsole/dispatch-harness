@@ -225,11 +225,17 @@ body {
      where it buys depth between the district and the towers, and thins over the
      ground the city is actually lit from. */
   background:
+    /* the street's own light in the wet air over it, which is the only reason
+       a city at night has a horizon at all */
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--shop-diner) 8%, transparent) 0,
+      color-mix(in srgb, var(--shop-diner) 3%, transparent) 6vh,
+      transparent 15vh),
     linear-gradient(0deg, rgba(90, 170, 170, 0.1), transparent 58%),
     linear-gradient(0deg,
-      rgba(3, 11, 17, 0.34) 0 5vh,
-      rgba(2, 8, 13, 0.6) 11vh,
-      rgba(1, 5, 9, 0.66) 17vh,
+      rgba(3, 11, 17, 0.16) 0 5vh,
+      rgba(2, 8, 13, 0.42) 12vh,
+      rgba(1, 5, 9, 0.62) 18vh,
       rgba(1, 4, 8, 0.34) 27vh,
       transparent 72%);
 }
@@ -1797,9 +1803,9 @@ body[data-idle="rest"] .rest { display: block; }
   background:
     /* the lantern itself: a small hot box, the one thing up here that is a
        light rather than lit */
-    radial-gradient(0.34rem 0.19rem at 50% 0.24rem,
-      #fff6e4 0 58%,
-      color-mix(in srgb, var(--shop-diner) 92%, #fff) 58% 78%, transparent 84%)
+    radial-gradient(0.4rem 0.23rem at 50% 0.26rem,
+      #fff6e4 0 60%,
+      color-mix(in srgb, var(--shop-diner) 92%, #fff) 60% 80%, transparent 86%)
       left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
     /* the hood over it, so a lantern is a fitting rather than a floating dot */
     linear-gradient(180deg,
@@ -1808,8 +1814,8 @@ body[data-idle="rest"] .rest { display: block; }
       transparent 0.1rem)
       left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
     /* the wet air around it */
-    radial-gradient(1.1rem 0.8rem at 50% 0.26rem,
-      color-mix(in srgb, var(--shop-diner) 56%, transparent), transparent 74%)
+    radial-gradient(1.2rem 0.9rem at 50% 0.28rem,
+      color-mix(in srgb, var(--shop-diner) 62%, transparent), transparent 74%)
       left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
     /* the cone it throws down its own column */
     radial-gradient(30% 100% at 50% 0%,
