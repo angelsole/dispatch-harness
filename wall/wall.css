@@ -57,6 +57,10 @@
   --win-a: rgba(255, 198, 128, 0.52);
   --win-b: rgba(222, 234, 238, 0.4);
   --win-c: rgba(122, 214, 236, 0.34);
+  /* The same amber with the night taken out of it: the colour of the one
+     window on the skyline that has a person behind it rather than a building
+     around it. Ambient light is the city; this is somebody working. */
+  --win-work: #ffc680;
   --edge: rgba(150, 195, 200, 0.45);
 
   /* The ground floor after dark. Four signs are the whole vocabulary of this
@@ -726,15 +730,19 @@ body[data-idle="rest"] .rest { display: block; }
   top: var(--break);
   height: calc(var(--storey) * 1.3);
   pointer-events: none;
+  /* Lit along the sill above and the sill below, the way a deck reads from the
+     street; the grille sits inside them rather than combing through them, or
+     the whole floor is a row of battlements. */
+  border-top: 0.22rem solid var(--edge);
+  border-bottom: 0.22rem solid var(--edge);
   background:
     /* Louvres: a plant deck is grille, never glass. */
     repeating-linear-gradient(90deg,
       var(--stone) 0 calc(var(--col) * 0.6),
       transparent calc(var(--col) * 0.6) calc(var(--col) * 1.7)),
-    linear-gradient(0deg,
-      var(--edge) 0 0.22rem,
-      var(--stone-warm) 0.22rem calc(100% - 0.22rem),
-      var(--edge) calc(100% - 0.22rem) 100%);
+    linear-gradient(0deg, var(--stone-warm), var(--stone-warm));
+  /* After the shorthand, which would otherwise reset it to the border box. */
+  background-clip: padding-box;
 }
 
 /* The podium: the storeys the street actually stands in front of. A lobby is
@@ -981,7 +989,7 @@ body[data-idle="rest"] .rest { display: block; }
      what the ones that do not — and the landmark — are drawn with. */
   --storey: calc(var(--row) * 2);
   --bays: 2;
-  --pier: 0.18rem;
+  --pier: 0.22rem;
   --belt: 4;
   --crew: #e8cfa6;
   --age: 0;
@@ -1112,8 +1120,8 @@ body[data-idle="rest"] .rest { display: block; }
     /* the awning, over the shop row and under the first floor */
     linear-gradient(0deg,
       transparent 0 calc(var(--storey) * 1.1),
-      var(--edge) calc(var(--storey) * 1.1) calc(var(--storey) * 1.1 + 0.2rem),
-      transparent calc(var(--storey) * 1.1 + 0.2rem)),
+      var(--edge) calc(var(--storey) * 1.1) calc(var(--storey) * 1.1 + 0.22rem),
+      transparent calc(var(--storey) * 1.1 + 0.22rem)),
     repeating-linear-gradient(90deg,
       var(--win-a) 0 calc(var(--col) * 1.6),
       transparent calc(var(--col) * 1.6) calc(var(--col) * 3.1)),
@@ -1142,7 +1150,7 @@ body[data-idle="rest"] .rest { display: block; }
   bottom: 0;
   height: calc(var(--storey) * 1.1);
   background: var(--stone);
-  border-top: 0.2rem solid color-mix(in srgb, var(--win-a) 60%, transparent);
+  border-top: 0.22rem solid color-mix(in srgb, var(--win-a) 60%, transparent);
 }
 
 /* A tower that steps in as it climbs, drawn as what you would actually see on
@@ -1151,8 +1159,8 @@ body[data-idle="rest"] .rest { display: block; }
   background:
     repeating-linear-gradient(0deg,
       transparent 0 calc(var(--row) * 1.2),
-      var(--edge) calc(var(--row) * 1.2) calc(var(--row) * 1.2 + 0.18rem),
-      var(--stone) calc(var(--row) * 1.2 + 0.18rem) var(--storey)),
+      var(--edge) calc(var(--row) * 1.2) calc(var(--row) * 1.2 + 0.22rem),
+      var(--stone) calc(var(--row) * 1.2 + 0.22rem) var(--storey)),
     repeating-linear-gradient(90deg,
       var(--win-c) 0 calc(var(--col) * 2.2),
       transparent calc(var(--col) * 2.2) calc(var(--col) * 2.9)),
@@ -1601,8 +1609,8 @@ body[data-idle="rest"] .rest { display: block; }
     linear-gradient(0deg,
       transparent 0 calc(var(--kerb) + 1.5vh),
       color-mix(in srgb, var(--edge) 26%, transparent)
-        calc(var(--kerb) + 1.5vh) calc(var(--kerb) + 1.5vh + 0.2rem),
-      transparent calc(var(--kerb) + 1.5vh + 0.2rem)),
+        calc(var(--kerb) + 1.5vh) calc(var(--kerb) + 1.5vh + 0.22rem),
+      transparent calc(var(--kerb) + 1.5vh + 0.22rem)),
     /* the near pavement, lit off the same street a stop lower */
     linear-gradient(0deg,
       color-mix(in srgb, var(--shop-diner) 13%, transparent) 0 calc(var(--kerb) + 0.4vh),
@@ -1888,7 +1896,36 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, var(--accent) 30%, transparent);
-  mask-image: repeating-linear-gradient(0deg, #000 0 0.44rem, transparent 0.44rem 0.88rem);
+  /* The tower's own storey pitch, not a number that happened to match one of
+     the five: a lit floor has to land on a row of windows on every silhouette,
+     exactly as the shipping cascade's mask does. */
+  -webkit-mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
+  mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
+  transform: scaleY(calc(1 / var(--lvl)));
+  transform-origin: 50% 100%;
+  transition: transform var(--climb) var(--ease-io);
+}
+
+/* The same climb spread onto the building. A run does not happen in a shaft, it
+   happens in an office either side of one — so the storeys the car has passed
+   keep their windows on, in the actor's own neon turned right down. The actor
+   neon lights the car and this; the crew tint stays on the lamp under it.
+   Width in per cent of the shaft, so a tower with four runs in it spreads each
+   of them a quarter as far and the bands never become one wash. */
+.shaft__band {
+  position: absolute;
+  inset: 0 -34%;
+  overflow: hidden;
+  transform: scaleY(var(--lvl));
+  transform-origin: 50% 100%;
+  transition: transform var(--climb) var(--ease-io), opacity var(--spot-in) var(--ease);
+}
+.shaft__glow {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  -webkit-mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
+  mask-image: repeating-linear-gradient(0deg, #000 0 var(--row), transparent var(--row) var(--storey));
   transform: scaleY(calc(1 / var(--lvl)));
   transform-origin: 50% 100%;
   transition: transform var(--climb) var(--ease-io);
@@ -1959,6 +1996,34 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
   background: var(--accent);
   opacity: 0.75;
   box-shadow: 0 0 0.7rem var(--accent);
+}
+
+/* The storey the car is standing on, with somebody still at a desk on it. One
+   row of the tower's own windows, warm — the window colours are warm, and this
+   is the one light on the skyline that is a person rather than a machine: the
+   actor's neon is the car's and the crew's tint is the lamp's, so neither of
+   them may claim this. It rides in the lift, so it is always the floor the run
+   has actually reached, and it arrives there on the same eased climb.
+
+   Lit as a fact and shimmering as an ornament: reduced motion silences the
+   shimmer and leaves the floor lit, because somebody is still working on it. */
+.shaft__work {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: calc(var(--col) * 9);
+  height: var(--row);
+  margin: 0 0 calc(var(--row) * -0.5) calc(var(--col) * -4.5);
+  background: repeating-linear-gradient(90deg,
+    var(--win-work) 0 var(--col), transparent var(--col) calc(var(--col) * 2.1));
+  opacity: 0;
+}
+.shaft[data-state="active"] .shaft__work {
+  opacity: 0.92;
+  animation: at-the-desk 3.4s var(--ease-io) infinite;
+  /* Off its neighbours' beat, on the age the run already carries: two windows
+     breathing in unison is a dashboard blinking. */
+  animation-delay: calc(var(--age, 0) * -1s);
 }
 
 /* The carousel spotlight, car half: the bloom the beam makes where it lands.
@@ -2389,6 +2454,14 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
 @keyframes car-live {
   0%, 100% { opacity: 0.72; }
   50% { opacity: 1; }
+}
+/* Somebody at a desk on the floor the car stopped at: a few seconds of nothing
+   much, the way a room with one person in it reads from across a street. Never
+   a blink — a window that switches is a fault light, and this is a person. */
+@keyframes at-the-desk {
+  0%, 100% { opacity: 0.92; }
+  36% { opacity: 0.58; }
+  68% { opacity: 1; }
 }
 @keyframes car-klaxon {
   0%, 100% { opacity: 1; }
