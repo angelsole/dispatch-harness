@@ -504,13 +504,16 @@
     // --- the planes -------------------------------------------------------
 
     function backWall(beat) {
-      box(0, 0, W, FLOOR_Y, MID);
+      // The wall is part of the same blue-black night as the city. Keep its
+      // authored tile as surface grain, not as a mid-value colour field: the
+      // lamp and monitor are the only things allowed to lift this plane.
+      box(0, 0, W, FLOOR_Y, STONE);
       // Grain, not pattern. The tile is what stops a flat value reading as a
       // swatch; anything past a whisper of it and the back plane starts
       // competing with the desk, which is the one thing on this wall that has
       // to be looked at.
-      tile(art.wall, 0, SOFFIT, W, FLOOR_Y - SOFFIT, 0.13);
-      box(0, SOFFIT, W, FLOOR_Y - SOFFIT, STONE, 0.34);
+      tile(art.wall, 0, SOFFIT, W, FLOOR_Y - SOFFIT, 0.05);
+      box(0, SOFFIT, W, FLOOR_Y - SOFFIT, NIGHT, 0.28);
       // Panel joints. The wall is a built thing, and a seam every two modules
       // is what says so without adding a single object to the room.
       for (let x = 0; x <= W; x += 32) box(x, SOFFIT, 1, FLOOR_Y - SOFFIT, STONE, 0.8);
@@ -616,7 +619,10 @@
     // The floor the run has climbed to, as the plate beside a lift. Six pips,
     // one lit — the same ladder the tower's cars climb outside.
     function floorPlate(v) {
-      const tint = v.alarm ? ALARM : ACTOR[v.actorKey] || SAGE;
+      // This plate reports a floor, not an alert. A blocked run already owns
+      // the monitor, so its plate stays neutral instead of making a second red
+      // object on the wall.
+      const tint = v.alarm ? BONE : ACTOR[v.actorKey] || SAGE;
       box(PLATE.x - 1, PLATE.y - 1, PLATE.w + 2, PLATE.h + 2, NIGHT, 0.55);
       box(PLATE.x, PLATE.y, PLATE.w, PLATE.h, LIT);
       box(PLATE.x, PLATE.y, PLATE.w, 1, STEEL);
@@ -715,7 +721,7 @@
         text(SMALL, fit(SMALL, label, 76), x + 4, 140, colour, 0.95);
         x += w + 4;
       };
-      chip(v.actor, v.alarm ? ALARM : ACTOR[v.actorKey] || SAGE);
+      chip(v.actor, v.alarm ? BONE : ACTOR[v.actorKey] || SAGE);
       chip(v.owner, v.crew);
     }
 
@@ -728,18 +734,20 @@
         : [art.type0, art.type1, art.type2, art.type3];
       const img = frames[v.alarm ? beat.hands : beat.frame % frames.length];
       if (!img.complete || !img.naturalWidth) return;
-      const tint = v.alarm ? ALARM : ACTOR[v.actorKey] || SAGE;
+      // Waiting is a pose; it is not a red uniform. The monitor carries the
+      // alarm while the stopped operator recedes into the room's blue-black.
+      const tint = v.alarm ? STONE : ACTOR[v.actorKey] || SAGE;
       tintCtx.clearRect(0, 0, 64, 64);
       tintCtx.drawImage(img, 0, 0);
       tintCtx.globalCompositeOperation = 'source-atop';
       // A wash light enough that the figure keeps its own shading — the tint
       // says which model this is, it does not repaint the person.
-      tintCtx.globalAlpha = 0.11;
+      tintCtx.globalAlpha = v.alarm ? 0.48 : 0.11;
       tintCtx.fillStyle = tint;
       tintCtx.fillRect(0, 0, 64, 64);
       // And a rim down the side the monitor is on, which is where the light
       // actually is.
-      tintCtx.globalAlpha = 0.2;
+      tintCtx.globalAlpha = v.alarm ? 0.48 : 0.2;
       tintCtx.fillRect(48, 0, 16, 64);
       tintCtx.globalAlpha = 1;
       tintCtx.globalCompositeOperation = 'source-over';
@@ -760,24 +768,12 @@
     function nearPlane() {
       sprite(art.shelf, 267, 99);
       box(262, 96, W - 262, H - 96, NIGHT, 0.76);
-      sprite(art.plant, 21, 135);
-      box(18, 132, 36, H - 132, NIGHT, 0.58);
       box(0, 0, PILLAR, H, NIGHT, 0.9);
       box(PILLAR - 1, 0, 1, H, STEEL, 0.45);
       box(PILLAR, 0, 3, H, NIGHT, 0.35);
       // The frame's own falloff, top and bottom, so the eye lands on the desk.
       box(0, 0, W, 6, NIGHT, 0.35);
       box(0, H - 5, W, 5, NIGHT, 0.4);
-    }
-
-    // A run asking for a human turns the room over to the alarm, the same way
-    // its tower turns the searchlight on outside.
-    function alarmWash() {
-      // The alarm is a fact, not a frame in a flicker cycle. Keep its room-wide
-      // colour steady and leave the smaller monitor bloom to breathe inside it.
-      box(0, 0, W, FLOOR_Y, ALARM, 0.05);
-      box(0, FLOOR_Y, W, H - FLOOR_Y, ALARM, 0.036);
-      box(0, SOFFIT, W, 2, ALARM, 0.31);
     }
 
     // The floor in front of the desk, catching what the two lights spill past
@@ -814,7 +810,6 @@
       monitor(view, beat);
       worker(view, beat);
       nameplate(view);
-      if (view.alarm) alarmWash();
       nearPlane();
       present(beat);
     }
