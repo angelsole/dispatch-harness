@@ -2431,6 +2431,56 @@ for hostile in /assets/%2e%2e/server.js /assets/MANIFEST.md /assets/room/ \
     "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$hostile")" "404"
 done
 
+# The way out of a directory that has no `..` in it. A symlink is an ordinary
+# segment with an ordinary extension whose contents are somewhere else, so the
+# fence has to ask the filesystem and not only the string — checked against a
+# throwaway copy of wall/, because the committed tree is only ever read.
+FENCE="$ROOT/fence"
+mkdir -p "$FENCE"
+cp "$SRC/wall.sh" "$FENCE/wall.sh"
+cp -R "$SRC/wall" "$FENCE/wall"
+printf 'the private key\n' > "$ROOT/outside.txt"
+ln -s "$ROOT/outside.txt" "$FENCE/wall/assets/room/escape.png"
+ln -s "$FENCE/wall/assets/room" "$FENCE/wall/assets/shortcut"
+printf '{"room":"ok"}\n' > "$FENCE/wall/assets/room/probe.json"
+FENCE_GUARD="$(node -e '
+  const S = require(process.argv[1]);
+  const path = require("path");
+  const inside = (u) => { const f = S.assetOf(u); return f ? path.relative(S.ASSETS, f) : ""; };
+  console.log(JSON.stringify({
+    escape: inside("/assets/room/escape.png"),
+    through: inside("/assets/shortcut/probe.json"),
+    json: inside("/assets/room/probe.json"),
+  }));
+' "$FENCE/wall/server.js" 2>&1)"
+fence_of() { printf '%s' "$FENCE_GUARD" | jq -r ".$1" 2>/dev/null; }
+check "assets: a symlink pointing out of wall/assets is refused" "$(fence_of escape)" ""
+check "assets: and so is a real file reached through a symlinked directory" \
+  "$(fence_of through)" "room/probe.json"
+check "assets: a committed .json under wall/assets still resolves" \
+  "$(fence_of json)" "room/probe.json"
+bash "$FENCE/wall.sh" --runs "$RUNS" --host 127.0.0.1 --port 0 --city "$ROOT/fence-city.jsonl" \
+  > "$ROOT/fence.log" 2>&1 &
+PIDS="$PIDS $!"
+FENCE_PORT=''
+tries=0
+while [ "$tries" -lt 100 ]; do
+  FENCE_PORT=$(sed -n 's|.*http://[^:]*:\([0-9][0-9]*\)/.*|\1|p' "$ROOT/fence.log" 2>/dev/null | head -1)
+  [ -n "$FENCE_PORT" ] && break
+  sleep 0.1
+  tries=$((tries + 1))
+done
+if [ -z "$FENCE_PORT" ]; then
+  bad "assets: the fenced copy of the wall starts"
+else
+  ok "assets: the fenced copy of the wall starts"
+  check "assets: the server refuses the symlink too" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$FENCE_PORT/assets/room/escape.png")" "404"
+  check "assets: a .json asset is served as JSON" \
+    "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$FENCE_PORT/assets/room/probe.json")" \
+    "application/json; charset=utf-8"
+fi
+
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
 check "owner: the synthetic's runs are its own" "$(state_of BOT-2291 owner)" "bot"
