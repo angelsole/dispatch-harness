@@ -57,6 +57,10 @@
   --win-a: rgba(255, 198, 128, 0.52);
   --win-b: rgba(222, 234, 238, 0.4);
   --win-c: rgba(122, 214, 236, 0.34);
+  /* The solid dirty-white core shared by small fixtures. Keep it separate from
+     the translucent window wash so a lamp can be hot without borrowing the
+     pure white outside the city's locked palette. */
+  --light-hot: #deeaee;
   /* The same amber with the night taken out of it: the colour of the one
      window on the skyline that has a person behind it rather than a building
      around it. Ambient light is the city; this is somebody working. */
@@ -233,10 +237,10 @@ body {
       transparent 15vh),
     linear-gradient(0deg, rgba(90, 170, 170, 0.1), transparent 58%),
     linear-gradient(0deg,
-      rgba(3, 11, 17, 0.16) 0 5vh,
-      rgba(2, 8, 13, 0.42) 12vh,
-      rgba(1, 5, 9, 0.62) 18vh,
-      rgba(1, 4, 8, 0.34) 27vh,
+      color-mix(in srgb, var(--stone-lit) 5%, transparent) 0 5vh,
+      color-mix(in srgb, var(--stone) 20%, transparent) 12vh,
+      color-mix(in srgb, var(--bg) 90%, transparent) 18vh,
+      color-mix(in srgb, var(--bg) 45%, transparent) 27vh,
       transparent 72%);
 }
 .haze i {
@@ -1340,6 +1344,7 @@ body[data-idle="rest"] .rest { display: block; }
   top: 100%;
   height: 3rem;
   pointer-events: none;
+  transition: opacity var(--spot-in) var(--ease);
   background:
     /* the pool on the flagstones directly in front of the counters... */
     radial-gradient(50% 46% at 50% 0%,
@@ -1415,7 +1420,7 @@ body[data-idle="rest"] .rest { display: block; }
      it is dark enough to make it so: at this size the room reads the lit panel
      first and the word in it second, which is exactly what a shop sign does
      from across a street. */
-  color: color-mix(in srgb, var(--shop) 50%, #fff);
+  color: color-mix(in srgb, var(--shop) 50%, var(--light-hot));
   background: rgba(2, 6, 10, 0.72);
   border: 1px solid color-mix(in srgb, var(--shop) 62%, transparent);
   box-shadow: 0 0 0.7rem color-mix(in srgb, var(--shop) 32%, transparent),
@@ -1808,8 +1813,8 @@ body[data-idle="rest"] .rest { display: block; }
     /* the lantern itself: a small hot box, the one thing up here that is a
        light rather than lit */
     radial-gradient(0.4rem 0.23rem at 50% 0.26rem,
-      #fff 0 60%,
-      color-mix(in srgb, var(--shop-diner) 92%, #fff) 60% 80%, transparent 86%)
+      var(--light-hot) 0 60%,
+      color-mix(in srgb, var(--shop-diner) 92%, var(--light-hot)) 60% 80%, transparent 86%)
       left var(--lamp-x) top / var(--lamp-gap) 100% repeat-x,
     /* the hood over it, so a lantern is a fitting rather than a floating dot */
     linear-gradient(180deg,
@@ -1970,7 +1975,7 @@ body[data-idle="rest"] .rest { display: block; }
        body rather than hung off it, because the profile above is a clip-path
        and a clip-path takes a box-shadow with it. */
     radial-gradient(0.16rem 0.14rem at 96% 76%,
-      color-mix(in srgb, var(--car) 40%, #fff) 0 58%, transparent 72%),
+      color-mix(in srgb, var(--car) 40%, var(--light-hot)) 0 58%, transparent 72%),
     radial-gradient(0.12rem 0.11rem at 4% 78%,
       color-mix(in srgb, var(--car) 78%, transparent) 0 58%, transparent 74%),
     /* the glass, and the pillar between the two panes */
@@ -2035,7 +2040,7 @@ body[data-idle="rest"] .rest { display: block; }
                      95% 40%, 100% 60%, 100% 100%, 0 100%);
   background:
     radial-gradient(0.16rem 0.14rem at 4% 76%,
-      color-mix(in srgb, var(--car) 40%, #fff) 0 58%, transparent 72%),
+      color-mix(in srgb, var(--car) 40%, var(--light-hot)) 0 58%, transparent 72%),
     radial-gradient(0.12rem 0.11rem at 96% 78%,
       color-mix(in srgb, var(--car) 78%, transparent) 0 58%, transparent 74%),
     linear-gradient(90deg,
@@ -2122,7 +2127,7 @@ body[data-idle="rest"] .rest { display: block; }
       color-mix(in srgb, var(--stone) 80%, var(--win-b)) calc(100% - 0.1rem)),
     /* the lit saloon, in bays with the posts between them */
     repeating-linear-gradient(90deg,
-      color-mix(in srgb, var(--win-b) 96%, #fff) 0 0.3rem,
+      color-mix(in srgb, var(--win-b) 96%, var(--light-hot)) 0 0.3rem,
       color-mix(in srgb, var(--stone-warm) 70%, transparent) 0.3rem 0.46rem),
     linear-gradient(90deg, rgba(120, 190, 200, 0.5), rgba(200, 240, 240, 0.78));
   box-shadow: 0 0 0.7rem rgba(140, 210, 215, 0.4),
