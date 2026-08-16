@@ -158,6 +158,12 @@ grep_ok "$PAGE_SRC" '.tower[data-alarm="1"] .tower__sweep' \
   "ui: needs_input towers raise the searchlight"
 grep_ok "$PAGE_SRC" '.shaft[data-state="failed"] .shaft__car' \
   "ui: failed runs use the flare treatment"
+grep_ok "$PAGE_SRC" 'shaft__band' \
+  "ui: every skyline run lights the floors it has climbed"
+grep_ok "$PAGE_SRC" '.shaft[data-state="active"] .shaft__work' \
+  "ui: active runs light their current working storey"
+grep_ok "$PAGE_SRC" '.shaft[data-state="alarm"] .shaft__work' \
+  "ui: blocked live runs keep their current working storey lit"
 grep_ok "$PAGE_SRC" '.tower[data-spot="1"] .tower__spot' \
   "ui: the run on the brief plate is spotlit in the skyline"
 grep_ok "$PAGE_SRC" '.shaft[data-spot="1"] .shaft__halo' \

@@ -345,7 +345,8 @@ body {
   right: 0;
   top: 0.24rem;
   height: 1.8rem;
-  background: linear-gradient(180deg, rgba(255, 206, 150, 0.3), transparent 72%);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--win-work) 30%, transparent), transparent 72%);
   opacity: 0.85;
 }
 .street__car--b {
@@ -361,7 +362,8 @@ body {
 .street__car--b::after {
   left: 0;
   right: 4%;
-  background: linear-gradient(180deg, rgba(150, 200, 255, 0.26), transparent 72%);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--win-c) 76%, transparent), transparent 72%);
 }
 
 /* --- top chrome ------------------------------------------------------------ */
@@ -2018,7 +2020,8 @@ body[data-quiet="0"] .block__occupancy { opacity: 0.5; }
     var(--win-work) 0 var(--col), transparent var(--col) calc(var(--col) * 2.1));
   opacity: 0;
 }
-.shaft[data-state="active"] .shaft__work {
+.shaft[data-state="active"] .shaft__work,
+.shaft[data-state="alarm"] .shaft__work {
   opacity: 0.92;
   animation: at-the-desk 3.4s var(--ease-io) infinite;
   /* Off its neighbours' beat, on the age the run already carries: two windows
