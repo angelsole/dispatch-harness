@@ -210,18 +210,26 @@ PALETTE_CHECK="$(node -e '
   if (room.LOCK.length !== lock.size || room.LOCK.some((c) => !lock.has(c))) {
     bad.push("room.js draws with a palette that is not the lock");
   }
+  // Being ON the lock is not enough. Green is a WORD in this palette — it means
+  // shipped — so the success ramp belongs to a run that finished and to nothing
+  // else. A potted plant wearing it, or one stray emerald pixel a quantiser
+  // chose in the middle of a lamp bulb, is the palette telling the room a lie.
+  const SHIPPED = ["#3fd984", "#4ff08f", "#2c9a61", "#9fe8b8"];
   const dir = path.join(root, "wall", "assets", "room");
   for (const name of fs.readdirSync(dir).sort()) {
     if (!name.endsWith(".png")) continue;
     const img = decode(fs.readFileSync(path.join(dir, name)));
     const stray = new Set();
+    const shipped = new Set();
     for (let i = 0; i < img.w * img.h; i++) {
       const at = i * img.bpp;
       if (img.bpp === 4 && img.px[at + 3] === 0) continue;   // transparent is no colour
       const c = hex(img.px[at], img.px[at + 1], img.px[at + 2]);
       if (!lock.has(c)) stray.add(c);
+      if (SHIPPED.includes(c)) shipped.add(c);
     }
     if (stray.size) bad.push(name + ": " + [...stray].join(","));
+    if (shipped.size) bad.push(name + " wears the shipped ramp: " + [...shipped].join(","));
   }
   process.stdout.write(bad.length ? bad.join("; ") : "ok:" + lock.size);
 ' "$SRC" 2>&1)"
@@ -2536,6 +2544,14 @@ grep_ok "$ROOM_SRC" 'function bakePlanes(v) {' \
 for plane in plateBack plateMid plateFront; do
   grep_ok "$ROOM_SRC" "ctx.drawImage($plane, 0, 0);" "room: and $plane is composited in"
 done
+# The klaxon red thinned over a blue-black floor is not red light on night, it
+# is violet: the shipped room's two floor slabs measured hue 318 and 277. The
+# floor takes the palette's own deep red, banded; the bright one stays on the
+# tube, which is the thing raising the alarm.
+grep_ok "$ROOM_SRC" 'const cast = v.alarm ? RUST : CYAN;' \
+  "room: the alarm's light on the floor is a deep red, not a thinned klaxon"
+grep_ok "$ROOM_SRC" 'const tint = v.alarm ? ALARM : CYAN;' \
+  "room: and the klaxon red itself belongs to the monitor"
 
 # The route the sprites come down. A directory route is the path traversal this
 # server has never had, so the fence is checked from both sides: the real

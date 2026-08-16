@@ -625,7 +625,15 @@
 
     function floorPlane() {
       box(0, FLOOR_Y, W, H - FLOOR_Y, STONE);
-      tile(art.floor, 0, FLOOR_Y, W, H - FLOOR_Y, 0.16);
+      // Grain first, then back onto the ramp. The floor tile carries a warm step
+      // (#4f4441), which is right for lino under a lamp and wrong for the plane
+      // the whole lower third of the frame is made of: a warm value over a
+      // blue-black one is what makes a 640x360 tile of this room read violet
+      // rather than night. So the tile stays as texture at half the weight and
+      // STONE puts the plane's own value back where the wall's is — one
+      // night-and-stone ramp across both, which is what a room in this city is.
+      tile(art.floor, 0, FLOOR_Y, W, H - FLOOR_Y, 0.09);
+      box(0, FLOOR_Y, W, H - FLOOR_Y, STONE, 0.35);
       box(0, FLOOR_Y, W, H - FLOOR_Y, NIGHT, 0.3);
       // Two bands of depth rather than a perspective grid: the near floor is
       // darker because nothing is lighting it.
@@ -863,9 +871,21 @@
     // it. Without this the bottom fifth of the frame is a black band and the
     // room stops being a room at the kerb.
     function floorLight(v, beat) {
-      const cold = v.alarm ? ALARM : CYAN;
-      box(150, DESK_END + 3, 130, 9, cold, 0.09 + 0.05 * beat.glow);
-      box(168, DESK_END + 12, 96, 8, cold, 0.055);
+      // The screen's light on the floor. It used to be two wide slabs of the
+      // tube's own colour at a tenth of an alpha, which for an alarm is the
+      // reddest colour on the lock thinned over blue-black — and thinned, red
+      // does not read as red light on night, it MIXES with it. The two slabs
+      // measured hue 318 and 277: a violet field across a sixth of the frame,
+      // and the reason a 640x360 tile of this room did not read blue-black.
+      //
+      // So it is a POOL now, banded the way every other light in here is —
+      // three flat steps widening away from the source, narrow enough to sit
+      // under the screen that casts it — and for an alarm it is the palette's
+      // own deep red rather than a diluted klaxon. The bright red stays where
+      // the alarm is: the tube.
+      const cast = v.alarm ? RUST : CYAN;
+      spill(BEZEL.x + BEZEL.w / 2, DESK_END + 2, DESK_END + 20, 42,
+        cast, v.alarm ? 0.7 + 0.1 * beat.glow : 0.16 + 0.06 * beat.glow);
       box(40, DESK_END + 3, 92, 9, v.crew, 0.1);
       box(56, DESK_END + 12, 64, 8, v.crew, 0.06);
     }
