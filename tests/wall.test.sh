@@ -210,18 +210,26 @@ PALETTE_CHECK="$(node -e '
   if (room.LOCK.length !== lock.size || room.LOCK.some((c) => !lock.has(c))) {
     bad.push("room.js draws with a palette that is not the lock");
   }
+  // Being ON the lock is not enough. Green is a WORD in this palette — it means
+  // shipped — so the success ramp belongs to a run that finished and to nothing
+  // else. A potted plant wearing it, or one stray emerald pixel a quantiser
+  // chose in the middle of a lamp bulb, is the palette telling the room a lie.
+  const SHIPPED = ["#3fd984", "#4ff08f", "#2c9a61", "#9fe8b8"];
   const dir = path.join(root, "wall", "assets", "room");
   for (const name of fs.readdirSync(dir).sort()) {
     if (!name.endsWith(".png")) continue;
     const img = decode(fs.readFileSync(path.join(dir, name)));
     const stray = new Set();
+    const shipped = new Set();
     for (let i = 0; i < img.w * img.h; i++) {
       const at = i * img.bpp;
       if (img.bpp === 4 && img.px[at + 3] === 0) continue;   // transparent is no colour
       const c = hex(img.px[at], img.px[at + 1], img.px[at + 2]);
       if (!lock.has(c)) stray.add(c);
+      if (SHIPPED.includes(c)) shipped.add(c);
     }
     if (stray.size) bad.push(name + ": " + [...stray].join(","));
+    if (shipped.size) bad.push(name + " wears the shipped ramp: " + [...shipped].join(","));
   }
   process.stdout.write(bad.length ? bad.join("; ") : "ok:" + lock.size);
 ' "$SRC" 2>&1)"
@@ -2204,6 +2212,23 @@ CINE_PROBE="$ROOT/cinema-probe.js"
     moves: MOVE_MIN >= 6000 && MOVE_MAX <= 10000 && MOVE_MIN < MOVE_MAX,
     holds: HOLD_MIN >= 8000 && HOLD_MAX <= 20000 && WIDE_HOLD >= HOLD_MAX,
     cutFast: CUT_MS <= 1000,
+    // Leaving a shot, which every exit shares. The dive is the one shot that
+    // puts something on the wall the camera cannot take back off it, so the
+    // hook has to run whether the hold ended, the wall was resized, `c` was
+    // pressed or somebody walked in — and exactly once.
+    ...(() => {
+      const left = [];
+      current = { kind: 'room', leave: () => left.push('room') };
+      shotTimer = 7;
+      leaveShot();
+      const once = left.join(',');
+      leaveShot();
+      return {
+        leavesOnce: once === 'room' && left.join(',') === 'room',
+        leaveClearsTimer: shotTimer === 0,
+        leaveForgetsShot: current === null,
+      };
+    })(),
   }));
 JS
 } > "$CINE_PROBE"
@@ -2239,6 +2264,22 @@ check "cinema: moves take six to ten seconds"  "$(cine_of moves)" "true"
 check "cinema: holds are long, and the wide shot holds longest" "$(cine_of holds)" "true"
 check "cinema: a dismissed film gets the wide shot back inside a second" \
   "$(cine_of cutFast)" "true"
+check "cinema: leaving a shot runs its own leave hook exactly once" \
+  "$(cine_of leavesOnce)" "true"
+check "cinema: and cancels the timer the next cut was waiting on" \
+  "$(cine_of leaveClearsTimer)" "true"
+check "cinema: after which there is no shot left to leave" \
+  "$(cine_of leaveForgetsShot)" "true"
+# One exit, three call sites: the hold ending, the engage/disengage switch that
+# `c` and a hand on the mouse both come through, and the resize. A resize that
+# cancelled the timer and cut straight to the next shot is how a dive used to
+# leave its room covering the shot after it.
+check "cinema: every path out of a shot goes through leaveShot" \
+  "$(printf '%s\n' "$DIRECTOR_SRC" | grep -cF 'leaveShot();')" "3"
+grep_ok "$DIRECTOR_SRC" 'reframe = setTimeout(() => { leaveShot(); nextShot(); }, 400);' \
+  "cinema: a resize leaves the shot it re-frames away from"
+grep_not "$DIRECTOR_SRC" 'clearTimeout(shotTimer); nextShot();' \
+  "cinema: and nothing cancels a shot's timer behind its back"
 
 # Every shot type the brief names exists, and — the wide shot aside, which is
 # always available — each one can say there is nothing to film: an empty
@@ -2278,6 +2319,53 @@ grep_ok "$PAGE_SRC" "roomParams.get('shot') === 'room'" \
   "dive: ?shot=room is read once at load, in the idiom ?cinema uses"
 grep_ok "$DIRECTOR_SRC" 'if (forcedRoom) {' \
   "dive: and that still parks the camera instead of filming under the room"
+
+# Whose room it is. The plate hands over every seven seconds and a dive is a
+# six-to-ten second push onto a fifteen-to-twenty second hold, so a room that
+# kept asking the plate would enter one run's window and finish on somebody
+# else's ticket. Run the real chooser out of the real file, the way the cinema
+# probe runs the real activation rules.
+ROOM_PAGE_SRC="$(awk '/^  \/\/ --- the room ---/,/^  \/\/ --- the director ---/' "$SRC/wall/wall.js")"
+ROOM_PIN="$ROOT/room-pin.js"
+{
+  printf '%s\n' '  const window = { location: { search: "" } };'
+  printf '%s\n' '  const document = { getElementById: () => null };'
+  printf '%s\n' '  const still = { matches: false };'
+  printf '%s\n' '  const seededRandom = () => () => 0.5;'
+  printf '%s\n' '  const crewTint = () => "#e8cfa6";'
+  printf '%s\n' '  let latest = null;'
+  printf '%s\n' '  let runs = [{ id: "A", state: "alarm" }, { id: "B", state: "active" }];'
+  printf '%s\n' '  let plateId = "A";'
+  printf '%s\n' '  const plateQueue = () => runs.filter((r) => r.state === "alarm");'
+  printf '%s\n' "$ROOM_PAGE_SRC"
+  cat <<'JS'
+  const of = () => (roomRun() || { id: '' }).id;
+  const seen = {};
+  seen.plate = of();                       // no dive yet: the room follows the plate
+  pinnedRun = 'A';                         // the dive pins the window it chose
+  seen.pinned = of();
+  plateId = 'B';                           // the plate hands over mid-hold
+  seen.held = of();
+  runs = [{ id: 'B', state: 'active' }];   // and the pinned run finishes mid-hold
+  seen.vanished = of();
+  runs = [{ id: 'A', state: 'alarm' }, { id: 'B', state: 'active' }];
+  pinnedRun = '';                          // the dive is over
+  seen.released = of();
+  console.log(JSON.stringify(seen));
+JS
+} > "$ROOM_PIN"
+PIN="$(node "$ROOM_PIN" 2>&1)"
+pin_of() { printf '%s' "$PIN" | jq -r ".$1" 2>/dev/null; }
+check "dive: with no dive up, the room is whoever holds the plate" "$(pin_of plate)" "A"
+check "dive: the dive shows the run whose window it went through" "$(pin_of pinned)" "A"
+check "dive: and keeps showing it when the plate hands over mid-hold" "$(pin_of held)" "A"
+check "dive: a pinned run that finishes mid-hold falls back to the plate" \
+  "$(pin_of vanished)" "B"
+check "dive: and the plate has the room back once the dive is over" \
+  "$(pin_of released)" "B"
+grep_ok "$DIRECTOR_SRC" 'const dived = plateId;' \
+  "dive: the run is read once, where the window is chosen"
+
 ROOM_HOLD="$(sed -n 's/^  const ROOM_MIN = \([0-9]*\), ROOM_MAX = \([0-9]*\);.*/\1 \2/p' "$SRC/wall/wall.js")"
 if [ -n "$ROOM_HOLD" ] && awk "BEGIN { split(\"$ROOM_HOLD\", h, \" \");
      exit !(h[1] >= 15000 && h[2] <= 20000 && h[1] < h[2]) }"; then
@@ -2335,7 +2423,7 @@ console.log(JSON.stringify({
   // A run that is merely working says its stage in one word.
   gateWord: gate.word,
   gateAlarm: gate.alarm,
-  gateActor: gate.actorKey,
+  gateActor: gate.workActorKey,
   // Nothing the room draws is missing a glyph...
   missing: missing.join(","),
   // ...and no stage in the ladder is too wide for the tube it is drawn on.
@@ -2352,6 +2440,39 @@ console.log(JSON.stringify({
   // The actor neon a worker is tinted with is the city's own, on the lock.
   tints: ["opus", "codex", "gate", "alarm"].map((k) => R.ACTOR[k]).join(","),
   onLock: Object.values(R.ACTOR).every((c) => R.LOCK.includes(c)),
+  // The typing loop, sampled the way the gate samples: four poses at 300 ms is
+  // a 1.2 s cycle against a 750 ms sample, so no two consecutive tiles of a
+  // contact sheet catch the same pose. A loop and not a ping-pong: one full
+  // cycle visits every pose once, in order, and comes back round.
+  typingCadence: [0, 0.75, 1.5, 2.25, 3, 3.75]
+    .map((t) => R.beatAt(t, false).typing).join(","),
+  typingLoops: Array.from({ length: R.TYPE_FRAMES + 1 },
+    (_, i) => R.beatAt((i * R.TYPE_MS) / 1000, false).typing).join(","),
+  typingNeverStalls: [0, 0.75, 1.5, 2.25, 3, 3.75]
+    .map((t) => R.beatAt(t, false).typing)
+    .every((pose, i, all) => i === 0 || pose !== all[i - 1]),
+  // The push only ever goes in. A lens that eased back, even by a rounding
+  // error, is the cut the whole shot exists to avoid.
+  pushNeverBacks: (() => {
+    let last = -1;
+    for (let t = 0; t <= 24; t += 0.05) {
+      const p = R.beatAt(t, false).push;
+      if (p < last - 1e-9) return false;
+      last = p;
+    }
+    return true;
+  })(),
+  // Who is at the desk, in colour. The server preserves the work actor while
+  // actorKey becomes the wide city's alarm light, so the room consumes domain
+  // attribution instead of duplicating the floor ladder. Never stone, never red.
+  blockedActor: seen.workActorKey,
+  blockedTint: R.tintOf(seen),
+  workingTint: R.tintOf(gate),
+  blockedNotAlarm: R.tintOf(seen) !== R.ACTOR.alarm,
+  everyWorkerIsAnActor: api.runs.every((run) => {
+    const tint = R.tintOf(R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS));
+    return Object.values(R.ACTOR).includes(tint);
+  }),
   // And every sprite the room asks for is a file that was committed.
   sprites: Object.values(R.SPRITES).length,
 }));
@@ -2384,8 +2505,55 @@ check "room: that gate clock starts with the shot, not the server epoch" \
 check "room: the worker's tint is the city's own actor neon" \
   "$(room_of tints)" "#4c9dff,#3fd984,#e0a23c,#ff2f45"
 check "room: every one of them is on the palette lock" "$(room_of onLock)" "true"
+check "room: the typing hands land on a different pose in every gate frame" \
+  "$(room_of typingCadence)" "0,2,1,3,2,0"
+check "room: and never repeat one frame to the next" \
+  "$(room_of typingNeverStalls)" "true"
+check "room: the hands loop rather than ping-pong" "$(room_of typingLoops)" "0,1,2,3,0"
+check "room: the lens never eases back, at any second of the hold" \
+  "$(room_of pushNeverBacks)" "true"
+check "room: a blocked worker wears the neon of the floor work stopped on" \
+  "$(room_of blockedTint)" "#4c9dff"
+check "room: a working one wears their own" "$(room_of workingTint)" "#e0a23c"
+check "room: blocked actor attribution comes from the run snapshot" \
+  "$(room_of blockedActor)" "opus"
+check "room: the alarm red is for the monitor, never for the jacket" \
+  "$(room_of blockedNotAlarm)" "true"
+check "room: every run in the city puts an actor at that desk" \
+  "$(room_of everyWorkerIsAnActor)" "true"
 check "room: and every sprite it asks for is one this repo committed" \
   "$(room_of sprites)" "13"
+
+# The room's clock. rAF timestamps only ever go forward; Date.now() plus the
+# server skew is re-measured on every snapshot and steps in both directions,
+# which is what turned a twelve-second push into a jump cut half way through a
+# six-frame contact sheet. So the room is handed no clock at all.
+ROOM_SRC="$(cat "$SRC/wall/room.js")"
+ROOM_CODE="$(grep -v '^ *//' "$SRC/wall/room.js")"
+grep_not "$ROOM_CODE" 'Date.now' "room: nothing in here reads the wall clock"
+grep_not "$ROOM_CODE" 'skew'     "room: nor the server skew that moves under it"
+grep_ok "$ROOM_SRC" 'paint(ts / 1000);' \
+  "room: the loop draws at the timestamp rAF hands it"
+grep_ok "$ROOM_SRC" 'cancelAnimationFrame(raf);' \
+  "room: and a stopped room cancels the frame it had already queued"
+grep_ok "$PAGE_SRC" 'Room.create({ canvas: roomCanvas, still, random: seededRandom });' \
+  "room: the page hands it a canvas and a seed, and no clock"
+# The still planes are drawn once per run rather than at the display's refresh:
+# the wall, the window, the plate, the floor and the desk are facts about a run,
+# and forty rectangles of wall grain a frame is work with no picture in it.
+grep_ok "$ROOM_SRC" 'function bakePlanes(v) {' \
+  "room: the still planes are baked, not redrawn every frame"
+for plane in plateBack plateMid plateFront; do
+  grep_ok "$ROOM_SRC" "ctx.drawImage($plane, 0, 0);" "room: and $plane is composited in"
+done
+# The klaxon red thinned over a blue-black floor is not red light on night, it
+# is violet: the shipped room's two floor slabs measured hue 318 and 277. The
+# floor takes the palette's own deep red, banded; the bright one stays on the
+# tube, which is the thing raising the alarm.
+grep_ok "$ROOM_SRC" 'const cast = v.alarm ? RUST : CYAN;' \
+  "room: the alarm's light on the floor is a deep red, not a thinned klaxon"
+grep_ok "$ROOM_SRC" 'const tint = v.alarm ? ALARM : CYAN;' \
+  "room: and the klaxon red itself belongs to the monitor"
 
 # The route the sprites come down. A directory route is the path traversal this
 # server has never had, so the fence is checked from both sides: the real
@@ -2430,6 +2598,56 @@ for hostile in /assets/%2e%2e/server.js /assets/MANIFEST.md /assets/room/ \
   check "assets: [$hostile] 404s" \
     "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$hostile")" "404"
 done
+
+# The way out of a directory that has no `..` in it. A symlink is an ordinary
+# segment with an ordinary extension whose contents are somewhere else, so the
+# fence has to ask the filesystem and not only the string — checked against a
+# throwaway copy of wall/, because the committed tree is only ever read.
+FENCE="$ROOT/fence"
+mkdir -p "$FENCE"
+cp "$SRC/wall.sh" "$FENCE/wall.sh"
+cp -R "$SRC/wall" "$FENCE/wall"
+printf 'the private key\n' > "$ROOT/outside.txt"
+ln -s "$ROOT/outside.txt" "$FENCE/wall/assets/room/escape.png"
+ln -s "$FENCE/wall/assets/room" "$FENCE/wall/assets/shortcut"
+printf '{"room":"ok"}\n' > "$FENCE/wall/assets/room/probe.json"
+FENCE_GUARD="$(node -e '
+  const S = require(process.argv[1]);
+  const path = require("path");
+  const inside = (u) => { const f = S.assetOf(u); return f ? path.relative(S.ASSETS, f) : ""; };
+  console.log(JSON.stringify({
+    escape: inside("/assets/room/escape.png"),
+    through: inside("/assets/shortcut/probe.json"),
+    json: inside("/assets/room/probe.json"),
+  }));
+' "$FENCE/wall/server.js" 2>&1)"
+fence_of() { printf '%s' "$FENCE_GUARD" | jq -r ".$1" 2>/dev/null; }
+check "assets: a symlink pointing out of wall/assets is refused" "$(fence_of escape)" ""
+check "assets: an in-root symlink resolves to the canonical asset" \
+  "$(fence_of through)" "room/probe.json"
+check "assets: a committed .json under wall/assets still resolves" \
+  "$(fence_of json)" "room/probe.json"
+bash "$FENCE/wall.sh" --runs "$RUNS" --host 127.0.0.1 --port 0 --city "$ROOT/fence-city.jsonl" \
+  > "$ROOT/fence.log" 2>&1 &
+PIDS="$PIDS $!"
+FENCE_PORT=''
+tries=0
+while [ "$tries" -lt 100 ]; do
+  FENCE_PORT=$(sed -n 's|.*http://[^:]*:\([0-9][0-9]*\)/.*|\1|p' "$ROOT/fence.log" 2>/dev/null | head -1)
+  [ -n "$FENCE_PORT" ] && break
+  sleep 0.1
+  tries=$((tries + 1))
+done
+if [ -z "$FENCE_PORT" ]; then
+  bad "assets: the fenced copy of the wall starts"
+else
+  ok "assets: the fenced copy of the wall starts"
+  check "assets: the server refuses the symlink too" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$FENCE_PORT/assets/room/escape.png")" "404"
+  check "assets: a .json asset is served as JSON" \
+    "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$FENCE_PORT/assets/room/probe.json")" \
+    "application/json; charset=utf-8"
+fi
 
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"
@@ -2586,6 +2804,8 @@ check "actor: terminal needs_input keeps the blocking attribution" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .actor')" "needs input"
 check "floor: terminal needs_input stays where work stopped" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .floor')" "3"
+check "actor: terminal needs_input preserves who was working on that floor" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .workActorKey')" "codex"
 check "alarm: terminal needs_input raises its project's searchlight" \
   "$(printf '%s' "$API" | jq -r '.towers[] | select(.project=="input-project") | .alarm')" "1"
 check "project: long repo basenames are not truncated or merged" \

@@ -197,6 +197,12 @@ const FLOOR_OF = {
   pr: 5,
 };
 
+// The actor whose work each floor represents. Alarm runs deliberately replace
+// actorKey with `alarm` for the wide city's status light; workActorKey preserves
+// who is sitting inside that floor so interior views do not need their own copy
+// of the pipeline ladder.
+const FLOOR_ACTOR = ['setup', 'opus', 'gate', 'codex', 'demo', 'pr'];
+
 // A finished run parks at the floor it stopped on, not at the roof: a
 // `done: gate_failed` burnout two floors down is the honest picture, and only a
 // run that actually shipped lights the rooftop. Anything unrecognised (a future
@@ -348,6 +354,7 @@ function readRun(id, current) {
     state,
     actor,
     actorKey,
+    workActorKey: state === 'alarm' ? FLOOR_ACTOR[floor] || 'unknown' : actorKey,
     floor,
     floorName: FLOORS[floor] || FLOORS[0],
     activity: firstLine(path.join(dir, 'activity')).slice(0, 160),
@@ -766,12 +773,15 @@ function pruneLedger(before) {
 // and a demo restarted on the same ledger finds the district it left.
 const FIXTURE_RUNS = path.join(HERE, 'fixtures', 'runs');
 
+function realPath(file) {
+  try { return fs.realpathSync(file); } catch { return ''; }
+}
+
 // Resolved rather than compared as text: --runs is commonly relative (the visual
 // gate passes `wall/fixtures/runs`), and $TMPDIR on macOS is a symlink, so two
 // spellings of one directory must not read as two directories.
 function samePath(a, b) {
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-  return real(a) === real(b);
+  return (realPath(a) || path.resolve(a)) === (realPath(b) || path.resolve(b));
 }
 
 function seedFixtureCity(at) {
@@ -901,9 +911,16 @@ const STATIC = {
 // server has never had, so it is fenced on all four sides: the path must be a
 // plain relative one under wall/assets, every segment must be an ordinary name
 // (no dots, no separators, no encoded ones), the extension must be on the list,
-// and the resolved file must still be inside ASSETS after resolve() has had its
-// say. Anything else is a 404, never a read.
-const ASSETS = path.join(HERE, 'assets');
+// and the resolved file must still be inside ASSETS after resolve() AND the
+// filesystem have both had their say. Anything else is a 404, never a read.
+//
+// Through the real filesystem because a string fence only ever sees strings: a
+// symlink committed under wall/assets is a perfectly ordinary segment with a
+// perfectly ordinary extension whose contents are somewhere else entirely, and
+// `..` is not the only way out of a directory.
+// The root itself is resolved once, so a checkout under a symlinked path (a
+// /tmp worktree on macOS, say) is not a checkout whose sprites all 404.
+const ASSETS = realPath(path.join(HERE, 'assets')) || path.join(HERE, 'assets');
 const ASSET_TYPES = {
   '.png': 'image/png',
   '.json': 'application/json; charset=utf-8',
@@ -925,7 +942,12 @@ function assetOf(url) {
   const full = path.resolve(ASSETS, ...parts);
   if (full !== path.join(ASSETS, ...parts)) return '';
   if (!full.startsWith(ASSETS + path.sep)) return '';
-  return full;
+  // And the same question once more of the file that is actually there. A path
+  // that does not exist has no real path and is refused here rather than in
+  // readFile, which is the same 404 one syscall earlier.
+  const real = realPath(full);
+  if (!real || !real.startsWith(ASSETS + path.sep)) return '';
+  return real;
 }
 
 function serveAsset(res, file, type) {

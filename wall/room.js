@@ -29,8 +29,11 @@
 //
 //   Nothing keeps its own clock. Every moving thing is a pure function of one
 //   frame clock that starts with the room hold, so the lens, hands, CRT and rain
-//   all advance together. Reduced motion draws one frame at a pinned phase and
-//   never starts a loop: a still room is a LIT room standing still.
+//   all advance together. That clock is the FRAME clock — the timestamp rAF
+//   hands in, which only ever goes forward — and never the wall clock plus the
+//   server's skew, which steps sideways every time a snapshot lands and turns a
+//   slow push into a jump cut. Reduced motion draws one frame at a pinned phase
+//   and never starts a loop: a still room is a LIT room standing still.
 //
 //   The palette is the lock. Every colour below is one of the 32 in
 //   .creative/palette.png, which is also what every sprite in wall/assets/room
@@ -276,6 +279,15 @@
   const LAMP = { x: 60, y: DESK_Y - BOX.lamp.y - BOX.lamp.h };
   const RAIN_SPEED = 6;                                  // room px / second
 
+  // The typing loop: four poses, 300 ms each, so the cycle is 1.2 s. The visual
+  // gate samples every 750 ms, and 750 and 300 land on a different pose every
+  // time — 0, 2, 1, 3, 2, 0 across a six-frame contact sheet. The loop this
+  // replaced ran at 5.5 poses a second, which at exactly that cadence aliased
+  // back onto pose 0 in every single tile: six frames of a worker holding still.
+  // A loop, never a ping-pong — the hands come round rather than reversing.
+  const TYPE_MS = 300;
+  const TYPE_FRAMES = 4;
+
   // --- the beat -----------------------------------------------------------
   // Every cycle in the room, from one reading of the frame clock: which sprite
   // frame the worker is on, how hard the tube is glowing, how the strip light
@@ -292,7 +304,9 @@
     return {
       t: elapsed,
       elapsed,
-      frame: Math.floor(elapsed * 5.5),
+      // Which pose the hands are on. Milliseconds rather than seconds so the
+      // arithmetic is exact at the cadence the gate samples at.
+      typing: Math.floor((elapsed * 1000) / TYPE_MS) % TYPE_FRAMES,
       // The gate advances by 750 ms. Give the hands one unambiguous pose per
       // sample instead of letting a faster loop alias back onto the same one.
       hands: Math.floor(elapsed / 0.75) & 1,
@@ -322,6 +336,9 @@
       floor: Math.max(0, Math.min(ladder.length - 1, run.floor || 0)),
       floors: ladder.length,
       actorKey: run.actorKey || 'unknown',
+      // The server owns stage/floor attribution. In an alarm actorKey is the
+      // red status light, while workActorKey is the person behind the alert.
+      workActorKey: run.workActorKey || (alarm ? 'unknown' : run.actorKey) || 'unknown',
       actor: (run.actor || '').toUpperCase(),
       owner: (run.owner || '').toUpperCase(),
       crew: snap(run.crew || '#e8cfa6'),
@@ -332,26 +349,67 @@
     };
   }
 
+  // What the person at the desk is tinted with: an actor neon, always — the same
+  // colour that run's car is lit with out in the city. Never stone (which says
+  // "this person is scenery" about the one person the shot is of) and never the
+  // alarm red, which belongs to the things that raise the alarm.
+  const tintOf = (v) => ACTOR[v.workActorKey] || SAGE;
+
   // --- the drawing --------------------------------------------------------
+
+  // The room's clock when there is no rAF timestamp to hand: the same monotonic
+  // origin those timestamps are measured in, so a paint from outside the loop
+  // and a paint from inside it can be compared. Never Date.now(): the page's
+  // wall clock carries the server's skew, which is re-measured on every
+  // snapshot and moves in both directions.
+  const nowOf = () => (typeof performance === 'object' && performance && performance.now
+    ? performance.now() / 1000 : 0);
 
   function create(opts) {
     const canvas = opts.canvas;
     const still = opts.still;
-    const clock = opts.clock;
     const random = opts.random;
     const out = canvas.getContext('2d');
     canvas.width = W;
     canvas.height = H;
     out.imageSmoothingEnabled = false;
 
+    // A 320x180 buffer, made the same way five times over.
+    const buffer = () => {
+      const pad = document.createElement('canvas');
+      pad.width = W;
+      pad.height = H;
+      pad.getContext('2d').imageSmoothingEnabled = false;
+      return pad;
+    };
+
     // Draw the authored 320x180 room unchanged, then let a second 320x180
     // buffer act as the lens. Cropping whole source pixels keeps every edge
     // hard while allowing the shot to push toward the monitor.
-    const sceneCanvas = document.createElement('canvas');
-    sceneCanvas.width = W;
-    sceneCanvas.height = H;
-    const ctx = sceneCanvas.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
+    const sceneCanvas = buffer();
+    const sceneCtx = sceneCanvas.getContext('2d');
+
+    // The three planes that are facts about the room and the run rather than
+    // about the clock: the wall behind everything, the window/plate/floor/desk
+    // over the city, and the nameplate and near plane over the people. They are
+    // drawn ONCE per run and composited afterwards, because redrawing forty
+    // rectangles of wall grain sixty times a second to show the same wall is
+    // work with no picture in it. The beat-driven layers go between them.
+    const plateBack = buffer();
+    const plateMid = buffer();
+    const plateFront = buffer();
+    let baked = '';
+
+    // Everything below draws through `ctx`, so baking a plane is a matter of
+    // pointing it at that plane for the length of one call.
+    let ctx = sceneCtx;
+    function bake(pad, draw) {
+      const was = ctx;
+      ctx = pad.getContext('2d');
+      ctx.clearRect(0, 0, W, H);
+      draw();
+      ctx = was;
+    }
 
     // One offscreen buffer the size of a character sprite. The actor tint is
     // painted onto the worker there — source-atop on the room itself would
@@ -365,10 +423,13 @@
     const art = {};
     let loaded = 0;
     let ready = false;
+    let broken = false;
     let view = null;
     let running = false;
+    let raf = 0;
     let scale = 1;
-    let motionStartedAt = null;
+    let stamp = 0;            // the frame time this room last drew at, in seconds
+    let startedAt = null;     // and the one the hold on screen began at
 
     for (const key of Object.keys(SPRITES)) {
       const img = new Image();
@@ -382,8 +443,13 @@
         }
       });
       // A missing sprite is a room that never lights, not a broken page: the
-      // wide city underneath is untouched and the console says so once.
-      img.addEventListener('error', () => console.error('room: cannot load ' + img.src));
+      // wide city underneath is untouched, the loop stops rather than spinning
+      // on a room that can never draw, and the console says so once.
+      img.addEventListener('error', () => {
+        broken = true;
+        stop();
+        console.error('room: cannot load ' + img.src);
+      });
       img.src = 'assets/room/' + SPRITES[key];
     }
 
@@ -503,7 +569,7 @@
 
     // --- the planes -------------------------------------------------------
 
-    function backWall(beat) {
+    function backWall() {
       // The wall is part of the same blue-black night as the city. Keep its
       // authored tile as surface grain, not as a mid-value colour field: the
       // lamp and monitor are the only things allowed to lift this plane.
@@ -542,12 +608,26 @@
       box(0, 0, W, SOFFIT, NIGHT);
       box(0, SOFFIT, W, 1, STONE);
       box(112, 5, 96, 3, WARM, 0.8);
+    }
+
+    // The one line of the ceiling that is on the clock: the failing tube's own
+    // highlight, drawn over the baked wall. Nothing else reaches this band, so
+    // it lands exactly where it did when it was the last line of backWall().
+    function stripLight(beat) {
       box(112, 5, 96, 1, STEEL, 0.4 + 0.14 * beat.tube);
     }
 
     function floorPlane() {
       box(0, FLOOR_Y, W, H - FLOOR_Y, STONE);
-      tile(art.floor, 0, FLOOR_Y, W, H - FLOOR_Y, 0.16);
+      // Grain first, then back onto the ramp. The floor tile carries a warm step
+      // (#4f4441), which is right for lino under a lamp and wrong for the plane
+      // the whole lower third of the frame is made of: a warm value over a
+      // blue-black one is what makes a 640x360 tile of this room read violet
+      // rather than night. So the tile stays as texture at half the weight and
+      // STONE puts the plane's own value back where the wall's is — one
+      // night-and-stone ramp across both, which is what a room in this city is.
+      tile(art.floor, 0, FLOOR_Y, W, H - FLOOR_Y, 0.09);
+      box(0, FLOOR_Y, W, H - FLOOR_Y, STONE, 0.35);
       box(0, FLOOR_Y, W, H - FLOOR_Y, NIGHT, 0.3);
       // Two bands of depth rather than a perspective grid: the near floor is
       // darker because nothing is lighting it.
@@ -728,26 +808,30 @@
     // Who is working, and which model they are. The tint is the run's actor
     // neon — the same colour that run's car is lit with out in the city, so a
     // dive from the wide shot lands on a figure the room already recognises.
+    // ONE rule, for every state: waiting is a pose, not a second colour system.
+    // A blocked run's operator kept getting painted stone, which said "this
+    // person is scenery" about the one person the shot is of, and it is not
+    // what the wide city does either — out there the blocked car keeps its
+    // light. The alarm is loud on the alert sources (the monitor, the wash it
+    // throws) and nowhere else; the jacket stays the actor's own.
     function worker(v, beat) {
       const frames = v.alarm
         ? [art.wait1, art.wait2]
         : [art.type0, art.type1, art.type2, art.type3];
-      const img = frames[v.alarm ? beat.hands : beat.frame % frames.length];
+      const img = frames[v.alarm ? beat.hands : beat.typing % frames.length];
       if (!img.complete || !img.naturalWidth) return;
-      // Waiting is a pose; it is not a red uniform. The monitor carries the
-      // alarm while the stopped operator recedes into the room's blue-black.
-      const tint = v.alarm ? STONE : ACTOR[v.actorKey] || SAGE;
+      const tint = tintOf(v);
       tintCtx.clearRect(0, 0, 64, 64);
       tintCtx.drawImage(img, 0, 0);
       tintCtx.globalCompositeOperation = 'source-atop';
       // A wash light enough that the figure keeps its own shading — the tint
       // says which model this is, it does not repaint the person.
-      tintCtx.globalAlpha = v.alarm ? 0.48 : 0.11;
+      tintCtx.globalAlpha = 0.11;
       tintCtx.fillStyle = tint;
       tintCtx.fillRect(0, 0, 64, 64);
       // And a rim down the side the monitor is on, which is where the light
       // actually is.
-      tintCtx.globalAlpha = v.alarm ? 0.48 : 0.2;
+      tintCtx.globalAlpha = 0.2;
       tintCtx.fillRect(48, 0, 16, 64);
       tintCtx.globalAlpha = 1;
       tintCtx.globalCompositeOperation = 'source-over';
@@ -756,10 +840,11 @@
       // beat; this reads at 4x without making the whole worker bob.
       box(WORKER.x + 2, DESK_Y - 3, 60, 4, NIGHT, 0.45);
       const split = 40;
+      const key = v.alarm ? beat.hands : beat.typing & 1;
       ctx.drawImage(tintPad, 0, 0, 64, split,
         WORKER.x, WORKER.y, 64, split);
       ctx.drawImage(tintPad, 0, split, 64, 64 - split,
-        WORKER.x, WORKER.y + split + beat.hands, 64, 64 - split);
+        WORKER.x, WORKER.y + split + key, 64, 64 - split);
     }
 
     // The near plane. Nothing here is a fact — it is the room's own depth, and
@@ -780,37 +865,74 @@
     // it. Without this the bottom fifth of the frame is a black band and the
     // room stops being a room at the kerb.
     function floorLight(v, beat) {
-      const cold = v.alarm ? ALARM : CYAN;
-      box(150, DESK_END + 3, 130, 9, cold, 0.09 + 0.05 * beat.glow);
-      box(168, DESK_END + 12, 96, 8, cold, 0.055);
+      // The screen's light on the floor. It used to be two wide slabs of the
+      // tube's own colour at a tenth of an alpha, which for an alarm is the
+      // reddest colour on the lock thinned over blue-black — and thinned, red
+      // does not read as red light on night, it MIXES with it. The two slabs
+      // measured hue 318 and 277: a violet field across a sixth of the frame,
+      // and the reason a 640x360 tile of this room did not read blue-black.
+      //
+      // So it is a POOL now, banded the way every other light in here is —
+      // three flat steps widening away from the source, narrow enough to sit
+      // under the screen that casts it — and for an alarm it is the palette's
+      // own deep red rather than a diluted klaxon. The bright red stays where
+      // the alarm is: the tube.
+      const cast = v.alarm ? RUST : CYAN;
+      spill(BEZEL.x + BEZEL.w / 2, DESK_END + 2, DESK_END + 20, 42,
+        cast, v.alarm ? 0.7 + 0.1 * beat.glow : 0.16 + 0.06 * beat.glow);
       box(40, DESK_END + 3, 92, 9, v.crew, 0.1);
       box(56, DESK_END + 12, 64, 8, v.crew, 0.06);
     }
 
-    function paint() {
+    // The three still planes, drawn once for a run and kept. The key is the view
+    // itself: the hero can hand over and the stage under it can climb a floor
+    // while the room is up, and both change what the plate and the nameplate
+    // say — nothing else in here does.
+    function bakePlanes(v) {
+      const key = JSON.stringify(v);
+      if (key === baked) return;
+      baked = key;
+      bake(plateBack, backWall);
+      bake(plateMid, () => {
+        sprite(art.windowFrame, WINDOW.x, WINDOW.y);
+        shadeFrame(0.32);
+        windowLight();
+        floorPlate(v);
+        floorPlane();
+        sprite(art.desk, 29, DESK_Y - BOX.desk.y);
+        sprite(art.desk, 99, DESK_Y - BOX.desk.y, true);
+        sprite(art.desk, 173, DESK_Y - BOX.desk.y);
+        // The desk is furniture in an unlit room, not a light source: authored
+        // at full value, sunk here, and then lit back up by the lamp and the
+        // tube.
+        box(56, DESK_Y, 216, DESK_END - DESK_Y, NIGHT, 0.46);
+        box(56, DESK_END, 216, 3, NIGHT, 0.5);
+      });
+      bake(plateFront, () => {
+        nameplate(v);
+        nearPlane();
+      });
+    }
+
+    // One frame: three baked planes, and between them everything the beat
+    // touches. `at` is the frame clock in seconds — the loop hands its own rAF
+    // timestamp in, and a paint from outside the loop reads the same origin.
+    function paint(at) {
       if (!ready || !view) return;
-      const beat = beatAt(clock(), still.matches, motionStartedAt);
+      stamp = at === undefined ? nowOf() : at;
+      if (startedAt === null) startedAt = stamp;
+      const beat = beatAt(stamp, still.matches, startedAt);
+      bakePlanes(view);
       ctx.clearRect(0, 0, W, H);
-      backWall(beat);
+      ctx.drawImage(plateBack, 0, 0);
+      stripLight(beat);
       nightCity(beat);
-      sprite(art.windowFrame, WINDOW.x, WINDOW.y);
-      shadeFrame(0.32);
-      windowLight();
-      floorPlate(view);
-      floorPlane();
-      sprite(art.desk, 29, DESK_Y - BOX.desk.y);
-      sprite(art.desk, 99, DESK_Y - BOX.desk.y, true);
-      sprite(art.desk, 173, DESK_Y - BOX.desk.y);
-      // The desk is furniture in an unlit room, not a light source: authored at
-      // full value, sunk here, and then lit back up by the lamp and the tube.
-      box(56, DESK_Y, 216, DESK_END - DESK_Y, NIGHT, 0.46);
-      box(56, DESK_END, 216, 3, NIGHT, 0.5);
+      ctx.drawImage(plateMid, 0, 0);
       floorLight(view, beat);
       lamp(view, beat);
       monitor(view, beat);
       worker(view, beat);
-      nameplate(view);
-      nearPlane();
+      ctx.drawImage(plateFront, 0, 0);
       present(beat);
     }
 
@@ -836,10 +958,14 @@
       out.drawImage(sceneCanvas, sx, sy, sw, sh, 0, 0, W, H);
     }
 
-    function frame() {
+    // The timestamp rAF hands in is the room's clock, in the same origin
+    // performance.now() reports, so the two are interchangeable and both only
+    // ever go forward.
+    function frame(ts) {
+      raf = 0;
       if (!running) return;
-      paint();
-      requestAnimationFrame(frame);
+      paint(ts / 1000);
+      raf = requestAnimationFrame(frame);
     }
 
     // The one place the room's scale is decided: the largest whole multiple of
@@ -853,15 +979,24 @@
     }
 
     function start() {
-      if (running || still.matches) { paint(); return; }
+      if (running || broken || still.matches) { paint(); return; }
       running = true;
-      requestAnimationFrame(frame);
+      raf = requestAnimationFrame(frame);
+    }
+
+    // Stopping means the frame that was already queued is cancelled too, not
+    // merely ignored when it arrives: a room nobody is looking at should cost
+    // this page nothing.
+    function stop() {
+      running = false;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
     }
 
     measure();
     window.addEventListener('resize', measure);
     still.addEventListener('change', () => {
-      if (still.matches) { running = false; paint(); } else if (view) start();
+      if (still.matches) { stop(); paint(); } else if (view) start();
     });
 
     return {
@@ -869,20 +1004,23 @@
       // room turns that into its own view and nothing else.
       show(run, floors) {
         view = viewOf(run, floors);
-        if (motionStartedAt === null) motionStartedAt = clock();
         canvas.dataset.on = '1';
         measure();
         paint();
         start();
       },
       hide() {
-        running = false;
-        motionStartedAt = null;
+        stop();
+        // The next dive is a new shot and starts its own push from the top.
+        startedAt = null;
         delete canvas.dataset.on;
       },
       get holding() { return canvas.dataset.on === '1'; },
     };
   }
 
-  return { create, viewOf, beatAt, snap, widthOf, BIG, SMALL, W, H, LOCK, ACTOR, SPRITES };
+  return {
+    create, viewOf, tintOf, beatAt, snap, widthOf,
+    BIG, SMALL, W, H, LOCK, ACTOR, SPRITES, TYPE_MS, TYPE_FRAMES,
+  };
 }));

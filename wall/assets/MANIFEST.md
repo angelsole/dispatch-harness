@@ -31,6 +31,15 @@ Two rules the prompts are written to, both from `.creative/bible.md`:
   distance baked into it. The room draws the near plane dark and the desk sunk
   because that is the renderer's job, which is also why the same desk sprite can
   be a lit surface under the lamp and a silhouette three pixels to the left.
+- **Green is a word here, not a colour.** In this palette green means *shipped*,
+  so a prop may not wear the success ramp. `room/plant.png` came back from the
+  generator in mint and emerald and was recoloured pixel for pixel onto the cold
+  ramp — `#9fe8b8` to `#2c4341`, `#2c9a61` to `#253038`, `#14342d` left where it
+  was. Same shapes, same lock, one hash to update and no second generation: a
+  colour that means the wrong thing is a recolour, not a re-roll. `room/lamp.png`
+  had one pixel of `#3fd984` in the middle of its bulb, which the post-pass
+  quantiser is entitled to choose and the palette rule is not; it now carries the
+  bulb's own highlight. The suite refuses the whole ramp from here on.
 
 ## The room
 
@@ -40,8 +49,8 @@ Two rules the prompts are written to, both from `.creative/bible.md`:
 |---|---|---|---|---|---|---|---|---|
 | `room/desk.png` | one desk unit; three of them, one mirrored, make the run | pixellab.image | `/create-image-pixflux` | `room-desk` | `17430` | 2026-08-16 | generated for this repo | `5fe2730bb3b819ba019697335b4ded6ccce83cf93ac092cd2122f2c2362d6f3f` |
 | `room/floor.png` | the floor, same idea | pixellab.image | `/create-image-pixflux` | `room-floor` | `17433` | 2026-08-16 | generated for this repo | `c73b195a72315d3282382986e40ae413ffebd5caf6571fed99f9e5648b345f8c` |
-| `room/lamp.png` | the desk lamp - the warm light, in the dispatcher tint | pixellab.image | `/create-image-pixflux` | `room-lamp` | `3150714110` | 2026-08-16 | generated for this repo | `8fa6f589d1f13700425a65c3db9c3e6d8ed4a92169e0254aacdf54e7c1db08bd` |
-| `room/plant.png` | near plane, left | pixellab.image | `/create-image-pixflux` | `room-plant` | `3855081884` | 2026-08-16 | generated for this repo | `c07f83b31abd01668f02f9cc6ee53b8acbf4cd2f87b86daef6811de77cc741db` |
+| `room/lamp.png` | the desk lamp - the warm light, in the dispatcher tint; one stray success-green pixel recoloured | pixellab.image + recolour | `/create-image-pixflux` | `room-lamp` | `3150714110` | 2026-08-16 | generated for this repo | `b0c1a8d1691e14cc4b2a119c73161240651c81723f48911d48929925cdd1ee1f` |
+| `room/plant.png` | near plane, left; recoloured off the shipped-green ramp | pixellab.image + recolour | `/create-image-pixflux` | `room-plant` | `3855081884` | 2026-08-16 | generated for this repo | `20e42a2f62602dba9b66ec2b4c6bf0374e456ac30aa909c60226b59245aa84e2` |
 | `room/shelf.png` | near plane, right | pixellab.image | `/create-image-pixflux` | `room-shelf` | `17434` | 2026-08-16 | generated for this repo | `3900279ad40d192dcbf515982f62a2f893c9fd2c78e316d36a7835e65b26b1e1` |
 | `room/wall.png` | the back wall, as grain over a flat value | pixellab.image | `/create-image-pixflux` | `room-wall` | `17432` | 2026-08-16 | generated for this repo | `fbff77b5d7a982300ec61a8228a18a498e7dabfb9345f8cf944b1dbd19ddad4f` |
 | `room/window.png` | the window frame and its rolled blind; the glass was flooded out so the page can draw the city through it | pixellab.image | `/create-image-pixflux` | `room-window` | `17431` | 2026-08-16 | generated for this repo | `d742f8b5831615bceb7077c0818b7f5ee2417b3e46d486ec3029e2a0cad1d1e4` |

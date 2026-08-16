@@ -20,3 +20,13 @@ objects".
 
 **Pass** means: you would put this on the office TV in front of the team that
 ships from it. Anything else fails.
+
+## Inside a room
+
+The camera goes indoors, and the same six axes read like this once it has.
+Palette: a night room, the monitor cold and the lamp warm, red only for an
+alarm and green only for shipped. Grid: a whole-number scale of the authored
+canvas, every sprite on its own pixel grid. Silhouette: the worker and the desk
+read at three metres. Composition: window, desk, foreground — three planes that
+separate. Continuity: a loop that advances and a push that never reverses.
+Style match: the same city, seen through the window.

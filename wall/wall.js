@@ -990,13 +990,22 @@
 
   let room = null;      // the renderer, built the first time the wall asks for it
   let roomOn = false;   // whether the room is what this wall is showing now
+  // The run the dive chose, held for as long as that dive is on screen. The
+  // plate rotates every seven seconds and a dive is a six-to-ten second push
+  // followed by a fifteen-to-twenty second hold, so a room that kept asking the
+  // plate would enter one run's window and finish on somebody else's ticket.
+  // Written by the shot (roomShot below), cleared when it leaves.
+  let pinnedRun = '';
 
   // Which run the dive is for: whichever the query string named, else the one
-  // holding the brief plate — alarms first, then actives, which is the same
-  // hero the spotlight is already on out in the city.
+  // this dive pinned when it chose its window, else the one holding the brief
+  // plate — alarms first, then actives, which is the same hero the spotlight is
+  // already on out in the city. A pin whose run has since left the snapshot
+  // falls through to the plate rather than blanking the room.
   function roomRun() {
     const named = wantedRun && runs.find((r) => r.id === wantedRun);
-    return named || runs.find((r) => r.id === plateId) || plateQueue()[0] || null;
+    const pinned = pinnedRun && runs.find((r) => r.id === pinnedRun);
+    return named || pinned || runs.find((r) => r.id === plateId) || plateQueue()[0] || null;
   }
 
   // Show the room, or take it away. Safe to call before a snapshot has landed:
@@ -1006,12 +1015,11 @@
     const run = roomRun();
     if (!run) return;
     if (!room) {
-      room = Room.create({
-        canvas: roomCanvas,
-        still,
-        clock: () => Date.now() / 1000 + skew,
-        random: seededRandom,
-      });
+      // No clock is handed over. The city outside runs on the server's epoch
+      // plus a skew re-measured on every snapshot; the room runs on the frame
+      // clock, because a shot that is one continuous push may not be told the
+      // time has moved by a second and a half between two frames.
+      room = Room.create({ canvas: roomCanvas, still, random: seededRandom });
     }
     // Re-shown on every snapshot rather than once: the hero can hand over, and
     // the stage under it can climb a floor, while the room is still up. The
@@ -1108,6 +1116,7 @@
 
   let filming = false;
   let shotTimer = 0;
+  let current = null;       // the shot on screen, and the only thing that can be left
   let wideNext = true;      // the wide shot is what every close shot returns to
   let reel = null;          // the seeded draw this bucket's shot list comes from
   let reelBucket = -1;
@@ -1306,6 +1315,12 @@
     if (!lit) return null;
     const r = stageRect(lit, cam);
     if (!(r.w > 0) || !(r.h > 0)) return null;
+    // Whose window this is, read HERE and never again. `[data-spot="1"]` is on
+    // the shaft the plate is currently pinned to, and the plate hands over
+    // every seven seconds — well inside one dive's own push and hold. Pinning
+    // the id with the window is what keeps the room showing the run the camera
+    // actually went in through instead of whoever holds the plate on arrival.
+    const dived = plateId;
     // The storey itself is a few pixels of light. What the push frames is the
     // window around it — enough facade to know which building this is, held on
     // the centre line so the room lands on the same middle.
@@ -1316,8 +1331,8 @@
       move: span(MOVE_MIN, MOVE_MAX),
       hold: span(ROOM_MIN, ROOM_MAX),
       creep: creepFrom(cell, view, 0.01, 0.008),
-      enter: () => roomHold(true),
-      leave: () => roomHold(false),
+      enter: () => { pinnedRun = dived; roomHold(true); },
+      leave: () => { pinnedRun = ''; roomHold(false); },
     };
   }
 
@@ -1361,6 +1376,21 @@
       + 'px) scale(' + cam.s.toFixed(4) + ')';
   }
 
+  // The one way out of a shot, taken by all four exits: the natural cut, a
+  // resize that re-frames, the `c` key, and somebody walking in. A shot that
+  // put something on the wall the camera cannot take back off it — so far only
+  // the dive, whose room is a canvas over the whole stage — is undone here,
+  // once, whichever of the four happened. Cancelling the timer without this is
+  // how a resize during a hold used to leave the room covering the next shot.
+  function leaveShot() {
+    clearTimeout(shotTimer);
+    shotTimer = 0;
+    const next = current;
+    current = null;
+    if (!next) return;
+    if (next.leave) next.leave();
+  }
+
   function nextShot() {
     if (!filming) return;
     const view = { w: stage.clientWidth, h: stage.clientHeight };
@@ -1372,6 +1402,10 @@
     // live candidates just gets another establishing hold, which is the right
     // answer for a city with nothing in it.
     wideNext = next.kind !== 'establishing';
+    // From here on this is the shot on screen, and the only one leaveShot() can
+    // put back. It is set before the move rather than after it so a resize
+    // during the push leaves the shot it interrupted.
+    current = next;
     document.body.dataset.shot = next.kind;
     // Seconds of easing toward where the camera already is would be seconds of
     // nothing — which is exactly what the first cut of the film would be, since
@@ -1388,7 +1422,7 @@
       if (next.enter) next.enter();
       moveCamera(next.creep, next.hold, 'linear');
       shotTimer = setTimeout(() => {
-        if (next.leave) next.leave();
+        leaveShot();
         nextShot();
       }, next.hold);
     }, move);
@@ -1398,8 +1432,9 @@
     const want = wantsCinema({ reduced: still.matches, forced, manual, idle });
     if (want === filming) return;
     filming = want;
-    clearTimeout(shotTimer);
-    shotTimer = 0;
+    // Whatever was on screen is over, whichever direction this is going: the
+    // shot's own leave hook is on a timer this cancels, so it runs here instead.
+    leaveShot();
     document.body.dataset.cinema = want ? '1' : '0';
     if (want) {
       wideNext = true;
@@ -1407,10 +1442,7 @@
       nextShot();
       return;
     }
-    // Somebody is in the room. Come home quickly and get out of the way — and
-    // if the film was inside a dive when they arrived, come back out of it: the
-    // shot's own leave hook is on a timer this just cancelled.
-    roomHold(false);
+    // Somebody is in the room. Come home quickly and get out of the way.
     delete document.body.dataset.shot;
     moveCamera({ s: 1, x: 0, y: 0 }, CUT_MS, 'var(--ease)');
   }
@@ -1453,7 +1485,7 @@
     window.addEventListener('resize', () => {
       if (!filming) return;
       clearTimeout(reframe);
-      reframe = setTimeout(() => { clearTimeout(shotTimer); nextShot(); }, 400);
+      reframe = setTimeout(() => { leaveShot(); nextShot(); }, 400);
     });
     stirred();
   }
