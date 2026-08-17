@@ -515,7 +515,7 @@
   // Every number here is chosen against the LENS as well as the wall. The room's
   // push crops to whole source pixels, and at the end of it the shot starts at
   // x 39, y 15 — so a card at y 12, which is where the bare wall starts, would
-  // lose its first rows to a hold that ran its full twelve seconds. y 24 is
+  // lose its first rows to a hold that ran its full fourteen seconds. y 24 is
   // under the conduit and inside every frame of the push.
   const CARD = { x: 119, y: 24, w: 101, h: 37 };
   const CARD_PAD = 3;
@@ -589,6 +589,14 @@
   const WAIT_MS = 220;
   const WAIT_FRAMES = CYCLE;
 
+  // The room is held for fifteen to twenty seconds. Spend fourteen of them on
+  // the one lens move, then hold the destination: at twelve seconds the
+  // whole-pixel crop could cross three source columns between the gate's
+  // consecutive frames, and the wall travelled as a step instead of a push.
+  // The destination and its composition stay exactly the same; only the rate
+  // at which the crop gets there changes.
+  const PUSH_SECONDS = 14;
+
   // The cursor on the tube. 530 ms is a terminal's own blink interval, and this
   // one is on the room's clock like everything else.
   const BLINK_MS = 530;
@@ -651,7 +659,7 @@
   //
   // Pure and out here rather than inside the draw call, because it decides what
   // is IN SHOT — and a thing hung on the wall for a human to read has to still be
-  // in the frame at the end of the twelve seconds, not only at the start. The
+  // in the frame at the end of the fourteen seconds, not only at the start. The
   // crop origin travels to x 39, y 15 over a full hold, which is why the job card
   // is not on the bare wall above it.
   function cropAt(push) {
@@ -701,7 +709,7 @@
       // its turning point anywhere in a six-frame contact sheet, which makes a
       // continuous push read as a jump. Starting with the shot makes every
       // capture travel in the same direction, then the lens simply holds.
-      push: Math.min(1, elapsed / 12),
+      push: Math.min(1, elapsed / PUSH_SECONDS),
       // The CRT sweep shares that shot clock. It crosses several authored
       // pixels between gate samples, slowly enough to be followed tile to tile.
       scan: Math.floor(elapsed * 4) % (SCREEN.h + 8) - 4,
@@ -2013,7 +2021,7 @@
     SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX, PROP_ART, SLOTS, THING,
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
     TYPE_SET, WAIT_SET, FALLBACK, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
-    BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
+    PUSH_SECONDS, BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
     FEED_MARK, FEED_TOP, FEED_PITCH, FEED_TICKS, SCROLL_MS, REVEAL_CPS,
   };
 }));
