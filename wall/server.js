@@ -902,6 +902,10 @@ const STATIC = {
   // directory is the path traversal this server has never had.
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
   '/room.js': ['room.js', 'text/javascript; charset=utf-8'],
+  // Who sits at the desk, by owner. A committed file rather than a payload
+  // field: the sets it names are committed sprites, so which one an owner gets
+  // is a fact about this checkout and not about the runs on this disk.
+  '/crew.json': ['crew.json', 'application/json; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
 };
 
