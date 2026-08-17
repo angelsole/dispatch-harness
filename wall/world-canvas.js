@@ -811,35 +811,37 @@
         const y = Math.round(GROUND_Y);
         const deep = Math.max(1, GH - y);
         const kerb = Math.min(GROUND_H, deep);
-        const stone = this.blank(GW, deep);
+        // A panel of headroom over the kerb, the same as a building's, because
+        // a lamp stands on the pavement and its head is the half of it that
+        // matters: clipped at the ground line it is a post with no light in it.
+        const stone = this.blank(GW, deep + PANEL);
         // The roadway is a value, not a surface: dark tarmac with the lamp
         // pools laid on it. Only the pavement the city stands on is tiled.
-        stone.fill(0x060b12, 1, 0, kerb, GW, deep - kerb);
-        stone.fill(0x0b141c, 1, 0, deep - 3, GW, 3);
+        stone.fill(0x060b12, 1, 0, PANEL + kerb, GW, deep - kerb);
+        stone.fill(0x0b141c, 1, 0, PANEL + deep - 3, GW, 3);
         for (let x = 0; x < GW; x += GROUND_W) {
           const w = Math.min(GROUND_W, GW - x);
-          stone.stamp(ATLAS, this.cut('city-tile-kerb', 0, 0, w, kerb), x, 0, STAMP0);
+          stone.stamp(ATLAS, this.cut('city-tile-kerb', 0, 0, w, kerb), x, PANEL, STAMP0);
         }
-        // The kerb line: the one hard horizontal the whole picture hangs on.
-        stone.fill(EDGE, 0.5, 0, 0, GW, 1);
-        stone.fill(EDGE, 0.12, 0, 1, GW, 2);
-
-        // The lamps down the near kerb.
+        // The lamps down the near kerb, standing over it.
         const lampGap = Math.round(11 * VW);
         this.lamps = [];
         for (let x = Math.round(4 * VW); x < GW; x += lampGap) {
-          stone.stamp(ATLAS, 'city-prop-lamp', x, 26 - PANEL, STAMP0);
-          this.lamps.push(x + 16);
+          stone.stamp(ATLAS, 'city-prop-lamp', x - 16, PANEL - 22, STAMP0);
+          this.lamps.push(x);
         }
+        // The kerb line: the one hard horizontal the whole picture hangs on.
+        stone.fill(EDGE, 0.5, 0, PANEL, GW, 1);
+        stone.fill(EDGE, 0.12, 0, PANEL + 1, GW, 2);
         stone.render();
-        this.streetC.add(this.add.image(0, y, stone.key).setOrigin(0, 0));
+        this.streetC.add(this.add.image(0, y - PANEL, stone.key).setOrigin(0, 0));
 
         // And the light those lamps throw. Pools on the wet pavement and the
         // bulb inside each hood: the one thing on this wall that reads from
         // three metres before anything else does.
         for (const x of this.lamps) {
-          this.streetC.add(this.light(x, y + 30, 96, 38, LAMP, 0.55));
-          this.streetC.add(this.light(x, y + 4, 24, 26, LAMP, 0.8));
+          this.streetC.add(this.light(x, y + 26, 104, 40, LAMP, 0.5));
+          this.streetC.add(this.light(x, y - 12, 26, 26, LAMP, 0.85));
         }
 
         // The tram, and the rail it sits on whether or not it is running.
@@ -1107,8 +1109,10 @@
           plate.setDisplaySize(size, size);
           plate.setTint(0x02060a);
           root.add(plate);
+          root.add(this.light(px + size / 2, py + size / 2, size * 2.6, size * 2.6,
+                              tint, 0.42));
           const glyph = this.glyph(px + size / 2, py + size / 2, shop.glyph,
-                                   this.glyphCell - 2, hex(tint));
+                                   this.glyphCell - 1, hex(tint));
           root.add(glyph);
           parts.shop.glyph = glyph;
           parts.shop.plate = plate;
