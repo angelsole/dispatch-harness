@@ -2088,6 +2088,12 @@ grep_ok "$CANVAS_SRC" 'setTint(tower.alarm ? ALARM : ' \
 grep_ok "$CANVAS_SRC" 'Phaser.BlendModes.ADD' "canvas: and light is added, not painted over"
 grep_ok "$CANVAS_SRC" 'this.mall.setVisible(plan.mall)' \
   "canvas: the street plan's mall milestone has its own visible counterpart"
+grep_ok "$CANVAS_SRC" "stone.stamp(ATLAS, 'city-prop-ac'" \
+  "canvas: steam rises from a solid atlas vent, not an empty point"
+grep_ok "$CANVAS_SRC" "const bollardFrame = this.cut('city-prop-lamp'" \
+  "canvas: the pavement's bollards reuse the set's solid post"
+grep_ok "$CANVAS_SRC" 'this.tramStop.setVisible(plan.tram)' \
+  "canvas: the tram milestone brings its stop marker with it"
 # The frame loop moves what is on the GPU and never builds anything: no object
 # is created, no sprite is stamped and no texture is allocated inside it. This
 # is the whole difference between this world and the one it replaces, whose

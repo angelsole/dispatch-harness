@@ -840,6 +840,17 @@
           stone.stamp(ATLAS, 'city-prop-lamp', x - 16, PANEL - 22, STAMP0);
           this.lamps.push(x);
         }
+        // The steam has a source and the pavement has furniture. Both reuse
+        // solids already in the atlas: the AC grille is a street vent at this
+        // scale, while the lower post and foot of the lamp make a bollard.
+        for (const vent of VENTS) {
+          stone.stamp(ATLAS, 'city-prop-ac', Math.round(vent.x * GW) - 8,
+                      PANEL - 10, STAMP0);
+        }
+        const bollardFrame = this.cut('city-prop-lamp', 13, 18, 7, 12);
+        for (const x of [Math.round(32 * VW), Math.round(68 * VW)]) {
+          stone.stamp(ATLAS, bollardFrame, x - 3, PANEL - 4, STAMP0);
+        }
         // The kerb line: the one hard horizontal the whole picture hangs on.
         stone.fill(EDGE, 0.5, 0, PANEL, GW, 1);
         stone.fill(EDGE, 0.12, 0, PANEL + 1, GW, 2);
@@ -890,6 +901,15 @@
         this.rail = this.add.image(0, y + 16, '__WHITE').setOrigin(0, 0);
         this.rail.setDisplaySize(GW, 1).setTint(0x8ccdc8).setAlpha(0);
         this.streetC.add(this.rail);
+        // The blank tall plate becomes the stop marker. Lettering would be
+        // invented at this scale, so the tram's own warm light identifies it.
+        this.tramStop = this.add.image(Math.round(78 * VW), y + 16,
+                                       ATLAS, 'city-prop-signtall').setOrigin(0.5, 1);
+        this.tramStop.setDisplaySize(16, 24).setTint(0x8aa6aa).setVisible(false);
+        this.streetC.add(this.tramStop);
+        this.tramStopLight = this.light(Math.round(78 * VW), y + 4, 28, 28, WIN_A, 0.28);
+        this.tramStopLight.setVisible(false);
+        this.streetC.add(this.tramStopLight);
         this.tram = this.add.image(0, y + 16, ATLAS, 'city-tram').setOrigin(0, 1);
         this.tram.setAlpha(0);
         this.streetC.add(this.tram);
@@ -1556,6 +1576,8 @@
         }
         this.rail.setData('on', plan.tram);
         this.tram.setData('on', plan.tram);
+        this.tramStop.setVisible(plan.tram);
+        this.tramStopLight.setVisible(plan.tram);
         this.mall.setVisible(plan.mall);
         this.spot(pendingSpot);
         this.step(true);
