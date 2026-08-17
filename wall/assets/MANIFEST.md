@@ -126,6 +126,79 @@ itself, not a tolerance any of these had spare.
 | `crew/ran/wait-1.png` | waiting, hands off the keys - what a blocked run looks like | pixellab.animate | `/animate-with-text-v3` | `crew-ran-wait` | `17462` | 2026-08-17 | generated for this repo | `cc0c9399aa58576b416c3d395cff57b2ff64b9ce9a90f89692c1094c40339695` |
 | `crew/ran/wait-2.png` | waiting, second frame | pixellab.animate | `/animate-with-text-v3` | `crew-ran-wait` | `17462` | 2026-08-17 | generated for this repo | `957f6e22663985599342c2abefaec38616ce3b50bc11827a6fb5b24efab0a988` |
 
+## The city
+
+`?world=canvas`, and the whole of what the Phaser world is built out of. Two
+committed files and twenty-three frames inside them: the set is packed by
+`postpass.py --atlas`, so what the wall fetches is one texture and one frame
+table rather than twenty-three requests.
+
+Three rules the prompts settled into, all of them learnt by generating and
+looking rather than by reasoning:
+
+- **A wall is a texture, never a building.** Every prompt that said "a building
+  wall at night" came back as a whole shophouse with sky over it, a pavement
+  under it and a neon sign with invented lettering on it. *"a seamless repeating
+  texture tile of X … continues past every edge, no sky, no ground"* draws the
+  wall and only the wall.
+- **A prop is an item, never a scene.** "one street lamp" draws a street. "one
+  lamp post object, item on a plain empty background" draws a lamp post.
+- **Nothing is authored unlit.** There is no dark variant of any wall in here,
+  because three rolls asking for "every window dark and empty" came back with
+  the windows lit anyway — and because a sprite is authored once at full value
+  (`.creative/bible.md`). An empty floor, a shut shop and a far-band building
+  are the same sprite with a multiply tint, applied by the renderer.
+
+Two whole assets were thrown away rather than retouched, for the reason the
+room's first batch set: a lobby and a roller shutter that kept coming back with
+lettering across the fascia, and a road tile that came back with a word painted
+on the tarmac. The world draws the roadway as a value instead and uses one
+ground floor for every building.
+
+**Red and green are words in this palette**, and the quantiser does not know
+that: a brick course that lands on the alarm's own `#ff2f45`, or a lamp that
+lands on the shipped ramp, is the palette telling the room a lie. Every such
+pixel was recoloured onto the nearest lock colour that means nothing —
+`#ff2f45` → `#5e3437`, the shipped ramp → the cold stone ramp — exactly as
+`room/plant.png` was, and the set was re-post-passed afterwards so the atlas is
+packed from what is committed.
+
+| frame | what | size | tool | prompt | seed | date | origin |
+|---|---|---|---|---|---|---|---|
+| `city-facade-concrete-lit` | tower wall: stained concrete, narrow windows | 32 x 32 | pixellab.image | `city-facade-concrete-lit` | `19101` | 2026-08-17 | generated for this repo |
+| `city-facade-glass-lit` | tower wall: dark curtain wall, wide glazing | 32 x 32 | pixellab.image | `city-facade-glass-lit` | `19403` | 2026-08-17 | generated for this repo |
+| `city-facade-brick-lit` | tower wall: weathered brick, square windows and ledges | 32 x 32 | pixellab.image | `city-facade-brick-lit` | `19105` | 2026-08-17 | generated for this repo |
+| `city-block-shophouse` | district wall: shophouse, louvered shutters and ledges | 32 x 32 | pixellab.image | `city-block-shophouse` | `19311` | 2026-08-17 | generated for this repo |
+| `city-block-warehouse` | district wall: brick warehouse, tall arched glazing | 32 x 32 | pixellab.image | `city-block-warehouse` | `19112` | 2026-08-17 | generated for this repo |
+| `city-block-setback` | district wall: concrete, recessed balconies | 32 x 32 | pixellab.image | `city-block-setback` | `19113` | 2026-08-17 | generated for this repo |
+| `city-block-slab` | district wall: post-war slab, small square windows | 32 x 32 | pixellab.image | `city-block-slab` | `19314` | 2026-08-17 | generated for this repo |
+| `city-block-tenement` | district wall: tenement with an iron fire escape | 32 x 32 | pixellab.image | `city-block-tenement` | `19115` | 2026-08-17 | generated for this repo |
+| `city-ground-shop` | the one ground floor: a shop that is open | 64 x 32 | pixellab.image | `city-ground-shop` | `19121` | 2026-08-17 | generated for this repo |
+| `city-tile-kerb` | the pavement, with its kerb along the bottom edge | 64 x 32 | pixellab.image | `city-tile-kerb` | `19331` | 2026-08-17 | generated for this repo |
+| `city-crown-mast` | roof: a lattice mast | 32 x 32 | pixellab.image | `city-crown-mast` | `19441` | 2026-08-17 | generated for this repo |
+| `city-crown-rig` | roof: a slatted plant box with a fan cowl | 32 x 32 | pixellab.image | `city-crown-rig` | `19342` | 2026-08-17 | generated for this repo |
+| `city-crown-tank` | roof: a water tank on legs | 32 x 32 | pixellab.image | `city-crown-tank` | `19143` | 2026-08-17 | generated for this repo |
+| `city-crown-deck` | roof: a stair head hut | 32 x 32 | pixellab.image | `city-crown-deck` | `19444` | 2026-08-17 | generated for this repo |
+| `city-prop-ac` | roof: an air handling box, reduced 2:1 | 16 x 16 | pixellab.image | `city-prop-ac` | `19345` | 2026-08-17 | generated for this repo |
+| `city-prop-antenna` | roof: an aerial | 32 x 32 | pixellab.image | `city-prop-antenna` | `19146` | 2026-08-17 | generated for this repo |
+| `city-prop-lamp` | street: the lamp every pool on the pavement comes out of | 32 x 32 | pixellab.image | `city-prop-lamp` | `19151` | 2026-08-17 | generated for this repo |
+| `city-prop-awning` | street: the awning that catches a shop's light | 32 x 32 | pixellab.image | `city-prop-awning` | `19352` | 2026-08-17 | generated for this repo |
+| `city-prop-signtall` | the landmark's blank sign box; the page draws 冉 into it | 32 x 48 | pixellab.image | `city-prop-signtall` | `19156` | 2026-08-17 | generated for this repo |
+| `city-car` | the street car, ~44 px long | 48 x 24 | pixellab.image | `city-car` | `19161` | 2026-08-17 | generated for this repo |
+| `city-tram` | the tram a week that has shipped twenty puts on | 72 x 24 | pixellab.image | `city-tram` | `19162` | 2026-08-17 | generated for this repo |
+| `city-walker` | a walker, mid stride, reduced 2:1 | 16 x 16 | pixellab.image | `city-walker` | `19371` | 2026-08-17 | generated for this repo |
+| `city-walker-b` | a walker, feet together — the second pose, and the still one, reduced 2:1 | 16 x 16 | pixellab.image | `city-walker-b` | `19472` | 2026-08-17 | generated for this repo |
+
+The three sprites marked *reduced 2:1* were generated at 32 px, which is the
+generator's floor, and halved before the post-pass:
+`.creative/proportions.md` puts a person at ~10 px and a district storey at
+~14, so a 32 px figure is a landmark rather than a pedestrian.
+
+| path | what | tool | prompt | date | origin | sha256 |
+|---|---|---|---|---|---|---|
+| `city/atlas.png` | the packed set — every frame above, one texture | postpass.py --atlas | `city` | 2026-08-17 | generated for this repo | `d67a40bb60bb6eeb03aef99efa3e13baeac67508c92f78a170049ac8b27abce3` |
+| `city/atlas.json` | the frame table Phaser loads it with | postpass.py --atlas | `city` | 2026-08-17 | generated for this repo | `eadd42ad0b052eaab706cd1c9e1c4c96ffa1227057a7a763c531e3d8c2032752` |
+
 ## How they are served
 
 `wall/crew.json` has its own route in `wall/server.js`. It is a fact about this

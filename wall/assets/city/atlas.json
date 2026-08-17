@@ -1,0 +1,475 @@
+{
+  "frames": {
+    "city-block-setback": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 34,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-block-shophouse": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 67,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-block-slab": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 100,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-block-tenement": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 133,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-block-warehouse": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 166,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-car": {
+      "frame": {
+        "h": 24,
+        "w": 48,
+        "x": 1,
+        "y": 116
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 24,
+        "w": 48
+      },
+      "spriteSourceSize": {
+        "h": 24,
+        "w": 48,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-crown-deck": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 199,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-crown-mast": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 1,
+        "y": 50
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-crown-rig": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 34,
+        "y": 50
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-crown-tank": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 67,
+        "y": 50
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-facade-brick-lit": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 100,
+        "y": 50
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-facade-concrete-lit": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 133,
+        "y": 50
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-facade-glass-lit": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 166,
+        "y": 50
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-ground-shop": {
+      "frame": {
+        "h": 32,
+        "w": 64,
+        "x": 1,
+        "y": 83
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 64
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 64,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-prop-ac": {
+      "frame": {
+        "h": 16,
+        "w": 16,
+        "x": 123,
+        "y": 116
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 16,
+        "w": 16
+      },
+      "spriteSourceSize": {
+        "h": 16,
+        "w": 16,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-prop-antenna": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 66,
+        "y": 83
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-prop-awning": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 99,
+        "y": 83
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-prop-lamp": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 132,
+        "y": 83
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-prop-signtall": {
+      "frame": {
+        "h": 48,
+        "w": 32,
+        "x": 1,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 48,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 48,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-tile-kerb": {
+      "frame": {
+        "h": 32,
+        "w": 64,
+        "x": 165,
+        "y": 83
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 64
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 64,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-tram": {
+      "frame": {
+        "h": 24,
+        "w": 72,
+        "x": 50,
+        "y": 116
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 24,
+        "w": 72
+      },
+      "spriteSourceSize": {
+        "h": 24,
+        "w": 72,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-walker": {
+      "frame": {
+        "h": 16,
+        "w": 16,
+        "x": 140,
+        "y": 116
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 16,
+        "w": 16
+      },
+      "spriteSourceSize": {
+        "h": 16,
+        "w": 16,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    },
+    "city-walker-b": {
+      "frame": {
+        "h": 16,
+        "w": 16,
+        "x": 157,
+        "y": 116
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 16,
+        "w": 16
+      },
+      "spriteSourceSize": {
+        "h": 16,
+        "w": 16,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    }
+  },
+  "meta": {
+    "app": "creative/postpass.py",
+    "format": "RGBA8888",
+    "image": "atlas.png",
+    "scale": 1,
+    "size": {
+      "h": 256,
+      "w": 256
+    },
+    "version": "1.0"
+  }
+}
