@@ -210,5 +210,104 @@
     "no_background": true,
     "seed": 17422,
     "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
+  },
+  {
+    "id": "crew-angel",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 64,
+    "height": 64,
+    "no_background": true,
+    "view": "side",
+    "direction": "south",
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "medium detail",
+    "seed": 17470,
+    "prompt": "one person seated at a keyboard, facing the viewer, hunched forward, both forearms out in front resting on a keyboard, open olive green work jacket over a pale grey t-shirt, messy shoulder-length dark hair, short dark beard, head and torso and arms only, plain single figure, no desk, no monitor, no room, no background"
+  },
+  {
+    "id": "crew-angel-type",
+    "tool": "pixellab.animate",
+    "from": "crew-angel",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17441,
+    "prompt": "typing on the keyboard, fingers and forearms working up and down, shoulders shifting, head steady"
+  },
+  {
+    "id": "crew-angel-wait",
+    "tool": "pixellab.animate",
+    "from": "crew-angel",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17442,
+    "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
+  },
+  {
+    "id": "crew-emre",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 64,
+    "height": 64,
+    "no_background": true,
+    "view": "side",
+    "direction": "south",
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "medium detail",
+    "seed": 17455,
+    "prompt": "one person seated at a keyboard, facing the viewer, hunched forward, both forearms out in front resting on a keyboard, short dark hair, rectangular glasses, clean shaven, dark buttoned work shirt with a chest pocket, head and torso and arms only, plain single figure, no desk, no monitor, no room, no chair, no cup, no lamp, no background"
+  },
+  {
+    "id": "crew-emre-type",
+    "tool": "pixellab.animate",
+    "from": "crew-emre",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17451,
+    "prompt": "typing on the keyboard, fingers and forearms working up and down, shoulders shifting, head steady"
+  },
+  {
+    "id": "crew-emre-wait",
+    "tool": "pixellab.animate",
+    "from": "crew-emre",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17452,
+    "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
+  },
+  {
+    "id": "crew-ran",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 64,
+    "height": 64,
+    "no_background": true,
+    "view": "side",
+    "direction": "south",
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "medium detail",
+    "seed": 17495,
+    "prompt": "one person seated at a keyboard, facing the viewer, hunched forward, both forearms out in front resting on a keyboard, a young Chinese woman with East Asian features, short straight black hair, dark olive work shirt, head and torso and arms only, plain single figure, no desk, no monitor, no room, no background"
+  },
+  {
+    "id": "crew-ran-type",
+    "tool": "pixellab.animate",
+    "from": "crew-ran",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17461,
+    "prompt": "typing on the keyboard, fingers and forearms working up and down, shoulders shifting, head steady"
+  },
+  {
+    "id": "crew-ran-wait",
+    "tool": "pixellab.animate",
+    "from": "crew-ran",
+    "frame_count": 4,
+    "no_background": true,
+    "seed": 17462,
+    "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
   }
 ]
