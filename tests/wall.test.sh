@@ -3080,36 +3080,18 @@ console.log(JSON.stringify({
   // Nothing the room draws is missing a glyph...
   missing: missing.join(","),
   // --- the job card --------------------------------------------------------
-  // WHICH ticket and WHAT IT IS, on a sheet on the wall. The words come from the
-  // brief's own first heading, which the server has been shipping all along, so
-  // what is checked here is the wrapping — a title is prose and the sheet is 24
-  // cells of a 3x5 face.
+  // WHICH ticket and WHAT IT IS, folded into the floor plate. The words come
+  // from the brief's own first heading, which the server has been shipping all
+  // along, so what is checked here is the wrapping and the single-plane layout.
   cardCells: R.CARD_CELLS,
   cardLines: R.CARD_LINES,
-  // The card is a SECONDARY object, and that is arithmetic rather than an
-  // opinion: the first attempt filled the bare wall between the window and the
-  // floor plate at the plate's own height and turned the three of them into one
-  // edge-to-edge row of lit rectangles. This one is held to 55 % of that area and
-  // hangs UNDER the plate's band rather than beside it, so the dark central wall
-  // the champion has comes back.
-  cardArea: R.CARD.w * R.CARD.h,
-  cardCeiling: Math.floor(R.CARD_WAS.w * R.CARD_WAS.h * R.CARD_SHARE),
-  cardSecondary: R.CARD.w * R.CARD.h <= R.CARD_WAS.w * R.CARD_WAS.h * R.CARD_SHARE,
-  cardBelowThePlate: R.CARD.y > R.PLATE.y + R.PLATE.h / 2,
-  // And it clears the two things under it by measurement, not by eye: the
-  // monitor's own halo, and the head of every person the room can seat — read
-  // from the committed bases rather than from a number somebody typed.
-  cardClearOfTheMonitor: R.CARD.y + R.CARD.h <= R.BEZEL.y - 3,
-  cardClearOfEveryHead: (() => {
-    const sets = [...new Set(Object.keys(CREW).map((o) => R.setOf(CREW, o))
-      .concat(R.FALLBACK))];
-    const tops = sets.map((set) => {
-      const img = decode(fs.readFileSync(
-        path.join(process.argv[4], "wall", R.fileOf(set, "base"))));
-      return R.WORKER.y + bounds(img, 0, img.h)[1];
-    });
-    return R.CARD.y + R.CARD.h <= Math.min(...tops);
-  })(),
+  // The identifier has no surface of its own: every edge of its slot is inside
+  // the existing plate. The plate itself stops three rows before the monitor's
+  // halo, so combining the two does not create an overlap.
+  cardFoldedIntoPlate: R.CARD.x >= R.PLATE.x && R.CARD.y >= R.PLATE.y
+    && R.CARD.x + R.CARD.w <= R.PLATE.x + R.PLATE.w
+    && R.CARD.y + R.CARD.h <= R.PLATE.y + R.PLATE.h,
+  cardClearOfTheMonitor: R.PLATE.y + R.PLATE.h <= R.BEZEL.y - 3,
   // Every run the fixtures can serve, wrapped: never more lines than the sheet
   // has, never a line wider than the sheet, and never one that overruns in
   // pixels either — the cell count and the pixel width are two different claims
@@ -3151,21 +3133,11 @@ console.log(JSON.stringify({
   cardNoTitleNoRepo: R.viewOf({ id: "x" }, FLOORS).card.join("|"),
   // Every fixture carries a heading, so the card always has something to say.
   cardTitled: api.runs.every((run) => !!(run.title && run.title.trim())),
-  // WHERE it hangs. The sheet goes in the one span of this wall that is bare:
-  // right of the window frame, left of the floor plate's halo, under the conduit
-  // and clear of the monitor and the head of whoever is at the desk.
-  cardClearOfWindow: R.CARD.x > R.WINDOW.x + R.BOX.windowFrame.x + R.BOX.windowFrame.w,
-  cardClearOfPlate: R.CARD.x + R.CARD.w < R.PLATE.x - 1,
-  cardUnderTheConduit: R.CARD.y >= 24,
-  cardAboveTheDesk: R.CARD.y + R.CARD.h < R.BEZEL.y,
-  // And it is IN SHOT for the whole hold, not only at the top of the push: the
-  // lens crops whole source pixels and its origin travels to x 39, y 15 over
-  // twelve seconds, which is exactly why the card is not on the bare wall above
-  // the conduit where there was more room.
+  // The whole combined plate remains in shot for the complete lens push.
   cardInShot: Array.from({ length: 201 }, (_, i) => R.cropAt(i / 200)).every((c) =>
-    R.CARD.x - 1 >= c.x && R.CARD.y - 1 >= c.y
-    && R.CARD.x + R.CARD.w + 1 <= c.x + c.w
-    && R.CARD.y + R.CARD.h + 1 <= c.y + c.h),
+    R.PLATE.x - 1 >= c.x && R.PLATE.y - 1 >= c.y
+    && R.PLATE.x + R.PLATE.w + 1 <= c.x + c.w
+    && R.PLATE.y + R.PLATE.h + 1 <= c.y + c.h),
   lensOrigin: (() => {
     const at = R.cropAt(1);
     return at.x + "," + at.y;
@@ -3469,68 +3441,54 @@ check "room: nothing it draws is missing a glyph" "$(room_of missing)" ""
 check "room: no stage in the ladder overruns the tube" "$(room_of fits)" "true"
 
 # The job card. The room said which stage, which floor and who; it never said
-# WHICH TICKET or WHAT THE JOB IS, which is the one question somebody on the sofa
-# could not answer about a person they could see working. The words are the
-# brief's own first heading — the server has shipped it all along — so what is
-# checked here is the wrapping, the cutting, and where the sheet hangs.
-check "card: the sheet holds twenty-one cells of the small face" \
-  "$(room_of cardCells)" "21"
+# WHICH TICKET or WHAT THE JOB IS. Those words now share the existing floor
+# plate, leaving the wall between window and monitor empty.
+check "card: the plate holds fifteen cells of the small face" \
+  "$(room_of cardCells)" "15"
 check "card: and the title never runs past two lines" "$(room_of cardLines)" "2"
 check "card: every run in the city wraps inside it, in cells and in pixels" \
   "$(room_of cardFits)" "true"
 check "card: the ticket fits the big face, whatever it is called" \
   "$(room_of cardIdFits)" "true"
 check "card: an ad-hoc id is cut rather than shrunk" \
-  "$(room_of cardLongId)" "ADHOC-KPI-SPA."
+  "$(room_of cardLongId)" "ADHOC-KPI."
 check "card: a real heading reads as the sentence somebody wrote" \
-  "$(room_of cardTitle)" "INVOICE EXPORT | ENDPOINT - CSV + XLSX"
+  "$(room_of cardTitle)" "INVOICE EXPORT | ENDPOINT - C..."
 check "card: a blocked run keeps its card, and it says the job" \
-  "$(room_of cardAlarm)" "RETIRE THE LEGACY | QUOTE PDF RENDERER"
+  "$(room_of cardAlarm)" "RETIRE THE | LEGACY QUOTE..."
 check "card: a heading too long for the sheet ends in three stops" \
   "$(room_of cardEllipsis)" \
-  "RETIRE THE LEGACY|QUOTE RENDERER AND..."
+  "RETIRE THE|LEGACY QUOTE..."
 check "card: a word no line can hold is cut, not dropped" \
   "$(room_of cardLongWord)" "INTERNATION."
 check "card: an accent folds to the letter the face has" \
-  "$(room_of cardAccents)" "FACTURACION ANEXOS -|LIMITES"
+  "$(room_of cardAccents)" "FACTURACION|ANEXOS -..."
 check "card: a run with no heading says which repo it is" \
   "$(room_of cardNoTitle)" "OLYXBASE"
 check "card: and one with neither still has a sheet with something on it" \
   "$(room_of cardNoTitleNoRepo)" "UNCHARTED"
 check "card: every committed fixture carries a heading to put on it" \
   "$(room_of cardTitled)" "true"
-check "card: it hangs clear of the window frame" \
-  "$(room_of cardClearOfWindow)" "true"
-check "card: clear of the floor plate" "$(room_of cardClearOfPlate)" "true"
-check "card: it is secondary, at 55 % of the area the first one took" \
-  "$(room_of cardSecondary)" "true"
-check "card: which is $(room_of cardArea) px against a ceiling of $(room_of cardCeiling)" \
-  "$(room_of cardSecondary)" "true"
-check "card: it hangs under the floor plate's band, not beside it" \
-  "$(room_of cardBelowThePlate)" "true"
+check "card: it is folded entirely into the existing floor plate" \
+  "$(room_of cardFoldedIntoPlate)" "true"
 check "card: clear of the monitor's own halo" \
   "$(room_of cardClearOfTheMonitor)" "true"
-check "card: and above the head of every person the room can seat" \
-  "$(room_of cardClearOfEveryHead)" "true"
 check "card: and it is in shot at every second of the push, not only the first" \
   "$(room_of cardInShot)" "true"
 check "card: which is a bound because the lens crop only ever travels in" \
   "$(room_of lensNeverBacks)" "true"
 check "card: to x 39, y 15 by the end of the hold" "$(room_of lensOrigin)" "39,15"
 
-# The card carries no state at all: an alarm keeps it exactly as it is, because
-# the ticket is the thing you most need when the screen says NEEDS INPUT and the
-# red belongs to the monitor. Checked as structure, because "it never turns red"
-# is a claim about what is NOT in the function.
-CARD_FN="$(awk '/^    function jobCard\(v\) \{/, /^    \}$/' "$SRC/wall/room.js")"
+# The card carries no state and no surface of its own: it adds only type to the
+# floor plate. An alarm keeps the words, while the red belongs to the monitor.
+CARD_FN="$(awk '/^    function jobDetails\(v\) \{/, /^    \}$/' "$SRC/wall/room.js")"
 CARD_CODE="$(printf '%s\n' "$CARD_FN" | grep -v '^ *//')"
-grep_ok "$CARD_FN" 'box(CARD.x, CARD.y, CARD.w, CARD.h, BOARD);' \
-  "card: the sheet is the palette's one warm mid-value"
+grep_not "$CARD_CODE" 'box(' "card: it adds no independent wall surface"
 grep_not "$CARD_CODE" 'alarm' "card: nothing on it depends on the alarm"
 grep_not "$CARD_CODE" 'ALARM' "card: and the klaxon red is never drawn on it"
 grep_not "$CARD_CODE" 'v.crew' "card: nor the crew tint, which belongs to the lamp"
-grep_ok "$(cat "$SRC/wall/room.js")" '        jobCard(v);' \
-  "card: and it is baked with the still planes, not redrawn every frame"
+grep_ok "$(cat "$SRC/wall/room.js")" '      jobDetails(v);' \
+  "card: and it is part of the plate baked with the still planes"
 
 # Their things. Four rooms with four faces in them were still four copies of one
 # room. The pool is closed and lives in room.js, wall/crew.json says who owns

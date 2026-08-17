@@ -71,11 +71,6 @@
   const ICE = '#96c3c8';
   const MINT = '#a9d9c6';
   const RUST = '#531820';
-  // The one warm mid-value on the lock, out of the masonry ramp: what a sheet of
-  // paper on a wall is made of in a room lit by one lamp. Nothing else in here
-  // uses it, which is the point — the card is not a second monitor and not a
-  // second floor plate, it is a thing somebody pinned up.
-  const BOARD = '#4f4441';
   const CREAM = '#e8cfa6';
   const GLOW = '#ffc27d';
   const WORK = '#ffc680';
@@ -515,63 +510,30 @@
     w: BOX.windowFrame.hole.w,
     h: BOX.windowFrame.hole.h,
   };
-  const PLATE = { x: 228, y: 26, w: 72, h: 32 };         // the floor sign on the wall
+  const PLATE = { x: 228, y: 26, w: 72, h: 45 };         // floor + job sign on the wall
   const SCREEN = { x: 176, y: 78, w: 68, h: 38 };        // what the monitor shows
   const BEZEL = { x: 172, y: 74, w: 76, h: 52 };
   const WORKER = { x: 96, y: 74 };                       // the sprite's origin
   const LAMP = { x: 60, y: DESK_Y - BOX.lamp.y - BOX.lamp.h };
   const RAIN_SPEED = 6;                                  // room px / second
 
-  // The job card: the one thing this room never said. The monitor says which
-  // STAGE, the plate says which FLOOR, the nameplate says WHO — and from the
-  // sofa you could see somebody working and not say on what.
-  //
-  // WHERE it goes is the whole argument, and the first attempt got it wrong. A
-  // sheet filling the bare wall between the window frame (x 114) and the floor
-  // plate's halo (x 227) at the plate's own height turned window, card and plate
-  // into one edge-to-edge row of lit rectangles, and the champion's dark central
-  // wall — the negative space that separates the window from the plate and the
-  // monitor — went with it. A card that competes with the monitor is not a job
-  // card, it is a second screen.
-  //
-  // So this is a NOTE, and it is deliberately secondary in all three ways a thing
-  // can be:
-  //
-  //   SMALLER   89x23 is 55 % of what that first sheet took. It carries the id on
-  //             one line and the title on at most two, not three.
-  //   LOWER     it hangs at y 47, under the plate's band rather than beside it,
-  //             with its bottom four rows above the monitor's top-left shoulder
-  //             (y 74) and ten above the head of whoever is at the desk (y 79).
-  //             The wall between the window and the plate keeps its dark.
-  //   DIMMER    a note under a strip light that is eight rows further away than
-  //             the first sheet was, so it catches less of it.
-  //
-  // And every number is chosen against the LENS as well as the wall: the push
-  // crops to whole source pixels and its origin travels to x 39, y 15 over the
-  // twelve seconds, so a card anywhere above y 16 loses rows to a full hold.
-  const CARD = { x: 124, y: 47, w: 89, h: 23 };
-  const CARD_PAD = 3;
-  // The area the first sheet took, kept here as the ceiling this one is held to.
-  // A card is a job identifier; the moment it needs half the wall it has stopped
-  // being one, and the suite says so from these two numbers rather than from a
-  // screenshot somebody looked at once.
-  const CARD_WAS = { w: 101, h: 37 };
-  const CARD_SHARE = 0.55;
-  // What the sheet holds, in glyphs of each face: the ticket in the big one, the
-  // brief's own heading under it in the small one. 21 cells is not a taste — it
-  // is (89 - 2*3 + 1) / 4, the whole glyphs the sheet's width leaves.
+  // The job identifier is folded into the floor plate instead of claiming a
+  // second rectangle on the wall. The monitor says the state, the top of this
+  // plate says the floor, and its lower half answers which ticket and what it is.
+  // The dark span between the window and the plate therefore stays completely
+  // empty, as it was in the champion.
+  const CARD = { x: PLATE.x + 4, y: PLATE.y + 23, w: PLATE.w - 9, h: 20 };
+  const CARD_PAD = 2;
+  // What the plate's lower half holds, in glyphs of each face: the ticket in the
+  // big one and the brief's heading under it in the small one.
   const CARD_ROOM = CARD.w - CARD_PAD * 2;
   const CARD_CELLS = cells(SMALL, CARD_ROOM);
   const CARD_LINES = 2;
 
-  // Where the id sits and where the two rows of title do. Written out rather than
-  // derived so the sheet can be read off the source: 2 rows of top margin, 7 of
-  // the big face, 1 of air, then two 5-row lines on a 6-row pitch, then 2 rows of
-  // margin and the shadow. No rule between them — a note this small separates its
-  // two levels by size and value, and a horizontal line across it would only be
-  // one more hard edge for the lens to drag.
-  const CARD_ID_Y = CARD.y + 2;
-  const CARD_TEXT_Y = CARD.y + 10;
+  // The lower half is deliberately tight: one big row and two small rows, with
+  // no paper fill, frame, pin, or extra rule to turn it into another object.
+  const CARD_ID_Y = CARD.y;
+  const CARD_TEXT_Y = CARD.y + 8;
   const CARD_PITCH = 6;
 
   // And where somebody's own things go. Three places, the same three in every
@@ -689,10 +651,9 @@
   // do visible camera work without adding another object.
   //
   // Pure and out here rather than inside the draw call, because it decides what
-  // is IN SHOT — and a thing hung on the wall for a human to read has to still be
-  // in the frame at the end of the twelve seconds, not only at the start. The
-  // crop origin travels to x 39, y 15 over a full hold, which is why the job card
-  // is not on the bare wall above it.
+  // is IN SHOT — and the plate a human reads has to remain in the frame at the
+  // end of the twelve seconds, not only at the start. The crop origin travels to
+  // x 39, y 15 over a full hold.
   function cropAt(push) {
     const zoom = 1 + push * 0.14;
     const w = Math.round(W / zoom);
@@ -924,7 +885,7 @@
       // canvas, and so the baked plane's key changes when the words do.
       //
       // A run with no heading — no brief.md, or one that opens with prose —
-      // gets the repo instead of an empty sheet: the card's job is to answer
+      // gets the repo instead of an empty plate: the card's job is to answer
       // "which ticket, and what is it", and half of that answer still tells
       // somebody on the sofa which codebase is being worked on.
       card: (() => {
@@ -1399,7 +1360,9 @@
     }
 
     // The floor the run has climbed to, as the plate beside a lift. Six pips,
-    // one lit — the same ladder the tower's cars climb outside.
+    // one lit — the same ladder the tower's cars climb outside. The job sits in
+    // the lower half of this same physical plate, so the wall gains information
+    // without gaining another plane.
     function floorPlate(v) {
       // This plate reports a floor, not an alert. A blocked run already owns
       // the monitor, so its plate stays neutral instead of making a second red
@@ -1415,65 +1378,24 @@
       text(SMALL, fit(SMALL, v.floorName, PLATE.w - 26), PLATE.x + 24, PLATE.y + 7, MINT, 0.8);
       for (let i = 0; i < v.floors; i++) {
         const on = i === v.floor;
-        box(PLATE.x + 24 + i * 6, PLATE.y + 18, 4, 3, on ? tint : STEEL, on ? 0.95 : 0.7);
+        box(PLATE.x + 24 + i * 6, PLATE.y + 15, 4, 3, on ? tint : STEEL, on ? 0.95 : 0.7);
       }
+      jobDetails(v);
       // The plate is useful chrome, not a second screen. One flat exposure step
       // keeps its number and floor readable while leaving the monitor as the
       // brightest state-bearing plane when the lens moves through the room.
       box(PLATE.x, PLATE.y, PLATE.w, PLATE.h, NIGHT, 0.12);
     }
 
-    // WHICH JOB THIS IS: a sheet pinned to the wall over the desk, with the
-    // ticket on it in the big face and the brief's own heading under it in the
-    // small one. The room already said which stage (the monitor), which floor
-    // (the plate) and who (the nameplate); this is the fourth question somebody
-    // on the sofa asks and the first one the room could not answer.
-    //
-    // It is PAPER, on purpose. The plate above it is a bolted metal sign in the
-    // room's cold ramp with a lit edge; making the card a second one of those
-    // would have put two dark signs on one wall and asked the eye to tell them
-    // apart by their type. So the sheet takes the palette's one warm mid-value,
-    // is sunk the way the desk is, and then catches what reaches it of the strip
-    // light — warm first, cold second, in two flat steps rather than three,
-    // because at y 47 it is further from the tube than the plate is.
-    //
-    // Two levels of type and no more: the id in a quiet warm pale, which is what
-    // you read from the door, and the title one step down in value and three
-    // times smaller, which is what you read on a second look. No rule
-    // between them: this sheet is 23 rows tall and size plus value already
-    // separate the two, while a line across it would be one more hard edge for a
-    // whole-pixel lens to drag.
-    //
-    // There is no state in here at all — an alarm keeps its card exactly as it is,
-    // because the ticket is the thing you most need when the screen says NEEDS
-    // INPUT, and the monitor owns the red. In the alarm room the only bright mass
-    // above the desk is still that monitor.
-    function jobCard(v) {
-      box(CARD.x - 1, CARD.y - 1, CARD.w + 2, CARD.h + 2, NIGHT, 0.2);
-      box(CARD.x, CARD.y, CARD.w, CARD.h, BOARD);
-      // Furniture in an unlit room, sunk the same way the desk is, and then lit
-      // back up by the one tube on the ceiling that still works — which runs from
-      // x 112 to x 208, over this sheet but a long way over it.
-      box(CARD.x, CARD.y, CARD.w, CARD.h, NIGHT, 0.8);
-      box(CARD.x, CARD.y, CARD.w, 8, GLOW, 0.02);
-      box(CARD.x, CARD.y + 8, CARD.w, 8, GLOW, 0.01);
-      box(CARD.x, CARD.y + CARD.h - 6, CARD.w, 6, NIGHT, 0.12);
-      // The sheet's own edges: the top one catches the strip light, the right
-      // one is the side away from the lamp, and the bottom is the shadow it
-      // throws on the wall it is pinned to.
-      box(CARD.x, CARD.y, CARD.w, 1, CREAM, 0.05);
-      box(CARD.x + CARD.w - 1, CARD.y, 1, CARD.h, NIGHT, 0.35);
-      box(CARD.x, CARD.y + CARD.h - 1, CARD.w, 1, NIGHT, 0.65);
-      // The pin. Four pixels, and the only reason they are here is that they are
-      // what makes this a sheet somebody put up rather than a panel in the wall.
-      box(CARD.x + Math.floor(CARD.w / 2) - 1, CARD.y, 2, 2, GLOW, 0.3);
-      // The ticket, in the face the stage word uses. Cut rather than shrunk if it
-      // is one of the ad-hoc ids: fourteen glyphs of the big face is what this
-      // sheet holds, and ADHOC-KPI-SPA. still says which run this is.
-      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.42);
+    // WHICH JOB THIS IS, in the existing plate rather than on a tan wall block.
+    // There is no state here: the alarm keeps its ticket and title, while red
+    // remains the monitor's alone. Nor is there a rectangle to compete with it;
+    // this helper adds only type to the plate floorPlate() already drew.
+    function jobDetails(v) {
+      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.48);
       for (let i = 0; i < v.card.length && i < CARD_LINES; i++) {
         text(SMALL, v.card[i], CARD.x + CARD_PAD, CARD_TEXT_Y + i * CARD_PITCH,
-          CREAM, 0.28);
+          CREAM, 0.32);
       }
     }
 
@@ -1921,7 +1843,6 @@
         shadeFrame(0.32);
         windowLight();
         floorPlate(v);
-        jobCard(v);
         floorPlane();
         sprite(art.desk, 29, DESK_Y - BOX.desk.y);
         sprite(art.desk, 99, DESK_Y - BOX.desk.y, true);
@@ -2051,7 +1972,7 @@
     create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
     fileOf, splitOf, bandsOf, lineOf, keyOf, markOf, burstAt, revealed,
     spoken, wrapped, cropAt, propsOf, slotsOf,
-    CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES, CARD_WAS, CARD_SHARE,
+    CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES,
     PLATE, BEZEL, WORKER,
     SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX, PROP_ART, SLOTS, THING,
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
