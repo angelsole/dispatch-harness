@@ -330,6 +330,15 @@
 
 </div><!-- /stage -->
 
+<!-- THE OTHER BODY. Behind ?world=canvas everything inside the stage above is
+     hidden and this box holds one WebGL canvas that draws the same city with a
+     game engine instead. It is OUTSIDE the stage on purpose: the director's
+     camera is a CSS transform on that element, and a transform on a WebGL
+     canvas rasterises it — a 5 % establishing creep was costing the whole
+     world its sharpness on every hold. The world keeps its own camera; the
+     stage keeps its own. Empty and inert in the DOM world. -->
+<div class="world" id="world" aria-hidden="true"></div>
+
 <!-- Weather, drawn rather than tiled: each streak is its own drop, and the
      layer screens over the city so rain crossing a lit window or the carousel
      spotlight lights up on its own. Outside the stage on purpose: rain is the
