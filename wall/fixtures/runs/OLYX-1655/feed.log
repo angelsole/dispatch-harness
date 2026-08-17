@@ -1,7 +1,7 @@
-14:39:08 ⏺ Bash npm run gate
-14:40:08 🏁 success
-14:43:48 ◆ codex Reading .harness/brief.md and the diff against origin/main
-14:45:18 ◆ codex Checkpoint 1 — no tests weakened, fixtures untouched
-14:46:48 ◆ codex ledger.ts duplicates roundToCents from money.ts — folding it back
-14:48:18 ◆ codex Applying patch to src/ledger/split.ts
-14:49:13 ◆ codex Re-running the gate after the refactor
+04:50:25 ⏺ Bash npm run gate
+04:51:25 🏁 success
+04:55:05 ◆ codex Reading .harness/brief.md and the diff against origin/main
+04:56:35 ◆ codex Checkpoint 1 — no tests weakened, fixtures untouched
+04:58:05 ◆ codex ledger.ts duplicates roundToCents from money.ts — folding it back
+04:59:35 ◆ codex Applying patch to src/ledger/split.ts
+05:00:30 ◆ codex Re-running the gate after the refactor

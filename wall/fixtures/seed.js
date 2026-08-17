@@ -1,8 +1,9 @@
 'use strict';
-// Stage the wall's fixture runs: eleven run dirs shaped exactly as run-task.sh
+// Stage the wall's fixture runs: twelve run dirs shaped exactly as run-task.sh
 // writes them, spread across four repos plus one run whose worktree is
 // unreadable (the UNCHARTED tower), at every floor of the pipeline and owned by
-// a mix of crew and the `bot` synthetic.
+// a mix of crew and the `bot` synthetic — one run per crew member the room has
+// a character for, so every one of them can be looked at.
 //
 // The generated runs/ directory is committed, so `wall.sh --runs
 // wall/fixtures/runs` and the demo storyboard work straight out of a clone.
@@ -260,7 +261,27 @@ feed('OLYX-1673', [
   [20, '⏺ Bash gh pr create --draft'],
 ]);
 
-// --- olyx-dashboard: an adhoc ticket, mid-demo --------------------------------
+// --- olyx-dashboard: an adhoc ticket mid-demo, and Ran's ----------------------
+// The room draws whoever dispatched a run, so the fixtures need one run per
+// crew member the wall has a character for or `?shot=room&run=<id>` cannot be
+// pointed at all of them. This one goes on a tower that already stands and has
+// room on it: a fifth repo would have been a new tower rather than a new
+// person, and a third live run on either of the busy two would have made a
+// second crowded tower out of a fixture set that means to have exactly one.
+run({
+  id: 'OLYX-1667', project: 'olyx-dashboard', owner: 'ran', stageAge: 110, totalAge: 1650,
+  stage: 'implementing — Opus (Claude sub)',
+  activity: '⏺ Edit src/views/saved-layout.ts',
+  title: 'Saved views — per-user dashboard layouts',
+});
+feed('OLYX-1667', [
+  [1200, '⏺ Read src/views/layout-store.ts'],
+  [980, '🧠 Layouts are per workspace today, so two people fight over one grid'],
+  [720, '⏺ Grep useLayout'],
+  [430, '💬 Keying the store by user and falling back to the workspace default'],
+  [110, '⏺ Edit src/views/saved-layout.ts'],
+]);
+
 run({
   id: 'adhoc-kpi-sparklines', project: 'olyx-dashboard', owner: 'angel',
   stageAge: 30, totalAge: 1500,

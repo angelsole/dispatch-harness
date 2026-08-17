@@ -215,10 +215,22 @@ PALETTE_CHECK="$(node -e '
   // else. A potted plant wearing it, or one stray emerald pixel a quantiser
   // chose in the middle of a lamp bulb, is the palette telling the room a lie.
   const SHIPPED = ["#3fd984", "#4ff08f", "#2c9a61", "#9fe8b8"];
-  const dir = path.join(root, "wall", "assets", "room");
-  for (const name of fs.readdirSync(dir).sort()) {
-    if (!name.endsWith(".png")) continue;
-    const img = decode(fs.readFileSync(path.join(dir, name)));
+  // Every sprite under wall/assets, whichever set it belongs to: the room grew
+  // a crew directory and a check that only ever walked room/ would have let
+  // three new characters in without asking them the palette question at all.
+  const dir = path.join(root, "wall", "assets");
+  const sprites = [];
+  const walk = (at) => {
+    for (const name of fs.readdirSync(at).sort()) {
+      const full = path.join(at, name);
+      if (fs.statSync(full).isDirectory()) walk(full);
+      else if (name.endsWith(".png")) sprites.push(full);
+    }
+  };
+  walk(dir);
+  for (const full of sprites) {
+    const name = path.relative(dir, full).split(path.sep).join("/");
+    const img = decode(fs.readFileSync(full));
     const stray = new Set();
     const shipped = new Set();
     for (let i = 0; i < img.w * img.h; i++) {
@@ -235,6 +247,41 @@ PALETTE_CHECK="$(node -e '
 ' "$SRC" 2>&1)"
 check "assets: every sprite is quantised to the 32-colour lock, and so is the room" \
   "$PALETTE_CHECK" "ok:32"
+
+# Who is at the desk. wall/crew.json is the one place an owner is mapped to a
+# character, and a set it names that is missing a frame is a room that never
+# lights for that person — so the file is asked for the frames THE ROOM asks
+# for, through room.js's own fileOf, rather than against a list written twice.
+# A crew set carries a seventh file the room never draws: base.png, the still
+# both animate jobs were handed and the box the pose lock is measured in.
+CREW_CHECK="$(node -e '
+  const fs = require("fs"), path = require("path");
+  const root = process.argv[1];
+  const R = require(path.join(root, "wall", "room.js"));
+  const crew = JSON.parse(fs.readFileSync(path.join(root, "wall", "crew.json"), "utf8"));
+  const bad = [];
+  const owners = Object.keys(crew);
+  for (const owner of owners) {
+    if (owner !== owner.toLowerCase()) bad.push(owner + ": not a lane key");
+    const entry = crew[owner];
+    if (!entry || typeof entry.label !== "string" || !entry.label) bad.push(owner + ": no label");
+    const set = R.setOf(crew, owner);
+    if (set !== entry.set) bad.push(owner + ": set [" + entry.set + "] is not one the room will load");
+    const wanted = R.FRAMES.map((f) => R.fileOf(set, f));
+    if (set !== R.FALLBACK) wanted.push("assets/" + set + "/base.png");
+    for (const rel of wanted) {
+      if (!fs.existsSync(path.join(root, "wall", rel))) bad.push(owner + ": missing " + rel);
+    }
+  }
+  // And the fallback is a real set too, for every owner nobody drew.
+  for (const f of R.FRAMES) {
+    const rel = R.fileOf(R.FALLBACK, f);
+    if (!fs.existsSync(path.join(root, "wall", rel))) bad.push("fallback: missing " + rel);
+  }
+  process.stdout.write(bad.length ? bad.join("; ") : "ok:" + owners.length);
+' "$SRC" 2>&1)"
+check "crew: every set wall/crew.json names is complete, and so is the fallback" \
+  "$CREW_CHECK" "ok:4"
 
 # The crew manifest is gone, and must not creep back: the wall organises around
 # the work. Attribution survives only as a tinted light on the run's own car and
@@ -582,8 +629,8 @@ API="$(get "$PORT" /api/runs)"
 # arithmetic over this exact payload rather than a restatement of it.
 printf '%s' "$API" > "$ROOT/api.json"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
-check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "11"
-for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1673 OLYX-1598 \
+check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "12"
+for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1667 OLYX-1673 OLYX-1598 \
           BOT-2291 BOT-2287 adhoc-kpi-sparklines LEGACY-0042; do
   grep_ok "$API" "\"$id\"" "api: lists $id"
 done
@@ -680,7 +727,7 @@ grep_ok "$(state_of BOT-2287 reason)"  "opposite directions" "detail: the reject
 echo "== wall: ordering =="
 ORDER="$(printf '%s' "$API" | jq -r '.runs[].id' | tr '\n' ' ')"
 check "order: alarm first, then live oldest-first, then finished" \
-  "$ORDER" "OLYX-1642 LEGACY-0042 OLYX-1655 OLYX-1648 OLYX-1660 adhoc-kpi-sparklines OLYX-1631 BOT-2291 OLYX-1673 OLYX-1598 BOT-2287 "
+  "$ORDER" "OLYX-1642 LEGACY-0042 OLYX-1655 OLYX-1648 OLYX-1660 OLYX-1667 adhoc-kpi-sparklines OLYX-1631 BOT-2291 OLYX-1673 OLYX-1598 BOT-2287 "
 
 # --- project towers -------------------------------------------------------------
 # The wall is organised around the work: one tower per project, that project's
@@ -2387,8 +2434,11 @@ grep_ok "$CSS_SRC" '.room[data-on="1"] { opacity: 1; }' \
 # arithmetic over a run, not about a stylesheet.
 ROOM_PROBE="$ROOT/room-probe.js"
 cat > "$ROOM_PROBE" <<'JS'
+const fs = require("fs");
+const path = require("path");
 const R = require(process.argv[2]);
-const api = JSON.parse(require("fs").readFileSync(process.argv[3], "utf8"));
+const api = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+const CREW = JSON.parse(fs.readFileSync(path.join(process.argv[4], "wall", "crew.json"), "utf8"));
 const FLOORS = api.floors;
 const by = (id) => api.runs.find((r) => r.id === id);
 // The plate's hero, which is what a dive with no run named lands on: alarms
@@ -2473,11 +2523,32 @@ console.log(JSON.stringify({
     const tint = R.tintOf(R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS));
     return Object.values(R.ACTOR).includes(tint);
   }),
-  // And every sprite the room asks for is a file that was committed.
-  sprites: Object.values(R.SPRITES).length,
+  // And every sprite the room asks for is a file that was committed: the
+  // furniture, plus six frames for every set on the roster and the fallback.
+  sprites: Object.keys(R.PROPS)
+    .map((k) => "assets/room/" + R.PROPS[k])
+    .concat([...new Set(Object.keys(CREW).map((o) => R.setOf(CREW, o)).concat(R.FALLBACK))]
+      .flatMap((set) => R.FRAMES.map((f) => R.fileOf(set, f))))
+    .every((rel) => fs.existsSync(path.join(process.argv[4], "wall", rel))),
+  // Whose character the room draws, per fixture owner. This is the run: a
+  // dive is supposed to land on the person who dispatched it, not on one
+  // hooded figure standing in for all of them.
+  whose: api.runs.map((run) => run.id + "=" + R.setOf(CREW, run.owner)).sort().join(" "),
+  // The lane key is lower-cased on the way in, the way crewTint has always
+  // done it, and an owner nobody drew — or none at all — is the room worker.
+  shouty: R.setOf(CREW, "ANGEL"),
+  padded: R.setOf(CREW, "  Emre  "),
+  stranger: R.setOf(CREW, "nobody"),
+  unowned: R.setOf(CREW, ""),
+  // A hand-edited crew.json cannot take the room out through the asset route.
+  hostile: ["../../server", "crew/angel/../..", "", 7].map((set) =>
+    R.setOf({ x: { set } }, "x")).join(","),
+  // The plate says the name crew.json spells, and falls back to the run dir.
+  named: R.labelOf(CREW, R.viewOf({ owner: "ran" }, FLOORS)),
+  unnamed: R.labelOf(CREW, R.viewOf({ owner: "nobody" }, FLOORS)),
 }));
 JS
-ROOM="$(node "$ROOM_PROBE" "$SRC/wall/room.js" "$ROOT/api.json" 2>&1)"
+ROOM="$(node "$ROOM_PROBE" "$SRC/wall/room.js" "$ROOT/api.json" "$SRC" 2>&1)"
 room_of() { printf '%s' "$ROOM" | jq -r ".$1" 2>/dev/null; }
 check "room: the dive lands on the run the plate is pinned to" "$(room_of hero)" "OLYX-1642"
 check "room: a blocked run's monitor asks for a human" "$(room_of word)" "NEEDS INPUT"
@@ -2522,7 +2593,25 @@ check "room: the alarm red is for the monitor, never for the jacket" \
 check "room: every run in the city puts an actor at that desk" \
   "$(room_of everyWorkerIsAnActor)" "true"
 check "room: and every sprite it asks for is one this repo committed" \
-  "$(room_of sprites)" "13"
+  "$(room_of sprites)" "true"
+
+# The one fact in this room that is about a human rather than about the work.
+# The dive is supposed to land on whoever dispatched the run, so this is asked
+# of the real chooser over the real fixture payload — a hard-coded expectation
+# per run id, because "the room picks a set" is not the claim; "it picks THAT
+# person's set" is.
+check "crew: the room draws the owner of the run, not one figure for all of them" \
+  "$(room_of whose)" \
+  "BOT-2287=room BOT-2291=room LEGACY-0042=room OLYX-1598=crew/emre OLYX-1631=crew/angel OLYX-1642=room OLYX-1648=room OLYX-1655=crew/angel OLYX-1660=crew/angel OLYX-1667=crew/ran OLYX-1673=crew/emre adhoc-kpi-sparklines=crew/angel"
+check "crew: ANGEL and angel are one crew member" "$(room_of shouty)" "crew/angel"
+check "crew: and so are Emre and the spaces around him" "$(room_of padded)" "crew/emre"
+check "crew: an owner nobody drew gets the room's own worker" "$(room_of stranger)" "room"
+check "crew: so does a run with no owner at all" "$(room_of unowned)" "room"
+check "crew: a set name the asset route would refuse never gets asked for" \
+  "$(room_of hostile)" "room,room,room,room"
+check "crew: the plate says the name crew.json spells" "$(room_of named)" "RAN"
+check "crew: and keeps the run dir's own when there is no entry" \
+  "$(room_of unnamed)" "NOBODY"
 
 # The room's clock. rAF timestamps only ever go forward; Date.now() plus the
 # server skew is re-measured on every snapshot and steps in both directions,
@@ -2586,6 +2675,15 @@ for probe in up deep encoded doubled absolute tilde markdown script naked dotfil
 done
 check "assets: the room's sprites are served" \
   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" "200"
+check "assets: and so is every crew set the roster names" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/crew/ran/type-0.png")" "200"
+# The roster itself is a named static row, not an asset: the room fetches it
+# before it decides which sprites to ask for at all.
+check "crew: the roster is served as json" \
+  "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$PORT/crew.json")" \
+  "application/json; charset=utf-8"
+check "crew: and it is the file this repo committed" \
+  "$(curl -s "http://127.0.0.1:$PORT/crew.json" | jq -r '.reinier.set')" "room"
 check "assets: as image/png" \
   "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" \
   "image/png"
@@ -2892,7 +2990,7 @@ echo "== wall: the committed fixtures =="
 serve "$SRC/wall/fixtures/runs" "$ROOT/fixtures.log"; FIX="$PORT_OUT"
 if [ -n "$FIX" ]; then
   FIXAPI="$(get "$FIX" /api/runs)"
-  check "fixtures: eleven staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "11"
+  check "fixtures: twelve staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "12"
   check "fixtures: one alarm" \
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="alarm")] | length')" "1"
   check "fixtures: one ready, one failed" \
@@ -2900,7 +2998,13 @@ if [ -n "$FIX" ]; then
   check "fixtures: four repos plus the fallback tower" \
     "$(printf '%s' "$FIXAPI" | jq '.towers | length')" "5"
   check "fixtures: the long-finished runs are not in the skyline" \
-    "$(printf '%s' "$FIXAPI" | jq '[.towers[].runIds[]] | length')" "9"
+    "$(printf '%s' "$FIXAPI" | jq '[.towers[].runIds[]] | length')" "10"
+  # One run per crew member the room has a character for, so the dive can be
+  # pointed at every one of them. LEGACY-0042 is deliberately unowned and is not
+  # a crew member, which is why the empty string is dropped rather than counted.
+  check "fixtures: every crew member the room can draw has dispatched one" \
+    "$(printf '%s' "$FIXAPI" | jq -r '[.runs[].owner | select(. != "")] | unique | join(",")')" \
+    "angel,bot,emre,ran,reinier"
   check "fixtures: exactly one of those towers is the fallback" \
     "$(printf '%s' "$FIXAPI" | jq '[.towers[] | select(.known == false)] | length')" "1"
   check "fixtures: one project has three runs climbing at once" \
