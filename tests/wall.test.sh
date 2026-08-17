@@ -3088,6 +3088,30 @@ console.log(JSON.stringify({
   // cells of a 3x5 face.
   cardCells: R.CARD_CELLS,
   cardLines: R.CARD_LINES,
+  // The card is a SECONDARY object, and that is arithmetic rather than an
+  // opinion: the first attempt filled the bare wall between the window and the
+  // floor plate at the plate's own height and turned the three of them into one
+  // edge-to-edge row of lit rectangles. This one is held to 55 % of that area and
+  // hangs UNDER the plate's band rather than beside it, so the dark central wall
+  // the champion has comes back.
+  cardArea: R.CARD.w * R.CARD.h,
+  cardCeiling: Math.floor(R.CARD_WAS.w * R.CARD_WAS.h * R.CARD_SHARE),
+  cardSecondary: R.CARD.w * R.CARD.h <= R.CARD_WAS.w * R.CARD_WAS.h * R.CARD_SHARE,
+  cardBelowThePlate: R.CARD.y > R.PLATE.y + R.PLATE.h / 2,
+  // And it clears the two things under it by measurement, not by eye: the
+  // monitor's own halo, and the head of every person the room can seat — read
+  // from the committed bases rather than from a number somebody typed.
+  cardClearOfTheMonitor: R.CARD.y + R.CARD.h <= R.BEZEL.y - 3,
+  cardClearOfEveryHead: (() => {
+    const sets = [...new Set(Object.keys(CREW).map((o) => R.setOf(CREW, o))
+      .concat(R.FALLBACK))];
+    const tops = sets.map((set) => {
+      const img = decode(fs.readFileSync(
+        path.join(process.argv[4], "wall", R.fileOf(set, "base"))));
+      return R.WORKER.y + bounds(img, 0, img.h)[1];
+    });
+    return R.CARD.y + R.CARD.h <= Math.min(...tops);
+  })(),
   // Every run the fixtures can serve, wrapped: never more lines than the sheet
   // has, never a line wider than the sheet, and never one that overruns in
   // pixels either — the cell count and the pixel width are two different claims
@@ -3438,22 +3462,22 @@ check "room: no stage in the ladder overruns the tube" "$(room_of fits)" "true"
 # could not answer about a person they could see working. The words are the
 # brief's own first heading — the server has shipped it all along — so what is
 # checked here is the wrapping, the cutting, and where the sheet hangs.
-check "card: the sheet holds three lines of twenty-four cells" \
-  "$(room_of cardCells)" "24"
-check "card: and never draws more than three" "$(room_of cardLines)" "3"
+check "card: the sheet holds twenty-one cells of the small face" \
+  "$(room_of cardCells)" "21"
+check "card: and the title never runs past two lines" "$(room_of cardLines)" "2"
 check "card: every run in the city wraps inside it, in cells and in pixels" \
   "$(room_of cardFits)" "true"
 check "card: the ticket fits the big face, whatever it is called" \
   "$(room_of cardIdFits)" "true"
 check "card: an ad-hoc id is cut rather than shrunk" \
-  "$(room_of cardLongId)" "ADHOC-KPI-SPARK."
+  "$(room_of cardLongId)" "ADHOC-KPI-SPA."
 check "card: a real heading reads as the sentence somebody wrote" \
-  "$(room_of cardTitle)" "INVOICE EXPORT ENDPOINT | - CSV + XLSX"
+  "$(room_of cardTitle)" "INVOICE EXPORT | ENDPOINT - CSV + XLSX"
 check "card: a blocked run keeps its card, and it says the job" \
-  "$(room_of cardAlarm)" "RETIRE THE LEGACY QUOTE | PDF RENDERER"
+  "$(room_of cardAlarm)" "RETIRE THE LEGACY | QUOTE PDF RENDERER"
 check "card: a heading too long for the sheet ends in three stops" \
   "$(room_of cardEllipsis)" \
-  "RETIRE THE LEGACY QUOTE|RENDERER AND THE INVOICE|EXPORTER BEHIND IT AN..."
+  "RETIRE THE LEGACY|QUOTE RENDERER AND..."
 check "card: a word no line can hold is cut, not dropped" \
   "$(room_of cardLongWord)" "INTERNATION."
 check "card: an accent folds to the letter the face has" \
@@ -3467,9 +3491,16 @@ check "card: every committed fixture carries a heading to put on it" \
 check "card: it hangs clear of the window frame" \
   "$(room_of cardClearOfWindow)" "true"
 check "card: clear of the floor plate" "$(room_of cardClearOfPlate)" "true"
-check "card: under the conduit" "$(room_of cardUnderTheConduit)" "true"
-check "card: and above the monitor and the head at the desk" \
-  "$(room_of cardAboveTheDesk)" "true"
+check "card: it is secondary, at 55 % of the area the first one took" \
+  "$(room_of cardSecondary)" "true"
+check "card: which is $(room_of cardArea) px against a ceiling of $(room_of cardCeiling)" \
+  "$(room_of cardSecondary)" "true"
+check "card: it hangs under the floor plate's band, not beside it" \
+  "$(room_of cardBelowThePlate)" "true"
+check "card: clear of the monitor's own halo" \
+  "$(room_of cardClearOfTheMonitor)" "true"
+check "card: and above the head of every person the room can seat" \
+  "$(room_of cardClearOfEveryHead)" "true"
 check "card: and it is in shot at every second of the push, not only the first" \
   "$(room_of cardInShot)" "true"
 check "card: which is a bound because the lens crop only ever travels in" \
