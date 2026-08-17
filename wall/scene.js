@@ -120,14 +120,32 @@
   // not end up with the same shop, and the noodle bar is on the same corner after
   // a reload, on the second TV and on a colleague's laptop.
   //
-  // The whole vocabulary of the street is four signs. More would be a theme park;
-  // fewer would be a pattern the room notices.
-  const SHOP_KINDS = ['noodle', 'diner', 'arcade', 'repair'];
-  // And what each of those signs actually says, one character each: 麵 noodles,
-  // 食 a place that feeds you, 樂 an arcade, 修 a repair bench. Four glyphs, each
-  // the shop it hangs over — a sign that means nothing is texture, and this city
+  // The whole vocabulary of the street is eight signs. More would be a theme
+  // park; fewer would be a pattern the room notices. Four of them speak the
+  // wall's CJK signage and four speak English, because a street where every
+  // frontage is signed in one language is a set rather than a city — owner's
+  // call, 2026-08-17, and .creative/bible.md carries it.
+  const SHOP_KINDS = ['noodle', 'diner', 'arcade', 'repair', 'hotel', 'bar', 'cafe', 'deli'];
+  // And what each of those signs actually says. The CJK four are one character
+  // each: 麵 noodles, 食 a place that feeds you, 樂 an arcade, 修 a repair bench.
+  // The Latin four are the shop's own short word — a real trade, never a label,
+  // and never longer than the frontage under it can carry. Every one of them is
+  // the shop it hangs over: a sign that means nothing is texture, and this city
   // does not do texture. Nothing outside this map is ever lettered.
-  const SHOP_GLYPH = { noodle: '麵', diner: '食', arcade: '樂', repair: '修' };
+  const SHOP_GLYPH = {
+    noodle: '麵', diner: '食', arcade: '樂', repair: '修',
+    hotel: 'HOTEL', bar: 'BAR', cafe: 'CAFE', deli: 'DELI',
+  };
+  // Which of the two a sign is written in, and therefore what shape its board
+  // is: a CJK sign is square and hangs down a shoulder, a Latin one is wider
+  // than tall and reads across. That difference along a row of frontages is the
+  // street's own texture, which is why it is a fact about the shop and not a
+  // second draw.
+  const SHOP_SCRIPT = {
+    noodle: 'cjk', diner: 'cjk', arcade: 'cjk', repair: 'cjk',
+    hotel: 'latin', bar: 'latin', cafe: 'latin', deli: 'latin',
+  };
+  const SIGN_MAX = 6;        // letters — past that the board is wider than the shop
   const BAYS = 5;            // shopfronts along a building's base
   const FLICKER_SPREAD = 89; // seconds of stagger, so no two neons ever stutter together
 
@@ -175,9 +193,11 @@
     const shop = SHOP_KINDS[pick(street, 0, SHOP_KINDS.length)];
     return {
       shop,
-      // What the sign says is the shop, never a draw: the glyph is a translation
-      // of the row underneath it, not a second opinion about what is down there.
+      // What the sign says is the shop, never a draw: the lettering is a
+      // translation of the row underneath it, not a second opinion about what
+      // is down there — and which alphabet it is written in comes with it.
       glyph: SHOP_GLYPH[shop],
+      script: SHOP_SCRIPT[shop],
       // One building in three carries the extra neon tube. All of them would be
       // Piccadilly; the small glyph identifying each shop is separate.
       neon: pick(street, 2, 3) === 0,
@@ -421,7 +441,8 @@
     // The pure fabric, exported because both worlds and the suite draw on it.
     seedOf, storefrontOf, formOf, nightlifeOf, streetOf, crewTint, towerOf, blockOf,
     clamp01, wetness, weatherSeed, seededRandom, dawn,
-    SHOP_KINDS, SHOP_GLYPH, BAYS, FLICKER_SPREAD, FORM_SHARES, FORM_GRADES,
+    SHOP_KINDS, SHOP_GLYPH, SHOP_SCRIPT, SIGN_MAX, BAYS, FLICKER_SPREAD,
+    FORM_SHARES, FORM_GRADES,
     SIGN_TINTS, CREW_TINTS, SYNTHETIC_TINT, UNOWNED_TINT, RAN, GHOST,
     MAX_WALKERS, MAX_VEHICLES, PER_WALKER, PER_VEHICLE, GAP_QUIET, GAP_BUSY,
     BUSY_AT, MALL_AT, TRAM_AT, OCCUPIED, MAX_TOWER_WIDTH_RUNS, DEFAULT_FLOORS,

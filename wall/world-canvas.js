@@ -143,17 +143,38 @@
   const DONE = 0x3fd984;
   const DINER = 0xffc27d;
   const LAMP = 0xffc27d;
-  const SHOP = { noodle: 0xff9a5e, diner: DINER, arcade: 0x7fd4ec, repair: 0x9fe8b8 };
+  // One tube colour per shop, and the eight of them are the window colours
+  // turned up rather than a second palette: warm first, cold second, nothing in
+  // the two reserved meanings — red belongs to an alarm and green to a run that
+  // just shipped.
+  const SHOP = {
+    noodle: 0xff9a5e, diner: DINER, arcade: 0x7fd4ec, repair: 0x9fe8b8,
+    hotel: 0xe0a23c, bar: 0x96c3c8, cafe: 0xe8cfa6, deli: 0xa9d9c6,
+  };
   const ACTOR = {
     opus: 0x4c9dff, codex: 0x3fd984, gate: 0xe0a23c, pr: 0xe6dfc8, demo: 0x7fc9d8,
     setup: 0x3f8f9c, sync: 0x3f8f9c, skipped: 0x6b7a80, deferred: 0xc8a24a,
     done: 0x3fd984, failed: 0xff5a46, unreviewed: 0xff5a46, unknown: 0x7a878f,
   };
+  // A Latin shop sign, in world pixels: two per authored pixel of the wall's
+  // own bitmap face, and a hair of dark board either side of the word.
+  const SIGN_PIX = 2;
+  const SIGN_PAD = 3;
   const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace';
   const CJK = '"PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif';
 
   const hex = (n) => '#' + n.toString(16).padStart(6, '0');
   const rgb = (css) => parseInt(String(css || '#e8cfa6').slice(1), 16);
+  // Two palette colours, part of the way along. wall.css mixes a sign's ink out
+  // of the shop's own tube and the city's hot white with color-mix; this is the
+  // same sum, for the half of the wall that is drawn rather than styled.
+  function mix(from, to, k) {
+    const lerp = (shift) => {
+      const a = (from >> shift) & 255;
+      return Math.round(a + (((to >> shift) & 255) - a) * k) << shift;
+    };
+    return lerp(16) | lerp(8) | lerp(0);
+  }
 
   // --- the set ------------------------------------------------------------------
   // What the atlas carries and which building wears it. Every name here is a
@@ -900,6 +921,10 @@
     const still = opts.still;
     const clock = opts.clock;
     const Model = window.WallScene;
+    // The wall's own hand-set type, borrowed rather than copied: the shop signs
+    // are set in the same face wall/room.js draws its screen with, so this city
+    // has one drawn alphabet and not two.
+    const Type = window.WallRoom;
 
     const ratio = () => Math.min(window.devicePixelRatio || 1, 2);
     const wallSize = () => ({
@@ -999,6 +1024,7 @@
         this.walkers = [];
         this.vehicles = [];
         this.keys = [];               // saved textures, dropped on a restart
+        this.words = new Map();       // one board per shop word, drawn once
         // The film, from this scene's side: how far into the dive the camera
         // is, which window it went in through, and what it last told the page.
         this.u = 0;
@@ -1029,6 +1055,16 @@
         // Back to front, in the order wall.css stacks the same layers.
         this.skyC = this.add.container(0, 0);
         this.districtC = this.add.container(0, 0);
+        // One sign layer per depth band, sitting over the bodies of that band
+        // and under the bodies of the next one in: a shop's sign brackets out
+        // over the pavement, so the frontage next door does not stand in front
+        // of it — but a building genuinely nearer than the shop still does.
+        // Three containers for the whole district, not one per building.
+        this.signC = DEPTHS.map((_, depth) => {
+          const layer = this.add.container(0, 0).setDepth(depth + 1.5);
+          this.districtC.add(layer);
+          return layer;
+        });
         this.trafficC = this.add.container(0, 0);
         this.hazeC = this.add.container(0, 0);
         this.streetC = this.add.container(0, 0);
@@ -1123,6 +1159,53 @@
         text.setOrigin(0.5, 0.5);
         text.setScale(this.glyphScale);
         return text;
+      }
+
+      // A shop's own word, drawn a pixel at a time in the wall's own bitmap
+      // face — the small one wall/room.js sets its screen in, the only hand-set
+      // face this repo has — at two world pixels per authored pixel, so a
+      // stroke is two pixels here and six on the office TV. TYPE GETS DRAWN,
+      // NOT HALLUCINATED: there is no font to fall back to and no generator
+      // anywhere near it. Four words, four textures, however many shops the
+      // week puts up; a word the face cannot set is left off the board rather
+      // than approximated.
+      wordBoard(word, colour) {
+        if (this.words.has(word)) return this.words.get(word);
+        const face = Type ? Type.SMALL : null;
+        const cell = this.glyphCell;
+        const ink = face ? face.pitch * SIGN_PIX : 0;
+        const wide = face && word.length ? word.length * ink - SIGN_PIX : cell;
+        const board = { w: wide + SIGN_PAD * 2, h: cell, key: '' };
+        // What comes back out of here is the LIGHT on the sign — the tube round
+        // its edge and the ink of the word — and nothing else. A texture baked
+        // in this world adds to what is behind it rather than covering it,
+        // which is exactly right for light and useless for a board: the dark
+        // plate under this is a solid off the atlas, stood up in makeBlock.
+        // Three letters floating on a lit facade is what happens when the plate
+        // is drawn in here instead.
+        const dt = this.blank(board.w, board.h);
+        const edge = mix(0x02060a, colour, 0.5);
+        dt.fill(edge, 1, 0, 0, board.w, 1);
+        dt.fill(edge, 1, 0, board.h - 1, board.w, 1);
+        dt.fill(edge, 1, 0, 0, 1, board.h);
+        dt.fill(edge, 1, board.w - 1, 0, 1, board.h);
+        const hot = mix(colour, WIN_B, 0.5);
+        const top = Math.max(0, Math.round((cell - (face ? face.h * SIGN_PIX : 0)) / 2));
+        for (let i = 0; face && i < word.length; i++) {
+          const rows = face.rows[word[i]];
+          if (!rows) continue;
+          rows.forEach((row, ry) => {
+            for (let rx = 0; rx < row.length; rx++) {
+              if (row[rx] !== '#') continue;
+              dt.fill(hot, 1, SIGN_PAD + i * ink + rx * SIGN_PIX, top + ry * SIGN_PIX,
+                      SIGN_PIX, SIGN_PIX);
+            }
+          });
+        }
+        dt.render();
+        board.key = dt.key;
+        this.words.set(word, board);
+        return board;
       }
 
       // Lettering that stays crisp when the world is scaled 3x onto the TV:
@@ -1639,7 +1722,19 @@
         body.setTint(VEIL_TINT[box.depth] || VEIL_TINT[1]);
         root.add(body);
 
-        const parts = { root, box, block, body, shop: {} };
+        // A SIGN IS NOT PART OF THE WALL IT HANGS ON. Every frontage in a depth
+        // band shares one layer that sits over the bodies of that band, because
+        // a sign brackets out over the pavement and a neighbour of the same
+        // depth does not stand in front of it. Between bands the veil still
+        // rules — a near building covers a far shop, as it should. Held as a
+        // list rather than a container per block so the district's object count
+        // does not grow: what a block's settle moves, it moves here too.
+        const signs = [];
+        const parts = { root, box, block, body, signs, shop: {} };
+        const bracket = (object) => {
+          this.signC[box.depth].add(object);
+          signs.push({ g: object, y: object.y });
+        };
 
         // The ground floor after dark: the shop's own light on the pavement in
         // front of it, and the warm bay behind the glass that throws it.
@@ -1676,27 +1771,48 @@
           return { g: img, phase: win.phase };
         });
 
-        // The shop's own sign: the tube, and the character that says in a glyph
-        // what the tube says in light. Nothing else in this city is lettered.
+        // The shop's own sign: the tube, and what the tube says in a word. One
+        // CJK character on a square plate, or the shop's own English word on a
+        // board as wide as the word — same cell height, same plate, same light,
+        // same seeded stutter, and that difference in SHAPE down a row of
+        // frontages is the street's texture. Nothing else in this city is
+        // lettered.
         if (shop) {
-          const size = this.glyphCell * this.glyphScale;
-          const px = shop.side ? box.x + box.w - size : box.x;
-          const py = box.y + box.h - GROUND_H - size;
-          // The plate the tube is bolted to. A dark rectangle, because that is
-          // all it is: what makes it read as a sign at this size is the glyph
-          // and the light behind it, not a frame the generator would have put
-          // lettering on.
-          const plate = this.add.image(px, py, '__WHITE').setOrigin(0, 0);
-          plate.setDisplaySize(size, size);
-          plate.setTint(0x02060a);
-          root.add(plate);
-          root.add(this.light(px + size / 2, py + size / 2, size * 2.6, size * 2.6,
-                              tint, 0.42));
-          const glyph = this.glyph(px + size / 2, py + size / 2, shop.glyph,
-                                   this.glyphCell - 1, hex(tint));
-          root.add(glyph);
+          const cell = this.glyphCell;
+          const board = shop.script === 'latin' ? this.wordBoard(shop.glyph, tint) : null;
+          const size = board ? board.w : cell;
+          // Bracketed to the shoulder the run id picked — unless the word is
+          // wider than the shop paying for it, in which case it is centred on
+          // the frontage and projects over the street, which is what a sign
+          // does when the shop under it is narrower than its own name.
+          const px = clamp(size > box.w ? box.x + Math.round((box.w - size) / 2)
+            : shop.side ? box.x + box.w - size : box.x, 0, GW - size);
+          const py = box.y + box.h - GROUND_H - cell;
+          // The plate the tube is bolted to. A dark square, because that is all
+          // it is: what makes a CJK sign read at this size is the character and
+          // the light behind it, not a frame the generator would have put
+          // lettering on. A Latin board carries its own plate — the word, its
+          // tube edge and the dark behind them are one drawn object.
+          if (!board) {
+            parts.shop.plate = this.add.image(px, py, '__WHITE').setOrigin(0, 0);
+            parts.shop.plate.setDisplaySize(size, cell);
+            parts.shop.plate.setTint(0x02060a);
+            bracket(parts.shop.plate);
+          }
+          // And the light it throws on the frontage behind it. A word is a wider
+          // fixture than a character and a wide additive wash over it puts the
+          // ink back at the value of the wall, so a board's halo is tighter.
+          parts.shop.lampBase = board ? 0.28 : 0.42;
+          parts.shop.lamp = this.light(px + size / 2, py + cell / 2,
+                                       board ? size * 1.15 + cell : size * 2.6,
+                                       cell * (board ? 2.1 : 2.6), tint,
+                                       parts.shop.lampBase);
+          bracket(parts.shop.lamp);
+          const glyph = board
+            ? this.add.image(px, py, board.key).setOrigin(0, 0)
+            : this.glyph(px + size / 2, py + cell / 2, shop.glyph, cell - 1, hex(tint));
+          bracket(glyph);
           parts.shop.glyph = glyph;
-          parts.shop.plate = plate;
           parts.shop.glyphPhase = shop.hang;
           // One building in three carries the extra tube over its frontage.
           if (shop.neon) {
@@ -1704,7 +1820,7 @@
                                          box.y + box.h - GROUND_H - 6,
                                          Math.max(18, box.w * 0.5), 16, tint, 0.55);
             parts.shop.neonPhase = shop.flicker;
-            root.add(parts.shop.neon);
+            bracket(parts.shop.neon);
           }
         }
 
@@ -1752,6 +1868,7 @@
           // the whole district with it.
           if (!standing.has(id)) {
             const texture = parts.body.texture.key;
+            for (const object of parts.signs) object.destroy();
             parts.root.destroy();
             if (this.textures.exists(texture)) this.textures.remove(texture);
             this.blocks.delete(id);
@@ -2433,21 +2550,27 @@
       stepBlock(parts, phase, at, model) {
         const block = parts.block;
         const shop = parts.shop;
-        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23));
-        if (shop.glyph) {
-          const lit = tubeAt(phase, shop.glyphPhase, 23);
-          shop.glyph.setAlpha(lit);
-          shop.plate.setAlpha(0.5 + lit * 0.4);
-        }
-        parts.panes.forEach((pane, i) =>
-          pane.g.setAlpha(paneAt(phase, i, pane.phase * 13) * BAND_PANE));
         // A building lands with one settle and is furniture after that — and
         // the age it is fast-forwarded by is the same one --age carries in the
         // DOM world, so a browser opening this afternoon finds this morning's
-        // buildings standing rather than the whole week landing at once.
+        // buildings standing rather than the whole week landing at once. Its
+        // sign rides that settle from the layer it hangs in, which is a band
+        // above the wall it is bolted to rather than inside it.
         const age = Math.max(0, at - (block.at || at));
-        parts.root.setAlpha(phase.still ? 1 : Math.min(1, age / 0.9));
-        parts.root.setY(phase.still ? 0 : Math.round(Math.max(0, 1 - age / 0.9) * 14));
+        const landed = phase.still ? 1 : Math.min(1, age / 0.9);
+        const drop = phase.still ? 0 : Math.round(Math.max(0, 1 - age / 0.9) * 14);
+        parts.root.setAlpha(landed);
+        parts.root.setY(drop);
+        for (const sign of parts.signs) sign.g.setY(sign.y + drop);
+        if (shop.lamp) shop.lamp.setAlpha(shop.lampBase * landed);
+        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23) * landed);
+        if (shop.glyph) {
+          const lit = tubeAt(phase, shop.glyphPhase, 23);
+          shop.glyph.setAlpha(lit * landed);
+          if (shop.plate) shop.plate.setAlpha((0.5 + lit * 0.4) * landed);
+        }
+        parts.panes.forEach((pane, i) =>
+          pane.g.setAlpha(paneAt(phase, i, pane.phase * 13) * BAND_PANE));
         if (model) parts.sign.setAlpha(signAt(phase, age, model.signSeconds));
       }
 
