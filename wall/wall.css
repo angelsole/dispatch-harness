@@ -2829,6 +2829,18 @@ body[data-quiet="0"] .block { --work: 0.78; }
 }
 .room[data-on="1"] { opacity: 1; }
 
+/* Over a world that draws the room ITSELF, this canvas is not the picture — it
+   is the plate that finally takes the frame. In ?world=canvas the city pushes
+   through a lit window with room.js's own 320x180 buffer sampled as a texture,
+   so the room has to be PAINTING from the top of the push, long before the
+   camera arrives, while this stays out of the way. When the push lands (the
+   world writes data-dive) this comes up over an identical picture at the same
+   whole scale, and what the dissolve actually removes is the chrome, which
+   lives above the world's own layer and can be covered by nothing else. Held
+   back again the moment the camera starts pulling out. */
+body[data-world="canvas"] .room[data-on="1"] { opacity: 0; }
+body[data-world="canvas"][data-dive="inside"] .room[data-on="1"] { opacity: 1; }
+
 /* --- CRT overlays ---------------------------------------------------------- */
 
 .crt {

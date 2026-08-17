@@ -61,6 +61,16 @@
   // at one world pixel per authored pixel so the multiple IS the camera's zoom.
   const ROOM_W = 320;
   const ROOM_H = 180;
+  const ROOM_KEY = 'room-live';
+  // What the window looks straight at, in the room's own pixels: the monitor,
+  // which is the one thing in there that is lit and the one thing that says the
+  // state. Hang the room off its own middle instead and the first thing the
+  // push opens is the dark wall between the worker and the screen — a hole
+  // punched in a building rather than a window with somebody behind it.
+  const ROOM_EYE = { x: 202, y: 94 };
+  // Which lit floor is worth going into, when the plate has not said: one
+  // asking for a human beats one working. Nothing else is a dive.
+  const DIVE_RANK = { alarm: 3, active: 2 };
   // The config every sprite in this world is stamped with: top-left origin, so
   // a world coordinate is the pixel the sprite lands on.
   const STAMP0 = { originX: 0, originY: 0 };
@@ -628,7 +638,8 @@
   }
 
   // Where the room stands in the world: 320x180 of it, one world pixel per
-  // authored pixel, centred on the window the camera is going through — pushed
+  // authored pixel, hung off the window the camera is going through so that
+  // what is behind the glass at the start of the push is the monitor. Pushed
   // back inside the city where the wall's own edge would otherwise show, and
   // then back again far enough that the window it came in through is still
   // inside the picture.
@@ -637,8 +648,10 @@
     const viewH = H / ROOM_PIX;
     const px = pane.x + pane.w / 2;
     const py = pane.y + pane.h / 2;
-    let cx = viewW >= GW ? GW / 2 : clamp(px, viewW / 2, GW - viewW / 2);
-    let cy = viewH >= GH ? GH / 2 : clamp(py, viewH / 2, GH - viewH / 2);
+    let cx = px + ROOM_W / 2 - ROOM_EYE.x;
+    let cy = py + ROOM_H / 2 - ROOM_EYE.y;
+    cx = viewW >= GW ? GW / 2 : clamp(cx, viewW / 2, GW - viewW / 2);
+    cy = viewH >= GH ? GH / 2 : clamp(cy, viewH / 2, GH - viewH / 2);
     cx = clamp(cx, px - (ROOM_W - pane.w) / 2, px + (ROOM_W - pane.w) / 2);
     cy = clamp(cy, py - (ROOM_H - pane.h) / 2, py + (ROOM_H - pane.h) / 2);
     return {
@@ -761,6 +774,66 @@
     let pendingSpot = '';
     let baked = 0;            // texture keys are unique for the life of the page
 
+    // --- whether the wall is filming itself ---------------------------------------
+    // The rules are the page's and arrive whole (wall.js, reelSignals): this
+    // world does not restate a truth table it would then have to keep in step.
+    // What lives here is the state those rules are asked about, and the events
+    // that change it — the same four inputs, the same `c`, the same ninety
+    // seconds of quiet. WHERE the camera goes is the scene's business, below.
+    const film = { signals: null, on: false, idle: false, manual: null, timer: 0, gen: 0 };
+    let directing = false;
+
+    function syncFilm() {
+      const s = film.signals;
+      if (!s) return;
+      const want = s.wantsCinema({
+        reduced: still.matches, forced: s.forced, manual: film.manual, idle: film.idle,
+      });
+      if (want === film.on) return;
+      film.on = want;
+      // The reel is a pure function of the clock and this number, so a cut in
+      // or out of the film is one increment and the scene picks it up.
+      film.gen++;
+      s.cinema(want);
+      if (city) city.step(true);
+    }
+
+    // Any pointer or key resets the idle clock; `c` toggles instead. Both
+    // outcomes are the page's own function of what the room just did.
+    function stirred(toggle) {
+      const s = film.signals;
+      if (!s) return;
+      film.idle = false;
+      film.manual = s.manualAfterActivity(film.manual, film.on, toggle === true);
+      clearTimeout(film.timer);
+      film.timer = setTimeout(() => { film.idle = true; syncFilm(); }, s.idleMs);
+      syncFilm();
+    }
+
+    function direct(signals) {
+      film.signals = signals;
+      if (city) city.arm(signals);
+      if (directing) return true;
+      directing = true;
+      signals.cinema(false);
+      // ?shot=room is the parked still: no timers, no listeners and no film —
+      // the camera is simply born inside the room and stays there.
+      if (signals.forcedRoom) return true;
+      for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart']) {
+        window.addEventListener(ev, stirred, { passive: true });
+      }
+      window.addEventListener('keydown', (ev) => {
+        const isToggle = ev.key === 'c' || ev.key === 'C';
+        // The two off-switches are absolute — under either one `c` is ordinary
+        // activity and cannot leave a manual film waiting to resume later.
+        stirred(isToggle && !still.matches && signals.forced !== 'off');
+      });
+      // A room that turns motion off mid-film gets the wide shot back at once.
+      still.addEventListener('change', syncFilm);
+      stirred();
+      return true;
+    }
+
     class CityScene extends Phaser.Scene {
       constructor() { super('city'); }
 
@@ -786,6 +859,20 @@
         this.walkers = [];
         this.vehicles = [];
         this.keys = [];               // saved textures, dropped on a restart
+        // The film, from this scene's side: how far into the dive the camera
+        // is, which window it went in through, and what it last told the page.
+        this.u = 0;
+        this.dived = null;
+        this.plan = null;
+        this.cycleFrom = 0;
+        this.reelGen = -1;
+        this.exit = null;
+        this.said = { shot: undefined, dive: undefined, room: undefined };
+        // A restart takes the display list with it, so the dive's own two
+        // objects are gone; the room's texture is the game's and survives.
+        this.roomImg = null;
+        this.roomRim = null;
+        this.roomTex = this.textures.exists(ROOM_KEY) ? this.textures.get(ROOM_KEY) : null;
 
         const cam = this.cameras.main;
         cam.setZoom(PIX);
@@ -807,6 +894,10 @@
         this.streetC = this.add.container(0, 0);
         this.cityC = this.add.container(0, 0);
         this.nearC = this.add.container(0, 0);
+        // In front of the whole city, and empty until the camera goes through a
+        // window: what the dive reveals is behind the glass, so it is drawn
+        // over the wall the glass is in.
+        this.diveC = this.add.container(0, 0);
 
         this.glyphScale = 1 / TXT;
         this.glyphCell = 13;
@@ -820,7 +911,43 @@
         city = this;
         if (pending) this.apply(pending);
         this.spot(pendingSpot);
+        if (film.signals) this.arm(film.signals);
         this.step(true);
+      }
+
+      // --- what the dive lands on -------------------------------------------------
+      // wall/room.js draws one floor of one tower on its own 320x180 canvas,
+      // on its own clock, exactly as it does for the DOM wall. This world does
+      // not draw a room: it SAMPLES that canvas as a texture and puts it in the
+      // city, one world pixel per authored pixel, behind the window the camera
+      // is going through. Made once, here; the frame loop only refreshes it.
+      arm(signals) {
+        this.signals = signals;
+        if (!signals) return;
+        if (!this.roomImg) {
+          // The light of the room coming out of the pane, so the aperture's
+          // edge is a spill and never a rectangle drawn on a building.
+          this.roomRim = this.light(0, 0, 2, 2, WIN_A, 0);
+          this.roomImg = this.add.image(0, 0, '__WHITE').setOrigin(0, 0);
+          this.diveC.add(this.roomRim);
+          this.diveC.add(this.roomImg);
+          this.roomImg.setVisible(false);
+          this.roomRim.setVisible(false);
+        }
+        // wall/room.js sizes its own 320x180 buffer the first time the page is
+        // asked for a room, which is the first frame of the first dive — so the
+        // texture is taken THEN, exactly once, and this is called again from
+        // there. Sampling the canvas element's 300x150 HTML default instead
+        // would hang a stretched room in the window, and resizing a live
+        // CanvasTexture afterwards reaches into a sealed component's own
+        // drawing surface and turns its pixel smoothing back on.
+        const canvas = signals.canvas;
+        if (this.roomTex || !canvas) return;
+        if (canvas.width !== ROOM_W || canvas.height !== ROOM_H) return;
+        this.roomTex = this.textures.exists(ROOM_KEY)
+          ? this.textures.get(ROOM_KEY)
+          : this.textures.addCanvas(ROOM_KEY, canvas);
+        this.roomImg.setTexture(ROOM_KEY);
       }
 
       // --- the set --------------------------------------------------------------
@@ -1919,6 +2046,139 @@
 
         for (const parts of this.blocks.values()) this.stepBlock(parts, phase, at, model);
         for (const T of this.towers.values()) this.stepTower(T, phase, at, model);
+        this.roll(at);
+      }
+
+      // Where the dive goes: the run the query string named, else the run the
+      // brief plate is talking about, else the head of the queue — one asking
+      // for a human first, then whatever is working. A run with no lit floor is
+      // not a dive, and a city with none of them holds the wide shot.
+      pickWindow() {
+        const s = this.signals;
+        const lit = [];
+        for (const T of this.towers.values()) {
+          if (!T.tower) continue;
+          for (const [id, S] of T.shaftEls) {
+            const rank = S.run && S.pane ? (DIVE_RANK[S.run.state] || 0) : 0;
+            if (rank) lit.push({ id, pane: S.pane, rank });
+          }
+        }
+        if (!lit.length) return null;
+        const found = (s.run && lit.find((c) => c.id === s.run))
+          || (pendingSpot && lit.find((c) => c.id === pendingSpot))
+          || lit.reduce((best, c) => (c.rank > best.rank ? c : best), lit[0]);
+        return { run: found.id, pane: found.pane, room: roomBoxAt(found.pane) };
+      }
+
+      // ?shot=room on a wall with nothing running is still the room, not the
+      // city: the camera goes in through the middle of the skyline and the
+      // page decides whose desk is behind it.
+      middleWindow() {
+        const pane = { x: Math.round(GW / 2 - BAY / 2), y: Math.round(GH * 0.42),
+                       w: BAY, h: 24 };
+        return { run: '', pane, room: roomBoxAt(pane) };
+      }
+
+      // --- one frame of the film ----------------------------------------------------
+      // The whole reel: wide, in, hold, out, wide, and the only place the
+      // camera is ever moved. Every number here is a pure function of the
+      // clock, the plan and whether the wall is filming — nothing integrates —
+      // so a snapshot landing mid-push cannot nudge the camera, a dropped frame
+      // cannot lose it, and the same second of the same plan is the same pose.
+      roll(at) {
+        const s = this.signals;
+        if (!s) return;
+        if (this.reelGen !== film.gen) {
+          this.reelGen = film.gen;
+          this.plan = null;
+          // Somebody walked in. The whole push is ONE number, so easing it back
+          // to zero is the way home — same cut the DOM camera takes.
+          this.exit = film.on ? null : { at, u: this.u };
+        }
+        const rolling = film.on && !still.matches && !s.forcedRoom;
+        let step;
+        if (s.forcedRoom) {
+          step = { phase: 'room', u: 1 };
+        } else if (rolling) {
+          if (!this.plan) { this.plan = reelPlan(s.draw, s.cadence); this.cycleFrom = at; }
+          while (at - this.cycleFrom >= this.plan.total / 1000) {
+            this.cycleFrom += this.plan.total / 1000;
+            this.plan = reelPlan(s.draw, s.cadence);
+          }
+          step = reelAt((at - this.cycleFrom) * 1000, this.plan);
+        } else {
+          const cut = Math.max(0.001, s.cadence.cut / 1000);
+          const home = this.exit ? 1 - ease((at - this.exit.at) / cut) : 0;
+          step = { phase: 'wide', u: this.exit ? this.exit.u * home : 0 };
+        }
+        // The window this dive goes through is chosen ONCE, where the push
+        // starts, and held for as long as the shot is on screen: the plate
+        // hands over every seven seconds and the stage under a run can climb a
+        // floor mid-hold, and neither may move a camera that is already moving.
+        if (rolling) {
+          if (step.phase === 'wide') this.dived = null;
+          else if (!this.dived) this.dived = this.pickWindow() || 'none';
+        } else if (s.forcedRoom && (!this.dived || this.dived === 'none')) {
+          this.dived = this.pickWindow() || this.middleWindow();
+        }
+        const dived = this.dived && this.dived !== 'none' ? this.dived : null;
+        if (!dived) step = { phase: step.phase, u: 0 };
+        this.u = step.u;
+
+        // What the page is told, and only when it changes — said BEFORE the
+        // room is drawn, because the first thing it does with `room` is start
+        // wall/room.js painting, and this world's next line samples that
+        // canvas. `shot` and `cinema` are the DOM director's own vocabulary;
+        // `dive` is the one thing its camera never had to say, because the
+        // room's overlay is a layer above this canvas and may only take the
+        // frame once the push has landed on the picture it is already showing.
+        const stage = !dived || step.u <= 0 ? ''
+          : step.phase === 'room' ? 'inside'
+            : step.phase === 'in' ? 'push' : 'back';
+        let shot = null;
+        if (s.forcedRoom) shot = 'room';
+        else if (film.on) shot = shotOf(stage === 'back' ? 'out' : step.phase);
+        const held = stage ? (dived.run || '') : null;
+        if (this.said.room !== held) {
+          this.said.room = held;
+          s.room(held !== null, held || '');
+        }
+        if (this.said.shot !== shot) { this.said.shot = shot; s.shot(shot); }
+        if (this.said.dive !== stage) { this.said.dive = stage; s.dive(stage); }
+
+        const room = dived ? dived.room : roomBoxAt(this.middleWindow().pane);
+        const pose = poseAt(step.u, room);
+        const cam = this.cameras.main;
+        cam.setZoom(pose.zoom);
+        cam.centerOn(pose.x, pose.y);
+        this.paintDive(dived, room, step);
+      }
+
+      // The room, in the window. It stands in the city at one world pixel per
+      // authored pixel and is revealed through the pane the camera is going
+      // into: the aperture starts as that window and opens to the room's own
+      // rectangle, so what fills the frame at the end of the push is 320x180 at
+      // a whole multiple of itself and never a rectangle that appeared.
+      paintDive(dived, room, step) {
+        if (!this.roomImg) return;
+        if (!this.roomTex) this.arm(this.signals);
+        const on = !!dived && step.u > 0 && !!this.roomTex;
+        this.roomImg.setVisible(on);
+        this.roomRim.setVisible(on);
+        if (!on) return;
+        const cut = apertureAt(step.u, dived.pane, room);
+        const left = Math.max(room.x, cut.x);
+        const top = Math.max(room.y, cut.y);
+        const wide = Math.max(0, Math.min(room.x + room.w, cut.x + cut.w) - left);
+        const tall = Math.max(0, Math.min(room.y + room.h, cut.y + cut.h) - top);
+        this.roomImg.setPosition(room.x, room.y);
+        this.roomImg.setCrop(left - room.x, top - room.y, wide, tall);
+        this.roomImg.setAlpha(Math.min(1, step.u * 8));
+        this.roomRim.setPosition(left + wide / 2, top + tall / 2);
+        this.roomRim.setDisplaySize(wide * 2.4 + BAY * 2, tall * 2.4 + BAY * 2);
+        const open = ease(step.u);
+        this.roomRim.setAlpha(0.8 * (1 - open * open) * Math.min(1, step.u * 6));
+        this.roomTex.refresh();
       }
 
       stepBlock(parts, phase, at, model) {
@@ -2094,6 +2354,9 @@
         if (city) city.spot(runId);
       },
       tick() { if (city) city.step(true); },
+      // The page's director hands the reel over rather than filming a stage
+      // this canvas is not on. Answered whether or not the scene has booted.
+      direct,
       game,
     };
   }

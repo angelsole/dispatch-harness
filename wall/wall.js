@@ -1041,6 +1041,21 @@
     if (room) room.hide();
   }
 
+  // The same dive, asked for by a world that owns its own camera. In
+  // ?world=canvas the city is on the GPU and so is the push, so the run the
+  // shot went in through is chosen out there and arrives here — but the rule
+  // is the one roomShot() has always used: pinned when the shot enters,
+  // released when it leaves, and room.hide() exactly once, on the leave.
+  //
+  // It is asked for at the TOP of the push rather than at the end of it,
+  // because the canvas world is sampling this canvas as a texture all the way
+  // in: the room has to be painting before the camera arrives, which is what
+  // makes the push continuous instead of a cross-fade at the end of one.
+  function roomDive(on, runId) {
+    pinnedRun = on ? (runId || '') : '';
+    roomHold(on);
+  }
+
   // --- the director ---------------------------------------------------------
   // The wall can film itself. A slow camera holds the whole skyline, then goes
   // and looks at something living in it — the tower somebody is waiting on, a
@@ -1465,6 +1480,11 @@
   }
 
   function director() {
+    // A world that draws its own city directs it: everything below moves ONE
+    // CSS transform on #stage, and the canvas world is deliberately not under
+    // it. Hand that world the signals this section would have filmed with —
+    // see reelSignals() — and get out of its way.
+    if (world.direct && world.direct(reelSignals())) return;
     document.body.dataset.cinema = '0';
     // ?shot=room is the still: the room, at full frame, held, with the camera
     // parked at the wide shot behind it. Nothing on this wall moves except the
@@ -1518,6 +1538,48 @@
     next();
   }
 
+  // The reel, handed over rather than reimplemented. A world that draws its own
+  // city has to own its own camera — the director's camera is a CSS transform
+  // on #stage and the canvas is deliberately not under it — but WHEN the wall
+  // films itself, and for how long, and what the page has to be told about it,
+  // are this section's decisions and stay this section's decisions. So the
+  // world gets the pure activation rules themselves, the query flags, the
+  // cadence, and four hooks back into the page; it decides where the camera
+  // goes and nothing else.
+  function reelSignals() {
+    return {
+      still,
+      forced,                                   // ?cinema=1 / ?cinema=0
+      forcedRoom,                               // ?shot=room, the parked still
+      run: wantedRun,                           // ?run=, whose room to show
+      canvas: roomCanvas,                       // what wall/room.js paints on
+      wantsCinema,                              // the whole truth table, verbatim
+      manualAfterActivity,                      // and what an input does to it
+      idleMs: CINEMA_IDLE_MS,
+      cadence: {
+        wide: WIDE_HOLD, moveMin: MOVE_MIN, moveMax: MOVE_MAX,
+        roomMin: ROOM_MIN, roomMax: ROOM_MAX, cut: CUT_MS,
+      },
+      draw,                                     // the shot bucket's seeded draw
+      // What the page says about itself while the world films. Set exactly as
+      // the DOM director sets them, because they are the wall's own vocabulary
+      // and something other than this file reads them.
+      shot(kind) {
+        if (kind) document.body.dataset.shot = kind;
+        else delete document.body.dataset.shot;
+      },
+      cinema(on) { document.body.dataset.cinema = on ? '1' : '0'; },
+      // Where the dive has got to, which is the one thing the DOM camera never
+      // had to say out loud: the room's overlay is a layer above the canvas and
+      // only takes the frame once the push has landed on it.
+      dive(stage) {
+        if (stage) document.body.dataset.dive = stage;
+        else delete document.body.dataset.dive;
+      },
+      room: roomDive,
+    };
+  }
+
   // The canvas world before its engine has landed: it holds the last scene and
   // hands it straight over the moment world-canvas.js is on the page. One frame
   // of empty stage, and then the city — with the DOM world's nodes hidden from
@@ -1526,6 +1588,11 @@
     let live = null;
     let last = null;
     let spotId = '';
+    let reel = null;
+    // Which body is drawing the city, said where a stylesheet can read it: the
+    // room's overlay behaves differently over a world that draws the room
+    // itself. Nothing else in wall.css branches on it.
+    document.body.dataset.world = 'canvas';
     for (const sel of ['svg.sky', '#district', '.dawn', '.haze', '.traffic',
                        '.street', '#life', '#city']) {
       const node = document.querySelector(sel);
@@ -1539,11 +1606,15 @@
       live = factory.create({ parent: worldMount, still, clock: () => Date.now() / 1000 + skew });
       if (last) live.render(last);
       live.spot(spotId);
+      if (reel) live.direct(reel);
     });
     return {
       render(scene) { last = scene; if (live) live.render(scene); },
       spot(runId) { spotId = runId; if (live) live.spot(runId); },
       tick(at) { if (live) live.tick(at); },
+      // Answered before the engine has landed, because the page's director asks
+      // once at boot and must not start filming a stage this canvas is not on.
+      direct(signals) { reel = signals; if (live) live.direct(signals); return true; },
     };
   }
 
