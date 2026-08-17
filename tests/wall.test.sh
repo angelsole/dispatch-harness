@@ -2408,26 +2408,75 @@ console.log(JSON.stringify({
   // shopfront is 32 px of committed art and there is no shorter one.
   bandFloor: C.blockBox({ id: 'X', kind: 'midrise', depth: 0, x: 0.5, storeys: 1,
     shape: { form: 'shophouse', grade: 0 } }).h >= C.grid().panel + C.grid().tile,
+  // AIR AROUND THE HERO. The tower the brief plate is talking about keeps a
+  // width and a half of night either side of it at every rank the plate can
+  // land on — and the row still reaches both ends of the picture, because a
+  // hero pinned to the middle of the frame puts the whole city in one half of
+  // it the moment the plate reaches the end of the queue.
+  heroAir: (() => {
+    const towers = [7.8, 7.8, 10, 7.8, 5.6]
+      .map((widthRem, i) => ({ widthRem, runIds: ['r' + i] }));
+    return towers.every((_, hero) => {
+      const band = C.heroBand(towers, hero);
+      const boxes = C.towerLayout(towers, hero);
+      const last = boxes[boxes.length - 1];
+      return band.air >= 1.5 * band.w
+        && boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE
+          && whole(box.x) && whole(box.w)
+          && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w))
+        && boxes[0].x < WIDE * 0.25 && last.x + last.w > WIDE * 0.75;
+    });
+  })(),
+  // The layout is a pure function of the model and the spot: the same two are
+  // the same row of boxes on both screens and tomorrow, and a spot landing on
+  // another tower is a different row.
+  heroPure: (() => {
+    const towers = [7.8, 7.8, 10].map((widthRem, i) => ({ widthRem, runIds: ['r' + i] }));
+    const once = JSON.stringify(C.towerLayout(towers, 1));
+    return once === JSON.stringify(C.towerLayout(towers, 1))
+      && once !== JSON.stringify(C.towerLayout(towers, 2));
+  })(),
+  // And which tower it is: the one carrying the run the plate named, then the
+  // head of the queue, and nothing at all on an empty skyline.
+  heroPick: (() => {
+    const towers = [{ runIds: [] }, { runIds: ['a', 'b'] }, { runIds: ['c'] }];
+    return C.heroOf(towers, 'c') === 2 && C.heroOf(towers, 'b') === 1
+      && C.heroOf(towers, '') === 1 && C.heroOf(towers, 'gone') === 1
+      && C.heroOf([], 'c') === -1;
+  })(),
+  // Crowded, the hero keeps its air FIRST and the row compresses around it —
+  // right up to the point where the only thing left to give is standing two
+  // projects in the same place, which this city never does.
+  heroFirst: (() => {
+    const crowd = (n) => Array.from({ length: n }, () => ({ widthRem: 5.6, runIds: ['x'] }));
+    const twenty = C.towerLayout(crowd(20), 9);
+    const band = C.heroBand(crowd(20), 9);
+    return band.air >= 1.5 * 5.6 * C.grid().rem * 0.99
+      && twenty[0].w < 5.6 * C.grid().rem
+      && twenty.every((box, i) => i === 0 || box.x >= twenty[i - 1].x + twenty[i - 1].w)
+      && C.towerLayout(crowd(40), 19)
+        .every((box, i, all) => i === 0 || box.x >= all[i - 1].x + all[i - 1].w);
+  })(),
   // THE HERO STANDS IN SKY. The back city keeps its own share of its height
   // across the picture and a fraction of that inside the spotted tower's air,
   // eased across the shoulders so the opening reads as distance. The near plane
   // is the block the towers stand on and never opens.
   skyOpens: (() => {
     const [far, mid, near] = C.PLANES;
-    const half = 240;
-    return C.skyKeep(far, WIDE / 2, half) < C.skyKeep(far, 0, half) * 0.45
-      && C.skyKeep(mid, WIDE / 2, half) < C.skyKeep(mid, 0, half) * 0.45
-      && C.skyKeep(far, 0, half) === far.keep && C.skyKeep(mid, WIDE, half) === mid.keep
-      && C.skyKeep(near, WIDE / 2, half) === near.keep
+    const band = { centre: WIDE / 2, half: 240 };
+    return C.skyKeep(far, band.centre, band) < C.skyKeep(far, 0, band) * 0.45
+      && C.skyKeep(mid, band.centre, band) < C.skyKeep(mid, 0, band) * 0.45
+      && C.skyKeep(far, 0, band) === far.keep && C.skyKeep(mid, WIDE, band) === mid.keep
+      && C.skyKeep(near, band.centre, band) === near.keep
       && [far, mid, near].every((p) => p.keep <= 1 && p.dim <= 1);
   })(),
   // And it eases: no step anywhere across the shoulder, and the deepest point
   // of the opening is the middle of the picture, which is where the hero is.
   skyEases: (() => {
-    const half = 240;
-    let last = C.skyKeep(C.PLANES[0], 0, half);
-    for (let x = 0; x <= WIDE / 2; x++) {
-      const k = C.skyKeep(C.PLANES[0], x, half);
+    const band = { centre: WIDE / 2, half: 240 };
+    let last = C.skyKeep(C.PLANES[0], 0, band);
+    for (let x = 0; x <= band.centre; x++) {
+      const k = C.skyKeep(C.PLANES[0], x, band);
       if (k > last + 1e-9 || last - k > 0.02) return false;
       last = k;
     }
@@ -2464,6 +2513,14 @@ check "band: and every tall form comes down with it, measured against the old wa
   "$(still_of bandDrop)" "true"
 check "band: the shortest building is still a shopfront with wall over it" \
   "$(still_of bandFloor)" "true"
+check "hero: the spotted tower keeps a width and a half of sky either side of it" \
+  "$(still_of heroAir)" "true"
+check "hero: the layout is a pure function of the model and the spot" \
+  "$(still_of heroPure)" "true"
+check "hero: which tower it is comes off the plate, then the head of the queue" \
+  "$(still_of heroPick)" "true"
+check "hero: a crowded skyline compresses around it and never overlaps" \
+  "$(still_of heroFirst)" "true"
 check "sky: the back city opens behind the spotted tower and holds elsewhere" \
   "$(still_of skyOpens)" "true"
 check "sky: and the opening eases into place rather than stepping" \
