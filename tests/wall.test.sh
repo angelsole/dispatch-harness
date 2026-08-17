@@ -346,9 +346,14 @@ const bad = [];
 let drawnWorst = 0;
 let bandWorst = 0;
 let counted = 0;
+// Per set as well as overall. One set at the ceiling hides every other set
+// behind it: `crew/angel` was regenerated at 0 px on both bounds and a re-roll
+// that quietly costs it four should fail here rather than pass on Ran's two.
+const perSet = {};
 
 for (const set of sets) {
   const split = R.splitOf(set);
+  perSet[set] = [0, 0];
   const base = png(R.fileOf(set, "base"));
   const box = bounds(base, 0, base.h);
   const bandBox = bounds(base, split, base.h);
@@ -364,7 +369,10 @@ for (const set of sets) {
     const band = bounds(img, split, img.h);
     if (!drawn || !band) { bad.push(set + "/" + frame + ": nothing opaque"); continue; }
     // (a) the whole drawn figure, all four numbers.
-    for (let i = 0; i < 4; i++) drawnWorst = Math.max(drawnWorst, Math.abs(drawn[i] - box[i]));
+    for (let i = 0; i < 4; i++) {
+      drawnWorst = Math.max(drawnWorst, Math.abs(drawn[i] - box[i]));
+      perSet[set][0] = Math.max(perSet[set][0], Math.abs(drawn[i] - box[i]));
+    }
     if (!drawn.every((v, i) => near(v, box[i], 1))) {
       bad.push(set + "/" + frame + ": drawn " + drawn.join(",") + " vs base " + box.join(","));
     }
@@ -372,7 +380,10 @@ for (const set of sets) {
     // band's own TOP is the split by construction, so it says nothing.
     const got = [band[0], band[2], band[1] + band[3]];
     const want = [bandBox[0], bandBox[2], bandBox[1] + bandBox[3]];
-    for (let i = 0; i < 3; i++) bandWorst = Math.max(bandWorst, Math.abs(got[i] - want[i]));
+    for (let i = 0; i < 3; i++) {
+      bandWorst = Math.max(bandWorst, Math.abs(got[i] - want[i]));
+      perSet[set][1] = Math.max(perSet[set][1], Math.abs(got[i] - want[i]));
+    }
     if (!got.every((v, i) => near(v, want[i], 3))) {
       bad.push(set + "/" + frame + ": band x/w/bottom " + got.join(",") + " vs base " + want.join(","));
     }
@@ -385,6 +396,7 @@ console.log(JSON.stringify({
   frames: counted,
   drawnWorst,
   bandWorst,
+  perSet: sets.map((s) => s + "=" + perSet[s][0] + "/" + perSet[s][1]).join(" "),
   bad: bad.join("; "),
 }));
 JS
@@ -404,6 +416,13 @@ if [ "$(lock_of bandWorst)" -le 3 ] 2>/dev/null; then
 else
   bad "lock: the animated band drifts $(lock_of bandWorst) px on x/width/bottom (ceiling 3)"
 fi
+# Per set as well, because one set at the ceiling hides every other one behind it.
+# Angel was regenerated to the owner's own description and its sixteen frames hold
+# BOTH bounds to zero — the prompt that got there names every part that must not
+# move. A re-roll that quietly costs it four pixels must fail here rather than pass
+# on somebody else's two.
+check "lock: and each set is pinned on its own, not behind the worst of them" \
+  "$(lock_of perSet)" "crew/angel=0/0 crew/emre=1/2 crew/ran=1/1 room=0/0"
 
 # Who is at the desk. wall/crew.json is the one place an owner is mapped to a
 # character, and a set it names that is missing a frame is a room that never

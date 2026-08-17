@@ -832,20 +832,20 @@
   //
   // Pure, and outside create(), so the suite can ask what a heading wraps to
   // without a canvas.
-  function wrapped(face, str, cells, rows) {
+  function wrapped(face, str, wide, rows) {
     const all = [];
     let at = '';
     for (const word of spoken(face, str).split(/\s+/).filter(Boolean)) {
-      const one = word.length <= cells ? word : word.slice(0, Math.max(1, cells - 1)) + '.';
+      const one = word.length <= wide ? word : word.slice(0, Math.max(1, wide - 1)) + '.';
       const next = at ? at + ' ' + one : one;
-      if (next.length <= cells) { at = next; continue; }
+      if (next.length <= wide) { at = next; continue; }
       all.push(at);
       at = one;
     }
     if (at) all.push(at);
     if (all.length <= rows) return all;
     const kept = all.slice(0, rows);
-    kept[rows - 1] = kept[rows - 1].slice(0, Math.max(0, cells - 3))
+    kept[rows - 1] = kept[rows - 1].slice(0, Math.max(0, wide - 3))
       .replace(/\s+$/, '') + '...';
     return kept;
   }
