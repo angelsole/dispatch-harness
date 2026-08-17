@@ -2086,6 +2086,8 @@ esac
 grep_ok "$CANVAS_SRC" 'setTint(tower.alarm ? ALARM : ' \
   "canvas: an alarm is a tint on a light, never a red building in the atlas"
 grep_ok "$CANVAS_SRC" 'Phaser.BlendModes.ADD' "canvas: and light is added, not painted over"
+grep_ok "$CANVAS_SRC" 'this.mall.setVisible(plan.mall)' \
+  "canvas: the street plan's mall milestone has its own visible counterpart"
 # The frame loop moves what is on the GPU and never builds anything: no object
 # is created, no sprite is stamped and no texture is allocated inside it. This
 # is the whole difference between this world and the one it replaces, whose
@@ -2134,6 +2136,7 @@ const WIDE = C.grid().gw;
 const whole = (n) => Number.isInteger(n);
 const roomy = C.towerLayout(Array.from({ length: 5 }, () => ({ widthRem: 5.6 })));
 const crowded = C.towerLayout(Array.from({ length: 20 }, () => ({ widthRem: 5.6 })));
+const packed = C.towerLayout(Array.from({ length: 40 }, () => ({ widthRem: 5.6 })));
 const bounded = (boxes) => boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE
   && whole(box.x) && whole(box.w)
   && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w));
@@ -2194,7 +2197,7 @@ console.log(JSON.stringify({
   // crowded skyline inside the world without letting towers overlap — and
   // every edge of it lands on a whole world pixel, because a tower standing on
   // x.5 is a tower whose windows are half a pixel off their own rhythm.
-  layout: bounded(roomy) && bounded(crowded),
+  layout: bounded(roomy) && bounded(crowded) && bounded(packed),
   // space-evenly leaves a single tower centred in the skyline band.
   centred: (() => {
     const [box] = C.towerLayout([{ widthRem: 5.6 }]);
@@ -2234,7 +2237,7 @@ check "motion: those completion and cooling beats advance when motion is allowed
 check "motion: a still canvas city is a lit city, not a dark one" "$(still_of lit)" "true"
 check "motion: with nothing left mid-drift" "$(still_of parked)" "true"
 check "alarm: the beacon turns one way, for ever" "$(still_of oneWay)" "true"
-check "canvas: a busy skyline shrinks inside the world without overlapping" \
+check "canvas: even an uncapped live skyline shrinks without hiding or overlapping work" \
   "$(still_of layout)" "true"
 check "canvas: space-evenly keeps a lone tower centred" "$(still_of centred)" "true"
 check "canvas: every silhouette is a stack of rectangles on the pavement" \

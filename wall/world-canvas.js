@@ -262,7 +262,17 @@
       out.push({ x, w: Math.min(w, GW - x) });
       cursor += widths[i] * squeeze + gap + slot;
     }
-    return out;
+    // Live work is never capped by the server. Once the row is crowded enough
+    // that a 32 px minimum would overlap, divide the usable skyline into
+    // one-pixel-gutter cells instead. Losing façade detail is preferable to
+    // merging two projects into one silhouette or hiding either of them.
+    if (!out.some((box, i) => i > 0 && box.x < out[i - 1].x + out[i - 1].w)) return out;
+    const cell = avail / towers.length;
+    return towers.map((_, i) => {
+      const x = Math.round(pad + i * cell);
+      const next = Math.round(pad + (i + 1) * cell);
+      return { x, w: Math.max(1, next - x - (i < towers.length - 1 ? 1 : 0)) };
+    });
   }
 
   // Where a building stands and how big it is: wall.css's own formula, landed
@@ -836,6 +846,38 @@
         stone.render();
         this.streetC.add(this.add.image(0, y - PANEL, stone.key).setOrigin(0, 0));
 
+        // A big week earns the same wide arcade the DOM world shows at the far
+        // kerb. It is one subdued block with uneven open bays, not another row
+        // of decorative signs; the plan's `mall` bit is the only thing that may
+        // make it appear.
+        const mallW = Math.round(21 * VW);
+        const mallH = Math.max(TILE, Math.round(4 * VH));
+        const mallTexture = this.blank(mallW, mallH);
+        const shopH = Math.min(GROUND_H, mallH);
+        for (let x = 0, bay = 0; x < mallW; x += GROUND_W, bay++) {
+          const w = Math.min(GROUND_W, mallW - x);
+          mallTexture.stamp(ATLAS, this.cut(GROUND_FRAME, 0, GROUND_H - shopH, w, shopH),
+                            x, mallH - shopH, bay % 3 === 1 ? STAMP_DARK : STAMP0);
+        }
+        for (let y = mallH - shopH; y > 0; y -= PANEL) {
+          const h = Math.min(PANEL, y);
+          for (let x = 0; x < mallW; x += PANEL) {
+            const w = Math.min(PANEL, mallW - x);
+            mallTexture.stamp(ATLAS, this.cut(SKIN.slab, 0, PANEL - h, w, h),
+                              x, y - h, STAMP_DARK);
+          }
+        }
+        mallTexture.fill(EDGE, 0.46, 0, 0, mallW, 2);
+        mallTexture.render();
+        this.mall = this.add.image(
+          GW - Math.round(3 * VW) - mallW,
+          Math.round(GH - 7.6 * VH) - mallH,
+          mallTexture.key).setOrigin(0, 0);
+        this.mall.setTint(VEIL_TINT[1]);
+        this.mall.setAlpha(0.68);
+        this.mall.setVisible(false);
+        this.streetC.add(this.mall);
+
         // And the light those lamps throw. Pools on the wet pavement and the
         // bulb inside each hood: the one thing on this wall that reads from
         // three metres before anything else does.
@@ -1169,7 +1211,12 @@
         for (const [id, parts] of this.blocks) {
           // Only the week rolling over takes a building down, and then it takes
           // the whole district with it.
-          if (!standing.has(id)) { parts.root.destroy(); this.blocks.delete(id); }
+          if (!standing.has(id)) {
+            const texture = parts.body.texture.key;
+            parts.root.destroy();
+            if (this.textures.exists(texture)) this.textures.remove(texture);
+            this.blocks.delete(id);
+          }
         }
         let landed = false;
         for (const block of model.blocks) {
@@ -1285,7 +1332,9 @@
           T.pool.setTint(tower.alarm ? ALARM : 0x8cc4ce);
           T.pool.setAlpha(tower.alarm ? 0.42 : 0.3);
 
-          this.paintBeam(T, box, top, h);
+          // Non-alarm towers carry no hidden beam command buffer. The alarm
+          // bit is part of the geometry key, so becoming one paints it here.
+          if (tower.alarm) this.paintBeam(T, box, top, h);
           this.paintSpot(T, box, top, h);
           T.halo.setPosition(box.x + box.w / 2, top);
           T.halo.setDisplaySize(8 * REM, 8 * REM);
@@ -1507,6 +1556,7 @@
         }
         this.rail.setData('on', plan.tram);
         this.tram.setData('on', plan.tram);
+        this.mall.setVisible(plan.mall);
         this.spot(pendingSpot);
         this.step(true);
       }
