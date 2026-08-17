@@ -1394,51 +1394,44 @@
     // three flat steps — warm first, cold second, and the only object on this
     // wall you would call light-coloured.
     //
-    // Two levels of type and no more: the id at 0.95 of the warmest pale on the
+    // Two levels of type and no more: the id in the warmest pale on the
     // lock, which is what you read from the door, and the title a step down in
     // value under a rule, which is what you read on a second look. There is no
     // state in here at all — an alarm keeps its card exactly as it is, because
     // the ticket is the thing you most need when the screen says NEEDS INPUT,
     // and the monitor owns the red.
-    // One number in here is not a taste and is worth saying out loud. The room's
-    // lens crops WHOLE source pixels, so every frame of the twelve-second push
-    // shifts the entire picture by about a pixel — and the visual gate's
-    // continuity number is dominated by that shift rather than by anything that
-    // is actually animating. What a new object on this wall costs the shot is
-    // therefore the energy in its own edges, and the object to be measured
-    // against is the floor plate beside it, which is what the room already hangs
-    // there. Sunk this far, the card's per-pixel shift cost sits at the plate's,
-    // and the shot's continuity is what it was before the card existed. A
-    // brighter sheet was the first thing drawn here and it measured half again
-    // the plate: the whole frame went from 0.106 to 0.126 against a 0.12 ceiling,
-    // for a card no easier to read.
+    // The room's lens crops WHOLE source pixels, so a bright field of small type
+    // turns its slow push into a row of high-energy steps. Keep the ticket loud,
+    // but sink the title and the sheet's outer shadow: the hierarchy still reads
+    // id first, description second, while the static card travels with the wall
+    // instead of making that move look like a cut.
     function jobCard(v) {
-      box(CARD.x - 1, CARD.y - 1, CARD.w + 2, CARD.h + 2, NIGHT, 0.3);
+      box(CARD.x - 1, CARD.y - 1, CARD.w + 2, CARD.h + 2, NIGHT, 0.1);
       box(CARD.x, CARD.y, CARD.w, CARD.h, BOARD);
       // Furniture in an unlit room, sunk the same way the desk is, and then lit
       // back up by the one tube on the ceiling that still works — which happens
       // to run from x 112 to x 208, directly over this sheet.
-      box(CARD.x, CARD.y, CARD.w, CARD.h, NIGHT, 0.58);
-      box(CARD.x, CARD.y, CARD.w, 11, GLOW, 0.07);
-      box(CARD.x, CARD.y + 11, CARD.w, 11, GLOW, 0.035);
+      box(CARD.x, CARD.y, CARD.w, CARD.h, NIGHT, 0.62);
+      box(CARD.x, CARD.y, CARD.w, 11, GLOW, 0.05);
+      box(CARD.x, CARD.y + 11, CARD.w, 11, GLOW, 0.025);
       box(CARD.x, CARD.y + CARD.h - 9, CARD.w, 9, NIGHT, 0.12);
       // The sheet's own edges: the top one catches the strip light, the right
       // one is the side away from the lamp, and the bottom is the shadow it
       // throws on the wall it is pinned to.
-      box(CARD.x, CARD.y, CARD.w, 1, CREAM, 0.12);
+      box(CARD.x, CARD.y, CARD.w, 1, CREAM, 0.08);
       box(CARD.x + CARD.w - 1, CARD.y, 1, CARD.h, NIGHT, 0.35);
       box(CARD.x, CARD.y + CARD.h - 1, CARD.w, 1, NIGHT, 0.65);
       // The pin. Four pixels, and the only reason they are here is that they are
       // what makes this a sheet somebody put up rather than a panel in the wall.
-      box(CARD.x + Math.floor(CARD.w / 2) - 1, CARD.y + 1, 2, 2, GLOW, 0.75);
+      box(CARD.x + Math.floor(CARD.w / 2) - 1, CARD.y + 1, 2, 2, GLOW, 0.6);
       // The ticket, in the face the stage word uses. Cut rather than shrunk if
       // it is one of the ad-hoc ids: sixteen glyphs of the big face is what this
       // sheet holds, and ADHOC-KPI-SPAR. still says which run this is.
-      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.88);
-      box(CARD.x + CARD_PAD, CARD_RULE_Y, CARD_ROOM, 1, GLOW, 0.22);
+      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.66);
+      box(CARD.x + CARD_PAD, CARD_RULE_Y, CARD_ROOM, 1, GLOW, 0.14);
       for (let i = 0; i < v.card.length && i < CARD_LINES; i++) {
         text(SMALL, v.card[i], CARD.x + CARD_PAD, CARD_TEXT_Y + i * CARD_PITCH,
-          CREAM, 0.62);
+          CREAM, 0.32);
       }
     }
 
@@ -1471,11 +1464,11 @@
       propCtx.clearRect(0, 0, PROP_PAD, PROP_PAD);
       propCtx.drawImage(img, 0, 0);
       propCtx.globalCompositeOperation = 'source-atop';
-      propCtx.globalAlpha = 0.36;
+      propCtx.globalAlpha = 0.48;
       propCtx.fillStyle = NIGHT;
       propCtx.fillRect(0, 0, w, h);
-      edge(slot.warm, GLOW, 0.3);
-      edge(slot.cold, CYAN, 0.2);
+      edge(slot.warm, GLOW, 0.24);
+      edge(slot.cold, CYAN, 0.16);
       propCtx.globalAlpha = 1;
       propCtx.globalCompositeOperation = 'source-over';
       // One row of contact shadow where it stands, so a thing on a desk is ON the

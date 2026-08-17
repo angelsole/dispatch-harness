@@ -3543,9 +3543,9 @@ grep_ok "$ROOM_ALL" '      worker(view, beat, revealing());' \
   "things: and the worker is drawn over that plane, so nothing crosses a forearm"
 THING_FN="$(awk '/^    function thing\(slot, name\) \{/, /^    \}$/' "$SRC/wall/room.js")"
 THING_CODE="$(printf '%s\n' "$THING_FN" | grep -v '^ *//')"
-grep_ok "$THING_CODE" 'edge(slot.warm, GLOW, 0.3);' \
+grep_ok "$THING_CODE" 'edge(slot.warm, GLOW, 0.24);' \
   "things: lit warm on the side the lamp is on"
-grep_ok "$THING_CODE" 'edge(slot.cold, CYAN, 0.2);' \
+grep_ok "$THING_CODE" 'edge(slot.cold, CYAN, 0.16);' \
   "things: and cold on the side the tube is"
 grep_not "$THING_CODE" 'v.crew' \
   "things: never in the crew tint, which the wide city gives to the lamp"
