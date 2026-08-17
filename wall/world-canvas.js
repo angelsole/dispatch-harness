@@ -75,6 +75,10 @@
   // once and comes up over this, so the eye reads a move rather than a slide
   // and nothing on the façade is ever caught between two courses.
   const FLOOR_STEP = 0.6;
+  // How long the skyline takes to re-flow when the spot changes hands. Long
+  // enough to read as one move of the whole city, short enough that the plate
+  // and the towers are never telling two different stories for a whole beat.
+  const REFLOW = 0.55;
   // The config every sprite in this world is stamped with: top-left origin, so
   // a world coordinate is the pixel the sprite lands on.
   const STAMP0 = { originX: 0, originY: 0 };
@@ -245,6 +249,23 @@
   // The district's proportion tables, straight off wall.css.
   const DEPTHS = [{ deep: 0.74, veil: 0.62 }, { deep: 0.92, veil: 0.34 },
                   { deep: 1.12, veil: 0.12 }];
+  // THE BAND IS A BASE. What the week has shipped stands in front of the towers,
+  // and standing it at the height these two tables used to state gave the wide
+  // shot a second city across its whole width — evenly lit, as tall at the edges
+  // as in the middle, with the tower the wall is talking about growing out of the
+  // middle of it. BAND_WAS is that table, kept rather than deleted: the drop is
+  // the point of this pass and a number you cannot compare to anything is not a
+  // drop. Every one of these is a count of 32 px COURSES — the band loses
+  // storeys, never pixel size, because this is pixel art and a half-scale
+  // building is a blurred one.
+  const BAND_WAS = { base: 3.4, storey: 1.9, floor: 1 };
+  const BAND = { base: 2, storey: 1.1, floor: 0.58 };
+  // And its values come down with it: fewer windows with somebody in them, and
+  // a veil that reads as mass rather than as a lit wall. The shops keep their
+  // own light — the signs and what they lay on the pavement are the whole point
+  // of the band — so only the stone moves.
+  const BAND_LIT = { base: 0.12, depth: 0.05 };
+  const BAND_PANE = 0.55;
   const KINDS = {
     residential: { wide: 0.72, tall: 1.16 }, industrial: { wide: 1.55, tall: 0.74 },
     spire: { wide: 0.58, tall: 1.1 }, infra: { wide: 1.85, tall: 0.5 },
@@ -260,7 +281,10 @@
   };
   // The veil is the RENDERER's, never a hazier PNG: one multiply tint per depth
   // band, so the same sprite is a near wall in front and a far mass behind.
-  const VEIL_TINT = [0x6e8794, 0xa8bac1, 0xe2ecee];
+  // These sit well under what the towers are drawn at, and that is the band's
+  // whole job from this pass on: a dark mass with a lit roofline and a lit shop
+  // under it, which the eye crosses on its way to the work.
+  const VEIL_TINT = [0x4e5f68, 0x6c7d85, 0x93a0a6];
 
   // --- the skyline's own arithmetic ---------------------------------------------
   // wall.css lays .city out as a `space-evenly` flex row with a fixed padding
@@ -268,37 +292,98 @@
   // budgets are solved separately — and every result is rounded to a whole
   // world pixel, because a tower standing on x.5 is a tower whose windows are
   // half a pixel off their own rhythm at every zoom the wall is ever shown at.
-  function towerLayout(towers) {
-    const pad = Math.round(3 * VW);
-    const gap = Math.round(1.4 * VW);
-    const avail = GW - pad * 2;
-    const widths = towers.map((tower) => tower.widthRem * REM);
+  function flexRow(widths, from, to, gap) {
+    const avail = Math.max(0, to - from);
     const widthTotal = widths.reduce((total, width) => total + width, 0);
-    const gapTotal = Math.max(0, towers.length - 1) * gap;
+    const gapTotal = Math.max(0, widths.length - 1) * gap;
     const widthBudget = Math.max(0, avail - gapTotal);
     const squeeze = widthTotal > widthBudget && widthTotal > 0
       ? widthBudget / widthTotal : 1;
     const used = widthTotal * squeeze + gapTotal;
-    const slot = towers.length ? Math.max(0, avail - used) / (towers.length + 1) : 0;
+    const slot = widths.length ? Math.max(0, avail - used) / (widths.length + 1) : 0;
     const out = [];
-    let cursor = pad + slot;
-    for (let i = 0; i < towers.length; i++) {
+    let cursor = from + slot;
+    for (let i = 0; i < widths.length; i++) {
       const w = Math.max(PANEL, Math.round(widths[i] * squeeze));
       const x = Math.round(cursor);
       out.push({ x, w: Math.min(w, GW - x) });
       cursor += widths[i] * squeeze + gap + slot;
     }
     // Live work is never capped by the server. Once the row is crowded enough
-    // that a 32 px minimum would overlap, divide the usable skyline into
-    // one-pixel-gutter cells instead. Losing façade detail is preferable to
-    // merging two projects into one silhouette or hiding either of them.
-    if (!out.some((box, i) => i > 0 && box.x < out[i - 1].x + out[i - 1].w)) return out;
-    const cell = avail / towers.length;
-    return towers.map((_, i) => {
-      const x = Math.round(pad + i * cell);
-      const next = Math.round(pad + (i + 1) * cell);
-      return { x, w: Math.max(1, next - x - (i < towers.length - 1 ? 1 : 0)) };
+    // that a 32 px minimum would overlap — or spill out of the band it was
+    // given — divide that band into one-pixel-gutter cells instead. Losing
+    // façade detail is preferable to merging two projects into one silhouette,
+    // hiding either of them, or letting the row eat the hero's sky.
+    if (!out.some((box, i) => (i > 0 && box.x < out[i - 1].x + out[i - 1].w)
+      || box.x + box.w > to + 1)) return out;
+    const cell = avail / widths.length;
+    return widths.map((_, i) => {
+      const x = Math.round(from + i * cell);
+      const next = Math.round(from + (i + 1) * cell);
+      return { x, w: Math.max(1, next - x - (i < widths.length - 1 ? 1 : 0)) };
     });
+  }
+
+  // AIR AROUND THE HERO. The tower the wall is talking about stands in the
+  // middle of the skyline with a width and a half of night either side of it,
+  // and that reserve is taken out of the row BEFORE anybody else is placed: a
+  // crowded wall compresses its two groups and the hero keeps its air. The only
+  // thing that may eat into it is the alternative of standing two towers in the
+  // same place — live work is never hidden, and never merged.
+  const HERO_AIR = 1.5;
+  const GUTTER = 1;        // the one pixel a cell-divided row keeps between towers
+  const minRow = (n) => (n > 0 ? n * PANEL + (n - 1) * GUTTER : 0);
+
+  function heroBand(towers, hero) {
+    const pad = Math.round(3 * VW);
+    const w = Math.max(PANEL, Math.round(towers[hero].widthRem * REM));
+    const x = Math.round((GW - w) / 2);
+    const spare = GW - pad * 2 - w - minRow(hero) - minRow(towers.length - hero - 1);
+    return {
+      x,
+      w: Math.min(w, GW - x),
+      air: Math.max(0, Math.min(Math.round(HERO_AIR * w), Math.floor(spare / 2))),
+    };
+  }
+
+  // Which tower the wall is talking about: the one carrying the run the brief
+  // plate named, and the head of the queue when the plate is empty. It is a
+  // fact about the model and the spot, so the layout it drives is one too —
+  // same model, same spot, same row of boxes, on both screens and tomorrow.
+  // How much of its own height the back city keeps at one x: the plane's own
+  // share of it everywhere, and a fraction of that inside the spotted tower's
+  // air. The shoulders ease rather than step, so what opens up behind the hero
+  // reads as the city being further away over there and not as a rectangle cut
+  // out of a painting.
+  function skyKeep(plane, x, half) {
+    if (!plane.notch || half <= 0) return plane.keep;
+    const away = Math.abs(x - GW / 2) / half;
+    const u = clamp01((1 - away) / HERO_SHOULDER);
+    return plane.keep * (1 - u * u * (3 - 2 * u) * (1 - HERO_SKY));
+  }
+
+  function heroOf(towers, runId) {
+    if (!towers || !towers.length) return -1;
+    if (runId) {
+      const named = towers.findIndex((tower) => tower.runIds.indexOf(runId) >= 0);
+      if (named >= 0) return named;
+    }
+    const live = towers.findIndex((tower) => tower.runIds.length > 0);
+    return live >= 0 ? live : 0;
+  }
+
+  function towerLayout(towers, hero) {
+    const pad = Math.round(3 * VW);
+    const gap = Math.round(1.4 * VW);
+    const widths = towers.map((tower) => tower.widthRem * REM);
+    const h = hero >= 0 && hero < towers.length ? Math.floor(hero) : -1;
+    if (h < 0) return flexRow(widths, pad, GW - pad, gap);
+    const band = heroBand(towers, h);
+    return [
+      ...flexRow(widths.slice(0, h), pad, band.x - band.air, gap),
+      { x: band.x, w: band.w },
+      ...flexRow(widths.slice(h + 1), band.x + band.w + band.air, GW - pad, gap),
+    ];
   }
 
   // Where a building stands and how big it is: wall.css's own formula, landed
@@ -313,8 +398,9 @@
     const w = Math.max(PANEL,
       Math.round(2.9 * REM * band.deep * kind.wide * (form ? form.wide : 1) * jitter));
     const h = Math.max(GROUND_H + TILE, Math.round(Math.max(
-      (3.4 + block.storeys * 1.9) * VH * band.deep * kind.tall * (form ? form.tall : 1) * shorten,
-      (form ? form.floor : 7) * VH * band.deep)));
+      (BAND.base + block.storeys * BAND.storey)
+        * VH * band.deep * kind.tall * (form ? form.tall : 1) * shorten,
+      (form ? form.floor : 7) * BAND.floor * VH * band.deep)));
     const x = Math.round(block.x * GW - w / 2);
     return { x, y: Math.round(GROUND_Y) - h, w, h, veil: band.veil, depth: block.depth };
   }
@@ -326,11 +412,27 @@
   // over — and two frames a second apart show the same car further along rather
   // than a new one somewhere else.
 
+  // The three painted planes, and — from this pass — how much of their own
+  // height each keeps. The back city used to run edge to edge at full height
+  // behind the towers, which is a continuous wall for the skyline to be read
+  // against rather than a distance for it to stand in front of. `keep` is the
+  // share of its height a plane holds on to about the ground line, so every
+  // silhouette in it keeps its own shape and the valleys already painted into
+  // the path open into sky; `dim` is how far back it steps in value. The near
+  // plane is the block the towers stand on and barely moves. `notch` is which
+  // of them open further still inside the hero's air — the far and the mid, the
+  // two that were standing behind the spotted tower's upper half.
   const PLANES = [
-    { key: 'far', period: 260, par: 1 },
-    { key: 'mid', period: 185, par: 2.4 },
-    { key: 'near', period: 150, par: 4 },
+    { key: 'far', period: 260, par: 1, keep: 0.78, dim: 0.74, notch: true },
+    { key: 'mid', period: 185, par: 2.4, keep: 0.86, dim: 0.82, notch: true },
+    { key: 'near', period: 150, par: 4, keep: 0.96, dim: 0.94, notch: false },
   ];
+  // What the back city keeps of its height directly behind the spotted tower.
+  const HERO_SKY = 0.3;
+  // How much of the hero's air the opening holds flat before its shoulders ease
+  // back up: an opening with no plateau is a notch, and a notch reads as a hole
+  // cut in a painting rather than as the city being further away over there.
+  const HERO_SHOULDER = 0.4;
   const GHOST_DRIFT = { period: 205, par: 1.6 };
   const HAZE_SLABS = [{ period: 47, delay: 0 }, { period: 71, delay: 22 }];
   const SHIPS = [
@@ -1058,45 +1160,100 @@
         // The three painted planes, each on its own slow drift. They are
         // silhouette and distant window and nothing more — the near one is not
         // even that, because no pattern reaches it.
-        this.planes = PLANES.map((plane) => {
-          const node = document.querySelector('.sky__' + plane.key + ' path');
+        this.planes = PLANES.map(() => {
           const holder = this.add.container(0, 0);
           this.skyC.add(holder);
-          if (!node) return holder;
+          return holder;
+        });
+        this.planeImgs = PLANES.map(() => null);
+        this.notchHalf = -1;
+        this.readPlanes();
+        this.paintPlanes(0);
+      }
+
+      // The page's own painting, read ONCE. What changes when the wall's hero
+      // changes is how far the back city is pushed down inside that tower's
+      // air, and re-sampling six hundred points off an SVG for that would be a
+      // second transcription of a picture that has not moved. Windows come off
+      // the same read: they belong to the buildings under them and travel with
+      // them when the plane loses height.
+      readPlanes() {
+        this.planeArt = PLANES.map((plane) => {
+          const node = document.querySelector('.sky__' + plane.key + ' path');
+          if (!node) return null;
           const points = samplePath(node, 2);
-          const top = points.reduce((lo, p) => Math.min(lo, p.y), GH);
-          const pg = this.make.graphics({}, false);
           const stops = gradientOf(plane.key);
           const body = stops.length ? stops[Math.floor(stops.length / 2)] : null;
-          pg.fillStyle(body ? body.colour : STONE, body ? body.alpha : 1);
-          pg.fillPoints(points.map((p) => ({ x: p.x + 24, y: p.y - top })), true, true);
-          if (plane.key === 'near') {
-            for (const rect of document.querySelectorAll('.sky__near rect')) {
-              fillGradient(pg, gradientOf('wet'),
-                skyX(rect.getAttribute('x')) + 24, skyY(rect.getAttribute('y')) - top,
-                Number(rect.getAttribute('width')) * SKY,
-                Number(rect.getAttribute('height')) * SKY);
-            }
-          } else {
-            const dot = Math.max(1, Math.round(2 * SKY));
-            const alpha = plane.key === 'far' ? 0.32 : 0.42;
-            const first = SKY_Y + Math.floor((top - SKY_Y) / (19 * SKY)) * 19 * SKY;
-            for (let y = first; y < GROUND_Y; y += 19 * SKY) {
-              for (let x = SKY_X; x < GW; x += 15 * SKY) {
-                if (inside(points, x + 4 * SKY, y + 5 * SKY)) {
-                  pg.fillStyle(0xffc98a, 0.45 * alpha);
-                  pg.fillRect(Math.round(x + 3 * SKY) + 24, Math.round(y + 4 * SKY - top), dot, dot);
-                }
-                if (inside(points, x + 11 * SKY, y + 13 * SKY)) {
-                  pg.fillStyle(0xa8dcf0, 0.3 * alpha);
-                  pg.fillRect(Math.round(x + 10 * SKY) + 24, Math.round(y + 12 * SKY - top), dot, dot);
-                }
+          const art = {
+            points,
+            colour: body ? body.colour : STONE,
+            alpha: body ? body.alpha : 1,
+            dots: [],
+            wet: [...document.querySelectorAll('.sky__' + plane.key + ' rect')].map((rect) => ({
+              x: skyX(rect.getAttribute('x')), y: skyY(rect.getAttribute('y')),
+              w: Number(rect.getAttribute('width')) * SKY,
+              h: Number(rect.getAttribute('height')) * SKY,
+            })),
+          };
+          if (plane.key === 'near') return art;
+          const top = points.reduce((lo, p) => Math.min(lo, p.y), GH);
+          const alpha = plane.key === 'far' ? 0.32 : 0.42;
+          const first = SKY_Y + Math.floor((top - SKY_Y) / (19 * SKY)) * 19 * SKY;
+          for (let y = first; y < GROUND_Y; y += 19 * SKY) {
+            for (let x = SKY_X; x < GW; x += 15 * SKY) {
+              if (inside(points, x + 4 * SKY, y + 5 * SKY)) {
+                art.dots.push({ x: x + 3 * SKY, y: y + 4 * SKY,
+                                colour: 0xffc98a, alpha: 0.45 * alpha });
+              }
+              if (inside(points, x + 11 * SKY, y + 13 * SKY)) {
+                art.dots.push({ x: x + 10 * SKY, y: y + 12 * SKY,
+                                colour: 0xa8dcf0, alpha: 0.3 * alpha });
               }
             }
           }
-          holder.add(this.bake(pg, -24, top, GW + 48, Math.max(1, GH - top)));
+          return art;
+        });
+      }
+
+      // The back city, painted at the height the hero leaves it. Static, and
+      // baked once per opening: the only thing that moves it is a spot landing
+      // on a tower of a different width, and the half-width is rounded to a
+      // panel so a one-pixel difference never costs a re-bake.
+      paintPlanes(half) {
+        if (this.notchHalf === half) return;
+        this.notchHalf = half;
+        PLANES.forEach((plane, i) => {
+          const art = this.planeArt[i];
+          if (!art) return;
+          const old = this.planeImgs[i];
+          if (old) {
+            const key = old.texture.key;
+            old.destroy();
+            if (this.textures.exists(key)) this.textures.remove(key);
+          }
+          const sink = (x, y) => GH - (GH - y) * skyKeep(plane, x, half);
+          const points = art.points.map((p) => ({ x: p.x + 24, y: sink(p.x, p.y) }));
+          const top = points.reduce((lo, p) => Math.min(lo, p.y), GH);
+          const pg = this.make.graphics({}, false);
+          pg.fillStyle(art.colour, art.alpha);
+          pg.fillPoints(points.map((p) => ({ x: p.x, y: p.y - top })), true, true);
+          // The wet street the back city leaves smeared on the tarmac stays on
+          // the tarmac: it is the road's, not the skyline's, and a reflection
+          // that rose with a shortened building would be lying about the road.
+          for (const wet of art.wet) {
+            fillGradient(pg, gradientOf('wet'), wet.x + 24, wet.y - top, wet.w, wet.h);
+          }
+          const dot = Math.max(1, Math.round(2 * SKY));
+          for (const win of art.dots) {
+            pg.fillStyle(win.colour, win.alpha);
+            pg.fillRect(Math.round(win.x) + 24,
+                        Math.round(sink(win.x, win.y) - top), dot, dot);
+          }
+          const img = this.bake(pg, -24, top, GW + 48, Math.max(1, GH - top));
+          img.setAlpha(plane.dim);
+          this.planes[i].add(img);
+          this.planeImgs[i] = img;
           pg.destroy();
-          return holder;
         });
       }
 
@@ -1459,7 +1616,8 @@
         const open = !shop || shop.neon || shop.bay % 3 !== 0;
         const dt = this.blank(box.w, box.h + PANEL);
         this.stamp(dt, box, massesOf(block), skin, open, rnd,
-                   0.3 + box.depth * 0.1, ROOF[form] || ['city-prop-ac']);
+                   BAND_LIT.base + box.depth * BAND_LIT.depth,
+                   ROOF[form] || ['city-prop-ac']);
         dt.render();
         const body = this.add.image(box.x, box.y - PANEL, dt.key).setOrigin(0, 0);
         // The veil is the renderer's, never a hazier PNG: one multiply tint per
@@ -1940,7 +2098,6 @@
         this.model = model;
         this.paintGhost(model.ghosts);
         this.renderDistrict(model);
-        const boxes = towerLayout(model.towers);
         const standing = new Set(model.towers.map((t) => t.project));
         for (const [project, T] of this.towers) {
           if (!standing.has(project)) {
@@ -1949,11 +2106,7 @@
             this.towers.delete(project);
           }
         }
-        model.towers.forEach((tower, i) => {
-          let T = this.towers.get(tower.project);
-          if (!T) { T = this.makeTower(); this.towers.set(tower.project, T); }
-          this.paintTower(T, tower, boxes[i], model.floors);
-        });
+        this.relayout();
         // Nightlife never competes with work: the instant anything is climbing,
         // the whole ground floor drops a stop and the skyline keeps the eye.
         this.streetC.setVisible(model.blocks.length > 0);
@@ -1977,11 +2130,46 @@
         this.step(true);
       }
 
+      // THE SKYLINE, LAID OUT AROUND THE TOWER THE WALL IS TALKING ABOUT. The
+      // hero stands in the middle with a width and a half of sky either side of
+      // it; the rest of the city is a group to its left and a group to its
+      // right. Same model and same spot is the same row of boxes, every time —
+      // and when the spot changes hands the towers RIDE to their new places
+      // over half a second, because a skyline that snaps every seven seconds is
+      // a skyline the room stops reading. A snapshot that moves nobody moves
+      // nobody: the boxes come out identical and no slide starts.
+      relayout() {
+        const model = this.model;
+        if (!model || !model.towers.length) return;
+        const hero = heroOf(model.towers, pendingSpot);
+        const boxes = towerLayout(model.towers, hero);
+        const at = this.origin + this.time.now / 1000;
+        model.towers.forEach((tower, i) => {
+          let T = this.towers.get(tower.project);
+          if (!T) { T = this.makeTower(); this.towers.set(tower.project, T); }
+          if (T.at !== undefined && T.at !== boxes[i].x) {
+            // A re-flow is a MOVE, not a redraw. The tower is stamped where it
+            // is GOING and the whole of it — body, reflection, lights, sign and
+            // the floors standing in it — rides home on one container offset,
+            // so a hand-over costs the frame loop one number per tower and not
+            // a single re-stamped texture.
+            T.slide = { from: T.at - boxes[i].x, at };
+          }
+          T.at = boxes[i].x;
+          this.paintTower(T, tower, boxes[i], model.floors);
+        });
+        const band = heroBand(model.towers, hero);
+        this.paintPlanes(Math.round((band.w / 2 + band.air) / PANEL) * PANEL);
+      }
+
       // The plate and the skyline tell the same story twice, so they are lit
       // together: the featured run's floor breathes brighter and throws
-      // further, and its building gets the beam and its name in light.
+      // further, and its building gets the beam and its name in light — and,
+      // from this pass, the sky around it.
       spot(runId) {
+        const was = pendingSpot;
         pendingSpot = runId;
+        if (was !== runId) this.relayout();
         let lit = false;
         for (const T of this.towers.values()) {
           let hit = false;
@@ -2235,7 +2423,8 @@
           shop.glyph.setAlpha(lit);
           shop.plate.setAlpha(0.5 + lit * 0.4);
         }
-        parts.panes.forEach((pane, i) => pane.g.setAlpha(paneAt(phase, i, pane.phase * 13)));
+        parts.panes.forEach((pane, i) =>
+          pane.g.setAlpha(paneAt(phase, i, pane.phase * 13) * BAND_PANE));
         // A building lands with one settle and is furniture after that — and
         // the age it is fast-forwarded by is the same one --age carries in the
         // DOM world, so a browser opening this afternoon finds this morning's
@@ -2249,6 +2438,13 @@
       stepTower(T, phase, at, model) {
         const tower = T.tower;
         if (!tower) return;
+        // The re-flow, and the whole of it: one eased offset on the tower's own
+        // container. Reduced motion lands it at once — still, and spaced.
+        if (T.slide) {
+          const home = phase.still ? 1 : once(at - T.slide.at, REFLOW);
+          T.root.setX(Math.round(T.slide.from * (1 - ease(home))));
+          if (home >= 1) T.slide = null;
+        }
         const drift = model ? at - model.at : 0;
         const completion = (model && model.completionSeconds) || 0;
         // The additive copy is also the tower's value separation from the
@@ -2403,8 +2599,10 @@
         if (city) city.apply(model);
       },
       spot(runId) {
-        pendingSpot = runId;
+        // The scene owns the spot once it is up, because changing it re-flows
+        // the skyline and it can only tell that it changed by comparing.
         if (city) city.spot(runId);
+        else pendingSpot = runId;
       },
       tick() { if (city) city.step(true); },
       // The page's director hands the reel over rather than filming a stage
@@ -2425,9 +2623,10 @@
 
   return {
     create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
-    walkerAt, vehicleAt, ramp, towerLayout, blockBox, massesOf,
+    walkerAt, vehicleAt, ramp, towerLayout, heroOf, heroBand, skyKeep,
+    blockBox, massesOf,
     storeyAt, spanAt, baysOf, windowAt, ease, reelPlan, reelAt, shotOf, reelWith,
     poseAt, roomBoxAt, apertureAt,
-    TOWER_MASSES, FORM_MASSES, KIND_MASSES,
+    TOWER_MASSES, FORM_MASSES, KIND_MASSES, PLANES, BAND, BAND_WAS, HERO_AIR,
   };
 }));

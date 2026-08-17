@@ -2384,6 +2384,55 @@ console.log(JSON.stringify({
     return whole(box.x) && whole(box.y) && whole(box.w) && whole(box.h)
       && box.y + box.h === Math.round(C.grid().groundY);
   }),
+  // THE BAND IS A BASE. The district in front of the towers used to reach their
+  // waist right across the picture. The storey table it stood on is kept in the
+  // source beside the one that replaced it, so the drop is measured rather than
+  // claimed: every term is at most 60 % of what it was — fewer 32 px courses per
+  // building, never a scale factor on the art.
+  bandTable: C.BAND.base <= C.BAND_WAS.base * 0.6
+    && C.BAND.storey <= C.BAND_WAS.storey * 0.6
+    && C.BAND.floor <= C.BAND_WAS.floor * 0.6,
+  // And what the table is worth on the wall, against heights recorded off the
+  // city this pass started from (PR #47): the two tallest forms the district
+  // draws, at every depth, and the landmark, which is the tallest thing in it.
+  bandDrop: (() => {
+    const before = [['setback', 0, 8, 94], ['setback', 1, 8, 117], ['setback', 2, 8, 142],
+      ['mast', 2, 8, 142], ['slab', 2, 8, 125], ['tank', 2, 8, 94], [null, 0, 16, 225]];
+    return before.every(([form, depth, storeys, was]) => C.blockBox({
+      id: 'X', kind: form ? 'midrise' : 'landmark', depth, x: 0.5, storeys,
+      shape: form ? { form, grade: 1 } : null,
+    }).h <= was * 0.6);
+  })(),
+  // The band comes down to a base; it does not go away. The shortest building
+  // the week can put up is still a lit shopfront with wall over it, because a
+  // shopfront is 32 px of committed art and there is no shorter one.
+  bandFloor: C.blockBox({ id: 'X', kind: 'midrise', depth: 0, x: 0.5, storeys: 1,
+    shape: { form: 'shophouse', grade: 0 } }).h >= C.grid().panel + C.grid().tile,
+  // THE HERO STANDS IN SKY. The back city keeps its own share of its height
+  // across the picture and a fraction of that inside the spotted tower's air,
+  // eased across the shoulders so the opening reads as distance. The near plane
+  // is the block the towers stand on and never opens.
+  skyOpens: (() => {
+    const [far, mid, near] = C.PLANES;
+    const half = 240;
+    return C.skyKeep(far, WIDE / 2, half) < C.skyKeep(far, 0, half) * 0.45
+      && C.skyKeep(mid, WIDE / 2, half) < C.skyKeep(mid, 0, half) * 0.45
+      && C.skyKeep(far, 0, half) === far.keep && C.skyKeep(mid, WIDE, half) === mid.keep
+      && C.skyKeep(near, WIDE / 2, half) === near.keep
+      && [far, mid, near].every((p) => p.keep <= 1 && p.dim <= 1);
+  })(),
+  // And it eases: no step anywhere across the shoulder, and the deepest point
+  // of the opening is the middle of the picture, which is where the hero is.
+  skyEases: (() => {
+    const half = 240;
+    let last = C.skyKeep(C.PLANES[0], 0, half);
+    for (let x = 0; x <= WIDE / 2; x++) {
+      const k = C.skyKeep(C.PLANES[0], x, half);
+      if (k > last + 1e-9 || last - k > 0.02) return false;
+      last = k;
+    }
+    return true;
+  })(),
 }));
 JS
 STILL="$(node "$STILL_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
@@ -2409,6 +2458,16 @@ check "canvas: every silhouette is a stack of rectangles on the pavement" \
   "$(still_of masses)" "true"
 check "canvas: and every plot is whole pixels standing on the ground line" \
   "$(still_of plots)" "true"
+check "band: the district's storey table is at most 60 % of the one it replaced" \
+  "$(still_of bandTable)" "true"
+check "band: and every tall form comes down with it, measured against the old wall" \
+  "$(still_of bandDrop)" "true"
+check "band: the shortest building is still a shopfront with wall over it" \
+  "$(still_of bandFloor)" "true"
+check "sky: the back city opens behind the spotted tower and holds elsewhere" \
+  "$(still_of skyOpens)" "true"
+check "sky: and the opening eases into place rather than stepping" \
+  "$(still_of skyEases)" "true"
 
 # A RUNNING JOB IS A LIT FLOOR. No lift cars: the storey a run has reached
 # lights its own windows and the light comes out of the building. Two claims
