@@ -175,7 +175,13 @@
   });
 
   // And the small face, for the strings that are context rather than headline:
-  // the repo, the dispatcher's name, the floor's label.
+  // the repo, the dispatcher's name, the floor's label — and, since the tube
+  // started showing the run's own feed, code. Code is punctuation as much as it
+  // is letters: a line that draws `EDIT SRC/EXPORT.TS` with the slash missing is
+  // a line that reads as two words nobody wrote. So the face carries the whole
+  // set a feed line can contain, set in the same 3x5 grid a pixel at a time —
+  // there is no second face and no larger one, because the tube is 68 px wide
+  // and the composition is not moving.
   const SMALL = glyphs(3, 5, {
     A: '.#./#.#/###/#.#/#.#',
     B: '##./#.#/##./#.#/##.',
@@ -216,8 +222,50 @@
     '-': '.../.../###/.../...',
     '.': '.../.../.../.../.#.',
     '/': '..#/..#/.#./#../#..',
+    ',': '.../.../.../.#./#..',
+    ':': '.../.#./.../.#./...',
+    ';': '.../.#./.../.#./#..',
+    '!': '.#./.#./.#./.../.#.',
+    '?': '##./..#/.#./.../.#.',
+    '(': '.#./#../#../#../.#.',
+    ')': '.#./..#/..#/..#/.#.',
+    '[': '##./#../#../#../##.',
+    ']': '.##/..#/..#/..#/.##',
+    '{': '.##/.#./##./.#./.##',
+    '}': '##./.#./.##/.#./##.',
+    '<': '..#/.#./#../.#./..#',
+    '>': '#../.#./..#/.#./#..',
+    '=': '.../###/.../###/...',
+    '+': '.../.#./###/.#./...',
+    '_': '.../.../.../.../###',
+    '|': '.#./.#./.#./.#./.#.',
+    '*': '.../#.#/.#./#.#/...',
+    '#': '#.#/###/#.#/###/#.#',
+    '@': '.#./#.#/###/#../.##',
+    '\'': '.#./.#./.../.../...',
+    '"': '#.#/#.#/.../.../...',
     ' ': '.../.../.../.../...',
   });
+
+  // Not letters: the two marks that say WHERE a feed line came from. The harness
+  // writes its log with a glyph per source — a filled dot for the implementer's
+  // own tool calls and thoughts, a diamond for the reviewer's — and neither is
+  // in any face, so each is a shape in the same 3x5 cell, drawn in the crew
+  // tint. Two, and no more: a third mark that meant "something" would be
+  // texture, and this wall does not do texture.
+  const MARKS = {
+    dot: ['...', '###', '###', '###', '...'],
+    diamond: ['...', '.#.', '###', '.#.', '...'],
+  };
+  const markOf = (src) => (src === 'codex' ? 'diamond' : 'dot');
+
+  // The four rows' ink, oldest first. A cold ramp and nothing else: red is an
+  // alarm in this palette and green is a run that shipped, so a `-` and a `+` in
+  // a diff hunk are text. The eye is walked to the newest row by VALUE — measured
+  // off the committed render, 252, 391, 545 and 694 of summed channel against the
+  // tube's own 60 — rather than by thinning the old ones with alpha, which is how
+  // the oldest row first came out at 204 and stopped reading at all.
+  const FEED_INK = [GREY, SAGE, ICE, PALE];
 
   // A face is its shapes plus the two numbers every caller needs: how wide one
   // glyph is, and how far the next one starts.
@@ -228,6 +276,20 @@
   }
 
   const widthOf = (face, text) => (text.length ? text.length * face.pitch - 1 : 0);
+
+  // A string too long for the space it has, cut where it stops fitting. The
+  // room would rather say VALORYX-GRAPHQL. than draw four unreadable pixels
+  // per letter. Trailing space goes before the stop does: `CHECKPOINT 3 - .`
+  // is a cut that looks like a mistake, and `CHECKPOINT 3 -.` is one that looks
+  // like a cut.
+  function fit(face, str, room) {
+    if (widthOf(face, str) <= room) return str;
+    const max = Math.max(1, Math.floor((room + 1) / face.pitch));
+    return str.slice(0, Math.max(1, max - 1)).replace(/\s+$/, '') + '.';
+  }
+
+  // How many whole glyphs of a face a span of the tube holds.
+  const cells = (face, room) => Math.max(0, Math.floor((room + 1) / face.pitch));
 
   // --- the assets ---------------------------------------------------------
   // Every file here is committed under wall/assets, listed in
@@ -246,21 +308,64 @@
     shelf: 'shelf.png',
   };
 
-  // The person at the desk is not a sprite but a SET of six frames, and which
-  // set that is depends on whose run this is — the one fact in this room that
-  // is about a human rather than about the work. Every set under
+  // The person at the desk is not a sprite but a SET of seventeen frames, and
+  // which set that is depends on whose run this is — the one fact in this room
+  // that is about a human rather than about the work. Every set under
   // wall/assets/crew/ names its frames the same way; the room's own worker
   // predates that directory and keeps the `worker-` prefix its files were
-  // committed with. Its base still is worker-type-0.png, which is why it has no
-  // separate base.png the way a crew set does.
+  // committed with, and its base still is worker-type-0.png rather than a
+  // base.png, which is what ALIAS is for.
   //
-  // The waiting pair starts at the frame where the hands come off the keys: the
-  // animate job's own frame 0 is the typing pose it was given, and a worker who
-  // has stopped has to look like one from three metres.
-  const FRAMES = ['type-0', 'type-1', 'type-2', 'type-3', 'wait-1', 'wait-2'];
+  // One base and two eight-frame cycles. Eight because four at 300 ms is 3.3
+  // poses a second, and at 4x on a preview — 12 device pixels per authored one
+  // on the office panel — 3.3 poses a second is a slideshow with a jump in it
+  // where the loop wraps. Eight at 120 ms is a hand.
+  //
+  // The BASE is a drawn frame now, not merely the still the generator was
+  // handed: every drawn worker is the base above the split and the cycle's own
+  // frame below it, so the head that was regenerated in every pose holds.
+  const CYCLE = 8;
+  const cycleFrames = (name) => Array.from({ length: CYCLE }, (_, i) => name + '-' + i);
+  const TYPE_SET = cycleFrames('type8');
+  const WAIT_SET = cycleFrames('wait8');
+  const FRAMES = ['base'].concat(TYPE_SET, WAIT_SET);
   const PREFIX = { room: 'worker-' };
+  const ALIAS = { room: { base: 'type-0' } };
   const FALLBACK = 'room';
-  const fileOf = (set, frame) => 'assets/' + set + '/' + (PREFIX[set] || '') + frame + '.png';
+  const fileOf = (set, frame) => 'assets/' + set + '/' + (PREFIX[set] || '')
+    + ((ALIAS[set] || {})[frame] || frame) + '.png';
+
+  // Where one figure is cut in two. Above this row the drawn worker is the
+  // base and nothing else; below it the cycle's frame. Measured per set off the
+  // committed PNGs rather than guessed: the row is chosen where the base's
+  // silhouette and every frame's agree, because a seam is only invisible where
+  // the jacket outline does not step. The heroes' jackets sit at different
+  // heights in their 64x64 box, so one number does not seat all four.
+  // Measured over the sixteen committed frames of each set: the row whose worst
+  // single-frame left/right edge mismatch against the base's row above it is
+  // smallest, out of the rows that still leave the forearms and hands below the
+  // cut. Room 41 and Angel 41 step by at most one pixel in one frame, Emre 43 by
+  // one in seven of sixteen, Ran 40 by two — Ran's sleeve is the widest thing in
+  // any of these boxes and two pixels of it is the price of keeping every one of
+  // her moving rows in the animated band.
+  const SPLIT = { room: 41, 'crew/angel': 41, 'crew/emre': 43, 'crew/ran': 40 };
+  const SPLIT_DEFAULT = 41;
+  const splitOf = (set) => (SPLIT[set] === undefined ? SPLIT_DEFAULT : SPLIT[set]);
+
+  // What one drawn worker is made of, as two bands and the row between them.
+  // Returned by a pure function rather than decided inside the draw call so the
+  // suite can ask the room which file each band came from — a head drawn from
+  // frame N is the whole defect this cycle exists to remove, and it must not be
+  // possible to reintroduce it without failing a test.
+  //
+  // `typing` is the reveal's override: while a line is appearing on the tube the
+  // hands are working, whatever the burst schedule was about to do. The person
+  // is typing what the screen is showing.
+  function bandsOf(set, beat, alarm, typing) {
+    const body = alarm ? WAIT_SET[beat.waiting]
+      : ((beat.burst || typing) ? TYPE_SET[beat.typing] : 'base');
+    return { split: splitOf(set), head: 'base', body };
+  }
 
   // Whose character sits at the desk. The server already lower-cases an owner
   // into a lane key; this lower-cases again because crew.json is written by
@@ -319,14 +424,80 @@
   const LAMP = { x: 60, y: DESK_Y - BOX.lamp.y - BOX.lamp.h };
   const RAIN_SPEED = 6;                                  // room px / second
 
-  // The typing loop: four poses, 300 ms each, so the cycle is 1.2 s. The visual
-  // gate samples every 750 ms, and 750 and 300 land on a different pose every
-  // time — 0, 2, 1, 3, 2, 0 across a six-frame contact sheet. The loop this
-  // replaced ran at 5.5 poses a second, which at exactly that cadence aliased
-  // back onto pose 0 in every single tile: six frames of a worker holding still.
-  // A loop, never a ping-pong — the hands come round rather than reversing.
-  const TYPE_MS = 300;
-  const TYPE_FRAMES = 4;
+  // The typing loop: eight poses, 120 ms each, so the cycle is 960 ms and the
+  // hands run at 8.3 poses a second. That is the floor for reading as typing —
+  // a hand that travels three or four pixels between frames at 8-10 fps is a
+  // hand, and one that travels one pixel at 3 fps is noise. The visual gate
+  // samples every 750 ms, and 750 and 120 land on a different pose every time —
+  // 0, 6, 4, 2, 1, 7 across a six-frame contact sheet, which is what stops a
+  // contact sheet showing six copies of one pose. A loop, never a ping-pong:
+  // the hands come round rather than reversing.
+  const TYPE_MS = 120;
+  const TYPE_FRAMES = CYCLE;
+
+  // And waiting: eight poses at 220 ms, a 1.76 s breath. A LOOP here too, even
+  // though a breath goes in and out — the eight frames are generated as one
+  // closed cycle that already breathes both ways, so ping-ponging them would
+  // play the exhale twice and double the period past what a breath takes. 220
+  // against the gate's 750 also lands on six distinct poses (0, 3, 6, 2, 5, 1),
+  // which matters more here than anywhere else: the alarm room IS the shot the
+  // gate takes of this room.
+  const WAIT_MS = 220;
+  const WAIT_FRAMES = CYCLE;
+
+  // The cursor on the tube. 530 ms is a terminal's own blink interval, and this
+  // one is on the room's clock like everything else.
+  const BLINK_MS = 530;
+
+  // Typing comes in BURSTS, because a person does: a few seconds of work, then
+  // half a second of hands-on-the-keys stillness while they read what they
+  // wrote. Four (working, resting) pairs, in seconds, and nothing else in this
+  // file is allowed to add a second source of motion to the hands — a one-pixel
+  // band drop on top of frames that already travel reads as a twitch, which is
+  // why the one that used to be here is gone.
+  //
+  // The four always sum to the same 13.9 s whatever order they are in, which is
+  // the property that makes "which segment is this second in" a modulo and a
+  // walk of at most four steps instead of a walk from the start of the shot: a
+  // room that has been up for an hour costs exactly what one that just opened
+  // costs. The ORDER rotates with a hashed step of the super-cycle index, so the
+  // pattern does not read as a metronome — and it is a hash of the CLOCK, never
+  // a random draw and never the page's seed, because a schedule dealt once at
+  // create() would not repeat from startedAt and a recording of the same second
+  // has to be the same picture.
+  const BURSTS = [[2.4, 0.6], [3.6, 0.9], [2.0, 0.4], [3.0, 1.0]];
+  const BURST_CYCLE = 13.9;
+
+  // Murmur3's finaliser, which is the cheapest thing that actually mixes into the
+  // LOW bits — the two obvious shortcuts do not. A plain multiply by an odd
+  // constant is the identity under mod 4, and one shift-xor after it lands on 0,
+  // 3, 3, 3, 3...: both would have been "rotate by a constant" wearing the word
+  // hash. This one gives 0 3 2 3 1 1 0 0 3 3 0 0 3 2 ... over the first
+  // super-cycles, which is what an irregular working rhythm is made of.
+  function step(turn) {
+    let h = turn >>> 0;
+    h ^= h >>> 16;
+    h = Math.imul(h, 0x85ebca6b);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0xc2b2ae35);
+    h ^= h >>> 16;
+    return (h >>> 0) % BURSTS.length;
+  }
+
+  function burstAt(elapsed) {
+    const turn = Math.floor(elapsed / BURST_CYCLE);
+    let at = elapsed - turn * BURST_CYCLE;
+    const from = step(turn);
+    for (let i = 0; i < BURSTS.length; i++) {
+      const pair = BURSTS[(i + from) % BURSTS.length];
+      if (at < pair[0]) return true;
+      at -= pair[0];
+      if (at < pair[1]) return false;
+      at -= pair[1];
+    }
+    // A float that lands on the last seam works rather than freezes.
+    return true;
+  }
 
   // --- the beat -----------------------------------------------------------
   // Every cycle in the room, from one reading of the frame clock: which sprite
@@ -345,11 +516,18 @@
       t: elapsed,
       elapsed,
       // Which pose the hands are on. Milliseconds rather than seconds so the
-      // arithmetic is exact at the cadence the gate samples at.
+      // arithmetic is exact at the cadence the gate samples at. It advances on
+      // the shot clock and never on a clock of its own, so a rest does not
+      // freeze the phase — the hands simply are not drawn from it while the
+      // person is reading, and pick the loop up where the clock got to.
       typing: Math.floor((elapsed * 1000) / TYPE_MS) % TYPE_FRAMES,
-      // The gate advances by 750 ms. Give the hands one unambiguous pose per
-      // sample instead of letting a faster loop alias back onto the same one.
-      hands: Math.floor(elapsed / 0.75) & 1,
+      // Whether this second is one of the working ones.
+      burst: reduced ? true : burstAt(elapsed),
+      // And which breath a waiting worker is on.
+      waiting: Math.floor((elapsed * 1000) / WAIT_MS) % WAIT_FRAMES,
+      // The cursor, lit half the time. Lit in a still room rather than dark:
+      // reduced motion is a room standing still, not a room switched off.
+      blink: reduced ? true : (Math.floor((elapsed * 1000) / BLINK_MS) & 1) === 0,
       // One deliberate move per room hold. An epoch-anchored triangle can hit
       // its turning point anywhere in a six-frame contact sheet, which makes a
       // continuous push read as a jump. Starting with the shot makes every
@@ -360,6 +538,72 @@
       scan: Math.floor(elapsed * 4) % (SCREEN.h + 8) - 4,
       glow: reduced ? 1 : 0.5 + 0.5 * Math.sin(elapsed * 1.7),
       tube: reduced ? 1 : 0.5 + 0.5 * Math.sin(elapsed * 0.9 + 1),
+    };
+  }
+
+  // --- the feed -----------------------------------------------------------
+  // What the tube says NOW: the tail of the run's own feed.log, which the
+  // snapshot has been carrying all along — tool calls, thoughts, the reviewer's
+  // diff hunks, `{t, text, src}` a line. The room does not interpret a line and
+  // does not colour it by meaning; it draws it, the way a terminal would.
+  //
+  // Four rows of sixteen characters is what a 68 px tube holds at a four-pixel
+  // advance, so a line has to earn its width. Three steps, in this order:
+  //
+  //   the leading marker comes off — the log's own source glyphs are not
+  //     letters, and the 3x5 mark drawn beside the row in the crew tint says the
+  //     same thing in three pixels
+  //   look-alikes normalise — an em dash IS a hyphen at this size, a backslash
+  //     is a slash, a curly quote is a quote; the face carries one of each
+  //   a path collapses to its basename, but only if the line does not otherwise
+  //     fit — EDIT SRC/INVOICES/EXPORT.TS becomes EDIT EXPORT.TS, because the
+  //     file name is the part somebody three metres away needs and a
+  //     head-truncated path is the one part it would lose
+  //
+  // and only then is what is left cut. Uppercase throughout: the face has no
+  // lowercase, and that IS the terminal look rather than a compromise with it.
+  const FEED_TAIL = 8;              // carried in the view
+  const FEED_ROWS = 4;              // and drawn on the tube
+  const FEED_MARK = 3;              // the source mark's cell, at the left edge
+  const FEED_W = SCREEN.w - FEED_MARK - 1;
+  const FEED_CELLS = cells(SMALL, FEED_W);
+  const FEED_TOP = 12;              // under the stage word and its rule
+  const FEED_PITCH = 6;             // five rows of glyph, one of air
+  // A row a step, not a pixel a step: this is a terminal, and a terminal
+  // scrolls by lines. 120 ms is fast enough that a burst of four lines is one
+  // movement rather than four events.
+  const SCROLL_MS = 120;
+  // And the newest line arrives a character at a time, at about the rate the
+  // hands beside it are working. Pure arithmetic on how long ago the line
+  // landed, so nothing can show a character before its second.
+  const REVEAL_CPS = 28;
+  const revealed = (chars, since) =>
+    Math.max(0, Math.min(chars, Math.floor(Math.max(0, since) * REVEAL_CPS)));
+
+  const MARKER = /^[^\x20-\x7e]+\s*/;
+  const LOOKALIKE = {
+    '—': '-', '–': '-', '−': '-', '·': '.', '•': '.',
+    '…': '.', '\\': '/', '`': '\'', '‘': '\'', '’': '\'',
+    '“': '"', '”': '"',
+  };
+  const LOOKALIKES = /[—–−·•…\\`‘’“”]/g;
+  const basename = (str) => str.replace(/\S*\/\S*/g, (token) =>
+    token.slice(token.lastIndexOf('/') + 1) || token);
+
+  function lineOf(entry) {
+    const raw = entry && typeof entry === 'object' ? entry : {};
+    let text = String(raw.text || '').replace(MARKER, '').toUpperCase()
+      .replace(LOOKALIKES, (ch) => LOOKALIKE[ch]);
+    if (widthOf(SMALL, text) > FEED_W) text = basename(text);
+    return {
+      // The timestamp is the line's identity rather than something drawn: it is
+      // how the next snapshot tells one appended line from the forty-seven it
+      // re-sent, and two runs of `npm run gate` are the same words at different
+      // seconds.
+      t: String(raw.t || ''),
+      src: String(raw.src || ''),
+      mark: markOf(String(raw.src || '')),
+      text: fit(SMALL, text, FEED_W),
     };
   }
 
@@ -389,6 +633,10 @@
       // The monitor's headline. A run asking for a human says so instead of
       // naming a stage nobody is working on.
       word: alarm ? 'NEEDS INPUT' : (run.floorName || ladder[0]).toUpperCase(),
+      // And the work itself, in the run's own words. A few more lines than the
+      // tube shows, so the room can tell an appended line from a re-sent one
+      // across two snapshots.
+      feed: (Array.isArray(run.feed) ? run.feed : []).slice(-FEED_TAIL).map(lineOf),
     };
   }
 
@@ -478,6 +726,25 @@
     let stamp = 0;            // the frame time this room last drew at, in seconds
     let startedAt = null;     // and the one the hold on screen began at
 
+    // The tube's own state, and the only thing in this room that is not a pure
+    // function of the clock: lines ARRIVE. `rows` is what is on the screen,
+    // `queue` is what has landed and is still scrolling in a row at a time, and
+    // `mostRecent` is how the next snapshot tells the one appended line from the
+    // forty-seven it re-sent.
+    //
+    // Two anchors, both on the frame clock and neither on the shot's origin,
+    // because a snapshot can append a line at any second of a hold and the
+    // reveal has to start THERE. What they must never do is move the hands: the
+    // burst schedule is arithmetic on `elapsed` from startedAt, and an arriving
+    // line can force the hands to be working (they are typing what appears) but
+    // cannot re-time a single pose of the cycle they are on.
+    let rows = [];
+    let queue = [];
+    let mostRecent = '';
+    let feedRun = null;
+    let stepAt = 0;           // the frame time the next row may scroll in at
+    let revealAt = 0;         // and the one the newest row began revealing at
+
     // Ready means every file this room decided to ask for is in AND the roster
     // has said who there is to ask for. Counting alone would light the room the
     // moment the furniture landed, which on a fast disk is before crew.json has
@@ -523,9 +790,11 @@
     for (const key of Object.keys(PROPS)) art[key] = image('assets/room/' + PROPS[key]);
 
     // Who there is to draw. Every set the roster names is loaded up front
-    // rather than when its owner's run arrives: a set is six 64x64 sprites, the
-    // whole roster is smaller than one of the desks, and a room that fetched a
-    // face mid-dive would show an empty chair for as long as that took. The
+    // rather than when its owner's run arrives: a set is seventeen 64x64
+    // sprites of a dozen colours each, the whole roster is still smaller than
+    // one of the desks, and a room that fetched a face mid-dive would show an
+    // empty chair for as long as that took. Loading only the cycle in play
+    // would trade that for an empty chair the moment a run blocks. The
     // server has already dropped any set whose sprites are not on the disk, so
     // what arrives here is a list of people this room can definitely draw.
     //
@@ -625,35 +894,39 @@
       }
     }
 
+    // One cell of a face, or one of the two source marks — the same pixel loop
+    // either way, because a mark IS a glyph that no string can spell.
+    function shape(rows, x, y) {
+      for (let r = 0; r < rows.length; r++) {
+        const line = rows[r];
+        for (let c = 0; c < line.length; c++) {
+          if (line[c] === '#') ctx.fillRect(x + c, y + r, 1, 1);
+        }
+      }
+    }
+
     function text(face, str, x, y, colour, alpha) {
       const rows = face.rows;
       ctx.globalAlpha = alpha === undefined ? 1 : alpha;
       ctx.fillStyle = colour;
       let cursor = Math.round(x);
       for (const ch of str) {
-        const shape = rows[ch] || rows[' '];
-        for (let r = 0; r < shape.length; r++) {
-          const line = shape[r];
-          for (let c = 0; c < line.length; c++) {
-            if (line[c] === '#') ctx.fillRect(cursor + c, Math.round(y) + r, 1, 1);
-          }
-        }
+        shape(rows[ch] || rows[' '], cursor, Math.round(y));
         cursor += face.pitch;
       }
       ctx.globalAlpha = 1;
     }
 
+    function mark(name, x, y, colour, alpha) {
+      if (!MARKS[name]) return;
+      ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+      ctx.fillStyle = colour;
+      shape(MARKS[name], Math.round(x), Math.round(y));
+      ctx.globalAlpha = 1;
+    }
+
     const centred = (face, str, cx, y, colour, alpha) =>
       text(face, str, cx - Math.floor(widthOf(face, str) / 2), y, colour, alpha);
-
-    // A string too long for the space it has, cut where it stops fitting. The
-    // room would rather say VALORYX-GRAPHQL. than draw four unreadable pixels
-    // per letter.
-    function fit(face, str, room) {
-      if (widthOf(face, str) <= room) return str;
-      const max = Math.max(1, Math.floor((room + 1) / face.pitch));
-      return str.slice(0, Math.max(1, max - 1)) + '.';
-    }
 
     // A ticket id is a name, so it is drawn whole wherever it can be: in the
     // big face if it fits, and only then dropped to the small one. Losing half
@@ -813,6 +1086,107 @@
       }
     }
 
+    // What the snapshot brought. Called from paint, so it is cheap and
+    // idempotent by construction: with nothing new the loop below finds the last
+    // line it already has and queues nothing.
+    const keyOf = (row) => row.t + ' ' + row.src + ' ' + row.text;
+
+    function feedIn(v, at) {
+      const lines = v.feed;
+      if (feedRun !== v.id) {
+        // A new run is a new screen. Whatever the last one was saying goes,
+        // including a reveal that was half way through a sentence nobody on this
+        // ticket wrote.
+        feedRun = v.id;
+        rows = lines.slice(-FEED_ROWS);
+        queue = [];
+        mostRecent = lines.length ? keyOf(lines[lines.length - 1]) : '';
+        revealAt = at;
+        stepAt = at;
+        return;
+      }
+      if (!lines.length) return;
+      let from = Math.max(0, lines.length - FEED_ROWS);
+      if (mostRecent) {
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (keyOf(lines[i]) === mostRecent) { from = i + 1; break; }
+        }
+      }
+      for (let i = from; i < lines.length; i++) queue.push(lines[i]);
+      if (!queue.length) return;
+      queue = queue.slice(-FEED_TAIL);
+      mostRecent = keyOf(queue[queue.length - 1]);
+      if (stepAt < at) stepAt = at;
+    }
+
+    // One row per step. The clock is the frame clock, so a tab that was hidden
+    // for a minute catches up over the queue rather than over the minute.
+    function feedStep(at) {
+      while (queue.length && at >= stepAt) {
+        rows.push(queue.shift());
+        if (rows.length > FEED_ROWS) rows.shift();
+        revealAt = stepAt;
+        stepAt += SCROLL_MS / 1000;
+      }
+    }
+
+    // How much of the newest line has arrived. A still room shows it whole: a
+    // reveal frozen half way through a word is a broken screen, not a still one.
+    function revealOf(row) {
+      if (still.matches) return row.text.length;
+      return revealed(row.text.length, stamp - revealAt);
+    }
+
+    // And whether one is still arriving, which is what tells the hands to work.
+    function revealing() {
+      if (!rows.length) return false;
+      const row = rows[rows.length - 1];
+      return revealOf(row) < row.text.length;
+    }
+
+    // The log on the tube: four rows of the run's own feed, newest at the
+    // bottom, older rows stepping back down the cold ramp so the eye lands on
+    // the newest without anything blinking to say so. Bottom-aligned, which is
+    // what puts the newest line and the cursor in the same place whether there
+    // are four lines or one.
+    //
+    // No colour means anything here. Red is an alarm in this palette and green
+    // is a run that shipped, so a `-` and a `+` in a diff hunk are text and
+    // nothing more; the only tinted thing in the block is the source mark, in
+    // the crew colour the lamp already uses.
+    function log(v, beat) {
+      const top = SCREEN.y + FEED_TOP;
+      const bottom = top + (FEED_ROWS - 1) * FEED_PITCH;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const slot = FEED_ROWS - rows.length + i;
+        const y = top + slot * FEED_PITCH;
+        const newest = i === rows.length - 1;
+        const shown = newest ? revealOf(row) : row.text.length;
+        // The mark is the only tinted thing in the block, and it steps back with
+        // its row so four crew-coloured dots do not flatten the ramp the text
+        // makes.
+        mark(row.mark, SCREEN.x, y, v.crew, 0.55 + 0.15 * slot);
+        text(SMALL, row.text.slice(0, shown), SCREEN.x + FEED_MARK + 1, y,
+          FEED_INK[slot], 1);
+        if (newest) {
+          caret(SCREEN.x + FEED_MARK + 1 + shown * SMALL.pitch, y, beat,
+            shown < row.text.length);
+        }
+      }
+      // A run that has said nothing yet — a fixture with no feed.log, a run three
+      // seconds old — gets the stage word and a cursor waiting under it. Never a
+      // black tube, and never the last line of whoever was here before.
+      if (!rows.length) caret(SCREEN.x + FEED_MARK + 1, bottom, beat, false);
+    }
+
+    // Solid while a line is arriving, blinking once it has landed: that is what
+    // a terminal does, and it is the one thing on this screen that says the run
+    // is still going while nothing else changes.
+    function caret(x, y, beat, arriving) {
+      if (arriving || beat.blink) box(x, y, 1, SMALL.h, PALE, 0.9);
+    }
+
     // The one screen in the room, drawn rather than photographed: a chunky
     // bezel this file owns to the pixel, because the type inside it is the
     // whole reason there is a room at all.
@@ -836,21 +1210,31 @@
       const bright = 0.86 + 0.14 * beat.glow;
       const room = SCREEN.w - 4;
       if (v.alarm) {
+        // Untouched, on purpose. This is the one screen in the room that has to
+        // be read from three metres by somebody who has just walked in, and its
+        // four lines already use every row: NEEDS and INPUT are seven pixels
+        // each, the id and the repo five, and what is left under the repo is two
+        // rows — three short of one line of the small face. So the log does not
+        // appear here. A blocked run's work is what it said before it stopped,
+        // and the ticker along the bottom of the wall is still saying it.
         centred(BIG, 'NEEDS', cx, SCREEN.y + 4, ALARM, bright);
         centred(BIG, 'INPUT', cx, SCREEN.y + 13, ALARM, bright);
         centred(SMALL, fit(SMALL, v.id, room), cx, SCREEN.y + 24, GLOW, 0.95);
         centred(SMALL, fit(SMALL, v.repo, room), cx, SCREEN.y + 31, EMBER, 0.8);
       } else {
-        const id = idLine(v.id, room);
+        // The stage, then the work. The id and the repo used to sit under the
+        // headline and they are gone from here: the id is already on the wall
+        // plate and on the tower's own sign out in the city, said twice, while
+        // the four rows of feed under this line were said nowhere at all.
         centred(BIG, fit(BIG, v.word, room), cx, SCREEN.y + 4, PALE, bright);
-        centred(id.face, id.text, cx, SCREEN.y + 14 + (id.face === SMALL ? 1 : 0), tint, 0.95);
-        centred(SMALL, fit(SMALL, v.repo, room), cx, SCREEN.y + 25, MINT, 0.8);
-        // The line under it is the work itself: a row of ticks that fills to
-        // the floor this run has reached, so the screen and the wall plate say
-        // the same thing twice.
+        box(SCREEN.x + 2, SCREEN.y + 11, SCREEN.w - 4, 1, tint, 0.3);
+        log(v, beat);
+        // The last row is the progress the wall plate reports too — a row of
+        // ticks that fills to the floor this run has reached. It stays because
+        // it fits under four rows of log, in the two pixels the log does not use.
         const done = Math.round(((v.floor + 1) / v.floors) * 15);
         for (let i = 0; i < 15; i++) {
-          box(SCREEN.x + 4 + i * 4, SCREEN.y + 33, 3, 2, i < done ? tint : STEEL, i < done ? 0.8 : 0.6);
+          box(SCREEN.x + 4 + i * 4, SCREEN.y + 35, 3, 2, i < done ? tint : STEEL, i < done ? 0.8 : 0.6);
         }
       }
       // Scanlines, at the room's own scale: one dark row in three.
@@ -910,20 +1294,41 @@
     // what the wide city does either — out there the blocked car keeps its
     // light. The alarm is loud on the alert sources (the monitor, the wash it
     // throws) and nowhere else; the jacket stays the actor's own.
-    function worker(v, beat) {
+    function worker(v, beat, typing) {
       // Whose desk this is. A set the roster named but that is not in hand —
       // which only happens before the roster answers — falls back rather than
       // leaving the chair empty.
-      const who = cast[setOf(crew, v.ownerKey)] || cast[FALLBACK];
+      let set = setOf(crew, v.ownerKey);
+      if (!cast[set]) set = FALLBACK;
+      const who = cast[set];
       if (!who) return;
-      const frames = v.alarm
-        ? [who['wait-1'], who['wait-2']]
-        : [who['type-0'], who['type-1'], who['type-2'], who['type-3']];
-      const img = frames[v.alarm ? beat.hands : beat.typing % frames.length];
-      if (!img.complete || !img.naturalWidth) return;
+      const bands = bandsOf(set, beat, v.alarm, typing);
+      const head = who[bands.head];
+      const body = who[bands.body];
+      if (!head || !body) return;
+      if (!head.complete || !head.naturalWidth || !body.complete || !body.naturalWidth) return;
       const tint = tintOf(v);
+      // The figure, in two bands. Everything above the split is the base at
+      // every frame of every cycle; only the band below it is the cycle's own.
+      //
+      // This is the whole answer to "the movement feels wrong". Ask a generator
+      // to move two hands and it regenerates the whole picture: between two
+      // consecutive poses of the four-frame loop this replaced, 10-21 % of the
+      // sprite's pixels changed — the hood, the headphones, the shoulders and
+      // the jacket outline all reflowing — while the hands themselves barely
+      // travelled. A person who jitters in place three times a second while
+      // their hands hold still is not typing, and no cadence fixes that. So the
+      // still parts are made still HERE, where it costs nothing, and the frames
+      // are spent entirely on the band that is supposed to move.
+      //
+      // The band is CLEARED before it is drawn rather than drawn over: the base
+      // is wider than some frames in places, and a base pixel left showing
+      // through a frame's transparent one is a double outline.
       tintCtx.clearRect(0, 0, 64, 64);
-      tintCtx.drawImage(img, 0, 0);
+      tintCtx.drawImage(head, 0, 0);
+      tintCtx.clearRect(0, bands.split, 64, 64 - bands.split);
+      tintCtx.drawImage(body, 0, bands.split, 64, 64 - bands.split,
+        0, bands.split, 64, 64 - bands.split);
       tintCtx.globalCompositeOperation = 'source-atop';
       // A wash light enough that the figure keeps its own shading — the tint
       // says which model this is, it does not repaint the person.
@@ -936,16 +1341,12 @@
       tintCtx.fillRect(48, 0, 16, 64);
       tintCtx.globalAlpha = 1;
       tintCtx.globalCompositeOperation = 'source-over';
-      // The shadow they sit in, then the figure. Keep the head and shoulders
-      // planted while the lower arm/keyboard band drops one pixel on the key
-      // beat; this reads at 4x without making the whole worker bob.
+      // The shadow they sit in, then the figure, in one piece and on one origin.
+      // The band used to be drawn a pixel lower on alternate beats to fake some
+      // travel the four frames did not have; the eight carry their own, and two
+      // sources of motion on the same hands read as a twitch.
       box(WORKER.x + 2, DESK_Y - 3, 60, 4, NIGHT, 0.45);
-      const split = 40;
-      const key = v.alarm ? beat.hands : beat.typing & 1;
-      ctx.drawImage(tintPad, 0, 0, 64, split,
-        WORKER.x, WORKER.y, 64, split);
-      ctx.drawImage(tintPad, 0, split, 64, 64 - split,
-        WORKER.x, WORKER.y + split + key, 64, 64 - split);
+      ctx.drawImage(tintPad, WORKER.x, WORKER.y);
     }
 
     // The near plane. Nothing here is a fact — it is the room's own depth, and
@@ -990,7 +1391,10 @@
     // while the room is up, and both change what the plate and the nameplate
     // say — nothing else in here does.
     function bakePlanes(v) {
-      const key = JSON.stringify(v);
+      // The feed is left out of the key. It lives on the tube, which is
+      // repainted every frame anyway, and a snapshot that only appended one line
+      // must not redraw forty rectangles of wall grain to show it.
+      const key = JSON.stringify({ ...v, feed: null });
       if (key === baked) return;
       baked = key;
       bake(plateBack, backWall);
@@ -1023,6 +1427,12 @@
       stamp = at === undefined ? nowOf() : at;
       if (startedAt === null) startedAt = stamp;
       const beat = beatAt(stamp, still.matches, startedAt);
+      // What the snapshot brought, then what the clock has done with it. Both
+      // read the frame clock and neither touches the beat: the hands are the
+      // beat's business and an arriving line may tell them to be working, never
+      // to be somewhere else in their cycle.
+      feedIn(view, stamp);
+      feedStep(stamp);
       bakePlanes(view);
       ctx.clearRect(0, 0, W, H);
       ctx.drawImage(plateBack, 0, 0);
@@ -1032,7 +1442,7 @@
       floorLight(view, beat);
       lamp(view, beat);
       monitor(view, beat);
-      worker(view, beat);
+      worker(view, beat, revealing());
       ctx.drawImage(plateFront, 0, 0);
       present(beat);
     }
@@ -1121,7 +1531,11 @@
   }
 
   return {
-    create, viewOf, tintOf, beatAt, snap, widthOf, setOf, labelOf, fileOf,
-    BIG, SMALL, W, H, LOCK, ACTOR, PROPS, FRAMES, FALLBACK, TYPE_MS, TYPE_FRAMES,
+    create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
+    fileOf, splitOf, bandsOf, lineOf, markOf, burstAt, revealed,
+    BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
+    TYPE_SET, WAIT_SET, FALLBACK, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
+    BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
+    FEED_MARK, FEED_TOP, FEED_PITCH, SCROLL_MS, REVEAL_CPS,
   };
 }));
