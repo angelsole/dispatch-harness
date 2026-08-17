@@ -620,6 +620,11 @@
   // belongs to the establishing shot it is returning to.
   const shotOf = (phase) => (phase === 'in' || phase === 'room' ? 'room' : 'establishing');
 
+  // The reel with the city's answer folded into it. A dive needs a lit floor
+  // to go through: no window, no dive, and the wide shot simply holds — which
+  // is the right film for a wall with nothing running on it.
+  const reelWith = (step, window) => (window ? step : { phase: 'wide', u: 0 });
+
   // The camera, as one number. The zoom is GEOMETRIC — every second multiplies
   // the magnification rather than adding to it, which is what a lens does —
   // with the house cubic in-out on top of it, so the move leaves the skyline
@@ -2122,7 +2127,7 @@
           this.dived = this.pickWindow() || this.middleWindow();
         }
         const dived = this.dived && this.dived !== 'none' ? this.dived : null;
-        if (!dived) step = { phase: step.phase, u: 0 };
+        step = reelWith(step, dived);
         this.u = step.u;
 
         // What the page is told, and only when it changes — said BEFORE the
@@ -2373,8 +2378,8 @@
   return {
     create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
     walkerAt, vehicleAt, ramp, towerLayout, blockBox, massesOf,
-    storeyAt, windowAt, ease, reelPlan, reelAt, shotOf, poseAt, roomBoxAt,
-    apertureAt,
+    storeyAt, baysOf, windowAt, ease, reelPlan, reelAt, shotOf, reelWith,
+    poseAt, roomBoxAt, apertureAt,
     TOWER_MASSES, FORM_MASSES, KIND_MASSES,
   };
 }));
