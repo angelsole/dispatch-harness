@@ -269,8 +269,12 @@
   // the room's own worker, which is who this room drew for everybody until now.
   //
   // The set name is checked against the shape the server's asset route will
-  // actually serve, so a typo in a hand-edited crew.json costs that owner their
-  // character rather than taking the whole room down with a 404.
+  // actually serve. That is a shape check and nothing more — `crew/angl` looks
+  // exactly like `crew/angel` — so it is the SERVER that decides a set exists,
+  // by putting every frame of it through the asset guard before the roster goes
+  // over the wire. This is the near half of the same fence: a roster from
+  // anywhere else cannot talk the room into requesting a path the route would
+  // refuse.
   const SET = /^[A-Za-z0-9][A-Za-z0-9_-]*(\/[A-Za-z0-9][A-Za-z0-9_-]*)?$/;
   function setOf(crew, owner) {
     const key = String(owner || '').trim().toLowerCase();
@@ -464,7 +468,7 @@
     let crew = {};              // crew.json, once it has answered
     let roster = false;         // whether it has answered at all, either way
     let expected = 0;           // files asked for; the roster adds to this once
-    let loaded = 0;
+    let answered = 0;           // and how many have come back, either way
     let ready = false;
     let broken = false;
     let view = null;
@@ -479,23 +483,38 @@
     // moment the furniture landed, which on a fast disk is before crew.json has
     // even come back: a lit room with nobody at the desk.
     function settle() {
-      if (ready || !roster || loaded < expected) return;
+      if (ready || broken || !roster || answered < expected) return;
       ready = true;
       canvas.dataset.ready = '1';
       paint();
     }
 
-    function image(src) {
+    // `set` names the character set this file belongs to, and is left off for
+    // the furniture. Every file answers exactly once, whether it arrived or
+    // not, so dropping a set never leaves the count waiting on it.
+    function image(src, set) {
       const img = new Image();
       expected++;
-      img.addEventListener('load', () => { loaded++; settle(); });
-      // A missing sprite is a room that never lights, not a broken page: the
-      // wide city underneath is untouched, the loop stops rather than spinning
-      // on a room that can never draw, and the console says so once.
+      const answer = () => { answered++; settle(); };
+      img.addEventListener('load', answer);
       img.addEventListener('error', () => {
-        broken = true;
-        stop();
         console.error('room: cannot load ' + img.src);
+        // The furniture, and the set every unknown owner falls back to, ARE the
+        // room: without them there is nothing to draw, so the loop stops rather
+        // than spinning on a room that can never draw and the wide city
+        // underneath is left untouched.
+        if (set === undefined || set === FALLBACK) {
+          broken = true;
+          stop();
+          return;
+        }
+        // A crew set is one person. Drop it and its owners sit down as the
+        // worker this room drew for everybody before anyone had a face — an
+        // empty chair for one dispatcher is not worth the whole room. The
+        // server only ever puts a complete set on the roster, so reaching here
+        // means the file went missing while the wall was up.
+        delete cast[set];
+        answer();
       });
       img.src = src;
       return img;
@@ -503,10 +522,12 @@
 
     for (const key of Object.keys(PROPS)) art[key] = image('assets/room/' + PROPS[key]);
 
-    // Who there is to draw. Every set crew.json names is loaded up front rather
-    // than when its owner's run arrives: a set is six 64x64 sprites, the whole
-    // roster is smaller than one of the desks, and a room that fetched a face
-    // mid-dive would show an empty chair for as long as that took.
+    // Who there is to draw. Every set the roster names is loaded up front
+    // rather than when its owner's run arrives: a set is six 64x64 sprites, the
+    // whole roster is smaller than one of the desks, and a room that fetched a
+    // face mid-dive would show an empty chair for as long as that took. The
+    // server has already dropped any set whose sprites are not on the disk, so
+    // what arrives here is a list of people this room can definitely draw.
     //
     // A wall that cannot read crew.json is not a broken wall. It is a wall
     // where everybody is the worker this room drew before anyone had a face, so
@@ -518,7 +539,7 @@
       for (const owner of Object.keys(crew)) sets.add(setOf(crew, owner));
       for (const set of sets) {
         cast[set] = {};
-        for (const frame of FRAMES) cast[set][frame] = image(fileOf(set, frame));
+        for (const frame of FRAMES) cast[set][frame] = image(fileOf(set, frame), set);
       }
       roster = true;
       settle();

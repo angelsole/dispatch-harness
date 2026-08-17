@@ -128,9 +128,15 @@ itself, not a tolerance any of these had spare.
 
 ## How they are served
 
-`wall/crew.json` is a named row in `wall/server.js`'s static table, beside
-`room.js` — it is a fact about this checkout rather than a sprite, so it does
-not come down the asset route. Everything below it does.
+`wall/crew.json` has its own route in `wall/server.js`. It is a fact about this
+checkout rather than a sprite, so it does not come down the asset route — and it
+is computed rather than read, because the roster the room is handed is the
+authored file filtered by what is on the disk: every frame of every set it names
+goes through the asset guard first, and an entry that does not survive is served
+as `room`. A typo like `crew/angl` passes any syntax check `crew/angel` passes,
+so a room that took the file at its word would ask for six sprites that are not
+there and hold an empty chair. Everything below this line comes down the asset
+route.
 
 `wall/server.js` has one route for this directory, and it is fenced on all four
 sides: the path must decode cleanly, every segment must be an ordinary name (no

@@ -2677,13 +2677,14 @@ check "assets: the room's sprites are served" \
   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" "200"
 check "assets: and so is every crew set the roster names" \
   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/crew/ran/type-0.png")" "200"
-# The roster itself is a named static row, not an asset: the room fetches it
-# before it decides which sprites to ask for at all.
+# The roster is its own route, not an asset: the room fetches it before it
+# decides which sprites to ask for at all.
 check "crew: the roster is served as json" \
   "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$PORT/crew.json")" \
   "application/json; charset=utf-8"
-check "crew: and it is the file this repo committed" \
-  "$(curl -s "http://127.0.0.1:$PORT/crew.json" | jq -r '.reinier.set')" "room"
+check "crew: and it is the roster this repo committed" \
+  "$(curl -s "http://127.0.0.1:$PORT/crew.json" | jq -r '[.angel.set, .reinier.set] | join(",")')" \
+  "crew/angel,room"
 check "assets: as image/png" \
   "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" \
   "image/png"
@@ -2746,6 +2747,56 @@ else
     "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$FENCE_PORT/assets/room/probe.json")" \
     "application/json; charset=utf-8"
 fi
+
+# A set that is not there. `crew/angl` passes every syntax check `crew/angel`
+# does, so a roster taken at its word would have the room ask for six sprites
+# that do not exist, take six 404s, and hold an empty chair — one typo in a
+# hand-edited file costing the whole room its worker. The server is what
+# settles it: every frame goes through the asset guard before the roster is
+# served, and an entry that does not survive keeps its owner's name and gets the
+# room's own worker. Asked of a THIRD throwaway tree, because proving it needs a
+# broken crew.json and a half-deleted set, and the committed tree is only read.
+GHOST="$ROOT/ghost"
+mkdir -p "$GHOST"
+cp "$SRC/wall.sh" "$GHOST/wall.sh"
+cp -R "$SRC/wall" "$GHOST/wall"
+cat > "$GHOST/wall/crew.json" <<'JSON'
+{
+  "angel": { "set": "crew/angel", "label": "ANGEL" },
+  "typo": { "set": "crew/angl", "label": "TYPO" },
+  "gutted": { "set": "crew/ran", "label": "GUTTED" },
+  "reinier": { "set": "room", "label": "REINIER" }
+}
+JSON
+# `gutted` names a set that exists and is one frame short of complete, which is
+# what a half-finished commit looks like and what a directory listing alone
+# would wave through.
+rm "$GHOST/wall/assets/crew/ran/wait-2.png"
+GHOST_ROSTER="$(node -e '
+  const S = require(process.argv[1]);
+  const R = require(process.argv[2]);
+  const served = S.roster();
+  console.log(JSON.stringify({
+    // What goes over the wire says what the room will actually draw...
+    whole: served.angel.set,
+    typo: served.typo.set,
+    gutted: served.gutted.set,
+    // ...and the names survive losing the faces.
+    labels: [served.typo.label, served.gutted.label].join(","),
+    // ...which is what the room then picks, for real.
+    draws: [R.setOf(served, "typo"), R.setOf(served, "gutted")].join(","),
+  }));
+' "$GHOST/wall/server.js" "$GHOST/wall/room.js" 2>&1)"
+ghost_of() { printf '%s' "$GHOST_ROSTER" | jq -r ".$1" 2>/dev/null; }
+check "crew: a set that is all there is served as itself" "$(ghost_of whole)" "crew/angel"
+check "crew: a set that is not there at all falls back to the room worker" \
+  "$(ghost_of typo)" "room"
+check "crew: and so does one that is a frame short of complete" \
+  "$(ghost_of gutted)" "room"
+check "crew: losing the face never costs the dispatcher their name" \
+  "$(ghost_of labels)" "TYPO,GUTTED"
+check "crew: which is the set the room then draws for both of them" \
+  "$(ghost_of draws)" "room,room"
 
 echo "== wall: crew is ambient, never furniture =="
 check "owner: read from the run's owner file"   "$(state_of OLYX-1631 owner)" "angel"

@@ -27,6 +27,12 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
+// The room's own frame names, so the roster below can be checked against
+// exactly the files the renderer will ask for rather than against a second list
+// that drifts from it. Required, not run: room.js is a UMD and hands over its
+// naming when there is no window to attach to.
+const ROOM = require('./room.js');
+
 // `|| default` would swallow a deliberate 0 — and --port 0 (let the OS pick a
 // free port) is how a second wall, and the test suite, stay out of each other's
 // way.
@@ -902,10 +908,6 @@ const STATIC = {
   // directory is the path traversal this server has never had.
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
   '/room.js': ['room.js', 'text/javascript; charset=utf-8'],
-  // Who sits at the desk, by owner. A committed file rather than a payload
-  // field: the sets it names are committed sprites, so which one an owner gets
-  // is a fact about this checkout and not about the runs on this disk.
-  '/crew.json': ['crew.json', 'application/json; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
 };
 
@@ -952,6 +954,32 @@ function assetOf(url) {
   const real = realPath(full);
   if (!real || !real.startsWith(ASSETS + path.sep)) return '';
   return real;
+}
+
+// Who sits at the desk, by owner — and only the ones this disk can actually
+// draw. wall/crew.json is the authored roster; what goes over the wire is the
+// part of it the room is allowed to believe.
+//
+// The check is not that the name looks like a path. `crew/angl` looks exactly
+// like `crew/angel`, and a room that took it at its word would ask for six
+// sprites that are not there, take six 404s, and hold an empty chair — which is
+// a typo in a hand-edited file costing the whole room its worker. So every
+// frame the renderer will ask for is put through the SAME guard the sprites
+// themselves come down, and an entry whose set does not survive that keeps its
+// owner's name and loses their character: a missing set is one person, never
+// the room.
+const CREW_FILE = path.join(HERE, 'crew.json');
+function roster() {
+  const table = readJSON(CREW_FILE) || {};
+  const out = {};
+  for (const owner of Object.keys(table)) {
+    const entry = table[owner];
+    if (!entry || typeof entry !== 'object') continue;
+    const set = ROOM.setOf(table, owner);
+    const whole = ROOM.FRAMES.every((frame) => assetOf('/' + ROOM.fileOf(set, frame)) !== '');
+    out[owner] = { ...entry, set: whole ? set : ROOM.FALLBACK };
+  }
+  return out;
 }
 
 function serveAsset(res, file, type) {
@@ -1061,6 +1089,12 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(payload()));
     }
+    // Computed rather than a static row: the roster is crew.json filtered by
+    // what is on this disk, and the disk can change under a wall that is up.
+    if (url === '/crew.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify(roster()));
+    }
     const entry = STATIC[url];
     if (entry) return serveStatic(res, entry);
     const asset = assetOf(url);
@@ -1103,5 +1137,5 @@ if (require.main === module) {
 module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
   shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
-  assetOf, ASSETS,
+  assetOf, ASSETS, roster,
 };
