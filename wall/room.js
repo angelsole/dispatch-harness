@@ -230,11 +230,13 @@
   const widthOf = (face, text) => (text.length ? text.length * face.pitch - 1 : 0);
 
   // --- the assets ---------------------------------------------------------
-  // Every file here is committed under wall/assets/room, listed in
+  // Every file here is committed under wall/assets, listed in
   // wall/assets/MANIFEST.md with the hash it was committed at, and quantised to
   // the same 32 colours this file draws with. Nothing is fetched from anywhere
   // else; the room simply does not draw until they are all in.
-  const SPRITES = {
+  //
+  // The furniture is one set and every run needs all of it.
+  const PROPS = {
     wall: 'wall.png',
     floor: 'floor.png',
     windowFrame: 'window.png',
@@ -242,16 +244,54 @@
     lamp: 'lamp.png',
     plant: 'plant.png',
     shelf: 'shelf.png',
-    type0: 'worker-type-0.png',
-    type1: 'worker-type-1.png',
-    type2: 'worker-type-2.png',
-    type3: 'worker-type-3.png',
-    // The waiting loop starts at the frame where the hands come off the keys:
-    // the animate job's own frame 0 is the typing pose it was given, and a
-    // worker who has stopped has to look like one from three metres.
-    wait1: 'worker-wait-1.png',
-    wait2: 'worker-wait-2.png',
   };
+
+  // The person at the desk is not a sprite but a SET of six frames, and which
+  // set that is depends on whose run this is — the one fact in this room that
+  // is about a human rather than about the work. Every set under
+  // wall/assets/crew/ names its frames the same way; the room's own worker
+  // predates that directory and keeps the `worker-` prefix its files were
+  // committed with. Its base still is worker-type-0.png, which is why it has no
+  // separate base.png the way a crew set does.
+  //
+  // The waiting pair starts at the frame where the hands come off the keys: the
+  // animate job's own frame 0 is the typing pose it was given, and a worker who
+  // has stopped has to look like one from three metres.
+  const FRAMES = ['type-0', 'type-1', 'type-2', 'type-3', 'wait-1', 'wait-2'];
+  const PREFIX = { room: 'worker-' };
+  const FALLBACK = 'room';
+  const fileOf = (set, frame) => 'assets/' + set + '/' + (PREFIX[set] || '') + frame + '.png';
+
+  // Whose character sits at the desk. The server already lower-cases an owner
+  // into a lane key; this lower-cases again because crew.json is written by
+  // hand and ANGEL and angel are one crew member — the same rule the wide
+  // city's crewTint has always used. An owner nobody drew a character for gets
+  // the room's own worker, which is who this room drew for everybody until now.
+  //
+  // The set name is checked against the shape the server's asset route will
+  // actually serve. That is a shape check and nothing more — `crew/angl` looks
+  // exactly like `crew/angel` — so it is the SERVER that decides a set exists,
+  // by putting every frame of it through the asset guard before the roster goes
+  // over the wire. This is the near half of the same fence: a roster from
+  // anywhere else cannot talk the room into requesting a path the route would
+  // refuse.
+  const SET = /^[A-Za-z0-9][A-Za-z0-9_-]*(\/[A-Za-z0-9][A-Za-z0-9_-]*)?$/;
+  function setOf(crew, owner) {
+    const key = String(owner || '').trim().toLowerCase();
+    const entry = crew && typeof crew === 'object' ? crew[key] : null;
+    const set = entry && typeof entry.set === 'string' ? entry.set : '';
+    return SET.test(set) ? set : FALLBACK;
+  }
+
+  // And the name that goes on the plate with them. crew.json is where a crew
+  // member's own spelling lives, so it wins over the lane key the server
+  // derived; an owner with no entry keeps the name their run dir was pinned
+  // with, and an unowned run still has nothing to say.
+  function labelOf(crew, view) {
+    const entry = crew && typeof crew === 'object' ? crew[view.ownerKey] : null;
+    const label = entry && typeof entry.label === 'string' ? entry.label : '';
+    return label || view.owner;
+  }
 
   // Where each sprite's own drawing sits inside its file, measured once off the
   // committed PNGs, so the room places the DESK rather than the desk's padding.
@@ -341,6 +381,9 @@
       workActorKey: run.workActorKey || (alarm ? 'unknown' : run.actorKey) || 'unknown',
       actor: (run.actor || '').toUpperCase(),
       owner: (run.owner || '').toUpperCase(),
+      // The same name twice, because the room says it and looks it up: the
+      // plate draws the loud one, crew.json is keyed by the quiet one.
+      ownerKey: String(run.owner || '').trim().toLowerCase(),
       crew: snap(run.crew || '#e8cfa6'),
       alarm,
       // The monitor's headline. A run asking for a human says so instead of
@@ -420,8 +463,12 @@
     const tintCtx = tintPad.getContext('2d');
     tintCtx.imageSmoothingEnabled = false;
 
-    const art = {};
-    let loaded = 0;
+    const art = {};             // the furniture, by key
+    const cast = {};            // and the people, by set name then frame name
+    let crew = {};              // crew.json, once it has answered
+    let roster = false;         // whether it has answered at all, either way
+    let expected = 0;           // files asked for; the roster adds to this once
+    let answered = 0;           // and how many have come back, either way
     let ready = false;
     let broken = false;
     let view = null;
@@ -431,27 +478,76 @@
     let stamp = 0;            // the frame time this room last drew at, in seconds
     let startedAt = null;     // and the one the hold on screen began at
 
-    for (const key of Object.keys(SPRITES)) {
-      const img = new Image();
-      art[key] = img;
-      img.addEventListener('load', () => {
-        loaded++;
-        if (loaded === Object.keys(SPRITES).length) {
-          ready = true;
-          canvas.dataset.ready = '1';
-          paint();
-        }
-      });
-      // A missing sprite is a room that never lights, not a broken page: the
-      // wide city underneath is untouched, the loop stops rather than spinning
-      // on a room that can never draw, and the console says so once.
-      img.addEventListener('error', () => {
-        broken = true;
-        stop();
-        console.error('room: cannot load ' + img.src);
-      });
-      img.src = 'assets/room/' + SPRITES[key];
+    // Ready means every file this room decided to ask for is in AND the roster
+    // has said who there is to ask for. Counting alone would light the room the
+    // moment the furniture landed, which on a fast disk is before crew.json has
+    // even come back: a lit room with nobody at the desk.
+    function settle() {
+      if (ready || broken || !roster || answered < expected) return;
+      ready = true;
+      canvas.dataset.ready = '1';
+      paint();
     }
+
+    // `set` names the character set this file belongs to, and is left off for
+    // the furniture. Every file answers exactly once, whether it arrived or
+    // not, so dropping a set never leaves the count waiting on it.
+    function image(src, set) {
+      const img = new Image();
+      expected++;
+      const answer = () => { answered++; settle(); };
+      img.addEventListener('load', answer);
+      img.addEventListener('error', () => {
+        console.error('room: cannot load ' + img.src);
+        // The furniture, and the set every unknown owner falls back to, ARE the
+        // room: without them there is nothing to draw, so the loop stops rather
+        // than spinning on a room that can never draw and the wide city
+        // underneath is left untouched.
+        if (set === undefined || set === FALLBACK) {
+          broken = true;
+          stop();
+          return;
+        }
+        // A crew set is one person. Drop it and its owners sit down as the
+        // worker this room drew for everybody before anyone had a face — an
+        // empty chair for one dispatcher is not worth the whole room. The
+        // server only ever puts a complete set on the roster, so reaching here
+        // means the file went missing while the wall was up.
+        delete cast[set];
+        answer();
+      });
+      img.src = src;
+      return img;
+    }
+
+    for (const key of Object.keys(PROPS)) art[key] = image('assets/room/' + PROPS[key]);
+
+    // Who there is to draw. Every set the roster names is loaded up front
+    // rather than when its owner's run arrives: a set is six 64x64 sprites, the
+    // whole roster is smaller than one of the desks, and a room that fetched a
+    // face mid-dive would show an empty chair for as long as that took. The
+    // server has already dropped any set whose sprites are not on the disk, so
+    // what arrives here is a list of people this room can definitely draw.
+    //
+    // A wall that cannot read crew.json is not a broken wall. It is a wall
+    // where everybody is the worker this room drew before anyone had a face, so
+    // the failure path registers the room's own set and nothing else.
+    function register(table) {
+      if (roster) return;
+      crew = table && typeof table === 'object' ? table : {};
+      const sets = new Set([FALLBACK]);
+      for (const owner of Object.keys(crew)) sets.add(setOf(crew, owner));
+      for (const set of sets) {
+        cast[set] = {};
+        for (const frame of FRAMES) cast[set][frame] = image(fileOf(set, frame), set);
+      }
+      roster = true;
+      settle();
+    }
+
+    fetch('crew.json', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(register, () => register(null));
 
     // The city outside, dealt once off a fixed seed: the same skyline every
     // time this wall opens, on every screen in the room, because a window that
@@ -802,7 +898,7 @@
         x += w + 4;
       };
       chip(v.actor, v.alarm ? BONE : ACTOR[v.actorKey] || SAGE);
-      chip(v.owner, v.crew);
+      chip(labelOf(crew, v), v.crew);
     }
 
     // Who is working, and which model they are. The tint is the run's actor
@@ -815,9 +911,14 @@
     // light. The alarm is loud on the alert sources (the monitor, the wash it
     // throws) and nowhere else; the jacket stays the actor's own.
     function worker(v, beat) {
+      // Whose desk this is. A set the roster named but that is not in hand —
+      // which only happens before the roster answers — falls back rather than
+      // leaving the chair empty.
+      const who = cast[setOf(crew, v.ownerKey)] || cast[FALLBACK];
+      if (!who) return;
       const frames = v.alarm
-        ? [art.wait1, art.wait2]
-        : [art.type0, art.type1, art.type2, art.type3];
+        ? [who['wait-1'], who['wait-2']]
+        : [who['type-0'], who['type-1'], who['type-2'], who['type-3']];
       const img = frames[v.alarm ? beat.hands : beat.typing % frames.length];
       if (!img.complete || !img.naturalWidth) return;
       const tint = tintOf(v);
@@ -1020,7 +1121,7 @@
   }
 
   return {
-    create, viewOf, tintOf, beatAt, snap, widthOf,
-    BIG, SMALL, W, H, LOCK, ACTOR, SPRITES, TYPE_MS, TYPE_FRAMES,
+    create, viewOf, tintOf, beatAt, snap, widthOf, setOf, labelOf, fileOf,
+    BIG, SMALL, W, H, LOCK, ACTOR, PROPS, FRAMES, FALLBACK, TYPE_MS, TYPE_FRAMES,
   };
 }));

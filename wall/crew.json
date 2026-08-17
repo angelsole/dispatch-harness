@@ -1,0 +1,6 @@
+{
+  "angel": { "set": "crew/angel", "label": "ANGEL" },
+  "emre": { "set": "crew/emre", "label": "EMRE" },
+  "ran": { "set": "crew/ran", "label": "RAN" },
+  "reinier": { "set": "room", "label": "REINIER" }
+}
