@@ -71,6 +71,10 @@
   // Which lit floor is worth going into, when the plate has not said: one
   // asking for a human beats one working. Nothing else is a dive.
   const DIVE_RANK = { alarm: 3, active: 2 };
+  // A stage change is a STEP up one storey: the light is on the new floor at
+  // once and comes up over this, so the eye reads a move rather than a slide
+  // and nothing on the façade is ever caught between two courses.
+  const FLOOR_STEP = 0.6;
   // The config every sprite in this world is stamped with: top-left origin, so
   // a world coordinate is the pixel the sprite lands on.
   const STAMP0 = { originX: 0, originY: 0 };
@@ -1855,6 +1859,9 @@
         S.run = run;
         if (key === S.key) return;
         S.key = key;
+        // When the stage moves the light is on the new course from this frame
+        // and comes up over FLOOR_STEP; the storey it left goes out with it.
+        S.since = this.origin + this.time.now / 1000;
         const warm = rgb(run.crew);
         // The storeys already worked through: their windows too, warm and low,
         // brightening toward the floor the job is on now. This is the progress
@@ -2255,11 +2262,15 @@
           const state = shaftAt(phase, run.age + drift, completion, S.spotted);
           const beat = run.state === 'alarm' ? phase.carAlarm
             : run.state === 'active' ? phase.car : 1;
-          const value = done ? state.car : beat;
+          // A stage change steps the light up a storey and it arrives over
+          // half a second — never a bar sliding between two floors.
+          const step = phase.still ? 1
+            : 0.4 + 0.6 * once(at - (S.since || 0), FLOOR_STEP);
+          const value = (done ? state.car : beat) * step;
           const throwOut = done ? state.scale : (S.spotted ? 1.22 : 1);
           S.root.setAlpha(done ? state.root : 1);
-          S.trail.setAlpha(state.column);
-          S.lit.setAlpha((S.spotted ? 0.66 : 0.56) + 0.3 * value);
+          S.trail.setAlpha(state.column * step);
+          S.lit.setAlpha(((S.spotted ? 0.66 : 0.56) + 0.3 * value) * step);
           S.ledge.setAlpha(0.27 * value);
           S.glow.setAlpha((S.spotted ? 0.4 : 0.3) * value);
           S.glow.setScale(S.glowBase * throwOut);
