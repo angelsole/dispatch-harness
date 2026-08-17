@@ -67,14 +67,19 @@
   --win-work: #ffc680;
   --edge: rgba(150, 195, 200, 0.45);
 
-  /* The ground floor after dark. Four signs are the whole vocabulary of this
-     street — a noodle bar, a diner, an arcade, a repair shop — and they are the
-     window colours turned up rather than a second palette: warm first, cold
-     second, nothing pink, nothing brighter than an alarm. */
+  /* The ground floor after dark. Eight signs are the whole vocabulary of this
+     street — a noodle bar, a diner, an arcade, a repair shop, a hotel, a bar, a
+     cafe and a deli — and they are the window colours turned up rather than a
+     second palette: warm first, cold second, nothing pink, nothing brighter
+     than an alarm. */
   --shop-noodle: #ff9a5e;
   --shop-diner: #ffc27d;
   --shop-arcade: #7fd4ec;
   --shop-repair: #9fe8b8;
+  --shop-hotel: #e0a23c;
+  --shop-bar: #96c3c8;
+  --shop-cafe: #e8cfa6;
+  --shop-deli: #a9d9c6;
 
   /* The lettering on that street. The page's monospace stack carries no CJK
      family, so the five glyphs this city is signed with would fall to whatever
@@ -1464,13 +1469,18 @@ body[data-idle="rest"] .rest { display: block; }
 .block[data-shop="diner"]  { --shop: var(--shop-diner); }
 .block[data-shop="arcade"] { --shop: var(--shop-arcade); }
 .block[data-shop="repair"] { --shop: var(--shop-repair); }
+.block[data-shop="hotel"]  { --shop: var(--shop-hotel); }
+.block[data-shop="bar"]    { --shop: var(--shop-bar); }
+.block[data-shop="cafe"]   { --shop: var(--shop-cafe); }
+.block[data-shop="deli"]   { --shop: var(--shop-deli); }
 
-/* And what the tube is for, in one character: 麵 noodles, 食 a place that feeds
-   you, 樂 an arcade, 修 a repair bench. A hanging vertical sign in the idiom the
-   towers already use — same tube-glow recipe as .tower__sign, at the scale of a
+/* And what the tube is for, in a word: 麵 noodles, 食 a place that feeds you,
+   樂 an arcade, 修 a repair bench — and HOTEL, BAR, CAFE, DELI, which say it in
+   the other language this street speaks. A lit sign in the idiom the towers
+   already use — same tube-glow recipe as .tower__sign, at the scale of a
    shopfront — bracketed to one end of the frontage rather than over a bay, so it
    is bounded by the building paying for it whichever way it hangs. Every
-   data-shop building gets its matching glyph; the brighter bay tube above keeps
+   data-shop building gets its matching sign; the brighter bay tube above keeps
    the established one-in-three density. */
 .block__glyph {
   display: none;
@@ -1480,13 +1490,6 @@ body[data-idle="rest"] .rest { display: block; }
      district can put up — a three-storey deck on pylons — still has roofline
      above the sign hanging on it. */
   bottom: 0.62rem;
-  writing-mode: vertical-rl;
-  font-family: var(--cjk);
-  /* Off the facade, never in rem, and capped: a wide low deck does not get a
-     billboard, and a narrow spire still gets strokes you can tell apart. The
-     floor is the point of the clamp — a character is a sign or it is texture,
-     and 0.3 of a stair tower's frontage was two and a half pixels of smear. */
-  font-size: clamp(0.56rem, var(--facade) * 0.32, 0.78rem);
   font-weight: 700;
   line-height: 1;
   padding: 0.16em 0.2em;
@@ -1501,6 +1504,27 @@ body[data-idle="rest"] .rest { display: block; }
               inset 0 0 0.4rem color-mix(in srgb, var(--shop) 22%, transparent);
   text-shadow: 0 0 0.35rem var(--shop),
                0 0 1rem color-mix(in srgb, var(--shop) 60%, transparent);
+}
+/* Which alphabet the sign is set in — and that is the whole difference between
+   the two boards. A CJK sign is one character hung DOWN the shoulder, in a face
+   the page's monospace does not carry, and its board is square. A Latin one is
+   a short word read ACROSS, in the terminal face the rest of this wall is set
+   in, on a board as wide as the word: a sign is wider than tall or it is not
+   English, and that difference along a row of frontages is the street's own
+   texture. Both are sized off the frontage they hang on rather than in rem — a
+   wide low deck does not get a billboard, and a narrow spire still gets strokes
+   you can tell apart. The floor of each clamp is the point of it: lettering is
+   a sign or it is texture, and 0.3 of a stair tower's frontage was two and a
+   half pixels of smear. */
+.block[data-script="cjk"] .block__glyph {
+  writing-mode: vertical-rl;
+  font-family: var(--cjk);
+  font-size: clamp(0.56rem, var(--facade) * 0.32, 0.78rem);
+}
+.block[data-script="latin"] .block__glyph {
+  writing-mode: horizontal-tb;
+  font-size: clamp(0.34rem, var(--facade) * 0.2, 0.5rem);
+  letter-spacing: 0.08em;
 }
 /* Which shoulder the bracket is bolted to, off the run id: a street where every
    sign hangs the same way is a wallpaper sample. */
