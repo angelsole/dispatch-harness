@@ -1004,6 +1004,19 @@
   // Written by the shot (roomShot below), cleared when it leaves.
   let pinnedRun = '';
 
+  // The canvas world lands one whole display pixel closer than the fitted DOM
+  // room: 5x rather than 4x at the 1280x720 gate. Pass that exact ratio to CSS
+  // so the GPU room and the overlay that takes the hold are the same crop, with
+  // no soft pixel and no handoff snap. The DOM world keeps its original frame.
+  function roomFraming() {
+    if (!roomCanvas) return;
+    const fit = Math.max(1, Math.floor(Math.min(window.innerWidth / 320, window.innerHeight / 180)));
+    const pushed = fit + Math.max(1, Math.floor(fit / 4));
+    roomCanvas.style.setProperty('--room-push', String(pushed / fit));
+  }
+  roomFraming();
+  if (window.addEventListener) window.addEventListener('resize', roomFraming);
+
   // Which run the dive is for: whichever the query string named, else the one
   // this dive pinned when it chose its window, else the one holding the brief
   // plate — alarms first, then actives, which is the same hero the spotlight is

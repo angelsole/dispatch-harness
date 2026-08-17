@@ -2318,8 +2318,8 @@ const landing = walls.map(([w, h, dpr]) => {
   const g = C.grid();
   const room = C.roomBoxAt(pane);
   const end = C.poseAt(1, room);
-  // The room is on screen at the whole multiple wall.css picks for the DOM
-  // overlay, and its left edge lands on a whole device pixel of the wall.
+  // The room is on screen at the whole pushed multiple wall.css picks for the
+  // DOM overlay, and its left edge lands on a whole device pixel of the wall.
   return {
     wall: w + 'x' + h + '@' + dpr,
     scale: end.zoom,
@@ -2458,7 +2458,7 @@ check "dive: and ends as the room's own rectangle, exactly" \
   "$(reel_of apertureEnd)" "true"
 check "dive: opening all the way, never shrinking" "$(reel_of apertureOpens)" "true"
 check "dive: the room lands at a whole multiple of its own 320x180" \
-  "$(reel_of landing)" "1280x720@1=4x 1920x1080@1=6x 1280x720@2=8x 3840x2160@1=12x"
+  "$(reel_of landing)" "1280x720@1=5x 1920x1080@1=7x 1280x720@2=10x 3840x2160@1=15x"
 check "dive: in device pixels, in CSS pixels, and on a whole pixel of the wall" \
   "$(reel_of landingWhole)" "true"
 check "dive: with the window it came in through inside the room it opens onto" \
