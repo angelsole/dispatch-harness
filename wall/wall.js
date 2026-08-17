@@ -380,9 +380,13 @@
     // normalized draw into frontage light.
     B.root.style.setProperty('--awake-seed', String(night.flicker / FLICKER_MAX));
     // The lettering rides the same write-once pass as everything else on this
-    // building: a glyph is a fact about the shop, so it is set here and never
-    // touched again.
+    // building: what the sign says is a fact about the shop, so it is set here
+    // and never touched again. Which alphabet it is set in comes with it, and
+    // it is the whole difference between the two boards — a CJK sign is one
+    // character hung down a shoulder, an English one is a short word read
+    // across a board as wide as itself.
     B.glyph.textContent = night.glyph;
+    B.root.dataset.script = night.script;
     B.root.dataset.side = String(night.side);
     B.root.style.setProperty('--hang', String(night.hang));
     night.windows.forEach((w, i) => {

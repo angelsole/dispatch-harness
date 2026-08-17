@@ -1780,29 +1780,54 @@ check "landmark: no typology's own floor reaches it either" \
   "$(printf '%s' "$HEIGHTS" | cut -d' ' -f3)" "1"
 
 # --- the street's lettering -------------------------------------------------------
-# Five glyphs, and no sixth: the four shops and the dedication. Everything else on
-# this wall is the terminal face it has always been.
+# Eight signs and no ninth: four shops signed in the wall's CJK signage, four in
+# English, and the dedication. Everything else on this wall is the terminal face
+# it has always been. The CJK five are untouched — this pass added a language, it
+# did not edit one.
 echo "== wall: the signs say something =="
-grep_ok "$PAGE_SRC" "const SHOP_GLYPH = { noodle: '麵', diner: '食', arcade: '樂', repair: '修' };" \
-  "signage: one character per shop, and the vocabulary is closed"
+grep_ok "$PAGE_SRC" "noodle: '麵', diner: '食', arcade: '樂', repair: '修'," \
+  "signage: the four CJK shops are the characters they always were"
+grep_ok "$PAGE_SRC" "hotel: 'HOTEL', bar: 'BAR', cafe: 'CAFE', deli: 'DELI'," \
+  "signage: and four shops on the same street say it in English"
 grep_ok "$PAGE_SRC" "seedOf(id + '·signage')" \
   "signage: how a sign hangs is its own draw, not a re-slice of the shop's"
 grep_ok "$CSS_SRC" '.block[data-shop] .block__glyph' \
-  "signage: every shop displays its matching glyph"
+  "signage: every shop displays its matching sign"
 grep_not "$CSS_SRC" '.block[data-neon="1"] .block__glyph' \
-  "signage: glyph visibility is not limited to the one-in-three neon tube"
+  "signage: sign visibility is not limited to the one-in-three neon tube"
 grep_ok "$CSS_SRC" 'font-family: var(--cjk);' \
   "signage: the signs declare a CJK stack the page's monospace does not carry"
 CJK_USERS="$(printf '%s\n' "$CSS_SRC" | grep -c 'font-family: var(--cjk);')"
 check "signage: and only the signs do" "$CJK_USERS" "2"
-# Sized off the frontage rather than in rem, both of them: the same lesson the
-# shopfront row already learned, so a sign under a narrow spire is a narrow sign.
-for sign in .block__glyph .landmark__sign; do
-  SIGN_CSS="$(printf '%s\n' "$CSS_SRC" | awk -v k="$sign {" 'index($0, k) == 1, /^\}/')"
-  grep_ok "$SIGN_CSS" 'var(--facade)' "signage: $sign is sized off the facade it hangs on"
+# A CJK sign reads down and a Latin one reads across: that difference in SHAPE
+# along a row of frontages is the street's texture, and it is what tells the two
+# boards apart in the DOM world.
+grep_ok "$CSS_SRC" '.block[data-script="cjk"] .block__glyph' \
+  "signage: the CJK board is its own rule"
+grep_ok "$CSS_SRC" '.block[data-script="latin"] .block__glyph' \
+  "signage: and so is the Latin one"
+CJK_CSS="$(printf '%s\n' "$CSS_SRC" \
+  | awk 'index($0, ".block[data-script=\"cjk\"] .block__glyph {") == 1, /^\}/')"
+LATIN_CSS="$(printf '%s\n' "$CSS_SRC" \
+  | awk 'index($0, ".block[data-script=\"latin\"] .block__glyph {") == 1, /^\}/')"
+grep_ok "$CJK_CSS" 'writing-mode: vertical-rl;' "signage: the CJK sign hangs down its shoulder"
+grep_ok "$LATIN_CSS" 'writing-mode: horizontal-tb;' "signage: the Latin sign reads across"
+grep_not "$LATIN_CSS" 'var(--cjk)' "signage: and is set in the wall's own face, not the CJK stack"
+# Sized off the frontage rather than in rem, every one of them: the same lesson
+# the shopfront row already learned, so a sign under a narrow spire is a narrow
+# sign.
+for sign in cjk latin; do
+  SIGN_CSS="$(printf '%s\n' "$CSS_SRC" \
+    | awk -v k=".block[data-script=\"$sign\"] .block__glyph {" 'index($0, k) == 1, /^\}/')"
+  grep_ok "$SIGN_CSS" 'var(--facade)' "signage: the $sign sign is sized off the facade it hangs on"
 done
+LANDMARK_CSS="$(printf '%s\n' "$CSS_SRC" | awk 'index($0, ".landmark__sign {") == 1, /^\}/')"
+grep_ok "$LANDMARK_CSS" 'var(--facade)' \
+  "signage: .landmark__sign is sized off the facade it hangs on"
 # No sixth glyph anywhere in the page — comments included. Done in node rather
-# than with grep -P, which BSD grep does not have and would silently pass.
+# than with grep -P, which BSD grep does not have and would silently pass. The
+# police vocabulary is the CJK one and this pass does not widen it: an English
+# shop sign is Latin, and Latin was always allowed.
 STRAY_GLYPHS="$(node -e '
   const fs = require("fs");
   const curated = new Set([..."冉麵食樂修"]);
@@ -1816,6 +1841,30 @@ if [ -z "$STRAY_GLYPHS" ]; then
 else
   bad "signage: no lettering beyond the five curated glyphs (found [$STRAY_GLYPHS])"
 fi
+# Both worlds sign the same street. Every kind the model can draw has a colour
+# and a rule in the DOM world and a tube colour in the canvas world, and the
+# canvas draws its Latin words a pixel at a time in the wall's own hand-set face
+# — there is no font to fall back to and no generator anywhere near it.
+SIGN_WORLDS="$(node -e '
+  const S = require(process.argv[1]);
+  const css = require("fs").readFileSync(process.argv[2], "utf8");
+  const canvas = require("fs").readFileSync(process.argv[3], "utf8");
+  const tints = (canvas.match(/const SHOP = \{[^}]*\}/s) || [""])[0];
+  const missing = S.SHOP_KINDS.filter((kind) =>
+    !css.includes(`.block[data-shop="${kind}"]`) || !css.includes(`--shop-${kind}:`)
+    || !tints.includes(` ${kind}: `));
+  process.stdout.write(missing.length ? missing.join(",") : "all");
+' "$SRC/wall/scene.js" "$SRC/wall/wall.css" "$SRC/wall/world-canvas.js")"
+check "signage: every shop the model can draw is signed in both worlds" "$SIGN_WORLDS" "all"
+WORD_SRC="$(cat "$SRC/wall/world-canvas.js")"
+grep_ok "$WORD_SRC" 'const face = Type ? Type.SMALL : null;' \
+  "signage: the canvas world sets its words in the wall's own hand-set face"
+grep_ok "$WORD_SRC" 'this.words.set(word, board);' \
+  "signage: and draws each word once, however many shops the week puts up"
+grep_ok "$WORD_SRC" "parts.shop.plate = this.add.image(px, py, '__WHITE')" \
+  "signage: both scripts stand on a real dark plate, not floating letters"
+grep_ok "$WORD_SRC" 'parts.shop.plate.setDisplaySize(size, high);' \
+  "signage: a Latin plate grows horizontally with its word"
 
 # --- the city lives at night ------------------------------------------------------
 # The desk's verdict on the accreting district was that it read as a mausoleum
@@ -1876,7 +1925,8 @@ grep_not "$(printf '%s\n' "$NIGHT_SRC" | grep -v '^ *//')" 'Math.random' \
 NIGHT_PROBE="$ROOT/nightlife-probe.js"
 {
   printf '%s\n' "  const S = require(process.argv[2]);"
-  printf '%s\n' "  const { storefrontOf, formOf, nightlifeOf, SHOP_GLYPH, FORM_SHARES } = S;"
+  printf '%s\n' "  const { storefrontOf, formOf, nightlifeOf, FORM_SHARES } = S;"
+  printf '%s\n' "  const { SHOP_GLYPH, SHOP_SCRIPT, SHOP_KINDS, SIGN_MAX } = S;"
   printf '%s\n' "  const { MAX_WALKERS, MAX_VEHICLES, GAP_BUSY, MALL_AT, TRAM_AT, OCCUPIED } = S;"
   cat <<'JS'
   const ids = [];
@@ -1922,7 +1972,9 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
     stable: JSON.stringify(storefrontOf('OLYX-1598')) === JSON.stringify(storefrontOf('OLYX-1598')),
     differs: JSON.stringify(storefrontOf('OLYX-1598')) !== JSON.stringify(storefrontOf('OLYX-1599')),
     everyKind: Object.keys(kinds).sort().join(','),
-    spread: Object.values(kinds).every((n) => n > ids.length / 10),
+    // Half the even share, at eight kinds as at four: no kind is starved and no
+    // ticket range is one long row of arcades.
+    spread: Object.values(kinds).every((n) => n > ids.length / (SHOP_KINDS.length * 2)),
     bays: [...bays].sort((a, b) => a - b).join(','),
     // The brighter neon tube keeps its established one-in-three density even
     // though every shop now carries a small glyph.
@@ -1934,8 +1986,23 @@ NIGHT_PROBE="$ROOT/nightlife-probe.js"
     // predictable from what is selling downstairs.
     unlinked: new Set(plans.map((plan) => plan.shop + ':' + plan.windows[0].phase)).size > 8,
     // Every sign says the shop it hangs over, and the vocabulary never grows.
-    glyphMatched: plans.every((plan) => plan.glyph === SHOP_GLYPH[plan.shop]),
-    glyphVocab: [...new Set(plans.map((plan) => plan.glyph))].sort().join(''),
+    glyphMatched: plans.every((plan) => plan.glyph === SHOP_GLYPH[plan.shop]
+      && plan.script === SHOP_SCRIPT[plan.shop]),
+    glyphVocab: [...new Set(plans.map((plan) => plan.glyph))].sort().join(' '),
+    // Closed at eight, half of them in each language, and every Latin sign is a
+    // word a shopfront can carry rather than a sentence.
+    signClosed: Object.keys(SHOP_GLYPH).sort().join(',') === SHOP_KINDS.slice().sort().join(',')
+      && Object.keys(SHOP_SCRIPT).sort().join(',') === SHOP_KINDS.slice().sort().join(','),
+    signSplit: SHOP_KINDS.filter((kind) => SHOP_SCRIPT[kind] === 'latin').length + '/'
+      + SHOP_KINDS.length,
+    signShort: SHOP_KINDS.every((kind) => (SHOP_SCRIPT[kind] === 'latin'
+      ? /^[A-Z]{2,}$/.test(SHOP_GLYPH[kind]) && SHOP_GLYPH[kind].length <= SIGN_MAX
+      : [...SHOP_GLYPH[kind]].length === 1)),
+    // The alphabet a frontage is signed in rides the shop, which rides the run
+    // id: a Chinese shop is still Chinese after a reload, and the one next door
+    // may be English.
+    signStable: storefrontOf('OLYX-1598').script === storefrontOf('OLYX-1598').script
+      && new Set(plans.map((plan) => plan.script)).size === 2,
     // How a sign hangs is a third draw: both sides of a frontage get used, and
     // which one a building gets is not readable off what is selling under it.
     sides: [...new Set(plans.map((plan) => plan.side))].sort().join(','),
@@ -1975,7 +2042,7 @@ check "life: the tram unlocks on its own ship, as a bonus" "$(night_of tramEdge)
 check "life: the same building keeps the same shop, always" "$(night_of stable)" "true"
 check "life: two buildings do not get the same street twice" "$(night_of differs)" "true"
 check "life: the whole vocabulary of the street gets used" \
-  "$(night_of everyKind)" "arcade,diner,noodle,repair"
+  "$(night_of everyKind)" "arcade,bar,cafe,deli,diner,hotel,noodle,repair"
 check "life: and a ticket range is not one long row of arcades" "$(night_of spread)" "true"
 check "life: shopfronts spread across every bay of a base" "$(night_of bays)" "0,1,2,3,4"
 check "life: about a third of the buildings carry a neon tube" "$(night_of someNeon)" "true"
@@ -1983,8 +2050,15 @@ check "life: every facade gets its fixed handful of lit windows" "$(night_of win
 check "life: and every one of them lands on the building" "$(night_of inFrame)" "true"
 check "life: a facade's hours are not readable off its shop" "$(night_of unlinked)" "true"
 check "signage: every sign says the shop it hangs over" "$(night_of glyphMatched)" "true"
-check "signage: and the lettering is the four curated glyphs, no more" \
-  "$(night_of glyphVocab)" "修樂食麵"
+check "signage: and the lettering is the eight curated signs, no more" \
+  "$(night_of glyphVocab)" "BAR CAFE DELI HOTEL 修 樂 食 麵"
+check "signage: the vocabulary is closed — a kind cannot exist unsigned" \
+  "$(night_of signClosed)" "true"
+check "signage: half the street speaks each language" "$(night_of signSplit)" "4/8"
+check "signage: an English sign is a short word, a CJK one is a character" \
+  "$(night_of signShort)" "true"
+check "signage: which language a frontage speaks rides its run id, and both are used" \
+  "$(night_of signStable)" "true"
 check "signage: signs hang off both sides of a frontage" "$(night_of sides)" "0,1"
 check "signage: and how one hangs is not readable off its shop" \
   "$(night_of hangUnlinked)" "true"
@@ -2384,6 +2458,105 @@ console.log(JSON.stringify({
     return whole(box.x) && whole(box.y) && whole(box.w) && whole(box.h)
       && box.y + box.h === Math.round(C.grid().groundY);
   }),
+  // THE BAND IS A BASE. The district in front of the towers used to reach their
+  // waist right across the picture. The storey table it stood on is kept in the
+  // source beside the one that replaced it, so the drop is measured rather than
+  // claimed: every term is at most 60 % of what it was — fewer 32 px courses per
+  // building, never a scale factor on the art.
+  bandTable: C.BAND.base <= C.BAND_WAS.base * 0.6
+    && C.BAND.storey <= C.BAND_WAS.storey * 0.6
+    && C.BAND.floor <= C.BAND_WAS.floor * 0.6,
+  // And what the table is worth on the wall, against heights recorded off the
+  // city this pass started from (PR #47): the two tallest forms the district
+  // draws, at every depth, and the landmark, which is the tallest thing in it.
+  bandDrop: (() => {
+    const before = [['setback', 0, 8, 94], ['setback', 1, 8, 117], ['setback', 2, 8, 142],
+      ['mast', 2, 8, 142], ['slab', 2, 8, 125], ['tank', 2, 8, 94], [null, 0, 16, 225]];
+    return before.every(([form, depth, storeys, was]) => C.blockBox({
+      id: 'X', kind: form ? 'midrise' : 'landmark', depth, x: 0.5, storeys,
+      shape: form ? { form, grade: 1 } : null,
+    }).h <= was * 0.6);
+  })(),
+  // The band comes down to a base; it does not go away. The shortest building
+  // the week can put up is still a lit shopfront with wall over it, because a
+  // shopfront is 32 px of committed art and there is no shorter one.
+  bandFloor: C.blockBox({ id: 'X', kind: 'midrise', depth: 0, x: 0.5, storeys: 1,
+    shape: { form: 'shophouse', grade: 0 } }).h >= C.grid().panel + C.grid().tile,
+  // AIR AROUND THE HERO. The tower the brief plate is talking about keeps a
+  // width and a half of night either side of it at every rank the plate can
+  // land on. The hero stays centred as the plate changes hands; the projects
+  // before and after it spend the separate regions on its left and right.
+  heroAir: (() => {
+    const towers = [7.8, 7.8, 10, 7.8, 5.6]
+      .map((widthRem, i) => ({ widthRem, runIds: ['r' + i] }));
+    return towers.every((_, hero) => {
+      const band = C.heroBand(towers, hero);
+      const boxes = C.towerLayout(towers, hero);
+      return band.air >= 1.5 * band.w
+        && Math.abs(band.x + band.w / 2 - WIDE / 2) <= 0.5
+        && boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE
+          && whole(box.x) && whole(box.w)
+          && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w));
+    });
+  })(),
+  // The layout is a pure function of the model and the spot: the same two are
+  // the same row of boxes on both screens and tomorrow, and a spot landing on
+  // another tower is a different row.
+  heroPure: (() => {
+    const towers = [7.8, 7.8, 10].map((widthRem, i) => ({ widthRem, runIds: ['r' + i] }));
+    const once = JSON.stringify(C.towerLayout(towers, 1));
+    return once === JSON.stringify(C.towerLayout(towers, 1))
+      && once !== JSON.stringify(C.towerLayout(towers, 2));
+  })(),
+  // And which tower it is: the one carrying the run the plate named, then the
+  // head of the queue, and nothing at all on an empty skyline.
+  heroPick: (() => {
+    const towers = [{ runIds: [] }, { runIds: ['a', 'b'] }, { runIds: ['c'] }];
+    return C.heroOf(towers, 'c') === 2 && C.heroOf(towers, 'b') === 1
+      && C.heroOf(towers, '') === 1 && C.heroOf(towers, 'gone') === 1
+      && C.heroOf([], 'c') === -1;
+  })(),
+  // Crowded, the hero keeps its air FIRST and the row compresses around it —
+  // right up to the point where the only thing left to give is standing two
+  // projects in the same place, which this city never does.
+  heroFirst: (() => {
+    const crowd = (n) => Array.from({ length: n }, () => ({ widthRem: 5.6, runIds: ['x'] }));
+    const twenty = C.towerLayout(crowd(20), 9);
+    const band = C.heroBand(crowd(20), 9);
+    const forty = C.towerLayout(crowd(40), 19);
+    const tight = C.heroBand(crowd(40), 19);
+    return band.air >= 1.5 * 5.6 * C.grid().rem * 0.99
+      && tight.air >= 1.5 * tight.w
+      && Math.abs(tight.x + tight.w / 2 - WIDE / 2) <= 0.5
+      && twenty[0].w < 5.6 * C.grid().rem
+      && twenty.every((box, i) => i === 0 || box.x >= twenty[i - 1].x + twenty[i - 1].w)
+      && forty.every((box, i, all) => i === 0 || box.x >= all[i - 1].x + all[i - 1].w);
+  })(),
+  // THE HERO STANDS IN SKY. The back city keeps its own share of its height
+  // across the picture and a fraction of that inside the spotted tower's air,
+  // eased across the shoulders so the opening reads as distance. The near plane
+  // is the block the towers stand on and never opens.
+  skyOpens: (() => {
+    const [far, mid, near] = C.PLANES;
+    const band = { centre: WIDE / 2, half: 240 };
+    return C.skyKeep(far, band.centre, band) < C.skyKeep(far, 0, band) * 0.45
+      && C.skyKeep(mid, band.centre, band) < C.skyKeep(mid, 0, band) * 0.45
+      && C.skyKeep(far, 0, band) === far.keep && C.skyKeep(mid, WIDE, band) === mid.keep
+      && C.skyKeep(near, band.centre, band) === near.keep
+      && [far, mid, near].every((p) => p.keep <= 1 && p.dim <= 1);
+  })(),
+  // And it eases: no step anywhere across the shoulder, and the deepest point
+  // of the opening is the middle of the picture, which is where the hero is.
+  skyEases: (() => {
+    const band = { centre: WIDE / 2, half: 240 };
+    let last = C.skyKeep(C.PLANES[0], 0, band);
+    for (let x = 0; x <= band.centre; x++) {
+      const k = C.skyKeep(C.PLANES[0], x, band);
+      if (k > last + 1e-9 || last - k > 0.02) return false;
+      last = k;
+    }
+    return true;
+  })(),
 }));
 JS
 STILL="$(node "$STILL_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
@@ -2409,6 +2582,24 @@ check "canvas: every silhouette is a stack of rectangles on the pavement" \
   "$(still_of masses)" "true"
 check "canvas: and every plot is whole pixels standing on the ground line" \
   "$(still_of plots)" "true"
+check "band: the district's storey table is at most 60 % of the one it replaced" \
+  "$(still_of bandTable)" "true"
+check "band: and every tall form comes down with it, measured against the old wall" \
+  "$(still_of bandDrop)" "true"
+check "band: the shortest building is still a shopfront with wall over it" \
+  "$(still_of bandFloor)" "true"
+check "hero: the spotted tower keeps a width and a half of sky either side of it" \
+  "$(still_of heroAir)" "true"
+check "hero: the layout is a pure function of the model and the spot" \
+  "$(still_of heroPure)" "true"
+check "hero: which tower it is comes off the plate, then the head of the queue" \
+  "$(still_of heroPick)" "true"
+check "hero: a crowded skyline compresses around it and never overlaps" \
+  "$(still_of heroFirst)" "true"
+check "sky: the back city opens behind the spotted tower and holds elsewhere" \
+  "$(still_of skyOpens)" "true"
+check "sky: and the opening eases into place rather than stepping" \
+  "$(still_of skyEases)" "true"
 
 # A RUNNING JOB IS A LIT FLOOR. No lift cars: the storey a run has reached
 # lights its own windows and the light comes out of the building. Two claims

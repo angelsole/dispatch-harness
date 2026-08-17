@@ -44,9 +44,10 @@ brick ramp sampled from the refs (`palette.py extract`, then hand-pruned).
 
 - Keep a luminance floor — the wall measures 42 % pure black; read as a night, not
   a hole. Distinct near / mid / far silhouettes, flat within each.
-- Nothing under ~3 px of stroke. Lettering is Latin or the wall's own CJK
-  signage (shopfronts 麵 食 樂 修, `scene.js:126-130`; landmark 冉) — owner's
-  call, 2026-08-16: the Chinese stays. Any other lettering is none.
+- Nothing under ~3 px of stroke. Lettering is Latin (the wall's own face —
+  project names on towers, short English shop signs) or the wall's CJK signage
+  (麵 食 樂 修; landmark 冉) — owner's call, 2026-08-17: a mix, not all Chinese.
+  Any other lettering is none.
 - No noir flood (one colour plus black is an unlit render), and no dashboard-y flat
   elevation — no even density, no grid of identical bays.
 - No invented lettering. The first live batch put "LUATA" on a prop and garbled neon
