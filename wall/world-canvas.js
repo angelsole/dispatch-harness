@@ -314,8 +314,8 @@
   // world pixel, because a tower standing on x.5 is a tower whose windows are
   // half a pixel off their own rhythm at every zoom the wall is ever shown at.
   // `air` is the sky one item keeps either side of itself, and it is RIGID: it
-  // comes out of the width budget before anybody is squeezed, so a crowded wall
-  // compresses its towers and the one the wall is talking about keeps its sky.
+  // comes out of the width budget before anybody is squeezed, so a crowded row
+  // compresses its towers before it gives up that sky.
   function flexRow(items, from, to, gap) {
     const avail = Math.max(0, to - from);
     const airTotal = items.reduce((total, item) => total + item.air * 2, 0);
@@ -336,9 +336,8 @@
     }
     // Live work is never capped by the server. Once the row is crowded enough
     // that a 32 px minimum would overlap, divide the usable skyline into
-    // one-pixel-gutter cells instead — and the hero's sky is the first thing
-    // to go, because losing façade detail is preferable to merging two projects
-    // into one silhouette or hiding either of them.
+    // one-pixel-gutter cells instead. Losing façade detail is preferable to
+    // merging two projects into one silhouette or hiding either of them.
     if (!out.some((box, i) => i > 0 && box.x < out[i - 1].x + out[i - 1].w)) return out;
     const cell = avail / items.length;
     return items.map((_, i) => {
@@ -348,33 +347,44 @@
     });
   }
 
-  // AIR AROUND THE HERO. The tower the wall is talking about keeps a width and
-  // a half of night either side of it. It is NOT pinned to the middle of the
-  // picture and the rest of the city is not shoved to one end to pay for it:
-  // the row still spreads edge to edge and the hero simply gets a wider slot in
-  // it. That is what keeps the wide shot full at every rank the brief plate can
-  // land on — a hero pinned to the centre puts the whole city in one half of
-  // the frame the moment the plate reaches the end of the queue — and the hero
-  // still stands in sky, which is the whole of the note.
+  // AIR AROUND THE HERO. The tower the wall is talking about stays centred, with
+  // the projects before it laid out as a left group and the projects after it as
+  // a right group. Each group spends its own width before the hero gives up the
+  // width and a half of night reserved on both shoulders. At an end of the queue
+  // one side is deliberately empty: that is the composition the spot describes,
+  // not permission to move the subject away from the middle of the frame.
   const HERO_AIR = 1.5;
   const GUTTER = 1;        // the one pixel a cell-divided row keeps between towers
-  const minRow = (n) => (n > 0 ? n * PANEL + (n - 1) * GUTTER : 0);
+  const minRow = (n) => (n > 0 ? n + (n - 1) * GUTTER : 0);
 
   function heroAir(towers, hero) {
     if (!(hero >= 0) || hero >= towers.length) return 0;
     const pad = Math.round(3 * VW);
     const w = Math.max(PANEL, Math.round(towers[hero].widthRem * REM));
-    const spare = GW - pad * 2 - minRow(towers.length);
-    return Math.max(0, Math.min(Math.round(HERO_AIR * w), Math.floor(spare / 2)));
+    const x = Math.round((GW - w) / 2);
+    const left = x - pad - minRow(hero);
+    const right = GW - pad - (x + w) - minRow(towers.length - hero - 1);
+    return Math.max(0, Math.min(Math.round(HERO_AIR * w), left, right));
   }
 
   function towerLayout(towers, hero) {
     const pad = Math.round(3 * VW);
     const gap = Math.round(1.4 * VW);
+    if (!(hero >= 0) || hero >= towers.length) {
+      return flexRow(towers.map((tower) => ({ w: tower.widthRem * REM, air: 0 })),
+                     pad, GW - pad, gap);
+    }
+    const at = Math.floor(hero);
+    const heroW = Math.max(PANEL, Math.round(towers[at].widthRem * REM));
+    const heroX = Math.round((GW - heroW) / 2);
     const air = heroAir(towers, hero);
-    return flexRow(towers.map((tower, i) => ({
-      w: tower.widthRem * REM, air: i === Math.floor(hero) ? air : 0,
-    })), pad, GW - pad, gap);
+    const items = (from, to) => towers.slice(from, to)
+      .map((tower) => ({ w: tower.widthRem * REM, air: 0 }));
+    return [
+      ...flexRow(items(0, at), pad, heroX - air, gap),
+      { x: heroX, w: heroW },
+      ...flexRow(items(at + 1, towers.length), heroX + heroW + air, GW - pad, gap),
+    ];
   }
 
   // Where the hero ended up and how much sky it actually got — measured off the
@@ -1258,7 +1268,8 @@
           this.skyC.add(holder);
           return holder;
         });
-        this.planeImgs = PLANES.map(() => null);
+        this.planeLayers = PLANES.map(() => []);
+        this.planeFadeAt = null;
         this.notchKey = null;
         this.readPlanes();
         this.paintPlanes(null);
@@ -1309,24 +1320,36 @@
       }
 
       // The back city, painted at the height the hero leaves it. Static, and
-      // baked once per opening: the only thing that moves it is the spot
+      // baked once per opening: the only thing that changes it is the spot
       // changing hands, and both numbers are rounded to a panel so a one-pixel
-      // difference never costs a re-bake. It is not eased with the towers on
-      // purpose — this is the sky behind everything, and a skyline sliding
-      // under a still opening reads as depth rather than as two moves.
+      // difference never costs a re-bake. The old and new static paintings
+      // cross-fade on the same short clock as the towers; the opening therefore
+      // follows the hand-over without either skyline being redrawn per frame.
       paintPlanes(band) {
         const key = band ? band.centre + ':' + band.half : '';
         if (this.notchKey === key) return;
         this.notchKey = key;
+        const at = this.origin + this.time.now / 1000;
+        this.stepPlaneFade(at);
+        const moving = !still.matches && this.planeLayers.some((layers) => layers.length);
+        if (moving) {
+          this.planeFadeAt = at;
+          for (const layers of this.planeLayers) {
+            for (const layer of layers) {
+              layer.from = layer.img.alpha;
+              layer.to = 0;
+            }
+          }
+        } else {
+          this.planeFadeAt = null;
+          for (let i = 0; i < this.planeLayers.length; i++) {
+            for (const layer of this.planeLayers[i]) this.dropPlane(layer.img);
+            this.planeLayers[i] = [];
+          }
+        }
         PLANES.forEach((plane, i) => {
           const art = this.planeArt[i];
           if (!art) return;
-          const old = this.planeImgs[i];
-          if (old) {
-            const key = old.texture.key;
-            old.destroy();
-            if (this.textures.exists(key)) this.textures.remove(key);
-          }
           const sink = (x, y) => GH - (GH - y) * skyKeep(plane, x, band);
           const points = art.points.map((p) => ({ x: p.x + 24, y: sink(p.x, p.y) }));
           const top = points.reduce((lo, p) => Math.min(lo, p.y), GH);
@@ -1346,11 +1369,39 @@
                         Math.round(sink(win.x, win.y) - top), dot, dot);
           }
           const img = this.bake(pg, -24, top, GW + 48, Math.max(1, GH - top));
-          img.setAlpha(plane.dim);
+          const alpha = moving ? 0 : plane.dim;
+          img.setAlpha(alpha);
           this.planes[i].add(img);
-          this.planeImgs[i] = img;
+          this.planeLayers[i].push({ img, from: alpha, to: plane.dim });
           pg.destroy();
         });
+      }
+
+      dropPlane(img) {
+        const key = img.texture.key;
+        img.destroy();
+        if (this.textures.exists(key)) this.textures.remove(key);
+      }
+
+      stepPlaneFade(at) {
+        if (this.planeFadeAt === null) return;
+        const home = still.matches ? 1 : once(at - this.planeFadeAt, REFLOW);
+        const k = ease(home);
+        for (const layers of this.planeLayers) {
+          for (const layer of layers) {
+            layer.img.setAlpha(layer.from + (layer.to - layer.from) * k);
+          }
+        }
+        if (home < 1) return;
+        for (let i = 0; i < this.planeLayers.length; i++) {
+          const keep = [];
+          for (const layer of this.planeLayers[i]) {
+            if (layer.to > 0) keep.push(layer);
+            else this.dropPlane(layer.img);
+          }
+          this.planeLayers[i] = keep;
+        }
+        this.planeFadeAt = null;
       }
 
       // The cold wash the sky picks up either side of local sunrise. Zero at
@@ -2269,7 +2320,10 @@
       // nobody: the boxes come out identical and no slide starts.
       relayout() {
         const model = this.model;
-        if (!model || !model.towers.length) return;
+        if (!model || !model.towers.length) {
+          this.paintPlanes(null);
+          return;
+        }
         const hero = heroOf(model.towers, pendingSpot);
         const boxes = towerLayout(model.towers, hero);
         const at = this.origin + this.time.now / 1000;
@@ -2281,8 +2335,10 @@
             // is GOING and the whole of it — body, reflection, lights, sign and
             // the floors standing in it — rides home on one container offset,
             // so a hand-over costs the frame loop one number per tower and not
-            // a single re-stamped texture.
-            T.slide = { from: T.at - boxes[i].x, at };
+            // a single re-stamped texture. Include its current offset so a
+            // second hand-over during that short ride continues from the pixel
+            // already on screen instead of jumping back to the first target.
+            T.slide = { from: T.at + T.root.x - boxes[i].x, at };
           }
           T.at = boxes[i].x;
           this.paintTower(T, tower, boxes[i], model.floors);
@@ -2343,6 +2399,7 @@
         this.phase = phase;
         const model = this.model;
 
+        this.stepPlaneFade(at);
         this.planes.forEach((plane, i) => plane.setX(phase.planes[i]));
         this.ghostG.setX(phase.ghost);
         this.hazeSlabs.forEach((slab, i) => slab.setX(-0.3 * GW + phase.air[i]));

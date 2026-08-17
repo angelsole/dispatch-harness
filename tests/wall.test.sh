@@ -2480,21 +2480,19 @@ console.log(JSON.stringify({
     shape: { form: 'shophouse', grade: 0 } }).h >= C.grid().panel + C.grid().tile,
   // AIR AROUND THE HERO. The tower the brief plate is talking about keeps a
   // width and a half of night either side of it at every rank the plate can
-  // land on — and the row still reaches both ends of the picture, because a
-  // hero pinned to the middle of the frame puts the whole city in one half of
-  // it the moment the plate reaches the end of the queue.
+  // land on. The hero stays centred as the plate changes hands; the projects
+  // before and after it spend the separate regions on its left and right.
   heroAir: (() => {
     const towers = [7.8, 7.8, 10, 7.8, 5.6]
       .map((widthRem, i) => ({ widthRem, runIds: ['r' + i] }));
     return towers.every((_, hero) => {
       const band = C.heroBand(towers, hero);
       const boxes = C.towerLayout(towers, hero);
-      const last = boxes[boxes.length - 1];
       return band.air >= 1.5 * band.w
+        && Math.abs(band.x + band.w / 2 - WIDE / 2) <= 0.5
         && boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE
           && whole(box.x) && whole(box.w)
-          && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w))
-        && boxes[0].x < WIDE * 0.25 && last.x + last.w > WIDE * 0.75;
+          && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w));
     });
   })(),
   // The layout is a pure function of the model and the spot: the same two are
@@ -2521,11 +2519,14 @@ console.log(JSON.stringify({
     const crowd = (n) => Array.from({ length: n }, () => ({ widthRem: 5.6, runIds: ['x'] }));
     const twenty = C.towerLayout(crowd(20), 9);
     const band = C.heroBand(crowd(20), 9);
+    const forty = C.towerLayout(crowd(40), 19);
+    const tight = C.heroBand(crowd(40), 19);
     return band.air >= 1.5 * 5.6 * C.grid().rem * 0.99
+      && tight.air >= 1.5 * tight.w
+      && Math.abs(tight.x + tight.w / 2 - WIDE / 2) <= 0.5
       && twenty[0].w < 5.6 * C.grid().rem
       && twenty.every((box, i) => i === 0 || box.x >= twenty[i - 1].x + twenty[i - 1].w)
-      && C.towerLayout(crowd(40), 19)
-        .every((box, i, all) => i === 0 || box.x >= all[i - 1].x + all[i - 1].w);
+      && forty.every((box, i, all) => i === 0 || box.x >= all[i - 1].x + all[i - 1].w);
   })(),
   // THE HERO STANDS IN SKY. The back city keeps its own share of its height
   // across the picture and a fraction of that inside the spotted tower's air,
