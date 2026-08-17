@@ -936,14 +936,6 @@
     const centred = (face, str, cx, y, colour, alpha) =>
       text(face, str, cx - Math.floor(widthOf(face, str) / 2), y, colour, alpha);
 
-    // A ticket id is a name, so it is drawn whole wherever it can be: in the
-    // big face if it fits, and only then dropped to the small one. Losing half
-    // of `adhoc-kpi-sparklines` to keep it large would be the wrong trade —
-    // legibility is about being READ, and a truncated id reads as the wrong run.
-    const idLine = (str, room) =>
-      (widthOf(BIG, str) <= room ? { face: BIG, text: str }
-        : { face: SMALL, text: fit(SMALL, str, room) });
-
     // --- the planes -------------------------------------------------------
 
     function backWall() {
