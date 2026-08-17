@@ -253,9 +253,13 @@
   // in any face, so each is a shape in the same 3x5 cell, drawn in the crew
   // tint. Two, and no more: a third mark that meant "something" would be
   // texture, and this wall does not do texture.
+  // Filled and hollow, and five rows against three. The reviewer's mark started
+  // as a small solid diamond, which in this grid is `.#./###/.#.` — the same
+  // three rows as the plus sign. A reviewer's line that opens with `+` would have
+  // drawn the mark twice and meant it once.
   const MARKS = {
     dot: ['...', '###', '###', '###', '...'],
-    diamond: ['...', '.#.', '###', '.#.', '...'],
+    diamond: ['.#.', '###', '#.#', '###', '.#.'],
   };
   const markOf = (src) => (src === 'codex' ? 'diamond' : 'dot');
 
@@ -569,6 +573,10 @@
   const FEED_CELLS = cells(SMALL, FEED_W);
   const FEED_TOP = 12;              // under the stage word and its rule
   const FEED_PITCH = 6;             // five rows of glyph, one of air
+  // And the progress ticks, on the last two rows of the tube with one row of air
+  // above them. Butted straight against the log they read as an underline to the
+  // newest line rather than as the bar they are.
+  const FEED_TICKS = 36;
   // A row a step, not a pixel a step: this is a terminal, and a terminal
   // scrolls by lines. 120 ms is fast enough that a burst of four lines is one
   // movement rather than four events.
@@ -1183,8 +1191,14 @@
     // Solid while a line is arriving, blinking once it has landed: that is what
     // a terminal does, and it is the one thing on this screen that says the run
     // is still going while nothing else changes.
+    //
+    // Held inside the tube. A line that fills all sixteen cells puts the cursor's
+    // own cell one past the right edge, where it would be drawn on the bezel; the
+    // last column of the tube is the one column no glyph reaches, so that is
+    // where it goes instead.
     function caret(x, y, beat, arriving) {
-      if (arriving || beat.blink) box(x, y, 1, SMALL.h, PALE, 0.9);
+      if (!arriving && !beat.blink) return;
+      box(Math.min(x, SCREEN.x + SCREEN.w - 1), y, 1, SMALL.h, PALE, 0.9);
     }
 
     // The one screen in the room, drawn rather than photographed: a chunky
@@ -1230,11 +1244,12 @@
         box(SCREEN.x + 2, SCREEN.y + 11, SCREEN.w - 4, 1, tint, 0.3);
         log(v, beat);
         // The last row is the progress the wall plate reports too — a row of
-        // ticks that fills to the floor this run has reached. It stays because
-        // it fits under four rows of log, in the two pixels the log does not use.
+        // ticks that fills to the floor this run has reached. It stays because it
+        // fits under four rows of log, in the rows the log does not use.
         const done = Math.round(((v.floor + 1) / v.floors) * 15);
         for (let i = 0; i < 15; i++) {
-          box(SCREEN.x + 4 + i * 4, SCREEN.y + 35, 3, 2, i < done ? tint : STEEL, i < done ? 0.8 : 0.6);
+          box(SCREEN.x + 4 + i * 4, SCREEN.y + FEED_TICKS, 3, 2,
+            i < done ? tint : STEEL, i < done ? 0.8 : 0.6);
         }
       }
       // Scanlines, at the room's own scale: one dark row in three.
@@ -1536,6 +1551,6 @@
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
     TYPE_SET, WAIT_SET, FALLBACK, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
     BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
-    FEED_MARK, FEED_TOP, FEED_PITCH, SCROLL_MS, REVEAL_CPS,
+    FEED_MARK, FEED_TOP, FEED_PITCH, FEED_TICKS, SCROLL_MS, REVEAL_CPS,
   };
 }));

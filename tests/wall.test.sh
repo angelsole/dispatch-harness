@@ -2979,17 +2979,29 @@ console.log(JSON.stringify({
     return Object.values(R.ACTOR).includes(tint);
   }),
   // --- the tube ------------------------------------------------------------
-  // The log fits: four rows of the small face under the stage word, and the two
-  // pixels the progress ticks need still left under them.
-  tubeRows: R.FEED_TOP + (R.FEED_ROWS - 1) * R.FEED_PITCH + R.SMALL.h + 2 <= R.SCREEN.h,
+  // The log fits: four rows of the small face under the stage word, a row of air,
+  // and the two rows the progress ticks need, all inside the tube.
+  tubeRows: R.FEED_TOP + (R.FEED_ROWS - 1) * R.FEED_PITCH + R.SMALL.h < R.FEED_TICKS
+    && R.FEED_TICKS + 2 <= R.SCREEN.h,
   // And sixteen characters plus the source mark fit across it, exactly.
   tubeCells: R.FEED_CELLS,
   tubeWidth: R.FEED_MARK + 1 + R.widthOf(R.SMALL, "X".repeat(R.FEED_CELLS)) <= R.SCREEN.w,
   tubeSpare: R.SCREEN.w - (R.FEED_MARK + 1 + R.widthOf(R.SMALL, "X".repeat(R.FEED_CELLS))),
+  // A full line's cursor asks for the cell one past the right edge, which is the
+  // bezel. There is exactly one column of the tube no glyph reaches, and it is
+  // where the cursor is held instead.
+  caretFits: R.FEED_MARK + 1 + (R.FEED_CELLS - 1) * R.SMALL.pitch + R.SMALL.w
+    < R.SCREEN.w,
   // Every character a feed line can be cut to has a glyph, including the whole
   // punctuation set code is written in.
   punctuation: "{}()[]=;:+_,<>'\"#*!?|@-./ ".split("")
     .filter((ch) => !R.SMALL.rows[ch]).join(""),
+  // A mark is not a letter, and it must not be able to be read as one: the
+  // reviewer's line often opens with `+` or `-`, so neither mark may be the same
+  // shape as any glyph the small face can draw.
+  markIsNotAGlyph: Object.values(R.MARKS).every((shape) =>
+    !Object.values(R.SMALL.rows).some((glyph) => glyph.join('/') === shape.join('/'))),
+  marks: Object.keys(R.MARKS).sort().join(","),
   // Both faces and both marks are on their own grid, to the character.
   faceGrid: [[R.BIG, 5, 7], [R.SMALL, 3, 5]].every(([face, w, h]) =>
     Object.values(face.rows).every((g) =>
@@ -3153,10 +3165,15 @@ check "room: sixteen characters and a source mark fit across it" \
 check "room: which is what a 68 px tube holds at a four-pixel advance" \
   "$(room_of tubeCells)" "16"
 check "room: with one pixel of the tube to spare" "$(room_of tubeSpare)" "1"
+check "room: which is the column the cursor is held in on a full line" \
+  "$(room_of caretFits)" "true"
 check "room: the small face carries the whole punctuation set code needs" \
   "$(room_of punctuation)" ""
 check "room: and every glyph of both faces is on its own grid" \
   "$(room_of faceGrid)" "true"
+check "room: there are two source marks and no more" "$(room_of marks)" "diamond,dot"
+check "room: and neither can be misread as a character of the face" \
+  "$(room_of markIsNotAGlyph)" "true"
 check "room: the log's ink is a cold ramp on the lock" "$(room_of inkOnLock)" "true"
 check "room: none of it means alarm or shipped" "$(room_of inkMeansNothing)" "true"
 check "room: older lines step back down that ramp" \
