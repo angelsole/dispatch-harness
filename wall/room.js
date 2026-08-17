@@ -1417,6 +1417,10 @@
         const on = i === v.floor;
         box(PLATE.x + 24 + i * 6, PLATE.y + 18, 4, 3, on ? tint : STEEL, on ? 0.95 : 0.7);
       }
+      // The plate is useful chrome, not a second screen. One flat exposure step
+      // keeps its number and floor readable while leaving the monitor as the
+      // brightest state-bearing plane when the lens moves through the room.
+      box(PLATE.x, PLATE.y, PLATE.w, PLATE.h, NIGHT, 0.12);
     }
 
     // WHICH JOB THIS IS: a sheet pinned to the wall over the desk, with the
@@ -1433,9 +1437,9 @@
     // light — warm first, cold second, in two flat steps rather than three,
     // because at y 47 it is further from the tube than the plate is.
     //
-    // Two levels of type and no more: the id in the warmest pale on the lock,
-    // which is what you read from the door, and the title one step down in value
-    // and three times smaller, which is what you read on a second look. No rule
+    // Two levels of type and no more: the id in a quiet warm pale, which is what
+    // you read from the door, and the title one step down in value and three
+    // times smaller, which is what you read on a second look. No rule
     // between them: this sheet is 23 rows tall and size plus value already
     // separate the two, while a line across it would be one more hard edge for a
     // whole-pixel lens to drag.
@@ -1450,26 +1454,26 @@
       // Furniture in an unlit room, sunk the same way the desk is, and then lit
       // back up by the one tube on the ceiling that still works — which runs from
       // x 112 to x 208, over this sheet but a long way over it.
-      box(CARD.x, CARD.y, CARD.w, CARD.h, NIGHT, 0.58);
-      box(CARD.x, CARD.y, CARD.w, 8, GLOW, 0.055);
-      box(CARD.x, CARD.y + 8, CARD.w, 8, GLOW, 0.028);
+      box(CARD.x, CARD.y, CARD.w, CARD.h, NIGHT, 0.8);
+      box(CARD.x, CARD.y, CARD.w, 8, GLOW, 0.02);
+      box(CARD.x, CARD.y + 8, CARD.w, 8, GLOW, 0.01);
       box(CARD.x, CARD.y + CARD.h - 6, CARD.w, 6, NIGHT, 0.12);
       // The sheet's own edges: the top one catches the strip light, the right
       // one is the side away from the lamp, and the bottom is the shadow it
       // throws on the wall it is pinned to.
-      box(CARD.x, CARD.y, CARD.w, 1, CREAM, 0.12);
+      box(CARD.x, CARD.y, CARD.w, 1, CREAM, 0.05);
       box(CARD.x + CARD.w - 1, CARD.y, 1, CARD.h, NIGHT, 0.35);
       box(CARD.x, CARD.y + CARD.h - 1, CARD.w, 1, NIGHT, 0.65);
       // The pin. Four pixels, and the only reason they are here is that they are
       // what makes this a sheet somebody put up rather than a panel in the wall.
-      box(CARD.x + Math.floor(CARD.w / 2) - 1, CARD.y, 2, 2, GLOW, 0.6);
+      box(CARD.x + Math.floor(CARD.w / 2) - 1, CARD.y, 2, 2, GLOW, 0.3);
       // The ticket, in the face the stage word uses. Cut rather than shrunk if it
       // is one of the ad-hoc ids: fourteen glyphs of the big face is what this
       // sheet holds, and ADHOC-KPI-SPA. still says which run this is.
-      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.86);
+      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.42);
       for (let i = 0; i < v.card.length && i < CARD_LINES; i++) {
         text(SMALL, v.card[i], CARD.x + CARD_PAD, CARD_TEXT_Y + i * CARD_PITCH,
-          CREAM, 0.6);
+          CREAM, 0.28);
       }
     }
 
