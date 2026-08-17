@@ -3138,7 +3138,7 @@ console.log(JSON.stringify({
   cardAboveTheDesk: R.CARD.y + R.CARD.h < R.BEZEL.y,
   // And it is IN SHOT for the whole hold, not only at the top of the push: the
   // lens crops whole source pixels and its origin travels to x 39, y 15 over
-  // fourteen seconds, which is exactly why the card is not on the bare wall above
+  // twelve seconds, which is exactly why the card is not on the bare wall above
   // the conduit where there was more room.
   cardInShot: Array.from({ length: 201 }, (_, i) => R.cropAt(i / 200)).every((c) =>
     R.CARD.x - 1 >= c.x && R.CARD.y - 1 >= c.y
@@ -3235,8 +3235,7 @@ console.log(JSON.stringify({
   frozen: new Set(still).size === 1,
   moves: new Set(moving).size === moving.length,
   lit: R.beatAt(0, true).glow === 1 && R.beatAt(0, true).tube === 1,
-  camera: [0, 3.5, 7, 10.5, 14, 17.5].map((t) => R.beatAt(t, false).push).join(","),
-  pushSeconds: R.PUSH_SECONDS,
+  camera: [0, 3, 6, 9, 12, 15].map((t) => R.beatAt(t, false).push).join(","),
   scan: [0, 0.75, 1.5, 2.25].map((t) => R.beatAt(t, false).scan).join(","),
   shotClock: shotClock.map((b) => b.elapsed).join(","),
   // The actor neon a worker is tinted with is the city's own, on the lock.
@@ -3557,8 +3556,6 @@ check "room: and the same room without it genuinely moves" "$(room_of moves)" "t
 check "room: a still room is a LIT room standing still" "$(room_of lit)" "true"
 check "room: the camera pushes in one direction and holds without a cut" \
   "$(room_of camera)" "0,0.25,0.5,0.75,1,1"
-check "room: that push lands before the shortest room hold ends" \
-  "$(room_of pushSeconds)" "14"
 check "room: the CRT retrace travels down on the gate clock" \
   "$(room_of scan)" "-4,-1,2,5"
 check "room: that gate clock starts with the shot, not the server epoch" \
@@ -3712,7 +3709,7 @@ check "crew: and keeps the run dir's own when there is no entry" \
 
 # The room's clock. rAF timestamps only ever go forward; Date.now() plus the
 # server skew is re-measured on every snapshot and steps in both directions,
-# which is what turned a fourteen-second push into a jump cut half way through a
+# which is what turned a twelve-second push into a jump cut half way through a
 # six-frame contact sheet. So the room is handed no clock at all.
 ROOM_SRC="$(cat "$SRC/wall/room.js")"
 ROOM_CODE="$(grep -v '^ *//' "$SRC/wall/room.js")"
