@@ -3222,9 +3222,13 @@ console.log(JSON.stringify({
   // Every name any owner wrote is in the pool, so no line resolves to nothing.
   thingsKnown: Object.keys(CREW)
     .every((who) => R.propsOf(CREW, who).every((name) => !!R.PROP_ART[name])),
-  // A name the pool does not have is NOT A THING: it takes no place, so the slot
-  // it would have filled stays empty and the room draws one fewer object.
+  // A name the pool does not have still HOLDS ITS PLACE: the slot it was written
+  // in stays empty and nothing slides up into it. Otherwise a typo does not look
+  // like a typo — the desk comes out one object short with everything shifted,
+  // and nobody can see which line is wrong.
   unknownThing: JSON.stringify(R.slotsOf(["nope", "mug"])),
+  unknownMidLine: JSON.stringify(R.slotsOf(["mug", "nope", "cactus"])),
+  unknownOnly: JSON.stringify(R.slotsOf(["nope"])),
   noThings: JSON.stringify(R.slotsOf([])),
   // A poster does not stand on a desk, and more things than places puts the
   // extras nowhere rather than on top of each other.
@@ -3240,11 +3244,20 @@ console.log(JSON.stringify({
     R.propsOf(null, "x"),
     R.propsOf(CREW, null),
   ]),
-  // An owner nobody drew borrows the desk of the person whose character they
-  // borrowed — the entry that names the fallback set — because a room with a face
-  // in it and nothing on the desk is a room somebody moved out of.
+  // An owner nobody drew borrows REINIER's desk, by name. Searching for "the first
+  // entry whose set is the fallback set" agrees with that today and stops agreeing
+  // the moment a second owner writes `"set": "room"` — after which object key
+  // order decides whose desk a stranger gets, silently and differently depending
+  // on how somebody hand-edited the file. So the probe puts another owner on that
+  // set FIRST and asks again.
   strangerThings: R.propsOf(CREW, "nobody").join("+"),
   unownedThings: R.propsOf(CREW, "").join("+"),
+  strangerIsNotFirstMatch: R.propsOf({
+    aaa: { set: "room", label: "AAA", props: ["ball"] },
+    reinier: { set: "room", label: "REINIER", props: ["figurine", "books"] },
+  }, "nobody").join("+"),
+  strangerWithNoReinier: JSON.stringify(
+    R.propsOf({ aaa: { set: "room", props: ["ball"] } }, "nobody")),
   // And the view carries them per fixture owner, resolved once so the baked plane
   // redraws when the desk changes and never otherwise.
   viewThings: api.runs.map((run) =>
@@ -3542,8 +3555,12 @@ check "things: two or three each, never more places than there are" \
   "$(room_of thingsSized)" "true"
 check "things: and every name any of them wrote is in the pool" \
   "$(room_of thingsKnown)" "true"
-check "things: a name the pool does not have leaves its place empty" \
-  "$(room_of unknownThing)" '["mug","",""]'
+check "things: a name the pool does not have holds its own place empty" \
+  "$(room_of unknownThing)" '["","mug",""]'
+check "things: and nothing slides up into it from further down the line" \
+  "$(room_of unknownMidLine)" '["mug","",""]'
+check "things: a line of nothing but typos is an empty desk" \
+  "$(room_of unknownOnly)" '["","",""]'
 check "things: an owner with no things has an empty desk, not a crash" \
   "$(room_of noThings)" '["","",""]'
 check "things: a poster does not stand on a desk" \
@@ -3553,8 +3570,12 @@ check "things: more things than places puts the extras nowhere" \
 check "things: nothing a hand-edited roster can say reaches the asset route" \
   "$(room_of hostileThings)" \
   '[["","",""],["","",""],[],[],[],["figurine","books"]]'
-check "things: an owner nobody drew borrows the desk they borrowed the face from" \
+check "things: an owner nobody drew borrows Reinier's desk" \
   "$(room_of strangerThings)" "figurine+books"
+check "things: by name, not by whoever is first on the fallback set" \
+  "$(room_of strangerIsNotFirstMatch)" "figurine+books"
+check "things: and a roster with no Reinier in it is an empty desk, not a throw" \
+  "$(room_of strangerWithNoReinier)" "[]"
 check "things: and so does a run with no owner at all" \
   "$(room_of unownedThings)" "figurine+books"
 check "things: and the view carries them per run, so the plane rebakes on a swap" \

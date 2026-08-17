@@ -437,44 +437,61 @@
     return label || view.owner;
   }
 
+  // Whose desk an unknown owner sits at. NAMED, not searched: the contract says
+  // the fallback room shows Reinier's things, and finding "the first entry whose
+  // set is the fallback set" is a different rule that happens to agree today. The
+  // moment a second owner also writes `"set": "room"`, object key order decides
+  // whose desk a stranger gets — silently, and differently depending on how
+  // somebody hand-edited the file.
+  const FALLBACK_OWNER = 'reinier';
+
   // And what they keep on it. crew.json is written by hand, so everything below
   // assumes the worst: no entry, no props key, a props that is a string, a name
   // nobody drew. None of those may cost the room a frame.
   //
   // An owner with an entry and no things has an EMPTY desk, which is a choice
-  // somebody made. An owner with no entry at all borrows — they are already
-  // sitting in the fallback character, so they sit at that person's desk too,
-  // because a room with a face in it and nothing on the desk is a room somebody
-  // moved out of.
+  // somebody made. An owner with no entry at all borrows Reinier's — they are
+  // already sitting in the character Reinier's own room uses, so they sit at his
+  // desk too, because a room with a face in it and nothing on the desk is a room
+  // somebody moved out of.
   function propsOf(crew, owner) {
     const table = crew && typeof crew === 'object' ? crew : {};
     const key = String(owner || '').trim().toLowerCase();
     let entry = table[key];
-    if (!entry || typeof entry !== 'object') {
-      const borrowed = Object.keys(table).find((who) => {
-        const other = table[who];
-        return other && typeof other === 'object' && other.set === FALLBACK;
-      });
-      entry = borrowed === undefined ? null : table[borrowed];
-    }
-    const list = entry && Array.isArray(entry.props) ? entry.props : [];
+    if (!entry || typeof entry !== 'object') entry = table[FALLBACK_OWNER];
+    const list = entry && typeof entry === 'object' && Array.isArray(entry.props)
+      ? entry.props : [];
     return list.filter((name) => typeof name === 'string')
       .map((name) => name.trim().toLowerCase());
   }
 
-  // Their things, in the places there are. Filled in the order the line was
-  // written, per plane. A name the pool does not have is not a thing: it takes no
-  // place, so the slot it would have filled stays empty and the room draws one
-  // fewer object rather than a question mark. More things than places is the same
-  // rule from the other end — the extras are simply not put anywhere.
+  // Their things, in the places there are. Walked in the order the line was
+  // written; a known name takes the next free place of its own PLANE, because a
+  // plane is not a position — a poster is asked for on the wall wherever in the
+  // line it appears, and the desk places are filled by the desk things in their
+  // own order.
+  //
+  // An unknown name still HOLDS A PLACE. That is the whole difference from the
+  // first version, which skipped it and let the next thing slide up: a line that
+  // reads `["nope", "mug"]` must leave a hole and put the mug in the second place,
+  // not quietly promote the mug into the first. Otherwise a typo does not look
+  // like a typo — the desk simply comes out one object short with everything
+  // shifted, and nobody can see which line is wrong. It holds the first place
+  // still going, because the plane it wanted is unknowable.
+  //
+  // More things than places is the same rule from the far end: once every place of
+  // a plane is held, the extras of that plane are not put anywhere.
   function slotsOf(names) {
     const out = SLOTS.map(() => '');
+    const held = SLOTS.map(() => false);
     for (const name of Array.isArray(names) ? names : []) {
       const art = PROP_ART[name];
-      if (!art) continue;
-      const at = SLOTS.findIndex((slot, i) => slot.plane === art.plane && !out[i]);
+      const at = art
+        ? SLOTS.findIndex((slot, i) => slot.plane === art.plane && !held[i])
+        : held.indexOf(false);
       if (at < 0) continue;
-      out[at] = name;
+      held[at] = true;
+      if (art) out[at] = name;
     }
     return out;
   }
