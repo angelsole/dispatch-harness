@@ -2840,16 +2840,6 @@ body[data-quiet="0"] .block { --work: 0.78; }
    back again the moment the camera starts pulling out. */
 body[data-world="canvas"] .room[data-on="1"] { opacity: 0; }
 body[data-world="canvas"][data-dive="inside"] .room[data-on="1"] { opacity: 1; }
-/* The canvas camera's final 25% push has to survive the handoff to this plate.
-   Scale from the bottom centre, keeping the desk in frame and spending the crop
-   on blank upper wall. --room-push is a ratio of whole authored-pixel scales
-   (5/4 at the gate), written by wall.js so larger panels stay crisp too. */
-body[data-world="canvas"] .room {
-  top: auto;
-  bottom: 0;
-  transform-origin: 50% 100%;
-  transform: translate3d(-50%, 0, 0) scale(var(--room-push, 1));
-}
 
 /* --- CRT overlays ---------------------------------------------------------- */
 

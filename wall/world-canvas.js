@@ -62,12 +62,6 @@
   const ROOM_W = 320;
   const ROOM_H = 180;
   const ROOM_KEY = 'room-live';
-  // The room's authored frame is deliberately a little wider than the final
-  // shot needs. One extra whole display pixel per four authored pixels pushes
-  // the lens in by roughly a quarter without softening the pixel grid. The
-  // crop stays on the bottom edge: it gives the empty upper wall away and
-  // lifts the desk, worker and monitor into the lower two thirds.
-  const ROOM_PUSH = 4;
   // What the window looks straight at, in the room's own pixels: the monitor,
   // which is the one thing in there that is lit and the one thing that says the
   // state. Hang the room off its own middle instead and the first thing the
@@ -109,8 +103,7 @@
   // numbers only, and the same whole number wall.css picks for the DOM
   // overlay (room.js measure()): a room shown at 4.37x is a room with a soft
   // edge on every pixel of it, which is the one thing 320x180 art cannot take.
-  let ROOM_CSS_PIX = 5;
-  let ROOM_PIX = 5;
+  let ROOM_PIX = 4;
 
   function measure(cssWidth, cssHeight, ratio) {
     DPR = Math.min(Math.max(Number(ratio) || 1, 1), 2);
@@ -129,9 +122,7 @@
     SKY = Math.max(GW / 1600, GH / 900);
     SKY_X = (GW - 1600 * SKY) / 2;
     SKY_Y = (GH - 900 * SKY) / 2;
-    const fit = Math.max(1, Math.floor(Math.min(cssWidth / ROOM_W, cssHeight / ROOM_H)));
-    ROOM_CSS_PIX = fit + Math.max(1, Math.floor(fit / ROOM_PUSH));
-    ROOM_PIX = ROOM_CSS_PIX * DPR;
+    ROOM_PIX = Math.max(1, Math.floor(Math.min(cssWidth / ROOM_W, cssHeight / ROOM_H))) * DPR;
   }
 
   // --- the palette --------------------------------------------------------------
@@ -642,19 +633,16 @@
   // the magnification rather than adding to it, which is what a lens does —
   // with the house cubic in-out on top of it, so the move leaves the skyline
   // slowly and the last second is the pane opening rather than an arrival.
-  // The centre travels straight from the middle of the city to the room's
-  // final crop. Horizontally that is its middle; vertically the bottom edge is
-  // held to the frame, removing upper wall instead of the desk. Because the
-  // zoom curve is concave against that straight line, every frame between the
-  // two is still full of city.
+  // The centre travels straight from the middle of the city to the middle of
+  // the room; because the zoom curve is concave against that straight line,
+  // every frame between the two is still full of city.
   function poseAt(u, room) {
     const k = ease(u);
-    const targetY = room.y + room.h - H / (2 * ROOM_PIX);
     return {
       k,
       zoom: PIX * Math.pow(ROOM_PIX / PIX, k),
       x: GW / 2 + (room.x + room.w / 2 - GW / 2) * k,
-      y: GH / 2 + (targetY - GH / 2) * k,
+      y: GH / 2 + (room.y + room.h / 2 - GH / 2) * k,
     };
   }
 
@@ -2402,7 +2390,7 @@
     w: W, h: H, dpr: DPR, pix: PIX, gw: GW, gh: GH, vw: VW, vh: VH, rem: REM,
     panel: PANEL, tile: TILE, bay: BAY, sky: SKY, skyX: SKY_X, skyY: SKY_Y,
     ground: GROUND, groundY: GROUND_Y, cityH: CITY_H, districtH: DISTRICT_H,
-    roomPix: ROOM_PIX, roomCssPix: ROOM_CSS_PIX, roomW: ROOM_W, roomH: ROOM_H,
+    roomPix: ROOM_PIX, roomW: ROOM_W, roomH: ROOM_H,
   });
 
   return {
