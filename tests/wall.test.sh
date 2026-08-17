@@ -1921,12 +1921,15 @@ check "scene: idle distinguishes live, resting, and empty cities" "$(scene_of id
 check "scene: an empty payload is an empty plain, not a throw" "$(scene_of empty)" "true"
 
 # --- the canvas world -----------------------------------------------------------------
-# The same city, on a GPU, behind ?world=canvas. What is checked here is what a
-# screenshot cannot check: that the page picks a world from the query string and
-# nothing else, that the engine is configured the way the owner fixed it, that
-# the DOM world's nodes are left unpopulated in that mode, and — the one a
-# keyframe grep could never prove about WebGL — that reduced motion genuinely
-# stops the world rather than slowing it down.
+# The same city, on a GPU, behind ?world=canvas — and from this pass a game
+# rather than a transcription of one: pixel art authored on the contract's own
+# grid, stamped into textures once, lit by additive light on top. What is
+# checked here is what a screenshot cannot check: that the page picks a world
+# from the query string and nothing else, that the engine is configured the way
+# the owner fixed it, that every sprite the code asks for is really a frame in
+# the committed atlas, that the world's pixel is the contract's pixel at any
+# wall — and the one a keyframe grep could never prove about WebGL, that
+# reduced motion genuinely stops the world rather than slowing it down.
 echo "== wall: the city's second body =="
 CANVAS_SRC="$(cat "$SRC/wall/world-canvas.js")"
 grep_ok "$PAGE_SRC" "get('world') === 'canvas'" \
@@ -1935,38 +1938,63 @@ grep_ok "$PAGE_SRC" 'const world = wantsCanvas ? canvasWorld() : domWorld' \
   "canvas: and the DOM world is what anything else gets"
 grep_ok "$PAGE_SRC" "const CANVAS_SCRIPTS = ['vendor/phaser.min.js', 'world-canvas.js']" \
   "canvas: the engine is fetched only for the world that needs it"
-grep_ok "$PAGE_SRC" "host.id = 'world'" "canvas: it mounts one box inside the stage"
+# The mount moved OUT of the stage this pass, which is why the world no longer
+# appends its own host: the director drives a CSS transform on #stage, a
+# transform on a WebGL canvas rasterises it, and a 5 % establishing creep was
+# costing the whole city its sharpness on every hold. The box is a sibling of
+# the stage, in index.html, and the in/out-of-stage arithmetic further down
+# counts it as the tenth element.
+grep_ok "$PAGE_SRC" "const worldMount = document.getElementById('world')" \
+  "canvas: it mounts in a box the page owns, outside the camera's stage"
 grep_ok "$CSS_SRC" '.world { position: fixed; inset: 0;' \
-  "canvas: which fills the stage the DOM world's layers used to"
+  "canvas: which fills the wall the DOM world's layers used to"
 # The DOM world's nodes stay in index.html — the structural tests read it by
 # line — but nothing populates them and nothing draws them.
 grep_ok "$PAGE_SRC" "if (node) node.setAttribute('hidden', '')" \
   "canvas: the DOM world's layers are hidden rather than deleted"
 # The engine config the owner fixed. Read as declarations, so a renamed option
-# fails here rather than on the TV.
+# fails here rather than on the TV. `fps: { limit: 30 }` was lifted to 60 this
+# pass: the budget is stated as frames per second at 1920x1080 dpr 2 and a
+# 30 Hz cap makes that unmeasurable, and this world draws about a tenth of the
+# geometry the transcription did.
 for option in "type: Phaser.AUTO" "mode: Phaser.Scale.NONE" \
               "smoothPixelArt: true" "roundPixels: true" \
-              "powerPreference: 'low-power'" "fps: { limit: 30 }" \
+              "powerPreference: 'low-power'" "fps: { limit: 60 }" \
               "audio: { noAudio: true }" "banner: false"; do
   grep_ok "$CANVAS_SRC" "$option" "canvas: the engine is configured with [$option]"
 done
-# This is a parity port of a city the DOM draws crisply in vh/rem at native
-# pixels, not a pixel-art sprite game — so there is no base grid to letterbox
-# into. The canvas covers the stage at whatever aspect the viewport has, and its
+# The canvas covers the wall at whatever aspect the viewport has, and its
 # backing store is device pixels: a MacBook is 16:10 and Retina, and both of
 # those used to cost black bars and a soft city.
 for banned in 'Scale.FIT' 'Scale.ENVELOP' 'autoCenter'; do
   grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
-    "canvas: no [$banned] — the world fills the stage rather than fitting inside it"
+    "canvas: no [$banned] — the world fills the wall rather than fitting inside it"
 done
 grep_ok "$CANVAS_SRC" 'zoom: 1 / DPR' \
   "canvas: the backing store is device pixels, shown at CSS size"
 grep_ok "$CANVAS_SRC" 'Math.min(window.devicePixelRatio || 1, 2)' \
   "canvas: at the panel's own ratio, capped at 2 for fill-rate"
-# Every size in the world is derived from the live stage rather than from a
-# constant, and measure() is the only place any of them is written.
+# smoothPixelArt sets antialias and pixelArt itself; declaring either would fight it.
+for banned in 'antialias:' 'pixelArt:'; do
+  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
+    "canvas: [$banned] is left to smoothPixelArt"
+done
+
+# THE WORLD'S PIXEL IS THE CONTRACT'S PIXEL. .creative/proportions.md states
+# every size at 1280x720 — a person ~10 px, a storey ~14, a 16 px district tile,
+# a 32 px facade panel — so the world is 1280 of its own pixels wide at every
+# wall and the engine's camera is what scales it to the panel. The old body
+# derived a rem from the live viewport instead, which meant a sprite authored
+# at 32 px was 32 px of the city on exactly one screen.
+grep_ok "$CANVAS_SRC" 'const GRID_W = 1280;' \
+  "canvas: the world is 1280 of the contract's own pixels wide, at any wall"
+grep_ok "$CANVAS_SRC" 'const REM = 13.44;' \
+  "canvas: its module is the stylesheet's clamp resolved at that width"
+grep_ok "$CANVAS_SRC" 'const PANEL = 32;' "canvas: and a facade panel is the module's 32"
+grep_ok "$CANVAS_SRC" 'cam.setZoom(PIX)' \
+  "canvas: the camera is what puts that grid on the panel"
 grep_ok "$CANVAS_SRC" 'function measure(cssWidth, cssHeight, ratio)' \
-  "canvas: the grid is measured off the stage, not declared"
+  "canvas: the wall is measured, not declared"
 # A resized wall re-measures and lays out again rather than stretching a frame
 # drawn for the old size — and the two ScaleManager calls that do it are
 # order-dependent: setZoom refreshes the CSS size off the backing store, so
@@ -1975,54 +2003,105 @@ check "canvas: a resize sets the backing store before refreshing the CSS size of
   "$(printf '%s\n' "$CANVAS_SRC" | grep -oE 'game\.scale\.(resize|setZoom)' \
      | sed 's/game\.scale\.//' | tr '\n' ' ')" "resize setZoom "
 grep_ok "$CANVAS_SRC" 'city.scene.restart()' \
-  "canvas: and the city is rebuilt for the new stage rather than repositioned"
-grep_ok "$CANVAS_SRC" 'REM = Math.min(26, Math.max(12, cssWidth * 0.0105)) * DPR' \
-  "canvas: a rem is the stylesheet's own clamp, in device pixels"
+  "canvas: and the city is rebuilt for the new wall rather than repositioned"
 GRID_PROBE="$ROOT/grid-probe.js"
 cat > "$GRID_PROBE" <<'JS'
 const C = require(process.argv[2]);
 const shot = (w, h, dpr) => { C.measure(w, h, dpr); return C.grid(); };
-const wide = shot(1920, 1080, 1);
-const retina = shot(1440, 900, 2);
-const capped = shot(1440, 900, 4);
+const gate = shot(1280, 720, 1);
+const tv = shot(3840, 2160, 1);
+const retina = shot(1920, 1080, 2);
+const capped = shot(1920, 1080, 4);
+const laptop = shot(1440, 900, 2);
 console.log(JSON.stringify({
-  // The backing store is the stage in device pixels, at any aspect.
-  wide: wide.w + 'x' + wide.h,
-  retina: retina.w + 'x' + retina.h,
-  // Never past 2, however proud the display is of its pixels.
-  capped: capped.w + 'x' + capped.h,
-  // A rem is the same size ON SCREEN in both, which is what makes a name plate
-  // as legible on a laptop as on the TV — it is just drawn with more pixels.
-  remCss: (wide.rem / wide.dpr).toFixed(2) + ' ' + (retina.rem / retina.dpr).toFixed(2),
-  // 16:10 is not letterboxed: the ground line is 9vh off the bottom of the
-  // stage, not of some 16:9 box centred inside it.
-  ground: (retina.h - retina.groundY).toFixed(1) === (9 * retina.h / 100).toFixed(1),
+  // The backing store is the wall in device pixels, at any aspect.
+  gate: gate.w + 'x' + gate.h + '@' + gate.pix,
+  // The office TV is an exact 3x of the authored grid: one authored pixel is a
+  // clean 3x3 block and nothing is resampled.
+  tv: tv.w + 'x' + tv.h + '@' + tv.pix,
+  // And so, by arithmetic rather than by luck, is 1920 at dpr 2.
+  retina: retina.w + 'x' + retina.h + '@' + retina.pix,
+  // Never past dpr 2, however proud the display is of its pixels.
+  capped: capped.w + 'x' + capped.h + '@' + capped.pix,
+  // The world stays 1280 wide whatever the wall is; a 16:10 laptop gets a
+  // taller world rather than a letterbox or a squeeze.
+  world: [gate, tv, retina, laptop].map((g) => g.gw + 'x' + Math.round(g.gh)).join(' '),
+  // A module is a module everywhere: this is what makes a facade panel the
+  // same building at 1280 and on the TV.
+  module: [gate, tv, laptop].every((g) => g.rem === 13.44 && g.panel === 32 && g.tile === 16),
+  // 16:10 is not letterboxed: the ground line is 9 % of the world's own height.
+  ground: (laptop.gh - laptop.groundY).toFixed(3) === (9 * laptop.gh / 100).toFixed(3),
   // And the sky's own 1600x900 box is covered rather than fitted, so a 16:10
   // wall crops the painting exactly as `xMidYMid slice` does in the DOM.
-  slice: retina.sky >= retina.w / 1600 && retina.sky >= retina.h / 900
-    && Math.min(retina.skyX, retina.skyY) <= 0,
+  slice: laptop.sky >= laptop.gw / 1600 && laptop.sky >= laptop.gh / 900
+    && Math.min(laptop.skyX, laptop.skyY) <= 0,
 }));
 JS
 GRID="$(node "$GRID_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
 grid_of() { printf '%s' "$GRID" | jq -r ".$1" 2>/dev/null; }
-check "canvas: a 1920x1080 wall at dpr 1 is a 1920x1080 backing store" \
-  "$(grid_of wide)" "1920x1080"
-check "canvas: and a 1440x900 laptop at dpr 2 is 2880x1800" "$(grid_of retina)" "2880x1800"
-check "canvas: the ratio is capped at 2, never higher" "$(grid_of capped)" "2880x1800"
-check "canvas: a rem is the same size on screen on both" "$(grid_of remCss)" "20.16 15.12"
-check "canvas: 16:10 is not letterboxed — the ground is 9vh off the stage" \
+check "canvas: the gate's own 1280x720 wall is drawn 1:1" "$(grid_of gate)" "1280x720@1"
+check "canvas: the office 4K panel is an exact 3x of it" "$(grid_of tv)" "3840x2160@3"
+check "canvas: and so is 1920x1080 at dpr 2" "$(grid_of retina)" "3840x2160@3"
+check "canvas: the ratio is capped at 2, never higher" "$(grid_of capped)" "3840x2160@3"
+check "canvas: the world is the contract's 1280 wide at every wall" \
+  "$(grid_of world)" "1280x720 1280x720 1280x720 1280x800"
+check "canvas: a rem, a panel and a tile are the same size in it everywhere" \
+  "$(grid_of module)" "true"
+check "canvas: 16:10 is not letterboxed — the ground is 9 % of the world" \
   "$(grid_of ground)" "true"
 check "canvas: and the painted sky is sliced to cover, as the DOM slices it" \
   "$(grid_of slice)" "true"
-# smoothPixelArt sets antialias and pixelArt itself; declaring either would fight it.
-for banned in 'antialias:' 'pixelArt:'; do
-  grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" "$banned" \
-    "canvas: [$banned] is left to smoothPixelArt"
+
+# SOLIDS ARE SPRITES. So the sprites have to be there: every frame name this
+# world asks the atlas for is checked against the committed atlas.json, both
+# ways. A renamed asset is a hole in the city, and a frame nobody draws is
+# weight in the texture and a row in a manifest for nothing.
+grep_ok "$CANVAS_SRC" "this.load.atlas(ATLAS, 'assets/city/atlas.png', 'assets/city/atlas.json')" \
+  "canvas: the set is one atlas, committed under wall/assets/city"
+check "canvas: and it is the only thing this world loads" \
+  "$(printf '%s\n' "$CANVAS_SRC" | grep -c 'this\.load\.')" "1"
+FRAME_CHECK="$(node -e '
+  const fs = require("fs"), path = require("path");
+  const root = process.argv[1];
+  const atlas = JSON.parse(fs.readFileSync(
+    path.join(root, "wall/assets/city/atlas.json"), "utf8"));
+  const frames = new Set(Object.keys(atlas.frames));
+  const src = fs.readFileSync(path.join(root, "wall/world-canvas.js"), "utf8");
+  const asked = new Set();
+  for (const m of src.matchAll(/.(city-[a-z0-9-]+)./g)) asked.add(m[1]);
+  const missing = [...asked].filter((name) => !frames.has(name));
+  const unused = [...frames].filter((name) => !asked.has(name));
+  process.stdout.write(missing.length ? "missing: " + missing.join(",")
+    : unused.length ? "unused: " + unused.join(",")
+    : "ok:" + frames.size);
+' "$SRC" 2>&1)"
+case "$FRAME_CHECK" in
+  ok:*) ok "assets: every sprite the city draws is a frame in the committed atlas" ;;
+  *)    bad "assets: the city and its atlas disagree ($FRAME_CHECK)" ;;
+esac
+# LIGHT IS DRAWN, and state colour is light. A sprite is authored once at full
+# value: the alarm's red and a ship's green are a tint on a shared glow, which
+# is why neither is allowed to exist in a committed PNG (the palette police
+# above refuses the whole shipped ramp from every sprite in wall/assets).
+grep_ok "$CANVAS_SRC" 'setTint(tower.alarm ? ALARM : ' \
+  "canvas: an alarm is a tint on a light, never a red building in the atlas"
+grep_ok "$CANVAS_SRC" 'Phaser.BlendModes.ADD' "canvas: and light is added, not painted over"
+grep_ok "$CANVAS_SRC" 'this.mall.setVisible(plan.mall)' \
+  "canvas: the street plan's mall milestone has its own visible counterpart"
+grep_ok "$CANVAS_SRC" "stone.stamp(ATLAS, 'city-prop-ac'" \
+  "canvas: steam rises from a solid atlas vent, not an empty point"
+grep_ok "$CANVAS_SRC" "const bollardFrame = this.cut('city-prop-lamp'" \
+  "canvas: the pavement's bollards reuse the set's solid post"
+grep_ok "$CANVAS_SRC" 'this.tramStop.setVisible(plan.tram)' \
+  "canvas: the tram milestone brings its stop marker with it"
+# The frame loop moves what is on the GPU and never builds anything: no object
+# is created, no sprite is stamped and no texture is allocated inside it. This
+# is the whole difference between this world and the one it replaces, whose
+# every frame replayed a hundred thousand Graphics commands.
+FRAME_SRC="$(awk '/^      step\(force\) \{/,/^      paintCascade/' "$SRC/wall/world-canvas.js")"
+for banned in 'this.add.' '.stamp(' 'renderTexture' 'this.make.'; do
+  grep_not "$FRAME_SRC" "$banned" "canvas: the frame loop never reaches for [$banned]"
 done
-# The loader ban that used to stand here is retired: "the city is drawn, not
-# loaded" was replaced by "nothing the wall needs leaves this machine", and the
-# room now loads committed, palette-locked, manifest-hashed sprites. Provenance
-# is enforced above instead, by the off-origin ban and the two manifests.
 # The sky painting is authored once, in index.html. This world reads that node
 # rather than keeping a second copy of the same skyline.
 grep_ok "$CANVAS_SRC" "document.querySelector('.sky__' + plane.key + ' path')" \
@@ -2034,15 +2113,23 @@ grep_ok "$CANVAS_SRC" 'fontFamily: CJK' \
 
 # Reduced motion. A keyframe grep proves nothing about a GPU, so the claim is
 # made where it can be checked: the whole of this world's motion is one pure
-# function of the wall clock, and asking it for a still frame returns the SAME
-# frame at every second — which is what "nothing tweens, no timer advances
-# state" actually means once there is no stylesheet to inspect.
-grep_ok "$PAGE_SRC" 'factory.create({ parent: stage, still,' \
+# function of one clock, and asking it for a still frame returns the SAME frame
+# at every second — which is what "nothing tweens, no timer advances state"
+# actually means once there is no stylesheet to inspect.
+grep_ok "$PAGE_SRC" 'factory.create({ parent: worldMount, still,' \
   "motion: the canvas world is handed the page's own reduced-motion guard"
 check "motion: and there is exactly one matchMedia on this wall" \
   "$(printf '%s\n' "$PAGE_SRC" | grep -c "matchMedia('(prefers-reduced-motion: reduce)')")" "1"
 grep_ok "$CANVAS_SRC" 'const frozen = still.matches;' \
   "motion: which is what its frame loop asks before it advances anything"
+# One clock, and a monotonic one. `clock()` is Date.now()+skew and the skew is
+# re-measured on every snapshot, so a world that read it per frame stepped
+# sideways every time the server spoke. It is read once, at boot, and the loop
+# runs on its own time after that.
+grep_ok "$CANVAS_SRC" 'const at = this.origin + this.time.now / 1000;' \
+  "motion: the frame loop runs on one monotonic clock, anchored at boot"
+grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//' | grep -v 'this.origin = ')" \
+  'clock()' "motion: and never re-reads the skewed wall clock mid-shift"
 STILL_PROBE="$ROOT/still-probe.js"
 cat > "$STILL_PROBE" <<'JS'
 const C = require(process.argv[2]);
@@ -2050,13 +2137,14 @@ const at = [0, 1, 7.5, 3600, 86399, 1755000000.25];
 const frozen = at.map((t) => JSON.stringify(C.phaseAt(t, { reducedMotion: true })));
 const moving = at.map((t) => JSON.stringify(C.phaseAt(t, {})));
 const rest = C.phaseAt(0, { reducedMotion: true });
-// The skyline is laid out against whatever the stage currently measures, so the
-// probe states the wall it is asking about rather than assuming a base grid.
-C.measure(1920, 1080, 1);
-const WIDE = C.grid().w;
+C.measure(1280, 720, 1);
+const WIDE = C.grid().gw;
+const whole = (n) => Number.isInteger(n);
 const roomy = C.towerLayout(Array.from({ length: 5 }, () => ({ widthRem: 5.6 })));
 const crowded = C.towerLayout(Array.from({ length: 20 }, () => ({ widthRem: 5.6 })));
-const bounded = (boxes) => boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE + 1e-6
+const packed = C.towerLayout(Array.from({ length: 40 }, () => ({ widthRem: 5.6 })));
+const bounded = (boxes) => boxes.every((box, i) => box.x >= 0 && box.x + box.w <= WIDE
+  && whole(box.x) && whole(box.w)
   && (i === 0 || box.x >= boxes[i - 1].x + boxes[i - 1].w));
 console.log(JSON.stringify({
   // Every second of the clock gives the same still frame.
@@ -2085,34 +2173,58 @@ console.log(JSON.stringify({
     && C.signAt(C.phaseAt(1, {}), 0, 40) !== C.signAt(C.phaseAt(1, {}), 40, 40),
   // A still city is a LIT city standing still, which is what wall.css's own
   // reduced-motion block leaves the DOM world showing: the tubes are on, the
-  // occupied windows are up, the tram sits on its line, and only the two things
-  // that are nothing but motion — the aircraft and the street streaks — are out.
+  // occupied windows are up, the tram sits on its line and the beacon still
+  // faces the room, and only the things that are nothing but motion — the
+  // aircraft and the street passes — are out.
   lit: C.tubeAt(rest, 40, 23) === 1 && C.paneAt(rest, 0, 12) === 0.85
-    && rest.tram.a > 0 && rest.ships.every((s) => s.a === 0)
-    && rest.street.every((s) => s.a === 0),
-  // And the camera is parked wide rather than held mid push-in.
-  parked: rest.cam.city === 1 && rest.cam.sky === 1
-    && rest.planes.every((p) => p === 0) && rest.ghost === 0,
-  // The sweep and the patch it paints share one alternate phase, but their
-  // ranges are the stylesheet's own distinct keyframes. Reduced motion parks
-  // each at its own resting transform.
-  alarmBeam: (() => {
-    const from = C.phaseAt(0, {});
-    const to = C.phaseAt(4.4, {});
-    return from.sweep === -34 && to.sweep === 38
-      && (from.ceiling.x / C.grid().vh).toFixed(2) === '-7.74'
-      && (to.ceiling.x / C.grid().vh).toFixed(2) === '9.00'
-      && (rest.ceiling.x / C.grid().vh).toFixed(2) === '-2.43'
-      && rest.ceiling.scale === 1;
+    && rest.tram.a > 0 && rest.beam.face === 1
+    && rest.ships.every((s) => s.a === 0) && rest.street.every((s) => s.a === 0),
+  // And nothing is mid-drift: the planes, the ghost and the weather slabs are
+  // all parked where they started.
+  parked: rest.planes.every((p) => p === 0) && rest.ghost === 0
+    && rest.air.every((a) => a === 0) && rest.steam.every((s) => s.a === 0),
+  // The alarm beacon turns, and it only ever turns ONE WAY. A beam that swings
+  // back is a windscreen wiper; a beam that goes round is a building asking
+  // for a human. Sampled across a whole revolution, the angle never decreases,
+  // and the room sees the half of it that faces the room.
+  oneWay: (() => {
+    const step = 8.8 / 40;
+    let last = -Infinity;
+    for (let i = 0; i < 40; i++) {
+      const a = C.phaseAt(i * step, {}).beam.angle;
+      if (a <= last) return false;
+      last = a;
+    }
+    const facing = C.phaseAt(8.8 * 0.25, {}).beam.face;
+    const away = C.phaseAt(8.8 * 0.75, {}).beam.face;
+    return facing === 1 && away === 0 && rest.beam.angle === -14;
   })(),
   // The hand-written flex row keeps both an ordinary fixture and a genuinely
-  // crowded skyline inside the stage without letting towers overlap.
-  layout: bounded(roomy) && bounded(crowded),
+  // crowded skyline inside the world without letting towers overlap — and
+  // every edge of it lands on a whole world pixel, because a tower standing on
+  // x.5 is a tower whose windows are half a pixel off their own rhythm.
+  layout: bounded(roomy) && bounded(crowded) && bounded(packed),
   // space-evenly leaves a single tower centred in the skyline band.
   centred: (() => {
     const [box] = C.towerLayout([{ widthRem: 5.6 }]);
-    return Math.abs(box.x + box.w / 2 - WIDE / 2) < 1e-6;
+    return Math.abs(box.x + box.w / 2 - WIDE / 2) <= 1;
   })(),
+  // Every building in the district is a stack of rectangles standing on the
+  // pavement, all of them inside their own plot, and the widest of them is the
+  // one at the bottom: that is the silhouette, and it has no off-grid edge in
+  // it anywhere.
+  masses: [...Object.values(C.TOWER_MASSES), ...Object.values(C.FORM_MASSES),
+    ...Object.values(C.KIND_MASSES)].every((stack) =>
+    stack.length && stack[0].w === 1 && stack[0].x === 0
+      && stack.every((m) => m.x >= 0 && m.x + m.w <= 1 && m.top >= 0 && m.top < 1)),
+  // And a plot is whole pixels wide, whole pixels tall and standing on the
+  // ground line, at whatever depth band it is in.
+  plots: [0, 1, 2].every((depth) => {
+    const box = C.blockBox({ id: 'X', kind: 'midrise', depth, x: 0.5, storeys: 4,
+      shape: { form: 'slab', grade: 1 } });
+    return whole(box.x) && whole(box.y) && whole(box.w) && whole(box.h)
+      && box.y + box.h === Math.round(C.grid().groundY);
+  }),
 }));
 JS
 STILL="$(node "$STILL_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
@@ -2129,12 +2241,15 @@ check "motion: and holds attribution steady until its lifetime expires" \
 check "motion: those completion and cooling beats advance when motion is allowed" \
   "$(still_of timedBeats)" "true"
 check "motion: a still canvas city is a lit city, not a dark one" "$(still_of lit)" "true"
-check "motion: with the camera parked wide" "$(still_of parked)" "true"
-check "alarm: the canvas sweep and ceiling patch use the DOM keyframe ranges" \
-  "$(still_of alarmBeam)" "true"
-check "canvas: a busy skyline shrinks inside the world without overlapping" \
+check "motion: with nothing left mid-drift" "$(still_of parked)" "true"
+check "alarm: the beacon turns one way, for ever" "$(still_of oneWay)" "true"
+check "canvas: even an uncapped live skyline shrinks without hiding or overlapping work" \
   "$(still_of layout)" "true"
 check "canvas: space-evenly keeps a lone tower centred" "$(still_of centred)" "true"
+check "canvas: every silhouette is a stack of rectangles on the pavement" \
+  "$(still_of masses)" "true"
+check "canvas: and every plot is whole pixels standing on the ground line" \
+  "$(still_of plots)" "true"
 
 # --- the director films the city --------------------------------------------------
 # The wall can film itself: a slow camera that holds the skyline, pushes in on
@@ -2166,6 +2281,11 @@ inside "the HUD"            'class="hud"'      out
 inside "the brief plate"    'id="brief"'       out
 inside "the comms ticker"   'id="comms"'       out
 inside "the rain"           'id="rain"'        out
+# The tenth element, and the newest: the canvas world's box. A CSS transform on
+# a WebGL canvas rasterises it, and the establishing shot creeps this stage by
+# 5 % on every hold — so the world that draws itself keeps its own camera and
+# stays out from under the director's.
+inside "the canvas world"   'id="world"'       out
 grep_ok "$CSS_SRC" 'transform-origin: 0 0' "cinema: the stage has a fixed camera origin"
 grep_ok "$PAGE_SRC" 'stage.style.transform' \
   "cinema: the director drives that transform and nothing else"

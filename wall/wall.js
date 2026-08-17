@@ -68,6 +68,9 @@
   const STATE_GLYPH = { alarm: 'g-alarm', ready: 'g-done', failed: 'g-failed' };
 
   const stage = document.getElementById('stage');
+  // The canvas world's box, and the one layer of the wall that is deliberately
+  // not on the stage: see index.html. The DOM world never touches it.
+  const worldMount = document.getElementById('world');
   const rest = document.getElementById('rest');
   const counts = document.getElementById('counts');
   const clock = document.getElementById('clock');
@@ -1533,7 +1536,7 @@
     loadScripts(CANVAS_SCRIPTS, () => {
       const factory = window.WallCanvasWorld;
       if (!factory || !window.Phaser) return;
-      live = factory.create({ parent: stage, still, clock: () => Date.now() / 1000 + skew });
+      live = factory.create({ parent: worldMount, still, clock: () => Date.now() / 1000 + skew });
       if (last) live.render(last);
       live.spot(spotId);
     });

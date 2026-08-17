@@ -157,11 +157,14 @@ body {
 }
 
 /* The city's other body. Behind ?world=canvas the whole world above is hidden
-   and one WebGL canvas is mounted here instead — same stage, same camera, same
-   z-index the skyline had, so everything outside the stage (the HUD, the plate,
-   the ticker, the rain) is unaware which world is drawing. Phaser owns the
-   canvas element's own size and centring; this only gives it a box to fill. */
-.world { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+   and one WebGL canvas is mounted here instead. The box lives OUTSIDE the stage
+   (index.html says why): a CSS transform on a WebGL canvas rasterises it, and
+   the director creeps the stage by 5 % on every establishing hold, so the world
+   that draws itself keeps its own camera and stays out from under that one. It
+   sits directly over the stage and under the rain, which is exactly where the
+   skyline sat relative to both. Phaser owns the canvas element's own size and
+   centring; this only gives it a box to fill. */
+.world { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
 
 /* --- sky, weather, traffic -------------------------------------------------- */
 
