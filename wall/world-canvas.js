@@ -2158,12 +2158,15 @@
         if (this.said.shot !== shot) { this.said.shot = shot; s.shot(shot); }
         if (this.said.dive !== stage) { this.said.dive = stage; s.dive(stage); }
 
-        const room = dived ? dived.room : roomBoxAt(this.middleWindow().pane);
-        const pose = poseAt(step.u, room);
+        // With nowhere to dive to there is nothing to interpolate toward, and
+        // the wide shot is what poseAt() returns at u = 0 anyway — so the hold
+        // costs this loop one assignment rather than a box a frame.
+        const pose = dived ? poseAt(step.u, dived.room)
+          : { k: 0, zoom: PIX, x: GW / 2, y: GH / 2 };
         const cam = this.cameras.main;
         cam.setZoom(pose.zoom);
         cam.centerOn(pose.x, pose.y);
-        this.paintDive(dived, room, step);
+        this.paintDive(dived, dived && dived.room, step);
       }
 
       // The room, in the window. It stands in the city at one world pixel per
