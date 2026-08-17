@@ -1,6 +1,6 @@
 {
-  "angel": { "set": "crew/angel", "label": "ANGEL" },
-  "emre": { "set": "crew/emre", "label": "EMRE" },
-  "ran": { "set": "crew/ran", "label": "RAN" },
-  "reinier": { "set": "room", "label": "REINIER" }
+  "angel": { "set": "crew/angel", "label": "ANGEL", "props": ["mug", "cactus", "poster"] },
+  "emre": { "set": "crew/emre", "label": "EMRE", "props": ["ball", "pennant"] },
+  "ran": { "set": "crew/ran", "label": "RAN", "props": ["photo", "figurine"] },
+  "reinier": { "set": "room", "label": "REINIER", "props": ["books", "mug"] }
 }

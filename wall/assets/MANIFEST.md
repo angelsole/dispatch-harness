@@ -83,6 +83,50 @@ the wording each seed was drawn against. Every `animate` job took
 the hood, the headphones, the jacket, the keyboard — is the same person in every
 frame the room can show.
 
+## Their things
+
+The furniture above is the ROOM. These are the DESK, and a desk belongs to
+somebody: `wall/crew.json` names two or three of them per owner, `wall/room.js`
+holds the closed pool a line may pick from, and there are three places to put
+them — beside the lamp, beside the monitor, and on the wall over the desk.
+
+| path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
+|---|---|---|---|---|---|---|---|---|
+| `room/prop-mug.png` | a mug, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-mug` | `18520` | 2026-08-17 | generated for this repo | `c680e87651666df4268afdf46d945067a6382da362911efd6cb8075d1ea48637` |
+| `room/prop-cactus.png` | a small cactus in a pot, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-cactus` | `18512` | 2026-08-17 | generated for this repo | `9235d7c876ad4e2c787b27803f7aa3f5bbab200a76a27bf3394ded7bafa24025` |
+| `room/prop-books.png` | a stack of books, for the desk; one klaxon-red cover recoloured onto the palette's deep red | pixellab.image + recolour + halve + trim | `/create-image-pixflux` | `room-prop-books` | `18521` | 2026-08-17 | generated for this repo | `0098d2a62e6de5a2316f20ce3caae1a83b0b30fb6b7292aa18c4e7c36ed9efc1` |
+| `room/prop-photo.png` | a framed photograph, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-photo` | `18523` | 2026-08-17 | generated for this repo | `5218a65059e4fa3baede822f902668a14c8435d3bf6f3675ea93acb1610932e7` |
+| `room/prop-figurine.png` | a small toy figurine, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-figurine` | `18525` | 2026-08-17 | generated for this repo | `6ad29a722970b23eaad4cbebd3c86d39717be5d5cadc941972fb82d6f64dd0b7` |
+| `room/prop-ball.png` | a football, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-ball` | `18526` | 2026-08-17 | generated for this repo | `e092f7d9f941d6a3c6fefb581eb9acab93562f616675c997bf27d6cc8d1f73d7` |
+| `room/prop-poster.png` | a framed night landscape, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-poster` | `18527` | 2026-08-17 | generated for this repo | `4e9f9ec53a15337fc88a1164621961c9307d8c5ace1d9e6e78389ecea5d148e6` |
+| `room/prop-pennant.png` | a felt pennant, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-pennant` | `18528` | 2026-08-17 | generated for this repo | `7539387a6ba16ab38c48226b3ae8de072c892ecf0d05e038acece3de34baa89b` |
+
+Three things about these files that the columns cannot say:
+
+- **`halve` is not a resample.** The factory's smallest square canvas is 32x32 —
+  its floor is 1024 px of area, so a 16x16 request is refused — and a mug drawn to
+  fill 32x32 is a mug as tall as the desk lamp beside it. This room's scale is
+  not negotiable: a person is 56 px and the lamp is 28, so a mug is 13. The desk
+  props come down by exactly two, each 2x2 block voting: the winning opaque
+  colour takes the output pixel, a block that is mostly transparent stays
+  transparent. No new colour can appear and no edge goes soft. The two WALL props
+  are not halved — a poster next to a 66 px window really is 24 px.
+- **`trim` is why there is no padding table.** Every prop is cropped to its own
+  drawing, so the committed file IS its content box and `room.js` places a thing
+  by one corner. The furniture above still carries a `BOX` entry each, because
+  those files predate the idea.
+- **One recolour, for meaning and never for value.** `prop-books` came back with
+  a bright `#ff2f45` cover, and in this palette that red is an alarm; it is on
+  `#531820` now, pixel for pixel, the same call `room/plant.png` got when it came
+  back in emerald. Nothing was recoloured for being too bright — an asset is
+  authored at full value and the renderer is what veils it, which is why the
+  football keeps its white and the room sinks it instead.
+
+Nine props were generated and eight are here. `room-prop-headphones` was rolled
+twice, at `18514` and `18524`, and came back both times as a spindle nobody would
+read as headphones at 4x; it was thrown away rather than retouched, and the pool
+is eight.
+
 ## Eight frames, and a head that holds
 
 `type-0..3` and `wait-1/2` are the four-and-two the room shipped with, and they
