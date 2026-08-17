@@ -3179,6 +3179,16 @@ console.log(JSON.stringify({
     .slice(-2).map((row) => row.mark + " " + row.text).join(" | "),
   feedCodex: R.viewOf({ ...by("OLYX-1655"), crew: "#e8cfa6" }, FLOORS).feed
     .slice(-1).map((row) => row.mark + " " + row.text).join(""),
+  // The display is only sixteen cells, but its truncated text is not a line's
+  // identity. Patch lines often share a timestamp, source and long prefix; both
+  // still have to reach the scroll queue.
+  feedIdentity: (() => {
+    const first = R.lineOf({ t: "05:04:15", src: "codex",
+      text: "+  const sharedPrefix = firstValue;" });
+    const second = R.lineOf({ t: "05:04:15", src: "codex",
+      text: "+  const sharedPrefix = secondValue;" });
+    return first.text === second.text && R.keyOf(first) !== R.keyOf(second);
+  })(),
   // A run with no feed.log at all is a screen with a word and a cursor on it,
   // never a black tube and never a stale line.
   feedEmpty: JSON.stringify(R.viewOf({ id: "x" }, FLOORS).feed),
@@ -3346,6 +3356,8 @@ check "room: a tool call reads as what it touched, with the implementer's mark" 
   "dot THE XLSX GOLDEN. | dot EDIT EXPORT.TS"
 check "room: and the reviewer's line wears the reviewer's" \
   "$(room_of feedCodex)" "diamond RE-RUNNING THE."
+check "room: truncated lookalikes remain distinct lines in the scroll queue" \
+  "$(room_of feedIdentity)" "true"
 check "room: a run with no feed at all leaves the tube with nothing to say" \
   "$(room_of feedEmpty)" "[]"
 check "room: no line the fixtures can produce overruns the tube" \

@@ -12,9 +12,9 @@
 //
 //   the worker      the actor that owns the stage, tinted with the actor neon
 //                   the same way that run's car is tinted in the wide city
-//   the monitor     the stage in one word, the ticket and the repo under it,
-//                   in the page's own type — no lettering is ever drawn by a
-//                   model, only by this file
+//   the monitor     the stage in one word, then the run's own feed line by
+//                   line, in the page's own type — no lettering is ever drawn
+//                   by a model, only by this file
 //   the wall plate  the floor the run has climbed to, out of six
 //   the lamp        the dispatcher, in their crew tint — the one place crew
 //                   colour is allowed, exactly as in the wide city
@@ -470,7 +470,7 @@
   // create() would not repeat from startedAt and a recording of the same second
   // has to be the same picture.
   const BURSTS = [[2.4, 0.6], [3.6, 0.9], [2.0, 0.4], [3.0, 1.0]];
-  const BURST_CYCLE = 13.9;
+  const BURST_CYCLE = BURSTS.reduce((total, pair) => total + pair[0] + pair[1], 0);
 
   // Murmur3's finaliser, which is the cheapest thing that actually mixes into the
   // LOW bits — the two obvious shortcuts do not. A plain multiply by an odd
@@ -600,20 +600,26 @@
 
   function lineOf(entry) {
     const raw = entry && typeof entry === 'object' ? entry : {};
-    let text = String(raw.text || '').replace(MARKER, '').toUpperCase()
+    const original = String(raw.text || '');
+    const source = String(raw.src || '');
+    const time = String(raw.t || '');
+    let text = original.replace(MARKER, '').toUpperCase()
       .replace(LOOKALIKES, (ch) => LOOKALIKE[ch]);
     if (widthOf(SMALL, text) > FEED_W) text = basename(text);
     return {
-      // The timestamp is the line's identity rather than something drawn: it is
-      // how the next snapshot tells one appended line from the forty-seven it
-      // re-sent, and two runs of `npm run gate` are the same words at different
-      // seconds.
-      t: String(raw.t || ''),
-      src: String(raw.src || ''),
-      mark: markOf(String(raw.src || '')),
+      // Identity is made from the full source line, before the tube shortens it.
+      // Two patch lines can share a timestamp, source and sixteen-cell prefix;
+      // treating their displayed forms as identity would silently drop the
+      // second one when the next snapshot arrives.
+      key: JSON.stringify([time, source, original]),
+      t: time,
+      src: source,
+      mark: markOf(source),
       text: fit(SMALL, text, FEED_W),
     };
   }
+
+  const keyOf = (row) => row.key;
 
   // --- the view -----------------------------------------------------------
   // Everything the room needs about a run, and nothing else: the page hands
@@ -1089,8 +1095,6 @@
     // What the snapshot brought. Called from paint, so it is cheap and
     // idempotent by construction: with nothing new the loop below finds the last
     // line it already has and queues nothing.
-    const keyOf = (row) => row.t + ' ' + row.src + ' ' + row.text;
-
     function feedIn(v, at) {
       const lines = v.feed;
       if (feedRun !== v.id) {
@@ -1609,7 +1613,7 @@
 
   return {
     create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
-    fileOf, splitOf, bandsOf, lineOf, markOf, burstAt, revealed,
+    fileOf, splitOf, bandsOf, lineOf, keyOf, markOf, burstAt, revealed,
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
     TYPE_SET, WAIT_SET, FALLBACK, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
     BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
