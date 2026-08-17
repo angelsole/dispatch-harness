@@ -3507,7 +3507,7 @@ check "things: and is trimmed to its own drawing, so there is no padding table" 
   "$(room_of propsTrimmed)" "true"
 check "things: who has what, as crew.json first assigned it" \
   "$(room_of whoseThings)" \
-  "angel=mug+cactus+poster emre=ball+pennant ran=photo+figurine reinier=books+mug"
+  "angel=mug+cactus+poster emre=ball+pennant ran=photo+mug reinier=figurine+books"
 check "things: four people, four different sets" "$(room_of thingsDistinct)" "true"
 check "things: two or three each, never more places than there are" \
   "$(room_of thingsSized)" "true"
@@ -3523,14 +3523,14 @@ check "things: more things than places puts the extras nowhere" \
   "$(room_of tooManyThings)" '["mug","books","poster"]'
 check "things: nothing a hand-edited roster can say reaches the asset route" \
   "$(room_of hostileThings)" \
-  '[["","",""],["","",""],[],[],[],["books","mug"]]'
+  '[["","",""],["","",""],[],[],[],["figurine","books"]]'
 check "things: an owner nobody drew borrows the desk they borrowed the face from" \
-  "$(room_of strangerThings)" "books+mug"
+  "$(room_of strangerThings)" "figurine+books"
 check "things: and so does a run with no owner at all" \
-  "$(room_of unownedThings)" "books+mug"
+  "$(room_of unownedThings)" "figurine+books"
 check "things: and the view carries them per run, so the plane rebakes on a swap" \
   "$(room_of viewThings)" \
-  "BOT-2287=books/mug/ BOT-2291=books/mug/ LEGACY-0042=books/mug/ OLYX-1598=ball//pennant OLYX-1631=mug/cactus/poster OLYX-1642=books/mug/ OLYX-1648=books/mug/ OLYX-1655=mug/cactus/poster OLYX-1660=mug/cactus/poster OLYX-1667=photo/figurine/ OLYX-1673=ball//pennant adhoc-kpi-sparklines=mug/cactus/poster"
+  "BOT-2287=figurine/books/ BOT-2291=figurine/books/ LEGACY-0042=figurine/books/ OLYX-1598=ball//pennant OLYX-1631=mug/cactus/poster OLYX-1642=figurine/books/ OLYX-1648=figurine/books/ OLYX-1655=mug/cactus/poster OLYX-1660=mug/cactus/poster OLYX-1667=photo/mug/ OLYX-1673=ball//pennant adhoc-kpi-sparklines=mug/cactus/poster"
 
 # Nothing on the desk may cross the forearms or the keyboard, and the way that is
 # guaranteed is an ORDER rather than a measurement: their things are the last

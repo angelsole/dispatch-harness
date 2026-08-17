@@ -90,6 +90,11 @@ somebody: `wall/crew.json` names two or three of them per owner, `wall/room.js`
 holds the closed pool a line may pick from, and there are three places to put
 them — beside the lamp, beside the monitor, and on the wall over the desk.
 
+The first assignment puts a DIFFERENT object in the place the eye lands on first,
+on all four desks: Angel's mug, Emre's football, Ran's photograph, Reinier's
+figurine. The mug is on two desks in two different places, which is what a mug
+is. The line in `crew.json` is the point — each owner edits their own.
+
 | path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
 |---|---|---|---|---|---|---|---|---|
 | `room/prop-mug.png` | a mug, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-mug` | `18520` | 2026-08-17 | generated for this repo | `c680e87651666df4268afdf46d945067a6382da362911efd6cb8075d1ea48637` |
