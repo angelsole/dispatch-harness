@@ -521,15 +521,34 @@
   // answer is then SNAPPED to the façade's own 32 px course: a band of light
   // half a panel off the windows it is supposed to be coming out of is a band
   // of light on some stone.
-  function storeyAt(mass, level) {
+  function storeyAt(mass, level, masses) {
     const groundTop = mass.y + mass.h - GROUND_H;
     const courses = Math.max(1, Math.floor((groundTop - mass.y) / PANEL));
     const at = mass.y + mass.h * 0.22 + mass.h * 0.62 * (1 - clamp01(level));
     const course = clamp(Math.round((groundTop - at) / PANEL - 0.5), 0, courses - 1);
-    return {
-      x: mass.x, w: mass.w, h: PANEL, y: groundTop - (course + 1) * PANEL,
-      course, courses,
-    };
+    const y = groundTop - (course + 1) * PANEL;
+    const span = spanAt(mass, masses, y);
+    return { x: span.x, w: span.w, h: PANEL, y, course, courses };
+  }
+
+  // The wall at ONE height, not the tower's bounding box: a setback tower is
+  // narrower up top, and a floor lit past its own façade is light in the sky.
+  // The span is the union of the masses whose top is at or above that y
+  // (rounded as stamp() rounds them), so a lit course sits on stone and glass
+  // and the pane the dive enters is a pane. No masses given = the whole box.
+  function spanAt(mass, masses, y) {
+    let x0 = mass.x; let x1 = mass.x + mass.w;
+    if (masses && masses.length) {
+      x0 = Infinity; x1 = -Infinity;
+      for (const m of masses) {
+        const mx = mass.x + Math.round(m.x * mass.w);
+        const mw = Math.max(PANEL / 2, Math.round(m.w * mass.w));
+        if (mass.y + Math.round(m.top * mass.h) > y) continue;
+        x0 = Math.min(x0, mx); x1 = Math.max(x1, Math.min(mx + mw, mass.x + mass.w));
+      }
+      if (!(x1 > x0)) { x0 = mass.x; x1 = mass.x + mass.w; }
+    }
+    return { x: x0, w: x1 - x0 };
   }
 
   // Where the glass is in one 32 px course of each wall in the set, measured
@@ -937,7 +956,10 @@
           // The light of the room coming out of the pane, so the aperture's
           // edge is a spill and never a rectangle drawn on a building.
           this.roomRim = this.light(0, 0, 2, 2, WIN_A, 0);
-          this.roomImg = this.add.image(0, 0, '__WHITE').setOrigin(0, 0);
+          // After a restart the texture is still the game's while this image
+          // is new: bind it here, or the next dive pushes into a white pane.
+          this.roomImg = this.add.image(0, 0, this.roomTex ? ROOM_KEY : '__WHITE')
+            .setOrigin(0, 0);
           this.diveC.add(this.roomRim);
           this.diveC.add(this.roomImg);
           this.roomImg.setVisible(false);
@@ -1631,6 +1653,7 @@
         const masses = TOWER_MASSES[shape];
         T.skin = TOWER_SKIN[shape];
         T.mass = { x: box.x, y: top, w: box.w, h };
+        T.masses = masses;
         const key = [shape, tower.crown, h, box.x, box.w, floors,
                      tower.alarm ? 1 : 0, tower.live].join('|');
         if (key !== T.key) {
@@ -1734,7 +1757,7 @@
         // and the only way the light on it stays a value rather than a blowout.
         const shared = new Map();
         for (const run of tower.shafts) {
-          const course = storeyAt(T.mass, run.level).course;
+          const course = storeyAt(T.mass, run.level, T.masses).course;
           shared.set(course, (shared.get(course) || []).concat(run.id));
         }
         for (const run of tower.shafts) {
@@ -1755,7 +1778,7 @@
             T.shafts.add(S.root);
             T.shaftEls.set(run.id, S);
           }
-          const mates = shared.get(storeyAt(T.mass, run.level).course) || [run.id];
+          const mates = shared.get(storeyAt(T.mass, run.level, T.masses).course) || [run.id];
           this.paintFloor(S, run, T, Math.max(0, mates.indexOf(run.id)), mates.length);
         }
       }
@@ -1851,7 +1874,7 @@
           : run.state === 'ready' ? DONE
             : run.state === 'failed' ? ACTOR.failed
               : (ACTOR[run.actorKey] || ACTOR.unknown);
-        const storey = storeyAt(mass, run.level);
+        const storey = storeyAt(mass, run.level, T.masses);
         const key = [run.state, run.actorKey, run.crew, slot, slots, T.skin,
                      storey.course, mass.x, mass.y, mass.w, mass.h].join('|');
         S.storey = storey;
@@ -1870,8 +1893,9 @@
         S.trail.clear();
         for (let c = 0; c < storey.course; c++) {
           const y = storey.y + (storey.course - c) * PANEL;
+          const span = spanAt(mass, T.masses, y);
           S.trail.fillStyle(warm, 0.08 + 0.2 * (c / Math.max(1, storey.course)));
-          for (const bay of baysOf({ x: storey.x, y, w: storey.w, h: PANEL }, T.skin)) {
+          for (const bay of baysOf({ x: span.x, y, w: span.w, h: PANEL }, T.skin)) {
             if (bay.bay % slots !== slot) continue;
             for (const pane of bay.panes) S.trail.fillRect(pane.x, pane.y, pane.w, pane.h);
           }
@@ -1905,8 +1929,8 @@
         S.ledge.setDisplaySize(mass.w * 1.02, PANEL * 0.9);
         S.ledge.setTint(out);
         S.glow.setPosition(storey.x + storey.w / 2, storey.y + storey.h / 2);
-        S.glow.setDisplaySize(mass.w * 1.34 + BAY, PANEL * 2.3);
-        S.glowBase = S.glow.scaleX;
+        S.glow.setDisplaySize(storey.w * 1.34 + BAY, PANEL * 2.3);
+        S.glowBase = { x: S.glow.scaleX, y: S.glow.scaleY };
         S.glow.setTint(out);
       }
 
@@ -2076,8 +2100,14 @@
           }
         }
         if (!lit.length) return null;
-        const found = (s.run && lit.find((c) => c.id === s.run))
-          || (pendingSpot && lit.find((c) => c.id === pendingSpot))
+        // A named run is the only run the dive may enter: the page's room shows
+        // the run the query named, so a window into anybody else's floor would
+        // open onto the wrong desk. No lit floor for it, no dive.
+        if (s.run) {
+          const named = lit.find((c) => c.id === s.run);
+          return named ? { run: named.id, pane: named.pane, room: roomBoxAt(named.pane) } : null;
+        }
+        const found = (pendingSpot && lit.find((c) => c.id === pendingSpot))
           || lit.reduce((best, c) => (c.rank > best.rank ? c : best), lit[0]);
         return { run: found.id, pane: found.pane, room: roomBoxAt(found.pane) };
       }
@@ -2280,7 +2310,7 @@
           S.lit.setAlpha(((S.spotted ? 0.66 : 0.56) + 0.3 * value) * step);
           S.ledge.setAlpha(0.27 * value);
           S.glow.setAlpha((S.spotted ? 0.4 : 0.3) * value);
-          S.glow.setScale(S.glowBase * throwOut);
+          S.glow.setScale(S.glowBase.x * throwOut, S.glowBase.y * throwOut);
         }
       }
 
@@ -2396,7 +2426,7 @@
   return {
     create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
     walkerAt, vehicleAt, ramp, towerLayout, blockBox, massesOf,
-    storeyAt, baysOf, windowAt, ease, reelPlan, reelAt, shotOf, reelWith,
+    storeyAt, spanAt, baysOf, windowAt, ease, reelPlan, reelAt, shotOf, reelWith,
     poseAt, roomBoxAt, apertureAt,
     TOWER_MASSES, FORM_MASSES, KIND_MASSES,
   };

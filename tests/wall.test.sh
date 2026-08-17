@@ -2412,6 +2412,18 @@ console.log(JSON.stringify({
     && s.y >= mass.y && s.y + s.h <= groundTop && s.x === mass.x && s.w === mass.w),
   climbs: storeys.every((s, i) => i === 0 || s.course >= storeys[i - 1].course)
     && storeys[storeys.length - 1].course > storeys[0].course,
+  // A setback tower is narrower up top: a course lit there spans the wall AT
+  // that height — inside the box, narrower than the base, never in the sky.
+  setback: (() => {
+    const masses = [{ x: 0, w: 1, top: 0.6 }, { x: 0.07, w: 0.86, top: 0.3 },
+                    { x: 0.14, w: 0.72, top: 0 }];
+    const low = C.storeyAt(mass, 0.05, masses);
+    const high = C.storeyAt(mass, 1, masses);
+    return low.w === mass.w && low.x === mass.x
+      && high.w < low.w && high.x > mass.x && high.x + high.w < mass.x + mass.w
+      && high.w === Math.round(0.72 * mass.w)
+      && C.spanAt(mass, masses, low.y).w === mass.w;
+  })(),
   // And the glass in that course is where the atlas drew it: two bays to every
   // 32 px panel, tiled from the mass's own left edge, every pane inside the
   // course, and a part-panel at the right simply drops its bays.
@@ -2467,6 +2479,8 @@ check "floor: a lit floor is a whole course of the façade, inside the mass" \
   "$(reel_of courses)" "true"
 check "floor: and it climbs with the stage rather than wandering" \
   "$(reel_of climbs)" "true"
+check "floor: on a setback tower the lit course spans the wall at its own height, not the box" \
+  "$(reel_of setback)" "true"
 check "floor: its light lands on the glass the atlas drew, in every wall of the set" \
   "$(reel_of glass)" "true"
 check "floor: and the window the dive goes through is one of those bays" \
