@@ -71,6 +71,12 @@
   const ICE = '#96c3c8';
   const MINT = '#a9d9c6';
   const RUST = '#531820';
+  // The one warm mid-value on the lock, out of the masonry ramp: what a sheet of
+  // paper on a wall is made of in a room lit by one lamp. Nothing else in here
+  // uses it, which is the point — the card is not a second monitor and not a
+  // second floor plate, it is a thing somebody pinned up.
+  const BOARD = '#4f4441';
+  const CREAM = '#e8cfa6';
   const GLOW = '#ffc27d';
   const WORK = '#ffc680';
   const EMBER = '#ff9a5e';
@@ -428,6 +434,36 @@
   const LAMP = { x: 60, y: DESK_Y - BOX.lamp.y - BOX.lamp.h };
   const RAIN_SPEED = 6;                                  // room px / second
 
+  // The job card: the one thing this room never said. The monitor says which
+  // STAGE, the plate says which FLOOR, the nameplate says WHO — and from the
+  // sofa you could see somebody working and not say on what. So a sheet goes on
+  // the wall, in the only span of it that is bare: between the window frame's
+  // right edge (x 114) and the floor plate's own halo (x 227), under the conduit
+  // (y 22) and well above the head of whoever is at the desk (y 84).
+  //
+  // Every number here is chosen against the LENS as well as the wall. The room's
+  // push crops to whole source pixels, and at the end of it the shot starts at
+  // x 39, y 15 — so a card at y 12, which is where the bare wall starts, would
+  // lose its first rows to a hold that ran its full twelve seconds. y 24 is
+  // under the conduit and inside every frame of the push.
+  const CARD = { x: 119, y: 24, w: 101, h: 37 };
+  const CARD_PAD = 3;
+  // What the sheet holds, in glyphs of each face: the ticket in the big one, the
+  // brief's own heading under it in the small one. 24 cells is not a taste — it
+  // is (101 - 2*3 + 1) / 4, the whole glyphs the sheet's width leaves.
+  const CARD_ROOM = CARD.w - CARD_PAD * 2;
+  const CARD_CELLS = cells(SMALL, CARD_ROOM);
+  const CARD_LINES = 3;
+
+  // Where the id sits, where the rule under it sits, and the three rows of
+  // title. Written out rather than derived so the sheet can be read off the
+  // source: 4 rows of top margin, 7 of the big face, 2 of air, the rule, 3 of
+  // air, then three 5-row lines on a 6-row pitch, then 3 rows of margin.
+  const CARD_ID_Y = CARD.y + 4;
+  const CARD_RULE_Y = CARD.y + 13;
+  const CARD_TEXT_Y = CARD.y + 17;
+  const CARD_PITCH = 6;
+
   // The typing loop: eight poses, 120 ms each, so the cycle is 960 ms and the
   // hands run at 8.3 poses a second. That is the floor for reading as typing —
   // a hand that travels three or four pixels between frames at 8-10 fps is a
@@ -501,6 +537,31 @@
     }
     // A float that lands on the last seam works rather than freezes.
     return true;
+  }
+
+  // --- the lens -----------------------------------------------------------
+  // Which whole source pixels the shot is cropped to at a given push. At the end
+  // of it the monitor and the worker share the middle of the frame; the outer
+  // pillar and shelf move out first, which is what makes the three room planes
+  // do visible camera work without adding another object.
+  //
+  // Pure and out here rather than inside the draw call, because it decides what
+  // is IN SHOT — and a thing hung on the wall for a human to read has to still be
+  // in the frame at the end of the twelve seconds, not only at the start. The
+  // crop origin travels to x 39, y 15 over a full hold, which is why the job card
+  // is not on the bare wall above it.
+  function cropAt(push) {
+    const zoom = 1 + push * 0.14;
+    const w = Math.round(W / zoom);
+    const h = Math.round(H / zoom);
+    const cx = W / 2 + (BEZEL.x + BEZEL.w / 2 - W / 2) * push * 0.48;
+    const cy = H / 2 + (BEZEL.y + BEZEL.h / 2 - H / 2) * push * 0.4;
+    return {
+      x: Math.max(0, Math.min(W - w, Math.round(cx - w / 2))),
+      y: Math.max(0, Math.min(H - h, Math.round(cy - h / 2))),
+      w,
+      h,
+    };
   }
 
   // --- the beat -----------------------------------------------------------
@@ -621,6 +682,70 @@
 
   const keyOf = (row) => row.key;
 
+  // --- what the card says -------------------------------------------------
+  // A brief's first heading is prose a person typed into a markdown file: an
+  // em dash, an ampersand, an accent, a stray arrow. The card is drawn out of
+  // the same two hand-set faces as everything else in this room, and neither
+  // has a glyph for any of those — so the string is put through the face
+  // before it is measured, not after.
+  //
+  // The accented Latin letters a heading written by this team actually carries.
+  // At three pixels of width an accent is not a mark, it is noise — Ó IS O at
+  // this size — so the letter folds to the one the face has. Without this a
+  // Spanish or Dutch heading loses a letter to a space and `FACTURACIÓN` reads
+  // as two words nobody wrote. Kept out of the tube's own look-alike table on
+  // purpose: this is the card's problem and the feed is not being touched.
+  const ACCENTS = {
+    'Á': 'A', 'À': 'A', 'Ä': 'A', 'Â': 'A', 'Ã': 'A', 'Å': 'A', 'Æ': 'AE',
+    'Ç': 'C', 'É': 'E', 'È': 'E', 'Ë': 'E', 'Ê': 'E', 'Í': 'I', 'Ì': 'I',
+    'Ï': 'I', 'Î': 'I', 'Ñ': 'N', 'Ó': 'O', 'Ò': 'O', 'Ö': 'O', 'Ô': 'O',
+    'Õ': 'O', 'Ø': 'O', 'Œ': 'OE', 'Ú': 'U', 'Ù': 'U', 'Ü': 'U', 'Û': 'U',
+    'Ý': 'Y',
+  };
+  const ACCENTED = new RegExp('[' + Object.keys(ACCENTS).join('') + ']', 'g');
+
+  // Three steps, and the first is the tube's: the look-alikes normalise (an em
+  // dash IS a hyphen at this size), the accents fold, and then anything the face
+  // still cannot draw becomes a SPACE rather than a blank cell — a space is a
+  // word break, so `INVOICES & QUOTES` reads as two words instead of leaving a
+  // hole where the ampersand was.
+  const spoken = (face, str) => String(str || '').toUpperCase()
+    .replace(LOOKALIKES, (ch) => LOOKALIKE[ch])
+    .replace(ACCENTED, (ch) => ACCENTS[ch])
+    .split('')
+    .map((ch) => (face.rows[ch] ? ch : ' '))
+    .join('');
+
+  // And then it is wrapped on whole words, to at most `rows` lines of `cells`
+  // glyphs. Two rules the room's other type does not need:
+  //
+  //   a word no line can hold is CUT rather than dropped, the same way the tube
+  //     cuts one — the card would rather say AUTHENTICATION. than say nothing
+  //     about the longest word in the title
+  //   what is left over after the last line ends in three stops, because the
+  //     ellipsis a heading is written with is one character neither face has and
+  //     `...` is the three the small face does
+  //
+  // Pure, and outside create(), so the suite can ask what a heading wraps to
+  // without a canvas.
+  function wrapped(face, str, cells, rows) {
+    const all = [];
+    let at = '';
+    for (const word of spoken(face, str).split(/\s+/).filter(Boolean)) {
+      const one = word.length <= cells ? word : word.slice(0, Math.max(1, cells - 1)) + '.';
+      const next = at ? at + ' ' + one : one;
+      if (next.length <= cells) { at = next; continue; }
+      all.push(at);
+      at = one;
+    }
+    if (at) all.push(at);
+    if (all.length <= rows) return all;
+    const kept = all.slice(0, rows);
+    kept[rows - 1] = kept[rows - 1].slice(0, Math.max(0, cells - 3))
+      .replace(/\s+$/, '') + '...';
+    return kept;
+  }
+
   // --- the view -----------------------------------------------------------
   // Everything the room needs about a run, and nothing else: the page hands
   // this over, the room never reaches for a snapshot.
@@ -647,6 +772,24 @@
       // The monitor's headline. A run asking for a human says so instead of
       // naming a stage nobody is working on.
       word: alarm ? 'NEEDS INPUT' : (run.floorName || ladder[0]).toUpperCase(),
+      // WHAT THE JOB IS, which is the one thing this room has never said. The
+      // server already ships it: the first `# heading` of the run's own
+      // brief.md, which is the sentence whoever opened the ticket wrote.
+      title: (run.title || '').trim().toUpperCase(),
+      // And the same thing as the card draws it — wrapped here rather than in
+      // the draw call, so a probe can ask what a heading turns into without a
+      // canvas, and so the baked plane's key changes when the words do.
+      //
+      // A run with no heading — no brief.md, or one that opens with prose —
+      // gets the repo instead of an empty sheet: the card's job is to answer
+      // "which ticket, and what is it", and half of that answer still tells
+      // somebody on the sofa which codebase is being worked on.
+      card: (() => {
+        const lines = wrapped(SMALL, run.title || '', CARD_CELLS, CARD_LINES);
+        return lines.length ? lines
+          : [fit(SMALL, (run.projectLabel || run.project || 'UNCHARTED').toUpperCase(),
+            CARD_ROOM)];
+      })(),
       // And the work itself, in the run's own words. A few more lines than the
       // tube shows, so the room can tell an appended line from a re-sent one
       // across two snapshots.
@@ -1092,6 +1235,68 @@
       }
     }
 
+    // WHICH JOB THIS IS: a sheet pinned to the wall over the desk, with the
+    // ticket on it in the big face and the brief's own heading under it in the
+    // small one. The room already said which stage (the monitor), which floor
+    // (the plate) and who (the nameplate); this is the fourth question somebody
+    // on the sofa asks and the first one the room could not answer.
+    //
+    // It is PAPER, on purpose. The plate beside it is a bolted metal sign in the
+    // room's cold ramp with a lit edge; making the card a second one of those
+    // would have put two dark signs on one wall and asked the eye to tell them
+    // apart by their type. So the sheet takes the palette's one warm mid-value,
+    // is sunk the way the desk is, and then catches the strip light overhead in
+    // three flat steps — warm first, cold second, and the only object on this
+    // wall you would call light-coloured.
+    //
+    // Two levels of type and no more: the id at 0.95 of the warmest pale on the
+    // lock, which is what you read from the door, and the title a step down in
+    // value under a rule, which is what you read on a second look. There is no
+    // state in here at all — an alarm keeps its card exactly as it is, because
+    // the ticket is the thing you most need when the screen says NEEDS INPUT,
+    // and the monitor owns the red.
+    // One number in here is not a taste and is worth saying out loud. The room's
+    // lens crops WHOLE source pixels, so every frame of the twelve-second push
+    // shifts the entire picture by about a pixel — and the visual gate's
+    // continuity number is dominated by that shift rather than by anything that
+    // is actually animating. What a new object on this wall costs the shot is
+    // therefore the energy in its own edges, and the object to be measured
+    // against is the floor plate beside it, which is what the room already hangs
+    // there. Sunk this far, the card's per-pixel shift cost sits at the plate's,
+    // and the shot's continuity is what it was before the card existed. A
+    // brighter sheet was the first thing drawn here and it measured half again
+    // the plate: the whole frame went from 0.106 to 0.126 against a 0.12 ceiling,
+    // for a card no easier to read.
+    function jobCard(v) {
+      box(CARD.x - 1, CARD.y - 1, CARD.w + 2, CARD.h + 2, NIGHT, 0.4);
+      box(CARD.x, CARD.y, CARD.w, CARD.h, BOARD);
+      // Furniture in an unlit room, sunk the same way the desk is, and then lit
+      // back up by the one tube on the ceiling that still works — which happens
+      // to run from x 112 to x 208, directly over this sheet.
+      box(CARD.x, CARD.y, CARD.w, CARD.h, NIGHT, 0.58);
+      box(CARD.x, CARD.y, CARD.w, 11, GLOW, 0.07);
+      box(CARD.x, CARD.y + 11, CARD.w, 11, GLOW, 0.035);
+      box(CARD.x, CARD.y + CARD.h - 9, CARD.w, 9, NIGHT, 0.12);
+      // The sheet's own edges: the top one catches the strip light, the right
+      // one is the side away from the lamp, and the bottom is the shadow it
+      // throws on the wall it is pinned to.
+      box(CARD.x, CARD.y, CARD.w, 1, CREAM, 0.16);
+      box(CARD.x + CARD.w - 1, CARD.y, 1, CARD.h, NIGHT, 0.35);
+      box(CARD.x, CARD.y + CARD.h - 1, CARD.w, 1, NIGHT, 0.65);
+      // The pin. Four pixels, and the only reason they are here is that they are
+      // what makes this a sheet somebody put up rather than a panel in the wall.
+      box(CARD.x + Math.floor(CARD.w / 2) - 1, CARD.y + 1, 2, 2, GLOW, 0.75);
+      // The ticket, in the face the stage word uses. Cut rather than shrunk if
+      // it is one of the ad-hoc ids: sixteen glyphs of the big face is what this
+      // sheet holds, and ADHOC-KPI-SPAR. still says which run this is.
+      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.88);
+      box(CARD.x + CARD_PAD, CARD_RULE_Y, CARD_ROOM, 1, GLOW, 0.22);
+      for (let i = 0; i < v.card.length && i < CARD_LINES; i++) {
+        text(SMALL, v.card[i], CARD.x + CARD_PAD, CARD_TEXT_Y + i * CARD_PITCH,
+          CREAM, 0.7);
+      }
+    }
+
     // What the snapshot brought. Called from paint, so it is cheap and
     // idempotent by construction: with nothing new the loop below finds the last
     // line it already has and queues nothing.
@@ -1484,6 +1689,7 @@
         shadeFrame(0.32);
         windowLight();
         floorPlate(v);
+        jobCard(v);
         floorPlane();
         sprite(art.desk, 29, DESK_Y - BOX.desk.y);
         sprite(art.desk, 99, DESK_Y - BOX.desk.y, true);
@@ -1536,18 +1742,8 @@
         out.drawImage(sceneCanvas, 0, 0);
         return;
       }
-
-      // At the end of the push the monitor and the worker share the middle of
-      // the shot. The outer pillar and shelf move out first, making the three
-      // room planes do visible camera work without adding another object.
-      const zoom = 1 + push * 0.14;
-      const sw = Math.round(W / zoom);
-      const sh = Math.round(H / zoom);
-      const cx = W / 2 + (BEZEL.x + BEZEL.w / 2 - W / 2) * push * 0.48;
-      const cy = H / 2 + (BEZEL.y + BEZEL.h / 2 - H / 2) * push * 0.4;
-      const sx = Math.max(0, Math.min(W - sw, Math.round(cx - sw / 2)));
-      const sy = Math.max(0, Math.min(H - sh, Math.round(cy - sh / 2)));
-      out.drawImage(sceneCanvas, sx, sy, sw, sh, 0, 0, W, H);
+      const at = cropAt(push);
+      out.drawImage(sceneCanvas, at.x, at.y, at.w, at.h, 0, 0, W, H);
     }
 
     // The timestamp rAF hands in is the room's clock, in the same origin
@@ -1614,6 +1810,9 @@
   return {
     create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
     fileOf, splitOf, bandsOf, lineOf, keyOf, markOf, burstAt, revealed,
+    spoken, wrapped, cropAt,
+    CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES, PLATE, BEZEL, WORKER,
+    SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX,
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
     TYPE_SET, WAIT_SET, FALLBACK, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
     BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,

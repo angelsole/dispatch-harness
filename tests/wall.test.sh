@@ -2978,6 +2978,16 @@ for (const run of api.runs) {
   const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
   for (const ch of v.word + v.id) if (!R.BIG.rows[ch]) missing.push("BIG:" + ch);
   for (const ch of v.repo + v.owner + v.floorName) if (!R.SMALL.rows[ch]) missing.push("SMALL:" + ch);
+  // The card is type too, and its words come from a markdown heading somebody
+  // typed rather than from a closed vocabulary the server owns — so it is the
+  // one string in this room that could arrive with a glyph in it that no face
+  // has. It goes through the same probe as everything else.
+  for (const ch of R.fit(R.BIG, v.id, R.CARD_ROOM)) {
+    if (!R.BIG.rows[ch]) missing.push("CARD-ID:" + ch);
+  }
+  for (const line of v.card) {
+    for (const ch of line) if (!R.SMALL.rows[ch]) missing.push("CARD:" + ch);
+  }
   for (const row of v.feed) {
     for (const ch of row.text) if (!R.SMALL.rows[ch]) missing.push("FEED:" + ch);
     if (!R.MARKS[row.mark]) missing.push("MARK:" + row.mark);
@@ -3047,6 +3057,77 @@ console.log(JSON.stringify({
   gateActor: gate.workActorKey,
   // Nothing the room draws is missing a glyph...
   missing: missing.join(","),
+  // --- the job card --------------------------------------------------------
+  // WHICH ticket and WHAT IT IS, on a sheet on the wall. The words come from the
+  // brief's own first heading, which the server has been shipping all along, so
+  // what is checked here is the wrapping — a title is prose and the sheet is 24
+  // cells of a 3x5 face.
+  cardCells: R.CARD_CELLS,
+  cardLines: R.CARD_LINES,
+  // Every run the fixtures can serve, wrapped: never more lines than the sheet
+  // has, never a line wider than the sheet, and never one that overruns in
+  // pixels either — the cell count and the pixel width are two different claims
+  // and only the second one is what the eye sees.
+  cardFits: api.runs.every((run) => {
+    const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
+    return v.card.length > 0 && v.card.length <= R.CARD_LINES
+      && v.card.every((line) => line.length <= R.CARD_CELLS
+        && R.widthOf(R.SMALL, line) <= R.CARD_ROOM);
+  }),
+  // The id is in the BIG face and the sheet holds sixteen of them; an ad-hoc
+  // ticket longer than that is cut the way the tube cuts, not shrunk.
+  cardIdFits: api.runs.every((run) => {
+    const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
+    return R.widthOf(R.BIG, R.fit(R.BIG, v.id, R.CARD_ROOM)) <= R.CARD_ROOM;
+  }),
+  cardLongId: R.fit(R.BIG, "ADHOC-KPI-SPARKLINES", R.CARD_ROOM),
+  // What one real fixture's heading turns into, exactly.
+  cardTitle: R.viewOf({ ...by("OLYX-1631"), crew: "#e8cfa6" }, FLOORS).card.join(" | "),
+  // The blocked run keeps its card, and it says the ticket rather than the
+  // alarm: NEEDS INPUT is the monitor's job and the red is the monitor's alone.
+  cardAlarm: seen.card.join(" | "),
+  // A title too long for three lines ends in the three stops the face can
+  // spell, because the ellipsis a heading is written with is a glyph neither
+  // face has.
+  cardEllipsis: R.wrapped(R.SMALL,
+    "Retire the legacy quote renderer and the invoice exporter behind it and "
+    + "everything that ever called either of them", R.CARD_CELLS, R.CARD_LINES)
+    .join("|"),
+  // A word no line can hold is cut rather than dropped.
+  cardLongWord: R.wrapped(R.SMALL, "Internationalisation", 12, 3).join("|"),
+  // An accent is the same letter at three pixels of width, so it folds to the
+  // letter the face has instead of leaving a hole mid-word.
+  cardAccents: R.wrapped(R.SMALL, "Facturación & anexos — límites", R.CARD_CELLS,
+    R.CARD_LINES).join("|"),
+  // A run whose brief has no heading says which repo it is instead of showing an
+  // empty sheet.
+  cardNoTitle: R.viewOf({ id: "x", projectLabel: "olyxbase" }, FLOORS).card.join("|"),
+  cardNoTitleNoRepo: R.viewOf({ id: "x" }, FLOORS).card.join("|"),
+  // Every fixture carries a heading, so the card always has something to say.
+  cardTitled: api.runs.every((run) => !!(run.title && run.title.trim())),
+  // WHERE it hangs. The sheet goes in the one span of this wall that is bare:
+  // right of the window frame, left of the floor plate's halo, under the conduit
+  // and clear of the monitor and the head of whoever is at the desk.
+  cardClearOfWindow: R.CARD.x > R.WINDOW.x + R.BOX.windowFrame.x + R.BOX.windowFrame.w,
+  cardClearOfPlate: R.CARD.x + R.CARD.w < R.PLATE.x - 1,
+  cardUnderTheConduit: R.CARD.y >= 24,
+  cardAboveTheDesk: R.CARD.y + R.CARD.h < R.BEZEL.y,
+  // And it is IN SHOT for the whole hold, not only at the top of the push: the
+  // lens crops whole source pixels and its origin travels to x 39, y 15 over
+  // twelve seconds, which is exactly why the card is not on the bare wall above
+  // the conduit where there was more room.
+  cardInShot: Array.from({ length: 201 }, (_, i) => R.cropAt(i / 200)).every((c) =>
+    R.CARD.x - 1 >= c.x && R.CARD.y - 1 >= c.y
+    && R.CARD.x + R.CARD.w + 1 <= c.x + c.w
+    && R.CARD.y + R.CARD.h + 1 <= c.y + c.h),
+  lensOrigin: (() => {
+    const at = R.cropAt(1);
+    return at.x + "," + at.y;
+  })(),
+  // The lens only ever pushes IN, which is what makes the line above a bound
+  // rather than a sample: the crop origin never travels back out.
+  lensNeverBacks: Array.from({ length: 201 }, (_, i) => R.cropAt(i / 200))
+    .every((c, i, all) => i === 0 || (c.x >= all[i - 1].x && c.y >= all[i - 1].y)),
   // ...and no stage in the ladder is too wide for the tube it is drawn on.
   fits: FLOORS.every((name) => R.widthOf(R.BIG, name) <= 64),
   // Reduced motion is ONE frame at every second of the clock, and a lit one:
@@ -3251,6 +3332,63 @@ check "room: and is not drawn as an alarm" "$(room_of gateAlarm)" "false"
 check "room: the worker is the actor that owns the stage" "$(room_of gateActor)" "gate"
 check "room: nothing it draws is missing a glyph" "$(room_of missing)" ""
 check "room: no stage in the ladder overruns the tube" "$(room_of fits)" "true"
+
+# The job card. The room said which stage, which floor and who; it never said
+# WHICH TICKET or WHAT THE JOB IS, which is the one question somebody on the sofa
+# could not answer about a person they could see working. The words are the
+# brief's own first heading — the server has shipped it all along — so what is
+# checked here is the wrapping, the cutting, and where the sheet hangs.
+check "card: the sheet holds three lines of twenty-four cells" \
+  "$(room_of cardCells)" "24"
+check "card: and never draws more than three" "$(room_of cardLines)" "3"
+check "card: every run in the city wraps inside it, in cells and in pixels" \
+  "$(room_of cardFits)" "true"
+check "card: the ticket fits the big face, whatever it is called" \
+  "$(room_of cardIdFits)" "true"
+check "card: an ad-hoc id is cut rather than shrunk" \
+  "$(room_of cardLongId)" "ADHOC-KPI-SPARK."
+check "card: a real heading reads as the sentence somebody wrote" \
+  "$(room_of cardTitle)" "INVOICE EXPORT ENDPOINT | - CSV + XLSX"
+check "card: a blocked run keeps its card, and it says the job" \
+  "$(room_of cardAlarm)" "RETIRE THE LEGACY QUOTE | PDF RENDERER"
+check "card: a heading too long for the sheet ends in three stops" \
+  "$(room_of cardEllipsis)" \
+  "RETIRE THE LEGACY QUOTE|RENDERER AND THE INVOICE|EXPORTER BEHIND IT AN..."
+check "card: a word no line can hold is cut, not dropped" \
+  "$(room_of cardLongWord)" "INTERNATION."
+check "card: an accent folds to the letter the face has" \
+  "$(room_of cardAccents)" "FACTURACION ANEXOS -|LIMITES"
+check "card: a run with no heading says which repo it is" \
+  "$(room_of cardNoTitle)" "OLYXBASE"
+check "card: and one with neither still has a sheet with something on it" \
+  "$(room_of cardNoTitleNoRepo)" "UNCHARTED"
+check "card: every committed fixture carries a heading to put on it" \
+  "$(room_of cardTitled)" "true"
+check "card: it hangs clear of the window frame" \
+  "$(room_of cardClearOfWindow)" "true"
+check "card: clear of the floor plate" "$(room_of cardClearOfPlate)" "true"
+check "card: under the conduit" "$(room_of cardUnderTheConduit)" "true"
+check "card: and above the monitor and the head at the desk" \
+  "$(room_of cardAboveTheDesk)" "true"
+check "card: and it is in shot at every second of the push, not only the first" \
+  "$(room_of cardInShot)" "true"
+check "card: which is a bound because the lens crop only ever travels in" \
+  "$(room_of lensNeverBacks)" "true"
+check "card: to x 39, y 15 by the end of the hold" "$(room_of lensOrigin)" "39,15"
+
+# The card carries no state at all: an alarm keeps it exactly as it is, because
+# the ticket is the thing you most need when the screen says NEEDS INPUT and the
+# red belongs to the monitor. Checked as structure, because "it never turns red"
+# is a claim about what is NOT in the function.
+CARD_FN="$(awk '/^    function jobCard\(v\) \{/, /^    \}$/' "$SRC/wall/room.js")"
+CARD_CODE="$(printf '%s\n' "$CARD_FN" | grep -v '^ *//')"
+grep_ok "$CARD_FN" 'box(CARD.x, CARD.y, CARD.w, CARD.h, BOARD);' \
+  "card: the sheet is the palette's one warm mid-value"
+grep_not "$CARD_CODE" 'alarm' "card: nothing on it depends on the alarm"
+grep_not "$CARD_CODE" 'ALARM' "card: and the klaxon red is never drawn on it"
+grep_not "$CARD_CODE" 'v.crew' "card: nor the crew tint, which belongs to the lamp"
+grep_ok "$(cat "$SRC/wall/room.js")" '        jobCard(v);' \
+  "card: and it is baked with the still planes, not redrawn every frame"
 check "room: reduced motion is one frame at every second of the clock" \
   "$(room_of frozen)" "true"
 check "room: and the same room without it genuinely moves" "$(room_of moves)" "true"
