@@ -173,12 +173,14 @@
     return (v ^ (v >>> 16)) >>> 0;
   }
 
-  // Three draws, because a facade's hours have nothing to do with what is selling
+  // Four draws, because a facade's hours have nothing to do with what is selling
   // downstairs, nor with how the sign over it is hung, and one 32-bit word cannot
   // carry them all without the slices sharing bits — which is how a district ends
-  // up with every arcade lit on floor three.
+  // up with every arcade lit on floor three. The shop gets its own domain as well:
+  // neighbouring ticket numbers should not become a tiled row of the same trade.
   function storefrontOf(id) {
     const street = seedOf(id);
+    const trade = seedOf(id + '·shop');
     const hours = seedOf(id + '·hours');
     const signage = seedOf(id + '·signage');
     const pick = (seed, shift, mod) => (seed >>> shift) % mod;
@@ -190,7 +192,7 @@
         phase: pick(hours, i * 9 + 6, 8),
       });
     }
-    const shop = SHOP_KINDS[pick(street, 0, SHOP_KINDS.length)];
+    const shop = SHOP_KINDS[pick(trade, 0, SHOP_KINDS.length)];
     return {
       shop,
       // What the sign says is the shop, never a draw: the lettering is a

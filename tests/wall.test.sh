@@ -1861,6 +1861,10 @@ grep_ok "$WORD_SRC" 'const face = Type ? Type.SMALL : null;' \
   "signage: the canvas world sets its words in the wall's own hand-set face"
 grep_ok "$WORD_SRC" 'this.words.set(word, board);' \
   "signage: and draws each word once, however many shops the week puts up"
+grep_ok "$WORD_SRC" "parts.shop.plate = this.add.image(px, py, '__WHITE')" \
+  "signage: both scripts stand on a real dark plate, not floating letters"
+grep_ok "$WORD_SRC" 'parts.shop.plate.setDisplaySize(size, high);' \
+  "signage: a Latin plate grows horizontally with its word"
 
 # --- the city lives at night ------------------------------------------------------
 # The desk's verdict on the accreting district was that it read as a mausoleum

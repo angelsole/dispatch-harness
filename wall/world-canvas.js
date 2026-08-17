@@ -1186,13 +1186,9 @@
         const ink = face ? face.pitch * SIGN_PIX : 0;
         const wide = face && word.length ? word.length * ink - SIGN_PIX : cell;
         const board = { w: wide + SIGN_PAD * 2, h: cell, key: '' };
-        // A board on this street is LIGHT: the tube round its edge and the ink
-        // of the word, and no dark plate under either. That is not a choice of
-        // taste — a texture baked in this world ADDS to what is behind it
-        // rather than covering it, which is right for light and useless for a
-        // board, so a plate drawn in here is a plate that is not there. It is
-        // also the idiom the CJK signs have always been drawn in, and the band
-        // this pass darkened is what they are read against.
+        // This texture is the board's light layer: the tube round its edge and
+        // the ink of the word. makeBlock stands it over the same dark solid the
+        // CJK signs use, so bright masonry cannot swallow a shop's name.
         const dt = this.blank(board.w, board.h);
         const edge = mix(0x02060a, colour, 0.5);
         dt.fill(edge, 1, 0, 0, board.w, 1);
@@ -1824,43 +1820,46 @@
 
         // The shop's own sign: the tube, and what the tube says in a word. One
         // CJK character on a square plate, or the shop's own English word on a
-        // board as wide as the word — same cell height, same light, same seeded
-        // stutter, and that difference in SHAPE down a row of frontages is the
-        // street's texture. Nothing else in this city is lettered.
+        // board as wide as the word — same plate, same cell height, same light,
+        // same seeded stutter, and that difference in SHAPE down a row of
+        // frontages is the street's texture. Nothing else in this city is
+        // lettered.
         if (shop) {
           const cell = this.glyphCell;
           const board = shop.script === 'latin' ? this.wordBoard(shop.glyph, tint) : null;
-          const size = board ? board.w : cell;
+          // Keep the established CJK board geometry exactly. Its text is drawn
+          // at the authored cell size and downscaled from the backing store;
+          // the plate itself has always followed that downscale.
+          const size = board ? board.w : cell * this.glyphScale;
+          const high = board ? board.h : size;
           // Bracketed to the shoulder the run id picked — unless the word is
           // wider than the shop paying for it, in which case it is centred on
           // the frontage and projects over the street, which is what a sign
           // does when the shop under it is narrower than its own name.
-          const px = clamp(size > box.w ? box.x + Math.round((box.w - size) / 2)
-            : shop.side ? box.x + box.w - size : box.x, 0, GW - size);
-          const py = box.y + box.h - GROUND_H - cell;
-          // The plate the tube is bolted to. A dark square, because that is all
-          // it is: what makes a CJK sign read at this size is the character and
-          // the light behind it, not a frame the generator would have put
-          // lettering on. A Latin board carries its own plate — the word, its
-          // tube edge and the dark behind them are one drawn object.
-          if (!board) {
-            parts.shop.plate = this.add.image(px, py, '__WHITE').setOrigin(0, 0);
-            parts.shop.plate.setDisplaySize(size, cell);
-            parts.shop.plate.setTint(0x02060a);
-            bracket(parts.shop.plate);
-          }
+          const px = board
+            ? clamp(size > box.w ? box.x + Math.round((box.w - size) / 2)
+              : shop.side ? box.x + box.w - size : box.x, 0, GW - size)
+            : shop.side ? box.x + box.w - size : box.x;
+          const py = box.y + box.h - GROUND_H - high;
+          // Both scripts are bolted to the same dark solid. The Latin light
+          // layer is wider, but a bright facade cannot turn either sign into
+          // floating letters.
+          parts.shop.plate = this.add.image(px, py, '__WHITE').setOrigin(0, 0);
+          parts.shop.plate.setDisplaySize(size, high);
+          parts.shop.plate.setTint(0x02060a);
+          bracket(parts.shop.plate);
           // And the light it throws on the frontage behind it. A word is a wider
           // fixture than a character and a wide additive wash over it puts the
           // ink back at the value of the wall, so a board's halo is tighter.
           parts.shop.lampBase = board ? 0.28 : 0.42;
-          parts.shop.lamp = this.light(px + size / 2, py + cell / 2,
+          parts.shop.lamp = this.light(px + size / 2, py + high / 2,
                                        board ? size * 1.15 + cell : size * 2.6,
-                                       cell * (board ? 2.1 : 2.6), tint,
+                                       high * (board ? 2.1 : 2.6), tint,
                                        parts.shop.lampBase);
           bracket(parts.shop.lamp);
           const glyph = board
             ? this.add.image(px, py, board.key).setOrigin(0, 0)
-            : this.glyph(px + size / 2, py + cell / 2, shop.glyph, cell - 1, hex(tint));
+            : this.glyph(px + size / 2, py + size / 2, shop.glyph, cell - 1, hex(tint));
           bracket(glyph);
           parts.shop.glyph = glyph;
           parts.shop.glyphPhase = shop.hang;
