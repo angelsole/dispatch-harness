@@ -1176,13 +1176,13 @@
         const ink = face ? face.pitch * SIGN_PIX : 0;
         const wide = face && word.length ? word.length * ink - SIGN_PIX : cell;
         const board = { w: wide + SIGN_PAD * 2, h: cell, key: '' };
-        // What comes back out of here is the LIGHT on the sign — the tube round
-        // its edge and the ink of the word — and nothing else. A texture baked
-        // in this world adds to what is behind it rather than covering it,
-        // which is exactly right for light and useless for a board: the dark
-        // plate under this is a solid off the atlas, stood up in makeBlock.
-        // Three letters floating on a lit facade is what happens when the plate
-        // is drawn in here instead.
+        // A board on this street is LIGHT: the tube round its edge and the ink
+        // of the word, and no dark plate under either. That is not a choice of
+        // taste — a texture baked in this world ADDS to what is behind it
+        // rather than covering it, which is right for light and useless for a
+        // board, so a plate drawn in here is a plate that is not there. It is
+        // also the idiom the CJK signs have always been drawn in, and the band
+        // this pass darkened is what they are read against.
         const dt = this.blank(board.w, board.h);
         const edge = mix(0x02060a, colour, 0.5);
         dt.fill(edge, 1, 0, 0, board.w, 1);
@@ -1773,10 +1773,9 @@
 
         // The shop's own sign: the tube, and what the tube says in a word. One
         // CJK character on a square plate, or the shop's own English word on a
-        // board as wide as the word — same cell height, same plate, same light,
-        // same seeded stutter, and that difference in SHAPE down a row of
-        // frontages is the street's texture. Nothing else in this city is
-        // lettered.
+        // board as wide as the word — same cell height, same light, same seeded
+        // stutter, and that difference in SHAPE down a row of frontages is the
+        // street's texture. Nothing else in this city is lettered.
         if (shop) {
           const cell = this.glyphCell;
           const board = shop.script === 'latin' ? this.wordBoard(shop.glyph, tint) : null;
