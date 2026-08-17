@@ -52,9 +52,15 @@
   // CONSTANT here, unlike the DOM's, because the world does not change width.
   const REM = 13.44;
   const PANEL = 32;        // one façade panel
+  const BAY = 16;          // one window bay: half a panel, and the dive's door
   const TILE = 16;         // one district tile
   const GROUND_H = 32;     // the ground floor: the storey the street reads
   const CEREMONY = 6;      // --ceremony, the shipping beat
+  // wall/room.js's own canvas, in its own pixels. The dive ends with that
+  // canvas on screen at a WHOLE multiple of this, and the room rides the world
+  // at one world pixel per authored pixel so the multiple IS the camera's zoom.
+  const ROOM_W = 320;
+  const ROOM_H = 180;
   // The config every sprite in this world is stamped with: top-left origin, so
   // a world coordinate is the pixel the sprite lands on.
   const STAMP0 = { originX: 0, originY: 0 };
@@ -79,6 +85,11 @@
   let SKY = GW / 1600;
   let SKY_X = 0;
   let SKY_Y = 0;
+  // Device pixels per authored room pixel at the end of the dive. Whole
+  // numbers only, and the same whole number wall.css picks for the DOM
+  // overlay (room.js measure()): a room shown at 4.37x is a room with a soft
+  // edge on every pixel of it, which is the one thing 320x180 art cannot take.
+  let ROOM_PIX = 4;
 
   function measure(cssWidth, cssHeight, ratio) {
     DPR = Math.min(Math.max(Number(ratio) || 1, 1), 2);
@@ -97,6 +108,7 @@
     SKY = Math.max(GW / 1600, GH / 900);
     SKY_X = (GW - 1600 * SKY) / 2;
     SKY_Y = (GH - 900 * SKY) / 2;
+    ROOM_PIX = Math.max(1, Math.floor(Math.min(cssWidth / ROOM_W, cssHeight / ROOM_H))) * DPR;
   }
 
   // --- the palette --------------------------------------------------------------
@@ -447,6 +459,13 @@
     if (phase.still) return age < span ? 0.85 : 0;
     return ramp(SIGN_COOL, once(age, span || 1));
   }
+  // A run's own four numbers, whatever the wall is drawing a run WITH. They
+  // were a lit car climbing a shaft; from this pass they are a lit floor, and
+  // the four survive the change of subject unaltered because they were never
+  // about the car: `root` is how present the run still is, `column` the trail
+  // it has left below it, `car` the value of the light itself and `scale` how
+  // far that light throws. A finished run flares and fades out of the
+  // building; under reduced motion it stays lit, and spotted stays brighter.
   function shaftAt(phase, age, span, spotted) {
     if (phase.still) {
       return { root: 1, column: spotted ? 1 : 0.8, car: 1, scale: spotted ? 1.3 : 1 };
@@ -471,6 +490,177 @@
     if (phase.still) return { a: 0, x: 0 };
     const u = loop(phase.t, plan.cycle || 48, slot * (plan.gap || 0));
     return { a: ramp(PROWL_ALPHA, u), x: (ramp(PROWL_X, u) * 124 - 10) * VW };
+  }
+
+  // --- a running job is a lit floor ---------------------------------------------
+  // No lift cars. A job standing in a building lights the storey it has reached
+  // and the light comes OUT of it — past the edge of the wall, onto the storey
+  // below, into the rain — so from three metres the sentence is "there, on that
+  // floor, someone is working" rather than "a dot is somewhere up that tower".
+
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+  // Which storey of a tower a run is standing on, as a rectangle of that
+  // tower's own wall. The ladder — the working half of the building, the same
+  // band the cars used to climb — is divided by the ladder of stages, and the
+  // answer is then SNAPPED to the façade's own 32 px course: a band of light
+  // half a panel off the windows it is supposed to be coming out of is a band
+  // of light on some stone.
+  function storeyAt(mass, level) {
+    const groundTop = mass.y + mass.h - GROUND_H;
+    const courses = Math.max(1, Math.floor((groundTop - mass.y) / PANEL));
+    const at = mass.y + mass.h * 0.22 + mass.h * 0.62 * (1 - clamp01(level));
+    const course = clamp(Math.round((groundTop - at) / PANEL - 0.5), 0, courses - 1);
+    return {
+      x: mass.x, w: mass.w, h: PANEL, y: groundTop - (course + 1) * PANEL,
+      course, courses,
+    };
+  }
+
+  // Where the glass is in one 32 px course of each wall in the set, measured
+  // off wall/assets/city/atlas.png: two window bays across every panel, and
+  // down it one tall window on the concrete wall, two on the glass and brick
+  // ones. A floor lit on this table lands on that wall's own windows at every
+  // tower width in the city, and never on its stone — which is the difference
+  // between a lit floor and a bar drawn over a building.
+  const GLASS = {
+    concrete: { cols: [[6, 10], [18, 10]], rows: [[5, 15]] },
+    glass: { cols: [[4, 8], [19, 8]], rows: [[2, 10], [19, 10]] },
+    brick: { cols: [[6, 7], [19, 7]], rows: [[4, 4], [14, 12]] },
+  };
+
+  // That table, laid over one storey of one tower: the bays across it, each
+  // with the panes down it. Panels are tiled from the mass's own left edge, so
+  // a part-panel at the right simply drops the bays that would hang off it.
+  function baysOf(storey, skin) {
+    const wall = GLASS[skin] || GLASS.glass;
+    const out = [];
+    for (let x = 0; x < storey.w; x += PANEL) {
+      for (const col of wall.cols) {
+        if (x + col[0] + col[1] > storey.w) continue;
+        out.push({
+          bay: out.length, x: storey.x + x + col[0], w: col[1],
+          panes: wall.rows.map((row) => ({
+            x: storey.x + x + col[0], y: storey.y + row[0], w: col[1], h: row[1],
+          })),
+        });
+      }
+    }
+    return out;
+  }
+
+  // The window the camera goes in through: one bay of that lit storey, nearest
+  // the middle of the mass, from its top pane's head to its bottom pane's sill.
+  function windowAt(storey, skin) {
+    const bays = baysOf(storey, skin);
+    if (!bays.length) return { x: storey.x, y: storey.y + 4, w: storey.w, h: storey.h - 9 };
+    const bay = bays[clamp(Math.round(bays.length / 2) - 1, 0, bays.length - 1)];
+    const head = bay.panes[0];
+    const sill = bay.panes[bay.panes.length - 1];
+    return { x: bay.x, y: head.y, w: bay.w, h: sill.y + sill.h - head.y };
+  }
+
+  // --- the reel -----------------------------------------------------------------
+  // The world owns its camera, so it owns the film too, and this is the whole
+  // of it: wide, in, hold, out, wide. One shot to go to and one reason to go —
+  // the person working on the run the plate just named. Nothing else.
+
+  // Cubic in-out: the house easing. Every move on this wall starts from rest
+  // and arrives at rest, because a camera that is noticed for itself is a
+  // camera that has stopped being a stagehand.
+  function ease(u) {
+    const t = clamp01(u);
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  // One cycle of the film, in milliseconds, drawn from the same seeded bucket
+  // the DOM director draws its shot lengths from — and to the same cadence,
+  // because two screens in one room should be cutting roughly together
+  // whichever body is drawing the city.
+  function reelPlan(draw, cadence) {
+    const span = (lo, hi) => lo + draw() * (hi - lo);
+    const wide = cadence.wide;
+    const move = span(cadence.moveMin, cadence.moveMax);
+    const hold = span(cadence.roomMin, cadence.roomMax);
+    const back = span(cadence.moveMin, cadence.moveMax);
+    return { wide, move, hold, back, total: wide + move + hold + back };
+  }
+
+  // Where the film is at one millisecond of one cycle. Pure: the reel is a
+  // function of the clock and the plan and nothing else, which is what makes a
+  // camera testable in node without standing a GPU up in front of it.
+  //
+  //   u = 0  the whole city          u = 1  the room, through the window
+  //
+  // and every value between is the push, in or out. `phase` is which of the
+  // four it is; the shot the wall says it is showing follows from it.
+  function reelAt(ms, plan) {
+    const t = clamp(ms, 0, plan.total);
+    if (t < plan.wide) return { phase: 'wide', u: 0 };
+    if (t < plan.wide + plan.move) {
+      return { phase: 'in', u: (t - plan.wide) / plan.move };
+    }
+    if (t < plan.wide + plan.move + plan.hold) return { phase: 'room', u: 1 };
+    return { phase: 'out', u: 1 - (t - plan.wide - plan.move - plan.hold) / plan.back };
+  }
+
+  // What the page is told the wall is showing, in the DOM director's own
+  // vocabulary: the push in and the hold are the room shot, the pull back
+  // belongs to the establishing shot it is returning to.
+  const shotOf = (phase) => (phase === 'in' || phase === 'room' ? 'room' : 'establishing');
+
+  // The camera, as one number. The zoom is GEOMETRIC — every second multiplies
+  // the magnification rather than adding to it, which is what a lens does —
+  // with the house cubic in-out on top of it, so the move leaves the skyline
+  // slowly and the last second is the pane opening rather than an arrival.
+  // The centre travels straight from the middle of the city to the middle of
+  // the room; because the zoom curve is concave against that straight line,
+  // every frame between the two is still full of city.
+  function poseAt(u, room) {
+    const k = ease(u);
+    return {
+      k,
+      zoom: PIX * Math.pow(ROOM_PIX / PIX, k),
+      x: GW / 2 + (room.x + room.w / 2 - GW / 2) * k,
+      y: GH / 2 + (room.y + room.h / 2 - GH / 2) * k,
+    };
+  }
+
+  // Where the room stands in the world: 320x180 of it, one world pixel per
+  // authored pixel, centred on the window the camera is going through — pushed
+  // back inside the city where the wall's own edge would otherwise show, and
+  // then back again far enough that the window it came in through is still
+  // inside the picture.
+  function roomBoxAt(pane) {
+    const viewW = W / ROOM_PIX;
+    const viewH = H / ROOM_PIX;
+    const px = pane.x + pane.w / 2;
+    const py = pane.y + pane.h / 2;
+    let cx = viewW >= GW ? GW / 2 : clamp(px, viewW / 2, GW - viewW / 2);
+    let cy = viewH >= GH ? GH / 2 : clamp(py, viewH / 2, GH - viewH / 2);
+    cx = clamp(cx, px - (ROOM_W - pane.w) / 2, px + (ROOM_W - pane.w) / 2);
+    cy = clamp(cy, py - (ROOM_H - pane.h) / 2, py + (ROOM_H - pane.h) / 2);
+    return {
+      x: Math.round(cx - ROOM_W / 2), y: Math.round(cy - ROOM_H / 2),
+      w: ROOM_W, h: ROOM_H,
+    };
+  }
+
+  // How far the pane has opened. The camera's easing carries the push; this
+  // rides it SQUARED, so for the first half of the move the room is still a lit
+  // window seen from outside and the pane opens onto the desk over the last
+  // second. At u = 1 it is the room's own rectangle, exactly.
+  function apertureAt(u, pane, room) {
+    const q = ease(u) * ease(u);
+    const at = (a, b) => a + (b - a) * q;
+    const w = at(pane.w, room.w);
+    const h = at(pane.h, room.h);
+    return {
+      x: at(pane.x + pane.w / 2, room.x + room.w / 2) - w / 2,
+      y: at(pane.y + pane.h / 2, room.y + room.h / 2) - h / 2,
+      w, h,
+    };
   }
 
   // --- drawing helpers ----------------------------------------------------------
@@ -1303,9 +1493,8 @@
         const top = Math.round(GROUND_Y) - h;
         const shape = tower.shape % TOWER_MASSES.length;
         const masses = TOWER_MASSES[shape];
+        T.skin = TOWER_SKIN[shape];
         T.mass = { x: box.x, y: top, w: box.w, h };
-        T.ladder = { x: box.x + Math.round(box.w * 0.16), w: Math.round(box.w * 0.68),
-                     y: top + Math.round(h * 0.22), h: Math.round(h * 0.62) };
         const key = [shape, tower.crown, h, box.x, box.w, floors,
                      tower.alarm ? 1 : 0, tower.live].join('|');
         if (key !== T.key) {
@@ -1403,24 +1592,36 @@
         for (const [id, S] of T.shaftEls) {
           if (!standing.has(id)) { S.root.destroy(); T.shaftEls.delete(id); }
         }
-        const wide = Math.max(6, Math.floor(T.ladder.w / Math.max(1, tower.shafts.length)));
-        tower.shafts.forEach((run, i) => {
+        // Two runs standing on the same floor of the same building would light
+        // the same windows twice over. They share the bays instead — alternate
+        // windows, one tint each — which is both the truth about that floor
+        // and the only way the light on it stays a value rather than a blowout.
+        const shared = new Map();
+        for (const run of tower.shafts) {
+          const course = storeyAt(T.mass, run.level).course;
+          shared.set(course, (shared.get(course) || []).concat(run.id));
+        }
+        for (const run of tower.shafts) {
           let S = T.shaftEls.get(run.id);
           if (!S) {
-            S = { root: this.add.container(0, 0), col: this.add.graphics(),
-                  halo: this.light(0, 0, 2, 2, 0xe2f8ff, 0.55),
-                  car: this.add.graphics(), key: '' };
-            S.col.setBlendMode(Phaser.BlendModes.ADD);
-            S.car.setBlendMode(Phaser.BlendModes.ADD);
-            S.root.add(S.col);
-            S.root.add(S.halo);
-            S.root.add(S.car);
+            // Five things, and every one of them is light: the storeys already
+            // worked through, the band across the live one, that storey's own
+            // windows added back over themselves, the fall onto the ledge
+            // below and the scatter of it all into the rain.
+            S = { root: this.add.container(0, 0), trail: this.add.graphics(),
+                  lit: this.add.graphics(),
+                  ledge: this.light(0, 0, 2, 2, WIN_A, 0),
+                  glow: this.light(0, 0, 2, 2, WIN_A, 0),
+                  key: '', spotted: false };
+            S.trail.setBlendMode(Phaser.BlendModes.ADD);
+            S.lit.setBlendMode(Phaser.BlendModes.ADD);
+            for (const key of ['trail', 'lit', 'ledge', 'glow']) S.root.add(S[key]);
             T.shafts.add(S.root);
             T.shaftEls.set(run.id, S);
           }
-          this.paintShaft(S, run, { x: T.ladder.x + wide * i, w: wide,
-                                    y: T.ladder.y, h: T.ladder.h });
-        });
+          const mates = shared.get(storeyAt(T.mass, run.level).course) || [run.id];
+          this.paintFloor(S, run, T, Math.max(0, mates.indexOf(run.id)), mates.length);
+        }
       }
 
       // The rooftop beacon: a lamp on the roof, the wedge it throws, the red it
@@ -1498,46 +1699,76 @@
         }
       }
 
-      // One run: a lit car in its shaft, with the storeys it has climbed lit
-      // behind it. Redrawn when the car reaches a new floor and not otherwise.
-      paintShaft(S, run, box) {
+      // ONE RUN IS ONE LIT FLOOR. The storey the job has reached burns at full
+      // value in the crew's own light and that light comes OUT of the
+      // building: past the edge of the wall by half a bay either side, down
+      // onto the storey below it, and out into the rain as a soft scatter.
+      // Everything below it that the job has already been through keeps a low
+      // warm afterglow, so how high the light has got IS the progress bar and
+      // it reads from three metres without a car, a column or a moving part.
+      //
+      // Stamped when the stage changes and left alone in between; the frame
+      // loop only ever puts a value on what is already here.
+      paintFloor(S, run, T, slot, slots) {
+        const mass = T.mass;
         const tint = run.state === 'alarm' ? ALARM
           : run.state === 'ready' ? DONE
             : run.state === 'failed' ? ACTOR.failed
               : (ACTOR[run.actorKey] || ACTOR.unknown);
-        const key = [run.state, run.actorKey, run.level.toFixed(4), run.crew,
-                     box.x, box.w, box.h].join('|');
-        if (key !== S.key) {
-          S.key = key;
-          S.col.clear();
-          S.car.clear();
-          const lit = box.h * Math.max(0, Math.min(1, run.level));
-          const carY = Math.round(box.y + box.h - lit);
-          // The column of the building this run occupies, lit up to the car —
-          // real storeys at the tower's own pitch, not a bar that stretches.
-          S.col.fillStyle(tint, 0.14);
-          for (let y = box.y + box.h - 4; y > box.y + box.h - lit; y -= 8) {
-            S.col.fillRect(box.x, Math.round(Math.max(box.y, y)), box.w, 3);
-          }
-          S.col.fillStyle(tint, 0.3);
-          S.col.fillRect(box.x + Math.round(box.w / 2) - 1, box.y, 2, box.h);
-          // The floor the car is standing on, lit right across the shaft: the
-          // line that carries "which stage" to the far side of the room.
-          const carW = run.state === 'alarm' ? 12 : 14;
-          const carH = 8;
-          S.car.fillStyle(tint, 0.7);
-          S.car.fillRect(-box.w / 2 - 8, -1, box.w + 16, 2);
-          glow(S.car, rgb(run.crew), 0, carH * 0.7, 6, 3, 0.9, 5);
-          S.car.fillStyle(tint, 1);
-          S.car.fillRect(-carW / 2, -carH / 2, carW, carH);
-          S.car.fillStyle(0xf2fbff, 0.5);
-          S.car.fillRect(-carW / 2, -carH / 2, carW, 2);
-          S.car.setPosition(box.x + box.w / 2, carY);
-          S.halo.setDisplaySize(5.4 * REM, 5.4 * REM);
-          S.halo.setPosition(box.x + box.w / 2, carY);
-          S.halo.setVisible(false);
-        }
+        const storey = storeyAt(mass, run.level);
+        const key = [run.state, run.actorKey, run.crew, slot, slots, T.skin,
+                     storey.course, mass.x, mass.y, mass.w, mass.h].join('|');
+        S.storey = storey;
+        S.pane = windowAt(storey, T.skin);
         S.run = run;
+        if (key === S.key) return;
+        S.key = key;
+        const warm = rgb(run.crew);
+        // The storeys already worked through: their windows too, warm and low,
+        // brightening toward the floor the job is on now. This is the progress
+        // bar, and it is a building with its lower half still awake — never a
+        // bar that stretches.
+        S.trail.clear();
+        for (let c = 0; c < storey.course; c++) {
+          const y = storey.y + (storey.course - c) * PANEL;
+          S.trail.fillStyle(warm, 0.08 + 0.2 * (c / Math.max(1, storey.course)));
+          for (const bay of baysOf({ x: storey.x, y, w: storey.w, h: PANEL }, T.skin)) {
+            if (bay.bay % slots !== slot) continue;
+            for (const pane of bay.panes) S.trail.fillRect(pane.x, pane.y, pane.w, pane.h);
+          }
+        }
+        // THE FLOOR. Its windows at full value in the crew's own light, the
+        // sill line right across the wall and half a bay past each edge of it,
+        // and a low wash of the room behind the glass. Drawn rather than
+        // stamped, because the value of a window is the state of a run: the
+        // atlas has one wall and the renderer says who is in it.
+        S.lit.clear();
+        S.lit.fillStyle(tint, 0.09 / slots);
+        S.lit.fillRect(storey.x - BAY / 2, storey.y + 3, storey.w + BAY, storey.h - 6);
+        for (const bay of baysOf(storey, T.skin)) {
+          if (bay.bay % slots !== slot) continue;
+          for (const pane of bay.panes) {
+            S.lit.fillStyle(tint, 0.62);
+            S.lit.fillRect(pane.x, pane.y, pane.w, pane.h);
+            S.lit.fillStyle(0xf4fbff, 0.22);
+            S.lit.fillRect(pane.x, pane.y, pane.w, 1);
+          }
+        }
+        S.lit.fillStyle(tint, 0.42 / slots);
+        S.lit.fillRect(storey.x - BAY / 2, storey.y + storey.h - 3, storey.w + BAY, 2);
+        // The fall onto the ledge below, and the scatter into the rain. Both
+        // are the WARM of a lit room seen from the street, whatever colour the
+        // work in it is — light through glass at night is warm, and red here
+        // belongs to the alarm alone. The actor's own neon stays where it says
+        // something: on the windows and on the band.
+        const out = tint === ALARM ? ALARM : WIN_A;
+        S.ledge.setPosition(storey.x + storey.w / 2, storey.y + storey.h + 7);
+        S.ledge.setDisplaySize(mass.w * 1.02, PANEL * 0.9);
+        S.ledge.setTint(out);
+        S.glow.setPosition(storey.x + storey.w / 2, storey.y + storey.h / 2);
+        S.glow.setDisplaySize(mass.w * 1.34 + BAY, PANEL * 2.3);
+        S.glowBase = S.glow.scaleX;
+        S.glow.setTint(out);
       }
 
       // --- the seam -------------------------------------------------------------
@@ -1584,8 +1815,8 @@
       }
 
       // The plate and the skyline tell the same story twice, so they are lit
-      // together: the featured run's car gets the searchbeam and its building
-      // gets named in light.
+      // together: the featured run's floor breathes brighter and throws
+      // further, and its building gets the beam and its name in light.
       spot(runId) {
         pendingSpot = runId;
         let lit = false;
@@ -1593,7 +1824,7 @@
           let hit = false;
           for (const [id, S] of T.shaftEls) {
             const on = id === runId;
-            S.halo.setVisible(on);
+            S.spotted = on;
             hit = hit || on;
           }
           T.spot.setVisible(hit);
@@ -1747,22 +1978,26 @@
           T.halo.setVisible(false);
           T.cascade.setVisible(false);
         }
+        // One lit floor per run standing in this building. A finished one
+        // flares and fades out of the wall on the server's own completion
+        // clock; a live one breathes, and the one the plate is talking about
+        // breathes wider and throws further — that is the halo's old job, done
+        // by the light that was already there.
         for (const S of T.shaftEls.values()) {
           const run = S.run;
           if (!run) continue;
-          if (run.state === 'ready' || run.state === 'failed') {
-            const state = shaftAt(phase, run.age + drift, completion, S.halo.visible);
-            S.root.setAlpha(state.root);
-            S.col.setAlpha(state.column);
-            S.car.setAlpha(state.car);
-            S.car.setScale(state.scale);
-          } else {
-            S.root.setAlpha(1);
-            S.col.setAlpha(S.halo.visible ? 1 : 0.8);
-            S.car.setScale(S.halo.visible ? 1.3 : 1);
-            S.car.setAlpha(run.state === 'alarm' ? phase.carAlarm
-              : run.state === 'active' ? phase.car : 1);
-          }
+          const done = run.state === 'ready' || run.state === 'failed';
+          const state = shaftAt(phase, run.age + drift, completion, S.spotted);
+          const beat = run.state === 'alarm' ? phase.carAlarm
+            : run.state === 'active' ? phase.car : 1;
+          const value = done ? state.car : beat;
+          const throwOut = done ? state.scale : (S.spotted ? 1.22 : 1);
+          S.root.setAlpha(done ? state.root : 1);
+          S.trail.setAlpha(state.column);
+          S.lit.setAlpha((S.spotted ? 0.66 : 0.56) + 0.3 * value);
+          S.ledge.setAlpha(0.27 * value);
+          S.glow.setAlpha((S.spotted ? 0.4 : 0.3) * value);
+          S.glow.setScale(S.glowBase * throwOut);
         }
       }
 
@@ -1867,13 +2102,16 @@
   // thinks a given wall is without standing a GPU up to find out.
   const grid = () => ({
     w: W, h: H, dpr: DPR, pix: PIX, gw: GW, gh: GH, vw: VW, vh: VH, rem: REM,
-    panel: PANEL, tile: TILE, sky: SKY, skyX: SKY_X, skyY: SKY_Y,
+    panel: PANEL, tile: TILE, bay: BAY, sky: SKY, skyX: SKY_X, skyY: SKY_Y,
     ground: GROUND, groundY: GROUND_Y, cityH: CITY_H, districtH: DISTRICT_H,
+    roomPix: ROOM_PIX, roomW: ROOM_W, roomH: ROOM_H,
   });
 
   return {
     create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
     walkerAt, vehicleAt, ramp, towerLayout, blockBox, massesOf,
+    storeyAt, windowAt, ease, reelPlan, reelAt, shotOf, poseAt, roomBoxAt,
+    apertureAt,
     TOWER_MASSES, FORM_MASSES, KIND_MASSES,
   };
 }));
