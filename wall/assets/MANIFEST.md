@@ -109,21 +109,33 @@ What replaced them, and why, in numbers measured off these files:
   among the rows that still leave the forearms and hands in the animated band
   (one pixel in one frame for the room and Angel, one in seven of sixteen for
   Emre, two for Ran, whose sleeve is the widest edge in any of these boxes).
-- **Which settles the pose lock.** Because the head band is the base, the box the
-  room DRAWS is the base's box to within **1 px** across all sixty-four frames,
-  against raw frames that drift up to 8 px on their own. The bases are the
-  committed ones and their drift from `room/worker-type-0.png`'s 56x53+4+7 is
-  what PR #44 recorded: room 0/0/0/0, Angel -3/+2/+1/-2, Emre +2/+3/-4/0,
-  Ran +2/-2/-2/-2.
-- **And the frames were drawn from the committed faces, not from a new roll.**
+- **Which is where the pose lock is measured.** Every generated frame carries a
+  redrawn head, and **the room discards those rows** — so a frame's own bounds are
+  a fact about the animator, not about the picture, and they are not what the lock
+  is checked against. `tests/wall.test.sh` measures the two things that are on the
+  wall, over these PNGs, through `room.js`'s own splits:
+  - the **drawn composite** — the base above the split plus the frame at and
+    below it — within **±1 px** of the set's base box. Worst across all
+    sixty-four: **1 px**.
+  - the **animated band alone**, x / width / bottom edge, within **±3 px** of the
+    base's same rows, so the arms cannot float or slide behind a head that is
+    holding the top of the box steady. Worst: **2 px**.
+
+  For the record, the raw frames drift up to 8 px on their own, always in the same
+  direction — the head growing upward, into rows nothing draws. The bases are the
+  committed ones and their drift from `room/worker-type-0.png`'s 56x53+4+7 is what
+  PR #44 recorded: room 0/0/0/0, Angel -3/+2/+1/-2, Emre +2/+3/-4/0, Ran
+  +2/-2/-2/-2.
+- **And the frames were requested from the committed faces, not from a new roll.**
   Each base was regenerated at its committed seed first: none came back
   byte-identical (2592-3894 pixels differ, and the room worker's box moved to
   59x52+2+7), so none was adopted. The factory's body-hash cache was primed with
-  the committed PNG instead, which is why every `animate` job's own frame 0 —
-  the first frame it was handed, returned verbatim — post-passes back to the
-  committed base byte for byte. Seven of the eight jobs did; `crew-emre-wait8`
-  is the one that came back a hair off, and its frame 0 is not committed either
-  way.
+  the committed PNG instead, so what every one of the eight `animate` jobs was
+  handed as `first_frame` is the committed base, byte for byte. That is the
+  provenance claim, and the primed cache is what makes it true for all eight.
+  What the endpoint *returns* as its own frame 0 is a redraw of that input like
+  every other frame it returns; none of the eight frame zeros is committed,
+  because the set already has that file as `base`.
 
 Between consecutive drawn frames, 72-381 pixels change, all of them below the
 split. Nothing here was retouched by hand.
@@ -145,9 +157,15 @@ so it comes down the asset route with the rest, and the suite asks for it throug
 
 The room draws `base` plus `type8-0..7` and `wait8-0..7`; `type-0..3` and
 `wait-1/2` are the old four-and-two and stay in the repo for the diff. The eight
-of each cycle are the animate job's frames 1-8. Its frame 0 is the first frame it
-was handed, returned verbatim, and is not committed — the set already has that
-file.
+of each cycle are the animate job's frames 1-8. Its frame 0 is that job's own
+redraw of the first frame it was handed, and is not committed for any set — the
+set already has the file it was handed, as `base`.
+
+The rows each cycle frame carries **above** its set's split are not drawn: every
+generated frame reflows the whole figure, and the room composites the base's head
+band over all of them. Those rows are why a frame's own bounds are not the lock;
+what is measured, from these PNGs, is in *Eight frames, and a head that holds*
+below.
 
 The lock is `room/worker-type-0.png`: opaque bounds **56x53 at +4+7** in a 64x64
 canvas, seated, facing the viewer, hands on the keyboard, the same light. A new
@@ -171,9 +189,10 @@ itself, not a tolerance any of these had spare.
 
 The eight-frame cycles gave that tolerance back rather than spending more of it.
 Their raw frames drift up to 8 px on their own — Emre's `wait8` reaches
-56x61+0+2 — but the room only draws them below the split, so the box it puts on
-the wall is each base's own to within **1 px** for all sixty-four. The frames'
-drift is a fact about the generator now, not about the picture.
+56x61+0+2, all of it the head growing upward into rows nothing draws — but the box
+the room puts on the wall is each base's own to within **1 px** for all
+sixty-four, and each animated band holds its base's x, width and bottom edge to
+within **2 px**. Both are asserted from these PNGs by `tests/wall.test.sh`.
 
 | path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
 |---|---|---|---|---|---|---|---|---|

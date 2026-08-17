@@ -156,48 +156,82 @@ case "$ASSET_CHECK" in
   *)    bad "assets: committed sprites disagree with MANIFEST.md ($ASSET_CHECK)" ;;
 esac
 
+# Two claims about the committed sprites are made from the pixels rather than from
+# a manifest column, and both want a PNG reader. It is written out of node's own
+# zlib — this wall has no dependencies and is not about to grow one for a test —
+# and it lives in one file that both checks require, because two copies of a
+# Paeth filter in one suite is one copy too many.
+PNG_JS="$ROOT/png.js"
+cat > "$PNG_JS" <<'JS'
+// 8-bit truecolour PNGs only, with or without alpha, which is what the post-pass
+// writes and what the palette itself is.
+const zlib = require("zlib");
+
+function decode(buf) {
+  const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
+  const depth = buf[24], type = buf[25];
+  if (depth !== 8 || (type !== 2 && type !== 6)) throw new Error("png " + depth + "/" + type);
+  const parts = [];
+  for (let at = 8; at + 8 <= buf.length;) {
+    const len = buf.readUInt32BE(at);
+    if (buf.toString("ascii", at + 4, at + 8) === "IDAT") parts.push(buf.subarray(at + 8, at + 8 + len));
+    at += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(parts));
+  const bpp = type === 6 ? 4 : 3, stride = w * bpp;
+  const out = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const filter = raw[y * (stride + 1)];
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? out[y * stride + x - bpp] : 0;
+      const b = y > 0 ? out[(y - 1) * stride + x] : 0;
+      const c = x >= bpp && y > 0 ? out[(y - 1) * stride + x - bpp] : 0;
+      let v = raw[y * (stride + 1) + 1 + x];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      out[y * stride + x] = v & 255;
+    }
+  }
+  return { w, h, bpp, px: out };
+}
+
+// Opaque or not, at a pixel. A sprite with no alpha channel is opaque
+// everywhere; the post-pass writes binary alpha, so 128 is a cut and not a
+// threshold anybody has to tune.
+const opaque = (img, x, y) =>
+  (img.bpp === 3 ? true : img.px[(y * img.w + x) * img.bpp + 3] >= 128);
+
+// The opaque bounding box of a band of rows, as [x, y, w, h], or null.
+function bounds(img, from, to) {
+  let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+  for (let y = Math.max(0, from); y < Math.min(img.h, to); y++) {
+    for (let x = 0; x < img.w; x++) {
+      if (!opaque(img, x, y)) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  return x1 < 0 ? null : [x0, y0, x1 - x0 + 1, y1 - y0 + 1];
+}
+
+module.exports = { decode, opaque, bounds };
+JS
+
 # And the palette is a lock, not a suggestion: every pixel of every sprite is
 # one of the 32 in .creative/palette.png, and the room draws with that same 32
 # rather than a copy that has drifted from it. Both claims are checked against
-# the real files, with a PNG reader written here out of node's own zlib — this
-# wall has no dependencies and is not about to grow one for a test.
+# the real files.
 PALETTE_CHECK="$(node -e '
-  const fs = require("fs"), path = require("path"), zlib = require("zlib");
-  // 8-bit truecolour PNGs only, with or without alpha, which is what the
-  // post-pass writes and what the palette itself is.
-  function decode(buf) {
-    const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
-    const depth = buf[24], type = buf[25];
-    if (depth !== 8 || (type !== 2 && type !== 6)) throw new Error("png " + depth + "/" + type);
-    const parts = [];
-    for (let at = 8; at + 8 <= buf.length;) {
-      const len = buf.readUInt32BE(at);
-      if (buf.toString("ascii", at + 4, at + 8) === "IDAT") parts.push(buf.subarray(at + 8, at + 8 + len));
-      at += 12 + len;
-    }
-    const raw = zlib.inflateSync(Buffer.concat(parts));
-    const bpp = type === 6 ? 4 : 3, stride = w * bpp;
-    const out = Buffer.alloc(h * stride);
-    for (let y = 0; y < h; y++) {
-      const filter = raw[y * (stride + 1)];
-      for (let x = 0; x < stride; x++) {
-        const a = x >= bpp ? out[y * stride + x - bpp] : 0;
-        const b = y > 0 ? out[(y - 1) * stride + x] : 0;
-        const c = x >= bpp && y > 0 ? out[(y - 1) * stride + x - bpp] : 0;
-        let v = raw[y * (stride + 1) + 1 + x];
-        if (filter === 1) v += a;
-        else if (filter === 2) v += b;
-        else if (filter === 3) v += (a + b) >> 1;
-        else if (filter === 4) {
-          const p = a + b - c;
-          const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
-          v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-        }
-        out[y * stride + x] = v & 255;
-      }
-    }
-    return { w, h, bpp, px: out };
-  }
+  const fs = require("fs"), path = require("path");
+  const { decode } = require(process.argv[2]);
   const hex = (r, g, b) => "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
   const root = process.argv[1];
   const lockPng = decode(fs.readFileSync(path.join(root, ".creative", "palette.png")));
@@ -244,9 +278,132 @@ PALETTE_CHECK="$(node -e '
     if (shipped.size) bad.push(name + " wears the shipped ramp: " + [...shipped].join(","));
   }
   process.stdout.write(bad.length ? bad.join("; ") : "ok:" + lock.size);
-' "$SRC" 2>&1)"
+' "$SRC" "$PNG_JS" 2>&1)"
 check "assets: every sprite is quantised to the 32-colour lock, and so is the room" \
   "$PALETTE_CHECK" "ok:32"
+
+# The POSE LOCK, from the pixels. A character set is only interchangeable with
+# another if every frame of it lands in the same box, and "the manifest says so"
+# is not a check — so this measures the committed PNGs, through room.js's own
+# splits and frame names, and fails on the numbers.
+#
+# Two bounds, because the room draws a figure in two bands and only one of them
+# comes from a generated frame:
+#
+#   (a) the DRAWN composite — the base's rows above the set's split plus the
+#       frame's rows at and below it, which is the figure that goes on the wall —
+#       within +/-1 px of the set's base box. This is the one that decides whether
+#       a set can sit at the room's worker origin.
+#   (b) the ANIMATED BAND on its own — x, width and bottom edge of the rows at and
+#       below the split — within +/-3 px of the base's same rows. Without this,
+#       (a) would pass a frame whose arms had floated off the keyboard, because the
+#       base's head would still be setting the top of the box.
+#
+# The rows a frame carries ABOVE the split are not measured, because the room
+# discards them: every generated frame redraws the whole figure, and their drift
+# is a fact about the animator rather than about the picture. The raw numbers are
+# in the run notes.
+#
+# What this does NOT check is which rows came from where — a bounding box cannot
+# see that, and on these sprites the box happens to be the same whichever side of
+# the split the shoulders come from. That claim is `headAlwaysBase` further down,
+# over the room's own band table, and `splitsSane`, which refuses a split outside
+# the jacket. Three probes, three claims; none of them stands in for another.
+LOCK_PROBE="$ROOT/lock-probe.js"
+cat > "$LOCK_PROBE" <<'JS'
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[2];
+const R = require(path.join(root, "wall", "room.js"));
+const { decode, opaque, bounds } = require(process.argv[3]);
+
+const png = (rel) => decode(fs.readFileSync(path.join(root, "wall", rel)));
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
+
+// The figure the room draws: base above the split, frame at and below it. Built
+// the same way worker() builds it — the band is CLEARED and then taken from the
+// frame, so a base pixel cannot show through a frame's transparent one.
+function composite(base, frame, split) {
+  const out = { w: base.w, h: base.h, bpp: 4, px: Buffer.alloc(base.w * base.h * 4) };
+  for (let y = 0; y < base.h; y++) {
+    const src = y < split ? base : frame;
+    for (let x = 0; x < base.w; x++) {
+      out.px[(y * out.w + x) * 4 + 3] = opaque(src, x, y) ? 255 : 0;
+    }
+  }
+  return out;
+}
+
+// Every set the roster names, plus the one every unknown owner falls back to —
+// which is exactly the list the room loads.
+const crew = JSON.parse(fs.readFileSync(path.join(root, "wall", "crew.json"), "utf8"));
+const sets = [...new Set(Object.keys(crew)
+  .map((owner) => R.setOf(crew, owner))
+  .concat(R.FALLBACK))].sort();
+
+const cycles = R.TYPE_SET.concat(R.WAIT_SET);
+const bad = [];
+let drawnWorst = 0;
+let bandWorst = 0;
+let counted = 0;
+
+for (const set of sets) {
+  const split = R.splitOf(set);
+  const base = png(R.fileOf(set, "base"));
+  const box = bounds(base, 0, base.h);
+  const bandBox = bounds(base, split, base.h);
+  if (!box || !bandBox) { bad.push(set + ": base has no opaque pixels"); continue; }
+  for (const frame of cycles) {
+    const img = png(R.fileOf(set, frame));
+    if (img.w !== base.w || img.h !== base.h) {
+      bad.push(set + "/" + frame + ": " + img.w + "x" + img.h + " is not the base's canvas");
+      continue;
+    }
+    counted++;
+    const drawn = bounds(composite(base, img, split), 0, base.h);
+    const band = bounds(img, split, img.h);
+    if (!drawn || !band) { bad.push(set + "/" + frame + ": nothing opaque"); continue; }
+    // (a) the whole drawn figure, all four numbers.
+    for (let i = 0; i < 4; i++) drawnWorst = Math.max(drawnWorst, Math.abs(drawn[i] - box[i]));
+    if (!drawn.every((v, i) => near(v, box[i], 1))) {
+      bad.push(set + "/" + frame + ": drawn " + drawn.join(",") + " vs base " + box.join(","));
+    }
+    // (b) the animated band: x, width, and where the bottom edge lands. The
+    // band's own TOP is the split by construction, so it says nothing.
+    const got = [band[0], band[2], band[1] + band[3]];
+    const want = [bandBox[0], bandBox[2], bandBox[1] + bandBox[3]];
+    for (let i = 0; i < 3; i++) bandWorst = Math.max(bandWorst, Math.abs(got[i] - want[i]));
+    if (!got.every((v, i) => near(v, want[i], 3))) {
+      bad.push(set + "/" + frame + ": band x/w/bottom " + got.join(",") + " vs base " + want.join(","));
+    }
+  }
+}
+
+console.log(JSON.stringify({
+  sets: sets.join(" "),
+  splits: sets.map((s) => s + "=" + R.splitOf(s)).join(" "),
+  frames: counted,
+  drawnWorst,
+  bandWorst,
+  bad: bad.join("; "),
+}));
+JS
+LOCK="$(node "$LOCK_PROBE" "$SRC" "$PNG_JS" 2>&1)"
+lock_of() { printf '%s' "$LOCK" | jq -r ".$1" 2>/dev/null; }
+check "lock: every frame of every set was measured" "$(lock_of frames)" "64"
+check "lock: and every one is a set the room will actually draw" \
+  "$(lock_of sets)" "crew/angel crew/emre crew/ran room"
+check "lock: nothing is out of tolerance" "$(lock_of bad)" ""
+if [ "$(lock_of drawnWorst)" -le 1 ] 2>/dev/null; then
+  ok "lock: the drawn figure is its base's box to $(lock_of drawnWorst) px (ceiling 1)"
+else
+  bad "lock: the drawn figure is off its base's box by $(lock_of drawnWorst) px (ceiling 1)"
+fi
+if [ "$(lock_of bandWorst)" -le 3 ] 2>/dev/null; then
+  ok "lock: the animated band holds x/width/bottom to $(lock_of bandWorst) px (ceiling 3)"
+else
+  bad "lock: the animated band drifts $(lock_of bandWorst) px on x/width/bottom (ceiling 3)"
+fi
 
 # Who is at the desk. wall/crew.json is the one place an owner is mapped to a
 # character, and a set it names that is missing a frame is a room that never
