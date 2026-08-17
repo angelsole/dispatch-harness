@@ -2251,6 +2251,241 @@ check "canvas: every silhouette is a stack of rectangles on the pavement" \
 check "canvas: and every plot is whole pixels standing on the ground line" \
   "$(still_of plots)" "true"
 
+# A RUNNING JOB IS A LIT FLOOR. No lift cars: the storey a run has reached
+# lights its own windows and the light comes out of the building. Two claims
+# carry it and both are arithmetic — the band lands on the façade's own 32 px
+# course, and the glass in that course is where the atlas actually drew it.
+grep_not "$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')" 'paintShaft' \
+  "floor: the lift car and its shaft are gone from the canvas world"
+grep_ok "$CANVAS_SRC" 'paintFloor(S, run, T, slot, slots)' \
+  "floor: a run is painted as a storey of a tower, not as a car in a lane"
+grep_ok "$CANVAS_SRC" 'const shared = new Map();' \
+  "floor: two runs on one floor share its bays rather than lighting it twice"
+
+# THE WORLD OWNS ITS CAMERA. The page's director drives one CSS transform on
+# #stage and this canvas is deliberately not under it, so in ?world=canvas the
+# section hands the reel over and returns — one line, and everything else in it
+# byte for byte what the DOM wall runs. The block further down still counts
+# leaveShot() three times and greps the same literals.
+grep_ok "$PAGE_SRC" 'if (world.direct && world.direct(reelSignals())) return;' \
+  "reel: the director hands the film to a world that draws its own city"
+grep_ok "$PAGE_SRC" 'direct(signals) { reel = signals; if (live) live.direct(signals); return true; }' \
+  "reel: answered before the engine lands, so the DOM camera never starts"
+grep_ok "$PAGE_SRC" 'wantsCinema,                              // the whole truth table, verbatim' \
+  "reel: and the activation rules are handed over rather than restated"
+grep_ok "$PAGE_SRC" 'function roomDive(on, runId) {' \
+  "reel: the run the dive went in through is pinned by the room's own section"
+grep_ok "$CANVAS_SRC" 'cam.setZoom(pose.zoom);' "reel: the camera is the scene's own"
+grep_ok "$CANVAS_SRC" 'cam.centerOn(pose.x, pose.y);' \
+  "reel: pointed by one pose function and nothing else"
+grep_ok "$CANVAS_SRC" 'this.textures.addCanvas(ROOM_KEY, canvas)' \
+  "dive: the room in the window is wall/room.js's own canvas, sampled"
+grep_ok "$CANVAS_SRC" 'this.roomTex.refresh();' \
+  "dive: refreshed per frame, so the room in there is the room that is running"
+grep_ok "$CSS_SRC" 'body[data-world="canvas"] .room[data-on="1"] { opacity: 0; }' \
+  "dive: the overlay stays out of the push's way while room.js paints for it"
+grep_ok "$CSS_SRC" 'body[data-world="canvas"][data-dive="inside"] .room[data-on="1"] { opacity: 1; }' \
+  "dive: and takes the frame only once the push has landed on that same picture"
+# Reduced motion is absolute here too: the reel is only ever consulted when the
+# wall is filming AND the room has not asked for stillness.
+grep_ok "$CANVAS_SRC" 'const rolling = film.on && !still.matches && !s.forcedRoom;' \
+  "reel: reduced motion never rolls, so there is no dive to park"
+grep_ok "$CANVAS_SRC" "step = { phase: 'room', u: 1 };" \
+  "reel: ?shot=room is the camera born in the dived pose, with no move at all"
+
+# And the film itself, run in node. The reel is a pure function of the clock,
+# the plan and whether the wall is filming — no tween, no timer, no integrator
+# — which is the only reason a camera can be checked without a GPU, and also
+# the reason a snapshot landing mid-push cannot move it.
+REEL_PROBE="$ROOT/reel-probe.js"
+cat > "$REEL_PROBE" <<'JS'
+const C = require(process.argv[2]);
+const cadence = { wide: 20000, moveMin: 6000, moveMax: 10000,
+                  roomMin: 15000, roomMax: 20000, cut: 700 };
+// The suite's own draw, not the wall's: seeded, so the plans below are the
+// same two hundred plans on every machine.
+let seed = 1;
+const draw = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+const plans = Array.from({ length: 200 }, () => C.reelPlan(draw, cadence));
+const walk = (plan, steps) => Array.from({ length: steps },
+  (_, i) => C.reelAt((i / (steps - 1)) * plan.total, plan));
+const whole = (n) => Number.isInteger(n);
+// Every wall the gate, the office TV and a laptop can show this on.
+const walls = [[1280, 720, 1], [1920, 1080, 1], [1280, 720, 2], [3840, 2160, 1]];
+const pane = { x: 639, y: 531, w: 7, h: 22 };
+const landing = walls.map(([w, h, dpr]) => {
+  C.measure(w, h, dpr);
+  const g = C.grid();
+  const room = C.roomBoxAt(pane);
+  const end = C.poseAt(1, room);
+  // The room is on screen at the whole multiple wall.css picks for the DOM
+  // overlay, and its left edge lands on a whole device pixel of the wall.
+  return {
+    wall: w + 'x' + h + '@' + dpr,
+    scale: end.zoom,
+    css: end.zoom / g.dpr,
+    edge: g.w / 2 - (C.grid().roomW / 2) * end.zoom,
+    holds: room.x <= pane.x && room.x + room.w >= pane.x + pane.w
+      && room.y <= pane.y && room.y + room.h >= pane.y + pane.h,
+  };
+});
+C.measure(1280, 720, 1);
+const G = C.grid();
+const room = C.roomBoxAt(pane);
+const poses = Array.from({ length: 101 }, (_, i) => C.poseAt(i / 100, room));
+const mass = { x: 588, y: 154, w: 132, h: 502 };
+const storeys = [0, 0.1, 0.26, 0.42, 0.59, 0.75, 0.92, 1].map((l) => C.storeyAt(mass, l));
+const groundTop = mass.y + mass.h - G.panel;
+console.log(JSON.stringify({
+  // The cadence is the DOM wall's, to the millisecond.
+  cadence: plans.every((p) => p.wide === 20000
+    && p.move >= 6000 && p.move <= 10000 && p.back >= 6000 && p.back <= 10000
+    && p.hold >= 15000 && p.hold <= 20000
+    && p.total === p.wide + p.move + p.hold + p.back),
+  // ...and it varies, rather than being the same film on a loop.
+  varies: new Set(plans.map((p) => p.move + ':' + p.hold + ':' + p.back)).size > 150,
+  // One cycle is wide, in, the room, out. In that order, once each, and
+  // nothing else is on offer in this world.
+  sequence: new Set(plans.map((p) => walk(p, 400)
+    .map((s) => s.phase).filter((k, i, all) => k !== all[i - 1]).join(','))).size === 1,
+  order: walk(plans[0], 400).map((s) => s.phase)
+    .filter((k, i, all) => k !== all[i - 1]).join(','),
+  // The push only ever goes in, and the pull back only ever comes out: a lens
+  // that eased backwards mid-move is the cut the whole shot exists to avoid.
+  monotonic: plans.every((p) => walk(p, 800).every((s, i, all) => {
+    if (i === 0) return true;
+    if (s.phase === 'in') return s.u >= all[i - 1].u;
+    if (s.phase === 'out') return all[i - 1].phase !== 'out' || s.u <= all[i - 1].u;
+    return s.phase === 'wide' ? s.u === 0 : s.u === 1;
+  })),
+  // The wall says what it is showing in the DOM director's own words.
+  shots: ['wide', 'in', 'room', 'out'].map(C.shotOf).join(','),
+  // No lit floor, no dive: a city with nothing running holds the wide shot.
+  noWindow: JSON.stringify(C.reelWith({ phase: 'in', u: 0.6 }, null)),
+  withWindow: C.reelWith({ phase: 'in', u: 0.6 }, { run: 'X' }).u,
+  // u = 0 IS the wide shot: same zoom and same centre the scene boots with.
+  wide: poses[0].zoom === G.pix && poses[0].x === G.gw / 2 && poses[0].y === G.gh / 2,
+  // The zoom is geometric and never reverses; the last stretch is the slowest,
+  // which is the pane opening rather than the camera arriving.
+  zoomIn: poses.every((p, i) => i === 0 || p.zoom > poses[i - 1].zoom),
+  eased: (() => {
+    const first = poses[10].zoom - poses[0].zoom;
+    const middle = poses[55].zoom - poses[45].zoom;
+    const last = poses[100].zoom - poses[90].zoom;
+    return first < middle && last < middle;
+  })(),
+  // Every frame of the push is full of city: the view never leaves the world,
+  // at any point of the move, however near the edge the window is.
+  inCity: [pane, { x: 8, y: 40, w: 7, h: 22 }, { x: 1268, y: 620, w: 7, h: 22 }]
+    .every((p) => {
+      const box = C.roomBoxAt(p);
+      return Array.from({ length: 101 }, (_, i) => C.poseAt(i / 100, box)).every((q) => {
+        const halfW = G.w / (2 * q.zoom);
+        const halfH = G.h / (2 * q.zoom);
+        return q.x - halfW >= -0.01 && q.x + halfW <= G.gw + 0.01
+          && q.y - halfH >= -0.01 && q.y + halfH <= G.gh + 0.01;
+      });
+    }),
+  // The pane opens from the window the camera is flying at onto the room's own
+  // rectangle, and never shrinks on the way.
+  apertureStart: JSON.stringify(C.apertureAt(0, pane, room)) === JSON.stringify(pane),
+  apertureEnd: JSON.stringify(C.apertureAt(1, pane, room)) === JSON.stringify(room),
+  apertureOpens: Array.from({ length: 101 }, (_, i) => C.apertureAt(i / 100, pane, room))
+    .every((a, i, all) => i === 0 || (a.w >= all[i - 1].w && a.h >= all[i - 1].h)),
+  // The landing, at every wall: a WHOLE number of device pixels per authored
+  // room pixel, the same whole number wall.css gives the DOM overlay, and the
+  // room's own edge on a whole pixel of the panel.
+  landing: landing.map((l) => l.wall + '=' + l.scale + 'x').join(' '),
+  landingWhole: landing.every((l) => whole(l.scale) && whole(l.css) && whole(l.edge)),
+  // ...and the window it came in through is inside the room it opens onto,
+  // wherever on the wall that window happens to be.
+  landingHolds: landing.every((l) => l.holds)
+    && [{ x: 4, y: 12, w: 7, h: 22 }, { x: 1270, y: 640, w: 7, h: 22 }].every((p) => {
+      const box = C.roomBoxAt(p);
+      return box.x <= p.x && box.x + box.w >= p.x + p.w
+        && box.y <= p.y && box.y + box.h >= p.y + p.h;
+    }),
+  // A lit floor is a COURSE of the façade, not a band at a fraction of a
+  // height: whole panels above the ground floor, one panel tall, inside the
+  // mass, and climbing with the stage rather than wandering.
+  courses: storeys.every((s) => s.h === G.panel && (groundTop - s.y) % G.panel === 0
+    && s.y >= mass.y && s.y + s.h <= groundTop && s.x === mass.x && s.w === mass.w),
+  climbs: storeys.every((s, i) => i === 0 || s.course >= storeys[i - 1].course)
+    && storeys[storeys.length - 1].course > storeys[0].course,
+  // A setback tower is narrower up top: a course lit there spans the wall AT
+  // that height — inside the box, narrower than the base, never in the sky.
+  setback: (() => {
+    const masses = [{ x: 0, w: 1, top: 0.6 }, { x: 0.07, w: 0.86, top: 0.3 },
+                    { x: 0.14, w: 0.72, top: 0 }];
+    const low = C.storeyAt(mass, 0.05, masses);
+    const high = C.storeyAt(mass, 1, masses);
+    return low.w === mass.w && low.x === mass.x
+      && high.w < low.w && high.x > mass.x && high.x + high.w < mass.x + mass.w
+      && high.w === Math.round(0.72 * mass.w)
+      && C.spanAt(mass, masses, low.y).w === mass.w;
+  })(),
+  // And the glass in that course is where the atlas drew it: two bays to every
+  // 32 px panel, tiled from the mass's own left edge, every pane inside the
+  // course, and a part-panel at the right simply drops its bays.
+  glass: ['concrete', 'glass', 'brick'].every((skin) => {
+    const bays = C.baysOf(storeys[3], skin);
+    return bays.length === Math.floor(mass.w / G.panel) * 2
+      && bays.every((b) => b.x >= mass.x && b.x + b.w <= mass.x + mass.w
+        && (b.x - mass.x) % G.panel < G.panel
+        && b.panes.every((p) => p.y >= storeys[3].y
+          && p.y + p.h <= storeys[3].y + storeys[3].h));
+  }),
+  // The window the camera goes in through is one of those bays.
+  window: ['concrete', 'glass', 'brick'].every((skin) => {
+    const w = C.windowAt(storeys[3], skin);
+    return C.baysOf(storeys[3], skin).some((b) => b.x === w.x && b.w === w.w)
+      && w.y >= storeys[3].y && w.y + w.h <= storeys[3].y + storeys[3].h;
+  }),
+}));
+JS
+REEL="$(node "$REEL_PROBE" "$SRC/wall/world-canvas.js" 2>&1)"
+reel_of() { printf '%s' "$REEL" | jq -r ".$1" 2>/dev/null; }
+check "reel: the cadence is the DOM wall's, to the millisecond" "$(reel_of cadence)" "true"
+check "reel: and no two cycles are the same film" "$(reel_of varies)" "true"
+check "reel: one cycle is wide, in, the room, out — and nothing else" \
+  "$(reel_of order)" "wide,in,room,out"
+check "reel: every cycle, at every clock" "$(reel_of sequence)" "true"
+check "reel: the push only goes in and the pull back only comes out" \
+  "$(reel_of monotonic)" "true"
+check "reel: the wall says which shot it is showing, in the director's words" \
+  "$(reel_of shots)" "establishing,room,room,establishing"
+check "reel: a city with no lit floor to dive into holds the wide shot" \
+  "$(reel_of noWindow)" '{"phase":"wide","u":0}'
+check "reel: and one with a lit floor gets its dive" "$(reel_of withWindow)" "0.6"
+check "reel: the start of the push IS the wide shot the wall was already on" \
+  "$(reel_of wide)" "true"
+check "reel: the zoom is a lens — geometric, and it never reverses" \
+  "$(reel_of zoomIn)" "true"
+check "reel: eased in and out, so the last second is the pane opening" \
+  "$(reel_of eased)" "true"
+check "reel: and every frame of the move is still full of city" "$(reel_of inCity)" "true"
+check "dive: the aperture starts as the window the camera is flying at" \
+  "$(reel_of apertureStart)" "true"
+check "dive: and ends as the room's own rectangle, exactly" \
+  "$(reel_of apertureEnd)" "true"
+check "dive: opening all the way, never shrinking" "$(reel_of apertureOpens)" "true"
+check "dive: the room lands at a whole multiple of its own 320x180" \
+  "$(reel_of landing)" "1280x720@1=4x 1920x1080@1=6x 1280x720@2=8x 3840x2160@1=12x"
+check "dive: in device pixels, in CSS pixels, and on a whole pixel of the wall" \
+  "$(reel_of landingWhole)" "true"
+check "dive: with the window it came in through inside the room it opens onto" \
+  "$(reel_of landingHolds)" "true"
+check "floor: a lit floor is a whole course of the façade, inside the mass" \
+  "$(reel_of courses)" "true"
+check "floor: and it climbs with the stage rather than wandering" \
+  "$(reel_of climbs)" "true"
+check "floor: on a setback tower the lit course spans the wall at its own height, not the box" \
+  "$(reel_of setback)" "true"
+check "floor: its light lands on the glass the atlas drew, in every wall of the set" \
+  "$(reel_of glass)" "true"
+check "floor: and the window the dive goes through is one of those bays" \
+  "$(reel_of window)" "true"
+
 # --- the director films the city --------------------------------------------------
 # The wall can film itself: a slow camera that holds the skyline, pushes in on
 # something living in it, and comes back out. Two structural claims carry the
@@ -2296,6 +2531,14 @@ grep_ok "$PAGE_SRC" "stage.style.transition = 'transform '" \
   "cinema: moves are eased transitions, timed per shot"
 grep_ok "$CSS_SRC" '.stage { transform: none !important; }' \
   "motion: reduced motion parks the camera wide, whatever a session left behind"
+# The one line this section grew for the world that draws its own city: it is
+# INSIDE the director, it is the first thing the director does, and everything
+# after it is what the DOM wall has always run. Handing over is not the same as
+# having two cameras.
+grep_ok "$DIRECTOR_SRC" 'if (world.direct && world.direct(reelSignals())) return;' \
+  "cinema: a world that draws its own city is handed the reel, here"
+check "cinema: and that is the whole of the hand-off" \
+  "$(printf '%s\n' "$DIRECTOR_SRC" | grep -cF 'world.direct')" "1"
 
 # The whole fabric of this city is seeded off a run id or the wall clock. The
 # director is presentation and gets the wall-clock bucket, never a raw draw —
