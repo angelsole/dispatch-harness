@@ -212,6 +212,24 @@
     "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
   },
   {
+    "id": "room-worker-type8",
+    "tool": "pixellab.animate",
+    "from": "room-worker",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17921,
+    "prompt": "typing on the keyboard, only the hands and forearms move, the fingers strike down onto the keys in a rolling wave and the wrists lift and fall between strokes, the head and the shoulders stay completely still"
+  },
+  {
+    "id": "room-worker-wait8",
+    "tool": "pixellab.animate",
+    "from": "room-worker",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17972,
+    "prompt": "not typing, waiting, both hands taken off the keyboard and held clear above the keys with the wrists raised and the fingers straight and relaxed, nothing is being pressed, breathing slowly in and out, the head and the shoulders stay completely still"
+  },
+  {
     "id": "crew-angel",
     "tool": "pixellab.image",
     "palette": ".creative/palette.png",
@@ -243,6 +261,24 @@
     "no_background": true,
     "seed": 17442,
     "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
+  },
+  {
+    "id": "crew-angel-type8",
+    "tool": "pixellab.animate",
+    "from": "crew-angel",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17941,
+    "prompt": "typing on the keyboard, only the hands and forearms move, the fingers strike down onto the keys in a rolling wave and the wrists lift and fall between strokes, the head and the shoulders stay completely still"
+  },
+  {
+    "id": "crew-angel-wait8",
+    "tool": "pixellab.animate",
+    "from": "crew-angel",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17992,
+    "prompt": "not typing, waiting, both hands taken off the keyboard and held clear above the keys with the wrists raised and the fingers straight and relaxed, nothing is being pressed, breathing slowly in and out, the head and the shoulders stay completely still"
   },
   {
     "id": "crew-emre",
@@ -278,6 +314,24 @@
     "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
   },
   {
+    "id": "crew-emre-type8",
+    "tool": "pixellab.animate",
+    "from": "crew-emre",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17951,
+    "prompt": "typing on the keyboard, only the hands and forearms move, the fingers strike down onto the keys in a rolling wave and the wrists lift and fall between strokes, the head and the shoulders stay completely still"
+  },
+  {
+    "id": "crew-emre-wait8",
+    "tool": "pixellab.animate",
+    "from": "crew-emre",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17982,
+    "prompt": "not typing, waiting, both hands taken off the keyboard and held clear above the keys with the wrists raised and the fingers straight and relaxed, nothing is being pressed, breathing slowly in and out, the head and the shoulders stay completely still"
+  },
+  {
     "id": "crew-ran",
     "tool": "pixellab.image",
     "palette": ".creative/palette.png",
@@ -309,6 +363,24 @@
     "no_background": true,
     "seed": 17462,
     "prompt": "leaning back away from the keyboard with both hands lifted off the keys, waiting, breathing slowly, head turning a little"
+  },
+  {
+    "id": "crew-ran-type8",
+    "tool": "pixellab.animate",
+    "from": "crew-ran",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17961,
+    "prompt": "typing on the keyboard, only the hands and forearms move, the fingers strike down onto the keys in a rolling wave and the wrists lift and fall between strokes, the head and the shoulders stay completely still"
+  },
+  {
+    "id": "crew-ran-wait8",
+    "tool": "pixellab.animate",
+    "from": "crew-ran",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 17902,
+    "prompt": "not typing, waiting, both hands taken off the keyboard and held clear above the keys with the wrists raised and the fingers straight and relaxed, nothing is being pressed, breathing slowly in and out, the head and the shoulders stay completely still"
   },
   {
     "id": "city-facade-concrete-lit",

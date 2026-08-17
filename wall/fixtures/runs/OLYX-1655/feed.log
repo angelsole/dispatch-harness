@@ -5,3 +5,15 @@
 04:58:05 ◆ codex ledger.ts duplicates roundToCents from money.ts — folding it back
 04:59:35 ◆ codex Applying patch to src/ledger/split.ts
 05:00:30 ◆ codex Re-running the gate after the refactor
+05:01:10 ◆ codex split.ts rounds each desk share separately, so a payout can lose a cent
+05:02:05 ◆ codex Reading src/ledger/split.ts and src/money/round.ts together
+05:03:20 ◆ codex Checkpoint 2 - the golden fixture is the contract; leaving it alone
+05:04:15 ◆ codex @@ -41,7 +41,9 @@ export function splitPayout(total, desks) {
+05:04:15 ◆ codex -  return desks.map((d) => roundToCents(total * d.share));
+05:04:15 ◆ codex +  const cents = desks.map((d) => Math.floor(total * d.share * 100));
+05:04:15 ◆ codex +  const drift = Math.round(total * 100) - sum(cents);
+05:04:15 ◆ codex +  return spread(cents, drift).map((c) => c / 100);
+05:05:30 ◆ codex Applying patch to src/ledger/split.ts
+05:06:40 ◆ codex Bash npm run test -- ledger/split
+05:07:55 ◆ codex The desk order decides who gets the odd cent - sorting by id first
+05:09:05 ◆ codex Re-running the gate with the drift spread in place

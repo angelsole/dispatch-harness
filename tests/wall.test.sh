@@ -156,48 +156,82 @@ case "$ASSET_CHECK" in
   *)    bad "assets: committed sprites disagree with MANIFEST.md ($ASSET_CHECK)" ;;
 esac
 
+# Two claims about the committed sprites are made from the pixels rather than from
+# a manifest column, and both want a PNG reader. It is written out of node's own
+# zlib — this wall has no dependencies and is not about to grow one for a test —
+# and it lives in one file that both checks require, because two copies of a
+# Paeth filter in one suite is one copy too many.
+PNG_JS="$ROOT/png.js"
+cat > "$PNG_JS" <<'JS'
+// 8-bit truecolour PNGs only, with or without alpha, which is what the post-pass
+// writes and what the palette itself is.
+const zlib = require("zlib");
+
+function decode(buf) {
+  const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
+  const depth = buf[24], type = buf[25];
+  if (depth !== 8 || (type !== 2 && type !== 6)) throw new Error("png " + depth + "/" + type);
+  const parts = [];
+  for (let at = 8; at + 8 <= buf.length;) {
+    const len = buf.readUInt32BE(at);
+    if (buf.toString("ascii", at + 4, at + 8) === "IDAT") parts.push(buf.subarray(at + 8, at + 8 + len));
+    at += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(parts));
+  const bpp = type === 6 ? 4 : 3, stride = w * bpp;
+  const out = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const filter = raw[y * (stride + 1)];
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? out[y * stride + x - bpp] : 0;
+      const b = y > 0 ? out[(y - 1) * stride + x] : 0;
+      const c = x >= bpp && y > 0 ? out[(y - 1) * stride + x - bpp] : 0;
+      let v = raw[y * (stride + 1) + 1 + x];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      out[y * stride + x] = v & 255;
+    }
+  }
+  return { w, h, bpp, px: out };
+}
+
+// Opaque or not, at a pixel. A sprite with no alpha channel is opaque
+// everywhere; the post-pass writes binary alpha, so 128 is a cut and not a
+// threshold anybody has to tune.
+const opaque = (img, x, y) =>
+  (img.bpp === 3 ? true : img.px[(y * img.w + x) * img.bpp + 3] >= 128);
+
+// The opaque bounding box of a band of rows, as [x, y, w, h], or null.
+function bounds(img, from, to) {
+  let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+  for (let y = Math.max(0, from); y < Math.min(img.h, to); y++) {
+    for (let x = 0; x < img.w; x++) {
+      if (!opaque(img, x, y)) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  return x1 < 0 ? null : [x0, y0, x1 - x0 + 1, y1 - y0 + 1];
+}
+
+module.exports = { decode, opaque, bounds };
+JS
+
 # And the palette is a lock, not a suggestion: every pixel of every sprite is
 # one of the 32 in .creative/palette.png, and the room draws with that same 32
 # rather than a copy that has drifted from it. Both claims are checked against
-# the real files, with a PNG reader written here out of node's own zlib — this
-# wall has no dependencies and is not about to grow one for a test.
+# the real files.
 PALETTE_CHECK="$(node -e '
-  const fs = require("fs"), path = require("path"), zlib = require("zlib");
-  // 8-bit truecolour PNGs only, with or without alpha, which is what the
-  // post-pass writes and what the palette itself is.
-  function decode(buf) {
-    const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
-    const depth = buf[24], type = buf[25];
-    if (depth !== 8 || (type !== 2 && type !== 6)) throw new Error("png " + depth + "/" + type);
-    const parts = [];
-    for (let at = 8; at + 8 <= buf.length;) {
-      const len = buf.readUInt32BE(at);
-      if (buf.toString("ascii", at + 4, at + 8) === "IDAT") parts.push(buf.subarray(at + 8, at + 8 + len));
-      at += 12 + len;
-    }
-    const raw = zlib.inflateSync(Buffer.concat(parts));
-    const bpp = type === 6 ? 4 : 3, stride = w * bpp;
-    const out = Buffer.alloc(h * stride);
-    for (let y = 0; y < h; y++) {
-      const filter = raw[y * (stride + 1)];
-      for (let x = 0; x < stride; x++) {
-        const a = x >= bpp ? out[y * stride + x - bpp] : 0;
-        const b = y > 0 ? out[(y - 1) * stride + x] : 0;
-        const c = x >= bpp && y > 0 ? out[(y - 1) * stride + x - bpp] : 0;
-        let v = raw[y * (stride + 1) + 1 + x];
-        if (filter === 1) v += a;
-        else if (filter === 2) v += b;
-        else if (filter === 3) v += (a + b) >> 1;
-        else if (filter === 4) {
-          const p = a + b - c;
-          const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
-          v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-        }
-        out[y * stride + x] = v & 255;
-      }
-    }
-    return { w, h, bpp, px: out };
-  }
+  const fs = require("fs"), path = require("path");
+  const { decode } = require(process.argv[2]);
   const hex = (r, g, b) => "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
   const root = process.argv[1];
   const lockPng = decode(fs.readFileSync(path.join(root, ".creative", "palette.png")));
@@ -244,16 +278,141 @@ PALETTE_CHECK="$(node -e '
     if (shipped.size) bad.push(name + " wears the shipped ramp: " + [...shipped].join(","));
   }
   process.stdout.write(bad.length ? bad.join("; ") : "ok:" + lock.size);
-' "$SRC" 2>&1)"
+' "$SRC" "$PNG_JS" 2>&1)"
 check "assets: every sprite is quantised to the 32-colour lock, and so is the room" \
   "$PALETTE_CHECK" "ok:32"
+
+# The POSE LOCK, from the pixels. A character set is only interchangeable with
+# another if every frame of it lands in the same box, and "the manifest says so"
+# is not a check — so this measures the committed PNGs, through room.js's own
+# splits and frame names, and fails on the numbers.
+#
+# Two bounds, because the room draws a figure in two bands and only one of them
+# comes from a generated frame:
+#
+#   (a) the DRAWN composite — the base's rows above the set's split plus the
+#       frame's rows at and below it, which is the figure that goes on the wall —
+#       within +/-1 px of the set's base box. This is the one that decides whether
+#       a set can sit at the room's worker origin.
+#   (b) the ANIMATED BAND on its own — x, width and bottom edge of the rows at and
+#       below the split — within +/-3 px of the base's same rows. Without this,
+#       (a) would pass a frame whose arms had floated off the keyboard, because the
+#       base's head would still be setting the top of the box.
+#
+# The rows a frame carries ABOVE the split are not measured, because the room
+# discards them: every generated frame redraws the whole figure, and their drift
+# is a fact about the animator rather than about the picture. The raw numbers are
+# in the run notes.
+#
+# What this does NOT check is which rows came from where — a bounding box cannot
+# see that, and on these sprites the box happens to be the same whichever side of
+# the split the shoulders come from. That claim is `headAlwaysBase` further down,
+# over the room's own band table, and `splitsSane`, which refuses a split outside
+# the jacket. Three probes, three claims; none of them stands in for another.
+LOCK_PROBE="$ROOT/lock-probe.js"
+cat > "$LOCK_PROBE" <<'JS'
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[2];
+const R = require(path.join(root, "wall", "room.js"));
+const { decode, opaque, bounds } = require(process.argv[3]);
+
+const png = (rel) => decode(fs.readFileSync(path.join(root, "wall", rel)));
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
+
+// The figure the room draws: base above the split, frame at and below it. Built
+// the same way worker() builds it — the band is CLEARED and then taken from the
+// frame, so a base pixel cannot show through a frame's transparent one.
+function composite(base, frame, split) {
+  const out = { w: base.w, h: base.h, bpp: 4, px: Buffer.alloc(base.w * base.h * 4) };
+  for (let y = 0; y < base.h; y++) {
+    const src = y < split ? base : frame;
+    for (let x = 0; x < base.w; x++) {
+      out.px[(y * out.w + x) * 4 + 3] = opaque(src, x, y) ? 255 : 0;
+    }
+  }
+  return out;
+}
+
+// Every set the roster names, plus the one every unknown owner falls back to —
+// which is exactly the list the room loads.
+const crew = JSON.parse(fs.readFileSync(path.join(root, "wall", "crew.json"), "utf8"));
+const sets = [...new Set(Object.keys(crew)
+  .map((owner) => R.setOf(crew, owner))
+  .concat(R.FALLBACK))].sort();
+
+const cycles = R.TYPE_SET.concat(R.WAIT_SET);
+const bad = [];
+let drawnWorst = 0;
+let bandWorst = 0;
+let counted = 0;
+
+for (const set of sets) {
+  const split = R.splitOf(set);
+  const base = png(R.fileOf(set, "base"));
+  const box = bounds(base, 0, base.h);
+  const bandBox = bounds(base, split, base.h);
+  if (!box || !bandBox) { bad.push(set + ": base has no opaque pixels"); continue; }
+  for (const frame of cycles) {
+    const img = png(R.fileOf(set, frame));
+    if (img.w !== base.w || img.h !== base.h) {
+      bad.push(set + "/" + frame + ": " + img.w + "x" + img.h + " is not the base's canvas");
+      continue;
+    }
+    counted++;
+    const drawn = bounds(composite(base, img, split), 0, base.h);
+    const band = bounds(img, split, img.h);
+    if (!drawn || !band) { bad.push(set + "/" + frame + ": nothing opaque"); continue; }
+    // (a) the whole drawn figure, all four numbers.
+    for (let i = 0; i < 4; i++) drawnWorst = Math.max(drawnWorst, Math.abs(drawn[i] - box[i]));
+    if (!drawn.every((v, i) => near(v, box[i], 1))) {
+      bad.push(set + "/" + frame + ": drawn " + drawn.join(",") + " vs base " + box.join(","));
+    }
+    // (b) the animated band: x, width, and where the bottom edge lands. The
+    // band's own TOP is the split by construction, so it says nothing.
+    const got = [band[0], band[2], band[1] + band[3]];
+    const want = [bandBox[0], bandBox[2], bandBox[1] + bandBox[3]];
+    for (let i = 0; i < 3; i++) bandWorst = Math.max(bandWorst, Math.abs(got[i] - want[i]));
+    if (!got.every((v, i) => near(v, want[i], 3))) {
+      bad.push(set + "/" + frame + ": band x/w/bottom " + got.join(",") + " vs base " + want.join(","));
+    }
+  }
+}
+
+console.log(JSON.stringify({
+  sets: sets.join(" "),
+  splits: sets.map((s) => s + "=" + R.splitOf(s)).join(" "),
+  frames: counted,
+  drawnWorst,
+  bandWorst,
+  bad: bad.join("; "),
+}));
+JS
+LOCK="$(node "$LOCK_PROBE" "$SRC" "$PNG_JS" 2>&1)"
+lock_of() { printf '%s' "$LOCK" | jq -r ".$1" 2>/dev/null; }
+check "lock: every frame of every set was measured" "$(lock_of frames)" "64"
+check "lock: and every one is a set the room will actually draw" \
+  "$(lock_of sets)" "crew/angel crew/emre crew/ran room"
+check "lock: nothing is out of tolerance" "$(lock_of bad)" ""
+if [ "$(lock_of drawnWorst)" -le 1 ] 2>/dev/null; then
+  ok "lock: the drawn figure is its base's box to $(lock_of drawnWorst) px (ceiling 1)"
+else
+  bad "lock: the drawn figure is off its base's box by $(lock_of drawnWorst) px (ceiling 1)"
+fi
+if [ "$(lock_of bandWorst)" -le 3 ] 2>/dev/null; then
+  ok "lock: the animated band holds x/width/bottom to $(lock_of bandWorst) px (ceiling 3)"
+else
+  bad "lock: the animated band drifts $(lock_of bandWorst) px on x/width/bottom (ceiling 3)"
+fi
 
 # Who is at the desk. wall/crew.json is the one place an owner is mapped to a
 # character, and a set it names that is missing a frame is a room that never
 # lights for that person — so the file is asked for the frames THE ROOM asks
 # for, through room.js's own fileOf, rather than against a list written twice.
-# A crew set carries a seventh file the room never draws: base.png, the still
-# both animate jobs were handed and the box the pose lock is measured in.
+# base.png used to be the seventh file of a set and never drawn — the still both
+# animate jobs were handed. It is a DRAWN frame now: every worker on the wall is
+# the base above the split and a cycle frame below it, so it comes down the same
+# route as the rest and is covered by FRAMES rather than by a line here.
 CREW_CHECK="$(node -e '
   const fs = require("fs"), path = require("path");
   const root = process.argv[1];
@@ -2811,19 +2970,68 @@ const hero = (alarms.length ? alarms : api.runs.filter((r) => r.state === "activ
 const view = (id) => R.viewOf({ ...by(id), crew: "#e8cfa6" }, FLOORS);
 const seen = view(hero.id);
 const gate = view("OLYX-1660");
-// Every string the room can be asked to draw, in the face that draws it.
+// Every string the room can be asked to draw, in the face that draws it — the
+// feed included, which is why the small face grew punctuation: a line of code
+// with the slash or the colon missing is a line nobody wrote.
 const missing = [];
 for (const run of api.runs) {
   const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
   for (const ch of v.word + v.id) if (!R.BIG.rows[ch]) missing.push("BIG:" + ch);
   for (const ch of v.repo + v.owner + v.floorName) if (!R.SMALL.rows[ch]) missing.push("SMALL:" + ch);
+  for (const row of v.feed) {
+    for (const ch of row.text) if (!R.SMALL.rows[ch]) missing.push("FEED:" + ch);
+    if (!R.MARKS[row.mark]) missing.push("MARK:" + row.mark);
+  }
 }
 const still = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
   JSON.stringify(R.beatAt(t, true)));
 const moving = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
   JSON.stringify(R.beatAt(t, false)));
-const sampledHands = [0, 0.75, 1.5, 2.25].map((t) => R.beatAt(t, false).hands).join(",");
 const shotClock = [100, 100.75, 101.5, 102.25].map((t) => R.beatAt(t, false, 100));
+const SETS = ["room", "crew/angel", "crew/emre", "crew/ran"];
+const GATE = [0, 0.75, 1.5, 2.25, 3, 3.75];
+// The burst schedule as it is actually realised, walked at a millisecond over
+// eight super-cycles: every run of typing and every rest between them. Walked
+// rather than read off the table, because a rest the arithmetic skipped would
+// merge two runs into one six-second stretch and the table would still look
+// right. One decimal place, because a 1 ms walk cannot see a boundary closer.
+const segments = [];
+{
+  let on = R.burstAt(0);
+  let from = 0;
+  for (let ms = 1; ms <= 8 * R.BURST_CYCLE * 1000; ms++) {
+    const now = R.burstAt(ms / 1000);
+    if (now !== on) { segments.push([on, (ms - from) / 1000]); on = now; from = ms; }
+  }
+}
+const spans = (working) => segments.filter((s) => s[0] === working)
+  .map((s) => Number(s[1].toFixed(1)));
+const burstSig = (from) => Array.from({ length: 1390 },
+  (_, i) => (R.burstAt(from + i * 0.01) ? "1" : "0")).join("");
+// Which frame each band of the drawn worker comes from, over every set, both
+// states, and either side of the reveal override.
+const bands = [];
+for (const set of SETS) {
+  for (let t = 0; t < 40; t += 0.017) {
+    for (const alarm of [false, true]) {
+      for (const typing of [false, true]) {
+        bands.push({ set, ...R.bandsOf(set, R.beatAt(t, false, 0), alarm, typing) });
+      }
+    }
+  }
+}
+// And every frame the body band is ever drawn from, over one long hold. `when`
+// picks the seconds this asks about: the ones the schedule is working through,
+// the ones it is resting through, or all of them.
+const bodies = (alarm, typing, when) => {
+  const seen = new Set();
+  for (let t = 0; t < 40; t += 0.017) {
+    const beat = R.beatAt(t, false, 0);
+    if (when !== undefined && beat.burst !== when) continue;
+    seen.add(R.bandsOf("room", beat, alarm, typing).body);
+  }
+  return [...seen].sort().join(",");
+};
 console.log(JSON.stringify({
   hero: hero.id,
   // A blocked run shows the alarm, not the stage it stopped on — and the floor
@@ -2846,24 +3054,65 @@ console.log(JSON.stringify({
   frozen: new Set(still).size === 1,
   moves: new Set(moving).size === moving.length,
   lit: R.beatAt(0, true).glow === 1 && R.beatAt(0, true).tube === 1,
-  handCadence: sampledHands,
   camera: [0, 3, 6, 9, 12, 15].map((t) => R.beatAt(t, false).push).join(","),
   scan: [0, 0.75, 1.5, 2.25].map((t) => R.beatAt(t, false).scan).join(","),
   shotClock: shotClock.map((b) => b.elapsed).join(","),
   // The actor neon a worker is tinted with is the city's own, on the lock.
   tints: ["opus", "codex", "gate", "alarm"].map((k) => R.ACTOR[k]).join(","),
   onLock: Object.values(R.ACTOR).every((c) => R.LOCK.includes(c)),
-  // The typing loop, sampled the way the gate samples: four poses at 300 ms is
-  // a 1.2 s cycle against a 750 ms sample, so no two consecutive tiles of a
+  // The typing loop, sampled the way the gate samples: eight poses at 120 ms is
+  // a 960 ms cycle against a 750 ms sample, so no two tiles of a six-frame
   // contact sheet catch the same pose. A loop and not a ping-pong: one full
   // cycle visits every pose once, in order, and comes back round.
-  typingCadence: [0, 0.75, 1.5, 2.25, 3, 3.75]
-    .map((t) => R.beatAt(t, false).typing).join(","),
+  typingCadence: GATE.map((t) => R.beatAt(t, false).typing).join(","),
   typingLoops: Array.from({ length: R.TYPE_FRAMES + 1 },
     (_, i) => R.beatAt((i * R.TYPE_MS) / 1000, false).typing).join(","),
-  typingNeverStalls: [0, 0.75, 1.5, 2.25, 3, 3.75]
-    .map((t) => R.beatAt(t, false).typing)
+  // And it never stalls: at the cadence the hands are drawn at, every frame is
+  // a different pose from the one before it, all the way round the loop.
+  typingNeverStalls: Array.from({ length: 4 * R.TYPE_FRAMES },
+    (_, i) => R.beatAt((i * R.TYPE_MS) / 1000, false).typing)
     .every((pose, i, all) => i === 0 || pose !== all[i - 1]),
+  typingMs: R.TYPE_MS,
+  typingFrames: R.TYPE_FRAMES,
+  // Waiting breathes rather than flicking between two stills — eight poses at
+  // 220 ms, which is the cycle the visual gate's own room shot is OF, since the
+  // run it lands on is an alarm.
+  waitCadence: GATE.map((t) => R.beatAt(t, false).waiting).join(","),
+  waitLoops: Array.from({ length: R.WAIT_FRAMES + 1 },
+    (_, i) => R.beatAt((i * R.WAIT_MS) / 1000, false).waiting).join(","),
+  waitMs: R.WAIT_MS,
+  // The bursts. A person types for a few seconds and then reads for half of one,
+  // and the schedule that says so is arithmetic on the shot clock: pure, so two
+  // recordings of the same second are the same picture, and irregular, so it is
+  // not a metronome.
+  burstTyping: spans(true).length
+    ? Math.min(...spans(true)) + ".." + Math.max(...spans(true)) : "none",
+  burstResting: spans(false).length
+    ? Math.min(...spans(false)) + ".." + Math.max(...spans(false)) : "none",
+  burstSegments: segments.length,
+  burstDeterministic: burstSig(0) === burstSig(0) && burstSig(7.3) === burstSig(7.3),
+  burstVaries: burstSig(0) !== burstSig(R.BURST_CYCLE)
+    && burstSig(0) !== burstSig(2 * R.BURST_CYCLE),
+  // The head pin. Every drawn worker is the set's BASE above the split and the
+  // cycle's own frame below it, at every second, in both states, and whether or
+  // not a line arriving on the tube has overridden the schedule. A head drawn
+  // from frame N is the whole defect this run removes, and this is the probe
+  // that refuses to let it back in.
+  headAlwaysBase: bands.every((b) => b.head === "base"),
+  headNeverACycle: bands.every((b) =>
+    !R.TYPE_SET.includes(b.head) && !R.WAIT_SET.includes(b.head)),
+  bandIsAFrame: bands.every((b) => R.FRAMES.includes(b.body)),
+  // The split sits below the shoulders and above the hands, per set, and every
+  // set has one of its own.
+  splits: SETS.map((s) => s + "=" + R.splitOf(s)).join(" "),
+  splitsSane: SETS.every((s) => R.splitOf(s) >= 38 && R.splitOf(s) <= 46),
+  // Which frames the body band is ever drawn from: the whole typing cycle while
+  // working, the whole waiting cycle in an alarm, and the base itself — hands on
+  // the keys, still — while the person is resting between bursts.
+  workingBodies: bodies(false, false, true),
+  restingBodies: bodies(false, false, false),
+  revealBodies: bodies(false, true, false),
+  alarmBodies: bodies(true, false),
   // The push only ever goes in. A lens that eased back, even by a rounding
   // error, is the cut the whole shot exists to avoid.
   pushNeverBacks: (() => {
@@ -2886,8 +3135,86 @@ console.log(JSON.stringify({
     const tint = R.tintOf(R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS));
     return Object.values(R.ACTOR).includes(tint);
   }),
+  // --- the tube ------------------------------------------------------------
+  // The log fits: four rows of the small face under the stage word, a row of air,
+  // and the two rows the progress ticks need, all inside the tube.
+  tubeRows: R.FEED_TOP + (R.FEED_ROWS - 1) * R.FEED_PITCH + R.SMALL.h < R.FEED_TICKS
+    && R.FEED_TICKS + 2 <= R.SCREEN.h,
+  // And sixteen characters plus the source mark fit across it, exactly.
+  tubeCells: R.FEED_CELLS,
+  tubeWidth: R.FEED_MARK + 1 + R.widthOf(R.SMALL, "X".repeat(R.FEED_CELLS)) <= R.SCREEN.w,
+  tubeSpare: R.SCREEN.w - (R.FEED_MARK + 1 + R.widthOf(R.SMALL, "X".repeat(R.FEED_CELLS))),
+  // A full line's cursor asks for the cell one past the right edge, which is the
+  // bezel. There is exactly one column of the tube no glyph reaches, and it is
+  // where the cursor is held instead.
+  caretFits: R.FEED_MARK + 1 + (R.FEED_CELLS - 1) * R.SMALL.pitch + R.SMALL.w
+    < R.SCREEN.w,
+  // Every character a feed line can be cut to has a glyph, including the whole
+  // punctuation set code is written in.
+  punctuation: "{}()[]=;:+_,<>'\"#*!?|@-./ ".split("")
+    .filter((ch) => !R.SMALL.rows[ch]).join(""),
+  // A mark is not a letter, and it must not be able to be read as one: the
+  // reviewer's line often opens with `+` or `-`, so neither mark may be the same
+  // shape as any glyph the small face can draw.
+  markIsNotAGlyph: Object.values(R.MARKS).every((shape) =>
+    !Object.values(R.SMALL.rows).some((glyph) => glyph.join('/') === shape.join('/'))),
+  marks: Object.keys(R.MARKS).sort().join(","),
+  // Both faces and both marks are on their own grid, to the character.
+  faceGrid: [[R.BIG, 5, 7], [R.SMALL, 3, 5]].every(([face, w, h]) =>
+    Object.values(face.rows).every((g) =>
+      g.length === h && g.every((line) => new RegExp("^[#.]{" + w + "}$").test(line))))
+    && Object.values(R.MARKS).every((g) =>
+      g.length === 5 && g.every((line) => /^[#.]{3}$/.test(line))),
+  // The ink the four rows are drawn in is a cold ramp and nothing else: red is
+  // an alarm in this palette and green is a run that shipped, so neither may
+  // appear in a log line — a diff hunk's minus and plus are text.
+  inkOnLock: R.FEED_INK.every((colour) => R.LOCK.includes(colour)),
+  inkMeansNothing: R.FEED_INK.every((colour) =>
+    !["#ff2f45", "#3fd984", "#4ff08f", "#2c9a61", "#9fe8b8"].includes(colour)),
+  inkSteps: R.FEED_INK.join(","),
+  // What the room makes of a real feed line: the source glyph off the front and
+  // into a mark, a path down to the name that matters, and the whole thing in the
+  // one face the tube has.
+  feedLines: R.viewOf({ ...by("OLYX-1631"), crew: "#e8cfa6" }, FLOORS).feed
+    .slice(-2).map((row) => row.mark + " " + row.text).join(" | "),
+  feedCodex: R.viewOf({ ...by("OLYX-1655"), crew: "#e8cfa6" }, FLOORS).feed
+    .slice(-1).map((row) => row.mark + " " + row.text).join(""),
+  // The display is only sixteen cells, but its truncated text is not a line's
+  // identity. Patch lines often share a timestamp, source and long prefix; both
+  // still have to reach the scroll queue.
+  feedIdentity: (() => {
+    const first = R.lineOf({ t: "05:04:15", src: "codex",
+      text: "+  const sharedPrefix = firstValue;" });
+    const second = R.lineOf({ t: "05:04:15", src: "codex",
+      text: "+  const sharedPrefix = secondValue;" });
+    return first.text === second.text && R.keyOf(first) !== R.keyOf(second);
+  })(),
+  // A run with no feed.log at all is a screen with a word and a cursor on it,
+  // never a black tube and never a stale line.
+  feedEmpty: JSON.stringify(R.viewOf({ id: "x" }, FLOORS).feed),
+  feedNeverOverflows: api.runs.every((run) =>
+    R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS).feed
+      .every((row) => R.widthOf(R.SMALL, row.text) <= R.FEED_W)),
+  // The reveal. Pure arithmetic on how long ago a line landed, so no character
+  // can appear before its own second: nothing at all at the moment it lands,
+  // never more than the line has, monotonic in between, and complete at the
+  // rate the constant says.
+  revealStartsEmpty: R.revealed(16, 0) === 0,
+  revealNeverEarly: (() => {
+    let last = 0;
+    for (let ms = 0; ms <= 2000; ms++) {
+      const at = R.revealed(16, ms / 1000);
+      if (at < last || at > 16 || at > Math.ceil((ms / 1000) * R.REVEAL_CPS)) return false;
+      last = at;
+    }
+    return last === 16;
+  })(),
+  revealCps: R.REVEAL_CPS,
+  scrollMs: R.SCROLL_MS,
+  blinkMs: R.BLINK_MS,
   // And every sprite the room asks for is a file that was committed: the
-  // furniture, plus six frames for every set on the roster and the fallback.
+  // furniture, plus the base and both eight-frame cycles for every set on the
+  // roster and the fallback.
   sprites: Object.keys(R.PROPS)
     .map((k) => "assets/room/" + R.PROPS[k])
     .concat([...new Set(Object.keys(CREW).map((o) => R.setOf(CREW, o)).concat(R.FALLBACK))]
@@ -2928,8 +3255,6 @@ check "room: reduced motion is one frame at every second of the clock" \
   "$(room_of frozen)" "true"
 check "room: and the same room without it genuinely moves" "$(room_of moves)" "true"
 check "room: a still room is a LIT room standing still" "$(room_of lit)" "true"
-check "room: the waiting hands change on every gate sample" \
-  "$(room_of handCadence)" "0,1,0,1"
 check "room: the camera pushes in one direction and holds without a cut" \
   "$(room_of camera)" "0,0.25,0.5,0.75,1,1"
 check "room: the CRT retrace travels down on the gate clock" \
@@ -2940,10 +3265,117 @@ check "room: the worker's tint is the city's own actor neon" \
   "$(room_of tints)" "#4c9dff,#3fd984,#e0a23c,#ff2f45"
 check "room: every one of them is on the palette lock" "$(room_of onLock)" "true"
 check "room: the typing hands land on a different pose in every gate frame" \
-  "$(room_of typingCadence)" "0,2,1,3,2,0"
-check "room: and never repeat one frame to the next" \
+  "$(room_of typingCadence)" "0,6,4,2,1,7"
+check "room: and never repeat one frame to the next, all the way round" \
   "$(room_of typingNeverStalls)" "true"
-check "room: the hands loop rather than ping-pong" "$(room_of typingLoops)" "0,1,2,3,0"
+check "room: the hands loop rather than ping-pong" \
+  "$(room_of typingLoops)" "0,1,2,3,4,5,6,7,0"
+check "room: eight poses is the loop" "$(room_of typingFrames)" "8"
+# 100-130 ms per pose is 8-10 poses a second, which is where a hand starts
+# reading as a hand instead of as a slideshow.
+if [ "$(room_of typingMs)" -ge 100 ] && [ "$(room_of typingMs)" -le 130 ]; then
+  ok "room: at a hand's own cadence ($(room_of typingMs) ms a pose)"
+else
+  bad "room: at a hand's own cadence (got $(room_of typingMs) ms a pose)"
+fi
+check "room: waiting breathes on eight poses, one per gate sample" \
+  "$(room_of waitCadence)" "0,3,6,2,5,1"
+check "room: and its breath comes round rather than reversing" \
+  "$(room_of waitLoops)" "0,1,2,3,4,5,6,7,0"
+if [ "$(room_of waitMs)" -ge 180 ] && [ "$(room_of waitMs)" -le 250 ]; then
+  ok "room: slower than the hands, as a breath is ($(room_of waitMs) ms a pose)"
+else
+  bad "room: slower than the hands, as a breath is (got $(room_of waitMs) ms)"
+fi
+
+# The bursts. A person types for a few seconds and then reads for half of one,
+# and the schedule that says so has to be arithmetic on the shot clock: a
+# recording of the same second has to be the same picture, which is why there is
+# no random draw in it and no schedule dealt once at create().
+check "room: typing comes in runs of two to four seconds" \
+  "$(room_of burstTyping)" "2..3.6"
+check "room: with a rest of under a second between them" \
+  "$(room_of burstResting)" "0.4..1"
+check "room: and the schedule is the same schedule every time it is asked" \
+  "$(room_of burstDeterministic)" "true"
+check "room: while not being the same bar over and over" \
+  "$(room_of burstVaries)" "true"
+
+# The head pin — the whole point of the run. Every drawn worker is the set's base
+# above the split and the cycle's own frame below it, at every second of the
+# clock, in both states, and whether or not a line arriving on the tube has
+# overridden the burst schedule.
+check "room: the head, hood and shoulders come from the base at every frame" \
+  "$(room_of headAlwaysBase)" "true"
+check "room: and never from a frame of either cycle" \
+  "$(room_of headNeverACycle)" "true"
+check "room: the band under the split is a frame the room loaded" \
+  "$(room_of bandIsAFrame)" "true"
+check "room: every set is cut at its own row, below the shoulders" \
+  "$(room_of splits)" "room=41 crew/angel=41 crew/emre=43 crew/ran=40"
+check "room: and no cut lands outside the jacket" "$(room_of splitsSane)" "true"
+check "room: a working worker's hands are the whole typing cycle" \
+  "$(room_of workingBodies)" "type8-0,type8-1,type8-2,type8-3,type8-4,type8-5,type8-6,type8-7"
+check "room: a resting one holds the base — hands on the keys, still" \
+  "$(room_of restingBodies)" "base"
+check "room: unless a line is arriving, and then they are typing it" \
+  "$(room_of revealBodies)" "type8-0,type8-1,type8-2,type8-3,type8-4,type8-5,type8-6,type8-7"
+check "room: a blocked one breathes through the whole waiting cycle" \
+  "$(room_of alarmBodies)" "wait8-0,wait8-1,wait8-2,wait8-3,wait8-4,wait8-5,wait8-6,wait8-7"
+
+# What the tube says. Four rows of the run's own feed.log, in the one face the
+# room has, with the punctuation code is written in.
+check "room: four rows of feed and the progress ticks fit the tube" \
+  "$(room_of tubeRows)" "true"
+check "room: sixteen characters and a source mark fit across it" \
+  "$(room_of tubeWidth)" "true"
+check "room: which is what a 68 px tube holds at a four-pixel advance" \
+  "$(room_of tubeCells)" "16"
+check "room: with one pixel of the tube to spare" "$(room_of tubeSpare)" "1"
+check "room: which is the column the cursor is held in on a full line" \
+  "$(room_of caretFits)" "true"
+check "room: the small face carries the whole punctuation set code needs" \
+  "$(room_of punctuation)" ""
+check "room: and every glyph of both faces is on its own grid" \
+  "$(room_of faceGrid)" "true"
+check "room: there are two source marks and no more" "$(room_of marks)" "diamond,dot"
+check "room: and neither can be misread as a character of the face" \
+  "$(room_of markIsNotAGlyph)" "true"
+check "room: the log's ink is a cold ramp on the lock" "$(room_of inkOnLock)" "true"
+check "room: none of it means alarm or shipped" "$(room_of inkMeansNothing)" "true"
+check "room: older lines step back down that ramp" \
+  "$(room_of inkSteps)" "#525852,#79907e,#96c3c8,#deeaee"
+# The last two lines of OLYX-1631's feed.log are a thought and an edit:
+#   "🧠 The XLSX golden file wants the amounts as numbers, not strings"
+#   "⏺ Edit src/invoices/export.ts"
+# The glyph comes off the front and becomes the mark; the path collapses to the
+# file name, which is the part somebody three metres away needs; the sentence is
+# cut where it stops fitting, with the space before the stop taken out.
+check "room: a tool call reads as what it touched, with the implementer's mark" \
+  "$(room_of feedLines)" \
+  "dot THE XLSX GOLDEN. | dot EDIT EXPORT.TS"
+check "room: and the reviewer's line wears the reviewer's" \
+  "$(room_of feedCodex)" "diamond RE-RUNNING THE."
+check "room: truncated lookalikes remain distinct lines in the scroll queue" \
+  "$(room_of feedIdentity)" "true"
+check "room: a run with no feed at all leaves the tube with nothing to say" \
+  "$(room_of feedEmpty)" "[]"
+check "room: no line the fixtures can produce overruns the tube" \
+  "$(room_of feedNeverOverflows)" "true"
+check "room: the newest line shows nothing at the moment it lands" \
+  "$(room_of revealStartsEmpty)" "true"
+check "room: and never a character before its own second" \
+  "$(room_of revealNeverEarly)" "true"
+if [ "$(room_of revealCps)" -ge 25 ] && [ "$(room_of revealCps)" -le 30 ]; then
+  ok "room: it arrives at a typing speed ($(room_of revealCps) chars/s)"
+else
+  bad "room: it arrives at a typing speed (got $(room_of revealCps) chars/s)"
+fi
+check "room: the screen scrolls by rows, a row every 120 ms" \
+  "$(room_of scrollMs)" "120"
+check "room: and the cursor blinks on a terminal's own interval" \
+  "$(room_of blinkMs)" "530"
+
 check "room: the lens never eases back, at any second of the hold" \
   "$(room_of pushNeverBacks)" "true"
 check "room: a blocked worker wears the neon of the floor work stopped on" \
@@ -3133,8 +3565,10 @@ cat > "$GHOST/wall/crew.json" <<'JSON'
 JSON
 # `gutted` names a set that exists and is one frame short of complete, which is
 # what a half-finished commit looks like and what a directory listing alone
-# would wave through.
-rm "$GHOST/wall/assets/crew/ran/wait-2.png"
+# would wave through. The frame removed is one the room actually asks for — the
+# set still has its old four-and-two on the disk, and a check that took those for
+# the set would wave this through too.
+rm "$GHOST/wall/assets/crew/ran/wait8-7.png"
 GHOST_ROSTER="$(node -e '
   const S = require(process.argv[1]);
   const R = require(process.argv[2]);
