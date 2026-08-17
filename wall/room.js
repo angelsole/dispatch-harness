@@ -1292,6 +1292,75 @@
       chip(labelOf(crew, v), v.crew);
     }
 
+    // The silhouette of one sprite, row by row: the leftmost and rightmost
+    // opaque pixel of each row, or [-1, -1] for an empty one. Read once per
+    // image and kept, because a sprite's outline never changes — a getImageData
+    // every frame is a readback the room has no reason to pay for.
+    const outlines = new WeakMap();
+    const edgePad = document.createElement('canvas');
+    edgePad.width = 64;
+    edgePad.height = 64;
+    const edgeCtx = edgePad.getContext('2d', { willReadFrequently: true });
+    edgeCtx.imageSmoothingEnabled = false;
+
+    function outlineOf(img) {
+      let rows = outlines.get(img);
+      if (rows) return rows;
+      edgeCtx.clearRect(0, 0, 64, 64);
+      edgeCtx.drawImage(img, 0, 0);
+      const px = edgeCtx.getImageData(0, 0, 64, 64).data;
+      rows = [];
+      for (let y = 0; y < 64; y++) {
+        let left = -1;
+        let right = -1;
+        for (let x = 0; x < 64; x++) {
+          if (px[(y * 64 + x) * 4 + 3] < 128) continue;
+          if (left < 0) left = x;
+          right = x;
+        }
+        rows.push([left, right]);
+      }
+      outlines.set(img, rows);
+      return rows;
+    }
+
+    // A rim of light down that silhouette, on the tint pad, after the wash.
+    //
+    // The head this room pins is the base's own band, which is the darkest thing
+    // in the set, and against a back wall of nearly the same value it merges: a
+    // critic reading the close frames preferred the champion for exactly that,
+    // and it is the one thing about the pin that measuring could not have caught.
+    // So the edge pixels catch the two lights this room actually has — the
+    // monitor down the right side, the lamp down the left.
+    //
+    // ON the edge pixel, never outside it. A pixel painted outside the
+    // silhouette is an outline, and nothing in this room is outlined; a pixel
+    // painted on it is light. And the rim runs the WHOLE figure rather than
+    // stopping at the split, because an edge that is lit above a row and unlit
+    // below it is the seam this run exists to remove, drawn in light.
+    //
+    // Warm is the palette's own lamp colour rather than the crew tint: the wide
+    // city allows crew colour in two places, the lamp and the name in type, and
+    // a third would make it decoration.
+    const RIM_COLD = 0.34;
+    const RIM_WARM = 0.24;
+
+    function rim(head, body, split) {
+      const above = outlineOf(head);
+      const below = outlineOf(body);
+      for (let y = 0; y < 64; y++) {
+        const row = y < split ? above[y] : below[y];
+        if (row[0] < 0) continue;
+        tintCtx.globalAlpha = RIM_COLD;
+        tintCtx.fillStyle = CYAN;
+        tintCtx.fillRect(row[1], y, 1, 1);
+        tintCtx.globalAlpha = RIM_WARM;
+        tintCtx.fillStyle = GLOW;
+        tintCtx.fillRect(row[0], y, 1, 1);
+      }
+      tintCtx.globalAlpha = 1;
+    }
+
     // Who is working, and which model they are. The tint is the run's actor
     // neon — the same colour that run's car is lit with out in the city, so a
     // dive from the wide shot lands on a figure the room already recognises.
@@ -1348,6 +1417,7 @@
       tintCtx.fillRect(48, 0, 16, 64);
       tintCtx.globalAlpha = 1;
       tintCtx.globalCompositeOperation = 'source-over';
+      rim(head, body, bands.split);
       // The shadow they sit in, then the figure, in one piece and on one origin.
       // The band used to be drawn a pixel lower on alternate beats to fake some
       // travel the four frames did not have; the eight carry their own, and two
