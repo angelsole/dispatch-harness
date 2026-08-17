@@ -836,7 +836,7 @@
     const all = [];
     let at = '';
     for (const word of spoken(face, str).split(/\s+/).filter(Boolean)) {
-      const one = word.length <= wide ? word : word.slice(0, Math.max(1, wide - 1)) + '.';
+      const one = word.length <= wide ? word : word.slice(0, Math.max(1, wide - 3)) + '...';
       const next = at ? at + ' ' + one : one;
       if (next.length <= wide) { at = next; continue; }
       all.push(at);
@@ -1392,10 +1392,12 @@
     // remains the monitor's alone. Nor is there a rectangle to compete with it;
     // this helper adds only type to the plate floorPlate() already drew.
     function jobDetails(v) {
-      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.48);
+      // The id at a glance, the title on the second look — under the floor
+      // label (0.92) and above texture: the owner's call is that the job reads.
+      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.72);
       for (let i = 0; i < v.card.length && i < CARD_LINES; i++) {
         text(SMALL, v.card[i], CARD.x + CARD_PAD, CARD_TEXT_Y + i * CARD_PITCH,
-          CREAM, 0.32);
+          CREAM, 0.6);
       }
     }
 

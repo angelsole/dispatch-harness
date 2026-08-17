@@ -3460,7 +3460,7 @@ check "card: a heading too long for the sheet ends in three stops" \
   "$(room_of cardEllipsis)" \
   "RETIRE THE|LEGACY QUOTE..."
 check "card: a word no line can hold is cut, not dropped" \
-  "$(room_of cardLongWord)" "INTERNATION."
+  "$(room_of cardLongWord)" "INTERNATI..."
 check "card: an accent folds to the letter the face has" \
   "$(room_of cardAccents)" "FACTURACION|ANEXOS -..."
 check "card: a run with no heading says which repo it is" \
