@@ -171,13 +171,22 @@ def flatten(content):
 
 
 def stream_steps(path):
-    """One stream-json file -> its steps, in the order the agent produced them.
+    """One stream-json file -> (its steps, how many segments it holds).
 
     Each assistant text block is a narration step and each tool_use is folded
     together with its matching tool_result into a single "action + observed
     output" step, which is the shape the verifier's prompt is written for: it is
     told to distrust the narration and read the output. `system` events carry no
-    work, and the `result` event is emitted last as the attempt's final message.
+    work.
+
+    A `result` event is a segment boundary, not the end of the file: the
+    implementer's stream is append-only within an invocation, so a turn-ceiling
+    resume leaves its whole segment in the same file behind the exhausted one.
+    Each result event therefore becomes a step of its own, in place — the resume
+    marker for a turn budget that ran out, the closing message for the segment
+    that ended the attempt — so the trajectory reads as the continuous piece of
+    work it was rather than jumping from the first segment's last tool call to
+    the last segment's first one.
     """
     events = []
     for line in read_text(path).splitlines():
@@ -200,7 +209,7 @@ def stream_steps(path):
                 observed[block.get("tool_use_id")] = flatten(block.get("content"))
 
     steps = []
-    final = ""
+    segments = 0
     for event in events:
         kind = event.get("type")
         if kind == "assistant":
@@ -226,17 +235,27 @@ def stream_steps(path):
                         % (name, rendered, output.strip()),
                     ))
         elif kind == "result":
+            segments += 1
             final = str(event.get("result") or "").strip()
-    if final:
-        steps.append(("impl:result", "The agent's closing message:\n" + final))
-    return steps
+            if event.get("subtype") == "error_max_turns":
+                text = ("The agent's turn budget ran out here; the same session"
+                        " was resumed with a fresh budget.")
+                if final:
+                    text += "\nIts last words before the resume:\n" + final
+                steps.append(("impl:resume", text))
+            elif final:
+                steps.append(("impl:result",
+                              "The agent's closing message:\n" + final))
+    return steps, segments
 
 
 def stream_files(run_dir):
     """Every implementer stream this run has, oldest attempt first.
 
     attempts/<n>/opus-stream.jsonl is a finished attempt (run-task.sh rotates it
-    on the way in); the live filename is the attempt that just ran.
+    on the way in); the live filename is the attempt that just ran. Each file is
+    one attempt whole, turn-ceiling resumes and all — the stream is truncated
+    once per invocation, not once per implementer spawn.
     """
     files = []
     attempts = os.path.join(run_dir, "attempts")
@@ -383,20 +402,27 @@ def elide(steps, max_chars):
 def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
     """Every step of the run, in the order it happened, clipped to budget.
 
-    Returns (steps, elided_steps). Never fabricates a step: a run whose
-    implementer left no stream at all has no trajectory to score, and the caller
-    turns that into a skip rather than into a number.
+    Returns (steps, elided_steps, segments) — segments being how many
+    implementer stretches the trajectory spans across every attempt, one per
+    result event, so a score can be read against the shape of the run that
+    produced it. Never fabricates a step: a run whose implementer left no stream
+    at all has no trajectory to score, and the caller turns that into a skip
+    rather than into a number.
     """
     steps = []
+    segments = 0
     for path in stream_files(run_dir):
-        steps.extend(stream_steps(path))
+        file_steps, file_segments = stream_steps(path)
+        steps.extend(file_steps)
+        segments += file_segments
     if not steps:
-        return [], 0
+        return [], 0, 0
     steps.extend(gate_steps(run_dir))
     steps.extend(review_steps(run_dir, worktree))
     steps.extend(final_steps(run_dir, worktree, base_ref))
     steps = [(kind, clip(text, step_chars)) for kind, text in steps]
-    return elide(steps, max_chars)
+    steps, elided = elide(steps, max_chars)
+    return steps, elided, segments
 
 
 def last_implementer_step(steps):
@@ -639,7 +665,8 @@ def main(argv):
     evals = env_int("HARNESS_VERIFY_EVALS", 3, minimum=1)
     max_criteria = env_int("HARNESS_VERIFY_MAX_CRITERIA", 8, minimum=0)
 
-    steps, elided = build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars)
+    steps, elided, segments = build_trajectory(
+        run_dir, worktree, base_ref, step_chars, max_chars)
     if not steps:
         sys.stderr.write("no trajectory: no implementer stream under %s\n" % run_dir)
         return EXIT_SKIP
@@ -661,6 +688,7 @@ def main(argv):
             "worktree": worktree,
             "base_ref": base_ref,
             "steps": len(steps),
+            "segments": segments,
             "labels": [kind for kind, _ in steps],
             "chars": sum(len(text) for text in texts),
             "elided_steps": elided,
@@ -739,6 +767,7 @@ def main(argv):
         "provider": provider,
         "evaluations": evals,
         "steps": len(steps),
+        "segments": segments,
         "elided_steps": elided,
         "usage": usage_counts,
         "seconds": round(time.time() - started, 3),
