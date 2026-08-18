@@ -287,51 +287,46 @@ check "assets: every sprite is quantised to the 32-colour lock, and so is the ro
 # is not a check — so this measures the committed PNGs, through room.js's own
 # per-(set, cycle) splits and frame names, and fails on the numbers.
 #
-# Everything is measured on what is DRAWN — the base's rows above the split plus
+# Every number is measured on what is DRAWN — the base's rows above the split plus
 # the frame's rows at and below it — never on raw generator output: the animator
 # grows the head upward systematically and the room throws those rows away, so a
 # frame's own bounds are a fact about the animator rather than about the picture.
-# The raw numbers are in the run notes.
 #
-# Four claims, and they are deliberately not one number, because a HOLD and a MOVE
-# want opposite things of the same measurement:
+# The ceilings are the brief's round-2 numbers and every one of them is a FIXED
+# ceiling. Nothing here is measured-and-reported in place of being bounded.
 #
-#   (a) SEAM, as a PINCH. For every frame of every cycle and every strip, the
-#       silhouette at the drawn row just above the split (the base's) and at the
-#       split (the frame's) is compared — but only in one direction. The defect is
-#       the frame's row being NARROWER: then the base's shoulder overhangs nothing
-#       and the jacket outline steps inward, which is what the pin exists to
-#       prevent. Ceiling 2 px. The frame's row being WIDER is a mug, or a hand
-#       resting past the end of the keyboard, whose top edge is below the cut — the
-#       pose rather than a step — so the FLARE is measured and reported and not
-#       bounded. Cutting `done8` at the row that made both directions small would
-#       mean cutting below the raised hand, which is the 13 px pinch this catches.
-#   (b) NO JITTER, and its opposite. Within a hold, neighbouring frames' animated
-#       band agrees on x / width / bottom to 3 px: a held pose breathes, it does not
-#       fidget. Within a MOVE the bound is 60 % of that move's OWN travel, never
-#       under 3 px — because a move that travels is the whole point of a move, and
-#       what would be wrong is a strip that spends its whole journey in one frame
-#       and eight frames standing still. What is held to 3 px at a move are its two
-#       SEAMS: the strip's last frame against the hold's first (the frame the hold
-#       was animated from), and the strip's first against the base composite.
-#   (c) SAME PERSON, SAME CHAIR. No drawn composite is more than 6 px WIDER than the
-#       base. It may be narrower: folding two arms across a chest takes 10 px off
-#       Angel's silhouette and 19 off Ran's, whose own forearms are the widest thing
-#       in her base, and that is the pose rather than a defect. What a rescaled
-#       person would look like is caught from the other side — the eight frames of a
-#       hold agree on their own width to 3 px, and a strip starts at the base's
-#       width. The bottom edge is within 1 px of the base's for the two cycles that
-#       keep their hands on the keyboard, and within 3 px for the three that take a
-#       hand off it: the room seats this sprite so its last row lands on DESK_Y, so
-#       a hand that leaves the keys and rests lower is a hand ON THE DESK.
+#   (a) SEAM, both ways. At the drawn row just above the split (the base's) against
+#       the row at the split (the frame's): a PINCH — the frame's row narrower, so
+#       the base's shoulder overhangs nothing and the jacket outline steps inward —
+#       at most 2 px on each side; a FLARE — the frame's row wider, a mug or a hand
+#       whose top edge sits at the cut — at most 12 px on each side. Both bounded.
+#   (b) HOLDS AND JOINS. Consecutive frames of a hold: animated-band opaque bounds
+#       within 3 px (x, w, bottom). A strip's last frame against its hold's frame 0,
+#       and the base composite against a strip's frame 0: 3 px. A strip's own
+#       consecutive frames: 10 px, AND no single frame carries more than 60 % of that
+#       strip's total travel on the same measure, floor 4 px — a move travels, it
+#       does not teleport, and it does not spend the whole journey in one frame.
+#   (c) SAME CHAIR. Bottom edge of every drawn composite: `type8`/`wait8` within 1 px
+#       of the base's; the three new poses and their strips within 3 px (a hand that
+#       leaves the keys and rests on the desk sits lower — the room seats this sprite
+#       so its last row lands on DESK_Y). Width: no composite wider than the base
+#       + 6 px; narrower is allowed, because folding two arms across a chest takes
+#       10 px off Angel's silhouette and 19 off Ran's, whose own forearms are the
+#       widest thing in her base — and a rescaled person is caught from the other
+#       side, by a hold's eight frames agreeing on their own width within 3 px and a
+#       strip's frame 0 being within 3 px of the base's width.
 #   (d) The typing and waiting frames and the bases are neither regenerated nor
 #       rewritten. Their bytes are pinned to their MANIFEST rows by the asset guard
-#       above; what is pinned HERE is the row each of them is cut at, which is the
-#       other half of "unchanged".
+#       above; what is pinned HERE is the row each of them is cut at.
+#
+# And the split itself: `type8`/`wait8` at rows 38-46 as they were, the three new
+# cycles at 26-46 and never above the row where that set's base CHIN ends — measured
+# here from the base's own silhouette rather than written down, as the row before the
+# first place below the skull where the outline flares into a shoulder.
 #
 # What this does NOT check is which rows came from where — a bounding box cannot
 # see that. That claim is `headAlwaysBase` further down, over the room's own band
-# table, and `splitsSane`, which refuses a split outside the jacket.
+# table, and `splitsSane`.
 LOCK_PROBE="$ROOT/lock-probe.js"
 cat > "$LOCK_PROBE" <<'JS'
 const fs = require("fs");
@@ -357,6 +352,21 @@ function composite(base, frame, split) {
   return out;
 }
 
+// Where a base's CHIN ends: the row before the first place below the skull where the
+// outline flares into a shoulder. Walked from row 10 so the top of the head — which
+// widens two pixels a row on the way down — is not mistaken for it, and the flare has
+// to reach 20 px wide so a stray pixel of hair cannot claim it.
+function chinOf(base) {
+  const wide = (y) => {
+    const row = bounds(base, y, y + 1);
+    return row ? row[2] : 0;
+  };
+  for (let y = 10; y < base.h - 1; y++) {
+    if (wide(y + 1) - wide(y) >= 3 && wide(y + 1) >= 20) return y;
+  }
+  return 10;
+}
+
 // Every set the roster names, plus the one every unknown owner falls back to —
 // which is exactly the list the room loads.
 const crew = JSON.parse(fs.readFileSync(path.join(root, "wall", "crew.json"), "utf8"));
@@ -365,14 +375,13 @@ const sets = [...new Set(Object.keys(crew)
   .concat(R.FALLBACK))].sort();
 
 // A hold and the strip that leads into it are one PAIR: the strip's last frame is
-// the frame the hold was animated from, so the two seams between them are claims
+// the frame the hold was animated from, so the two joins between them are claims
 // this probe can make and nothing else can.
 const PAIRS = Object.keys(R.HOLDS).map((hold) => ({
-  hold, strip: Object.keys(R.MOVES).find((m) => R.MOVE[hold] === m) || "",
+  hold, strip: R.MOVE[hold] || "",
 }));
-
-// How far the bottom edge may drift, by cycle. The two that keep their hands on the
-// keyboard are pinned to the base's own last row; the three that take a hand off it
+// How far the bottom edge may drift, by cycle: the two that keep their hands on the
+// keyboard are pinned to the base's own last row, the three that take a hand off it
 // may put it on the desk, which is the row under the sprite.
 const SEATED = { type8: 1, wait8: 1 };
 const SEATED_DEFAULT = 3;
@@ -382,18 +391,17 @@ let pinchWorst = 0;
 let flareWorst = 0;
 let holdWorst = 0;
 let moveWorst = 0;
-let jointWorst = 0;
+let moveShareWorst = 0;
+let joinWorst = 0;
 let bottomWorst = 0;
 let widerWorst = 0;
+let holdWidthWorst = 0;
+let stripWidthWorst = 0;
 let counted = 0;
-// Per set as well as overall — REPORTED, not asserted. Which set is nearest a
-// ceiling is worth reading off a failure; the ceilings themselves are the contract,
-// and freezing today's incidental numbers would fail a regenerated asset that is
-// perfectly inside them.
+// Per set as well as overall — REPORTED beside the assertions, never instead of one.
 const perSet = {};
+const chins = {};
 
-// One frame, measured: its seam against the base, its own band box, and the box of
-// the composite the room would actually draw.
 function measure(set, base, whole, cycle, frame, split) {
   const img = png(R.fileOf(set, frame));
   if (img.w !== base.w || img.h !== base.h) {
@@ -407,27 +415,31 @@ function measure(set, base, whole, cycle, frame, split) {
     bad.push(set + "/" + frame + ": nothing opaque");
     return null;
   }
-  // (a) the seam: the base's row above the cut against the frame's row at it. A
-  // PINCH is a step in the jacket; a FLARE is the pose.
+  // (a) the seam, in both directions and on each side.
   const above = bounds(base, split - 1, split);
   const at = bounds(img, split, split + 1);
   if (above && at) {
-    const pinch = Math.max(at[0] - above[0], (above[0] + above[2]) - (at[0] + at[2]));
-    const flare = Math.max(above[0] - at[0], (at[0] + at[2]) - (above[0] + above[2]));
+    const left = at[0] - above[0];
+    const right = (above[0] + above[2]) - (at[0] + at[2]);
+    const pinch = Math.max(left, right);
+    const flare = Math.max(-left, -right);
     pinchWorst = Math.max(pinchWorst, pinch);
     flareWorst = Math.max(flareWorst, flare);
     perSet[set][0] = Math.max(perSet[set][0], pinch);
     if (pinch > 2) {
       bad.push(set + "/" + frame + ": outline pinches " + pinch + " px at row " + split);
     }
+    if (flare > 12) {
+      bad.push(set + "/" + frame + ": outline flares " + flare + " px at row " + split);
+    }
   }
-  // (c) same person, same chair.
+  // (c) same chair.
   const seated = SEATED[cycle] === undefined ? SEATED_DEFAULT : SEATED[cycle];
   const bottom = Math.abs((drawn[1] + drawn[3]) - (whole[1] + whole[3]));
   bottomWorst = Math.max(bottomWorst, bottom);
   if (bottom > seated) {
     bad.push(set + "/" + frame + ": bottom edge " + (drawn[1] + drawn[3])
-      + " vs base " + (whole[1] + whole[3]));
+      + " vs base " + (whole[1] + whole[3]) + ", over " + seated);
   }
   const wider = drawn[2] - whole[2];
   widerWorst = Math.max(widerWorst, wider);
@@ -437,33 +449,39 @@ function measure(set, base, whole, cycle, frame, split) {
   return { band: [band[0], band[2], band[1] + band[3]], width: drawn[2] };
 }
 
-// (b) neighbour to neighbour, over a run of frames. `share` is what fraction of the
-// run's OWN travel a single frame may carry, so a move is allowed to move: what
-// would be wrong is a strip that spends the whole journey in one frame and eight
-// standing still. A hold gets share 0, so its bound is the floor.
-//
-// The floors differ by one pixel and the reason is the room's own worker: the
-// KEYBOARD is the widest thing in that sprite and it does not travel, so the box of
-// its `reach` barely moves while the hand inside it crosses ten pixels — travel
-// measures 4 and one frame carries all 4 of it. A hold is held to 3 because a breath
-// that shifts the box 4 px is a fidget; a strip gets 4, which is a hand's width
-// crossing the box's own edge. Neither is the real guarantee for a strip: that is
-// `neverCuts` and the frame-by-frame sequences further down, which are structural.
-function walk(set, label, run, share, floor, worst) {
-  const travel = Math.max(3, ...run[0].band
-    .map((v, k) => Math.max(...run.map((f) => Math.abs(f.band[k] - v)))));
-  const tol = Math.max(floor, Math.round(travel * share));
-  let most = worst;
+// (b) neighbour to neighbour. A hold gets 3 px flat. A strip gets 10 px AND 60 % of
+// its own travel: what would be wrong is a move that spends its whole journey in one
+// frame and eight frames standing still.
+function walk(set, label, run, flat, share) {
+  const travel = run[0].band
+    .map((v, k) => Math.max(...run.map((f) => Math.abs(f.band[k] - v))));
+  let step = 0;
+  let worstShare = 0;
   for (let i = 1; i < run.length; i++) {
-    const step = Math.max(...run[i].band.map((v, k) => Math.abs(v - run[i - 1].band[k])));
-    most = Math.max(most, step);
-    perSet[set][1] = Math.max(perSet[set][1], step);
-    if (step > tol) {
-      bad.push(set + "/" + label + ": band jumps " + step + " px at frame " + i
-        + ", over " + tol + " for a travel of " + travel);
+    for (let k = 0; k < 3; k++) {
+      const d = Math.abs(run[i].band[k] - run[i - 1].band[k]);
+      step = Math.max(step, d);
+      perSet[set][1] = Math.max(perSet[set][1], d);
+      if (d > flat) {
+        bad.push(set + "/" + label + ": band jumps " + d + " px at frame " + i
+          + ", over " + flat);
+      }
+      if (share) {
+        // 60 % of this strip's own travel on this measure, and never under 4 px:
+        // the room worker's KEYBOARD is the widest thing in that sprite and does not
+        // travel, so its `reach` box moves 4 px in total while the hand inside it
+        // crosses ten. What is bounded is the EXCESS over that allowance, which is
+        // zero or the frame is a teleport.
+        const room = Math.max(4, Math.round(travel[k] * share));
+        worstShare = Math.max(worstShare, d - room);
+        if (d > room) {
+          bad.push(set + "/" + label + ": one frame carries " + d + " px of a "
+            + travel[k] + " px travel at frame " + i + ", over " + room);
+        }
+      }
     }
   }
-  return most;
+  return { step, share: worstShare };
 }
 
 for (const set of sets) {
@@ -471,22 +489,37 @@ for (const set of sets) {
   const base = png(R.fileOf(set, "base"));
   const whole = bounds(base, 0, base.h);
   if (!whole) { bad.push(set + ": base has no opaque pixels"); continue; }
+  const chin = chinOf(base);
+  chins[set] = chin;
   for (const pair of PAIRS) {
     const holdSplit = R.splitOf(set, pair.hold);
+    // The split lives in the jacket, and never in a face: the two cycles that were
+    // on the wall before this run keep their own rows, and a new pose may not be cut
+    // above the row where this set's chin ends.
+    const range = pair.strip ? [26, 46] : [38, 46];
+    if (holdSplit < range[0] || holdSplit > range[1]) {
+      bad.push(set + "/" + pair.hold + ": cut at " + holdSplit
+        + ", outside " + range.join("-"));
+    }
+    if (pair.strip && holdSplit < chin) {
+      bad.push(set + "/" + pair.hold + ": cut at " + holdSplit
+        + ", above the chin at " + chin);
+    }
     const hold = R.HOLDS[pair.hold]
       .map((frame) => measure(set, base, whole, pair.hold, frame, holdSplit)).filter(Boolean);
     if (hold.length !== R.CYCLE) continue;
-    holdWorst = walk(set, pair.hold, hold, 0, 3, holdWorst);
+    holdWorst = Math.max(holdWorst, walk(set, pair.hold, hold, 3, 0).step);
     // The eight frames of a hold agree on their own width: a pose that resized
     // itself mid-breath is the rescaled person (c) is looking for.
     const widths = hold.map((f) => f.width);
     const spread = Math.max(...widths) - Math.min(...widths);
+    holdWidthWorst = Math.max(holdWidthWorst, spread);
     if (spread > 3) {
       bad.push(set + "/" + pair.hold + ": width wanders " + spread + " px over the hold");
     }
     if (!pair.strip) continue;
     // A strip is cut at its own hold's row, so the two are measured at one split
-    // and the joint between them is a real comparison.
+    // and the join between them is a real comparison.
     const stripSplit = R.splitOf(set, pair.strip);
     if (stripSplit !== holdSplit) {
       bad.push(set + "/" + pair.strip + ": cut at " + stripSplit
@@ -495,19 +528,23 @@ for (const set of sets) {
     const strip = R.MOVES[pair.strip]
       .map((frame) => measure(set, base, whole, pair.strip, frame, stripSplit)).filter(Boolean);
     if (strip.length !== R.CYCLE) continue;
-    moveWorst = walk(set, pair.strip, strip, 0.6, 4, moveWorst);
+    const moved = walk(set, pair.strip, strip, 10, 0.6);
+    moveWorst = Math.max(moveWorst, moved.step);
+    moveShareWorst = Math.max(moveShareWorst, moved.share);
     // The move starts where the base is and ends where the hold begins.
     const from = bounds(base, stripSplit, base.h);
-    const joints = [
-      ["into the base", strip[0].band, [from[0], from[2], from[1] + from[3]]],
+    const joins = [
+      ["out of the base", strip[0].band, [from[0], from[2], from[1] + from[3]]],
       ["into " + pair.hold, strip[strip.length - 1].band, hold[0].band],
     ];
-    for (const [what, got, want] of joints) {
+    for (const [what, got, want] of joins) {
       const step = Math.max(...got.map((v, k) => Math.abs(v - want[k])));
-      jointWorst = Math.max(jointWorst, step);
+      joinWorst = Math.max(joinWorst, step);
       if (step > 3) bad.push(set + "/" + pair.strip + ": " + what + " steps " + step + " px");
     }
-    if (!near(strip[0].width, whole[2], 6)) {
+    const startWidth = Math.abs(strip[0].width - whole[2]);
+    stripWidthWorst = Math.max(stripWidthWorst, startWidth);
+    if (startWidth > 3) {
       bad.push(set + "/" + pair.strip + "-0: " + strip[0].width
         + " px wide vs base " + whole[2]);
     }
@@ -522,9 +559,13 @@ console.log(JSON.stringify({
   flareWorst,
   holdWorst,
   moveWorst,
-  jointWorst,
+  moveShareWorst,
+  joinWorst,
   bottomWorst,
   widerWorst,
+  holdWidthWorst,
+  stripWidthWorst,
+  chins: sets.map((s) => s + "=" + chins[s]).join(" "),
   perSet: sets.map((s) => s + "=" + perSet[s][0] + "/" + perSet[s][1]).join(" "),
   // (d) The two cycles that were already on the wall are cut where they were cut.
   keys: sets.map((s) => s + "=" + R.splitOf(s, "type8") + "/" + R.splitOf(s, "wait8"))
@@ -542,30 +583,32 @@ check "lock: five holds and three moves, per set" \
 check "lock: nothing is out of tolerance" "$(lock_of bad)" ""
 lock_at() {
   if [ "$(lock_of "$2")" -le "$3" ] 2>/dev/null; then
-    ok "lock: $1 — $(lock_of "$2") px (ceiling $3)"
+    ok "lock: $1 — $(lock_of "$2") (ceiling $3)"
   else
-    bad "lock: $1 — $(lock_of "$2") px is over the ceiling of $3"
+    bad "lock: $1 — $(lock_of "$2") is over the ceiling of $3"
   fi
 }
-lock_at "the jacket outline never pinches at the seam" pinchWorst 2
-lock_at "a held pose breathes rather than shifting" holdWorst 3
-lock_at "and joins the base and its hold without a step" jointWorst 3
-lock_at "every drawn figure sits in its base's chair" bottomWorst 3
-lock_at "and none of them is wider than the base" widerWorst 6
-# Reported, not bounded: the flare is a mug or a hand whose top edge is below the
-# cut, and how far out it reaches is the pose. The move's worst single-frame step is
-# bounded against that move's own travel above, which is what `bad` carries.
-ok "lock: the poses flare up to $(lock_of flareWorst) px past the row above the cut"
-ok "lock: and a move's largest single frame carries $(lock_of moveWorst) px of travel"
+lock_at "(a) the outline never pinches at the seam" pinchWorst 2
+lock_at "(a) nor flares past what a mug in a hand takes" flareWorst 12
+lock_at "(b) a held pose breathes rather than shifting" holdWorst 3
+lock_at "(b) a move joins the base and its hold without a step" joinWorst 3
+lock_at "(b) a move's largest single frame" moveWorst 10
+lock_at "(b) and none of them past 60 % of that strip's own travel, floor 4 px" \
+  moveShareWorst 0
+lock_at "(c) every drawn figure sits in its base's chair" bottomWorst 3
+lock_at "(c) none of them is wider than the base" widerWorst 6
+lock_at "(c) a hold keeps one width across its eight frames" holdWidthWorst 3
+lock_at "(c) and a move starts at the base's own width" stripWidthWorst 3
 # The two cycles that were on the wall before this run are cut where they were cut:
 # the asset guard pins their BYTES to their manifest rows, and this pins the row.
 check "lock: the typing and waiting cycles keep the rows PR #47 measured" \
   "$(lock_of keys)" \
   "crew/angel=41/41 crew/emre=43/43 crew/ran=40/40 room=41/41"
-# And where each set actually sits, printed rather than asserted: the ceilings above
-# are the contract, and a line that froze today's per-set numbers would fail a
-# regenerated asset that is comfortably inside them.
-ok "lock: per set, seam/band — $(lock_of perSet)"
+# And where each set actually sits, printed beside the assertions above rather than
+# instead of them: the ceilings are the contract, and a line that froze today's
+# per-set numbers would fail a regenerated asset comfortably inside them.
+ok "lock: per set, pinch/band — $(lock_of perSet)"
+ok "lock: the chin each base's own silhouette ends at — $(lock_of chins)"
 
 # Who is at the desk. wall/crew.json is the one place an owner is mapped to a
 # character, and a set it names that is missing a frame is a room that never
@@ -3431,43 +3474,34 @@ const bodies = (cycle, typing, when) => {
   }
   return [...seen].sort().join(",");
 };
-// The whole drawn sequence across a pose change, frame by frame at the move's own
-// cadence: what a run actually shows when the plate climbs a floor. `from` is the
-// pose being left, `cycle` the one being entered.
+// The whole drawn sequence across a pose change, frame by frame, sampled fast enough
+// to catch a 250 ms beat of the base: what a run actually shows when the plate climbs
+// a floor. `from` is the pose being left, `cycle` the one being entered.
+const STEP_MS = 40;
 const across = (from, cycle) => {
-  const out = [];
-  const total = (R.MOVE[from] ? R.MOVE_SECS : 0) + (R.MOVE[cycle] ? R.MOVE_SECS : 0);
-  for (let n = -1; n * (R.MOVE_MS / 1000) <= total + 0.001; n++) {
-    const since = Math.max(0, n) * (R.MOVE_MS / 1000);
-    const beat = R.beatAt(n < 0 ? 0 : since, false, 0);
-    out.push(R.bandsOf("room", beat, {
-      cycle: n < 0 ? from : cycle, from: n < 0 ? from : from, since: n < 0 ? SETTLED : since,
-    }).body);
+  const total = (R.MOVE[from] ? R.MOVE_SECS : 0) + (R.MOVE[cycle] ? R.MOVE_SECS : 0)
+    + (!R.MOVE[from] && !R.MOVE[cycle] ? R.BASE_MS / 1000 : 0);
+  const out = [R.bandsOf("room", R.beatAt(0, false, 0),
+    { cycle: from, from: "", since: SETTLED }).body];
+  for (let ms = 0; ms <= Math.round(total * 1000) + STEP_MS; ms += STEP_MS) {
+    const since = ms / 1000;
+    out.push(R.bandsOf("room", R.beatAt(since, false, 0), { cycle, from, since }).body);
   }
-  return out;
+  // Consecutive duplicates say nothing about a cut; what matters is the ORDER the
+  // distinct frames come in, which is what the eye sees.
+  return out.filter((f, i) => !i || f !== out[i - 1]);
 };
-// Which physical position in the chair a drawn frame is at. A cycle change between
-// two consecutive drawn frames is only allowed where both frames are at the SAME
-// position: a hold and the last frame of its own strip, or the base and the first
-// frame of any strip. Anything else is the cut this run exists to remove.
-const anchorOf = (frame) => {
-  if (frame === "base") return "base";
-  const at = frame.lastIndexOf("-");
-  const cycle = frame.slice(0, at);
-  const n = Number(frame.slice(at + 1));
-  if (R.MOVES[cycle]) {
-    if (n === 0) return "base";
-    const hold = Object.keys(R.MOVE).find((h) => R.MOVE[h] === cycle);
-    return n === R.CYCLE - 1 ? hold : cycle + "-" + n;
-  }
-  // type8 and wait8 are both AT the keyboard, which is where the base is.
-  return R.MOVE[cycle] ? cycle : "base";
-};
+// The cut rule, and nothing that stands in for it. Between two frames from DIFFERENT
+// cycles the drawn sequence must contain a strip frame or the literal base — a
+// `type8-N` next to a `wait8-N` is a cut however alike the two pictures are, and the
+// round-1 probe passed it by calling both of them "the base".
+const cycleOf = (f) => (f === "base" ? "base" : f.slice(0, f.lastIndexOf("-")));
+const isStrip = (f) => !!R.MOVES[cycleOf(f)];
 const noCut = (run) => run.every((frame, i) => {
   if (!i) return true;
   const was = run[i - 1];
-  const cycle = (f) => (f === "base" ? "base" : f.slice(0, f.lastIndexOf("-")));
-  return cycle(was) === cycle(frame) || anchorOf(was) === anchorOf(frame);
+  if (cycleOf(was) === cycleOf(frame)) return true;
+  return was === "base" || frame === "base" || isStrip(was) || isStrip(frame);
 });
 console.log(JSON.stringify({
   hero: hero.id,
@@ -3696,9 +3730,9 @@ console.log(JSON.stringify({
       R.bandsOf("room", R.beatAt(t, true), { cycle, from: "type8", since: Infinity }).body);
     return new Set(at).size === 1 && at[0] === cycle + "-0";
   }),
-  stillIsSettled: R.stripAt({ cycle: "watch8", from: "type8", since: Infinity }) === ""
-    && R.stripAt({ cycle: "watch8", from: "type8" }) === ""
-    && R.stripAt({ cycle: "watch8", from: "type8", since: -1 }) === "",
+  stillIsSettled: R.moveAt({ cycle: "watch8", from: "type8", since: Infinity }) === ""
+    && R.moveAt({ cycle: "watch8", from: "type8" }) === ""
+    && R.moveAt({ cycle: "watch8", from: "type8", since: -1 }) === "",
   // The bursts. A person types for a few seconds and then reads for half of one,
   // and the schedule that says so is arithmetic on the shot clock: pure, so two
   // recordings of the same second are the same picture, and irregular, so it is
@@ -3755,14 +3789,29 @@ console.log(JSON.stringify({
   atTheKeyboard: Object.keys(R.HOLDS).filter((c) => !R.MOVE[c]).sort().join(" "),
   // --- the move strips -----------------------------------------------------
   // Into a pose out of the base, and out of one pose into another THROUGH the base:
-  // the exact sequence a run draws, at the strip's own cadence.
+  // the exact sequence a run draws.
   intoWatch: across("type8", "watch8").join(","),
   outOfWatch: across("watch8", "type8").join(","),
   watchToRead: across("watch8", "read8").join(","),
   doneToWait: across("done8", "wait8").join(","),
-  // No cut, over every ordered pair of holds there is.
-  neverCuts: Object.keys(R.HOLDS).every((from) =>
-    Object.keys(R.HOLDS).every((to) => from === to || noCut(across(from, to)))),
+  // And the two pairs that have no strip between them at all: IMPLEMENT to the alarm
+  // and back. One beat of the literal base goes between, because two cycles butted
+  // together are a cut whatever they look like.
+  typeToWait: across("type8", "wait8").join(","),
+  waitToType: across("wait8", "type8").join(","),
+  baseBeat: R.BASE_MS,
+  // No cut, over every ordered pair of holds there is — the twenty, the two alarm
+  // pairs among them.
+  cutPairs: Object.keys(R.HOLDS).flatMap((from) =>
+    Object.keys(R.HOLDS).filter((to) => to !== from)
+      .filter((to) => !noCut(across(from, to))).map((to) => from + ">" + to)).join(","),
+  pairsWalked: Object.keys(R.HOLDS).length * (Object.keys(R.HOLDS).length - 1),
+  // A FRESH show is not a change: there is no pose to travel out of, so the body is
+  // the hold's from the first frame. This is the alarm room the visual gate
+  // photographs, and it may not gain a base frame at t = 0.
+  freshShow: Object.keys(R.HOLDS).map((cycle) =>
+    cycle + "=" + R.bandsOf("room", R.beatAt(0, false, 0),
+      { cycle, from: "", since: 0 }).body).join(" "),
   // A strip plays ONCE. Past both of them the body is the hold's own frame and
   // stays there, however long the run sits on that stage.
   stripEnds: [2, 5, 30, 600].every((t) =>
@@ -4211,7 +4260,17 @@ check "move: and a shipped run puts the mug down before it waits" \
   "$(room_of doneToWait)" \
   "done8-0,toast-7,toast-6,toast-5,toast-4,toast-3,toast-2,toast-1,toast-0,wait8-4"
 check "move: no pair of poses anywhere cuts from one cycle to another" \
-  "$(room_of neverCuts)" "true"
+  "$(room_of cutPairs)" ""
+check "move: over all twenty ordered pairs of the five holds" \
+  "$(room_of pairsWalked)" "20"
+check "move: IMPLEMENT to the alarm goes through one beat of the literal base" \
+  "$(room_of typeToWait)" "type8-0,base,wait8-1"
+check "move: and back out of it the same way" \
+  "$(room_of waitToType)" "wait8-0,base,type8-2"
+check "move: which is long enough to read as a beat" "$(room_of baseBeat)" "250"
+check "move: a fresh show is not a change — the hold has the body at t = 0" \
+  "$(room_of freshShow)" \
+  "type8=type8-0 wait8=wait8-0 watch8=watch8-0 read8=read8-0 done8=done8-0"
 check "move: a strip plays once and the hold keeps the body after it" \
   "$(room_of stripEnds)" "true"
 check "move: and the same second is the same frame, every time it is asked" \
