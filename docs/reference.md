@@ -52,7 +52,7 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | Env var | What it does | Default |
 | --- | --- | --- |
 | `HARNESS_NTFY_TOPIC` | ntfy topic every stage handoff is pushed to. Empty disables phone push | empty |
-| `HARNESS_NTFY_SERVER` | Self-hosted ntfy server | `https://ntfy.sh` |
+| `HARNESS_NTFY_SERVER` | Self-hosted ntfy server | the public [ntfy](https://ntfy.sh) service |
 | `HARNESS_NOTIFY` | `0` silences the local desktop banners (macOS `osascript`) | `1` |
 | `HARNESS_WATCH_INTERVAL` | Seconds between redraws in `status.sh --watch` | `2` |
 | `HARNESS_STALE_SECS` | How long a run whose status has not moved stays on the statusline | `21600` (6h) |
@@ -320,7 +320,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `feed.log` | Live transcript across both model stages |
 | `gate-*.log`, `gate-rounds.log` | Each gate round's output and its one-line verdict |
 | `result.json` | The run's machine-readable outcome and metrics ([schema](#metrics-schema)) |
-| `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's |
+| `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
 | `verify.json`, `verify.log` | The [verifier's](#the-verifier) score, and why it did or did not produce one |
 | `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds and final message, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |

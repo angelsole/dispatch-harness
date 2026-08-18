@@ -404,6 +404,35 @@ The target is a machine you already trust with the run dir: mirroring copies
 briefs, feeds and worker logs onto it, and gives it whatever your ssh key gives
 it. Point it at your own wall, not at a shared box.
 
+## Re-merging the base into a pushed PR
+
+A PR branch that has been open for a while stops merging cleanly. `sync-pr.sh`
+re-merges the latest base into an already-pushed branch and hands the conflicted
+files to the same reviewer backend the run used — Codex where it is installed,
+a Claude worker otherwise — told to resolve them and re-run the tests relevant
+to the conflicted files. It mirrors its run dir on the same terms as a run
+([`HARNESS_MIRROR`](#runs-from-any-machine-harness_mirror)), and it escalates to
+a human rather than force-anything: a conflict it cannot resolve is reported,
+not guessed at. A base-sync merge whose only Codex attempt died on credits gets
+one more on [the fallback account](#a-second-codex-account-for-a-dry-primary)
+first.
+
+## Demo recordings
+
+On a frontend run the implementer writes a shot-scraper storyboard, and the
+pipeline records it against a dev server started inside the worktree — so the PR
+body carries a video of the change instead of a description of it. Two pins in
+the repo's entry turn it on: `DEMO_DEV_CMD` (a dev-server command that pins its
+port) and `DEMO_PORT` (the port it binds), both in
+[the repo pin](reference.md#the-repo-pin). `shot-scraper` records, `ffmpeg`
+transcodes and builds the preview GIF, and `rclone` uploads the result to the
+object-storage remote named in `demo.conf.sh`; without that config the demo is
+recorded but not uploaded, and the run is otherwise unaffected. A site behind a
+login gets its session captured once, by hand, with `demo-auth.sh` — which falls
+back to `python3` running `auth-capture.py` when `shot-scraper` was installed
+outside uv's default tool directory. Every part of this is guarded: a missing
+binary or a failed recording never fails a run.
+
 ## Claude-only mode
 
 Every run detects the `codex` CLI at startup, so one codebase serves both

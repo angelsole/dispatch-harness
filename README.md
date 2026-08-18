@@ -177,8 +177,8 @@ server in the worktree to see the change before approving, and
 ## What else it does
 
 **[Fire a run at a set time.](docs/operations.md#scheduling-a-run-for-later)**
-`schedule.sh` arms a launchd one-shot from `run-task.sh`'s arguments plus a
-time — and is honest about sleep: launchd does not wake the machine for it.
+`schedule.sh` arms a launchd one-shot from `run-task.sh`'s arguments and a time.
+Honest about sleep: "08:10, or as soon as the machine wakes after that".
 
 **[A run that defers itself instead of dying.](docs/operations.md#capacity-preflight-a-run-that-defers-itself)**
 A dispatch into a spent subscription window is pure waste, so a run out of
