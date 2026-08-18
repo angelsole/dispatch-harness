@@ -113,6 +113,7 @@ sequenceDiagram
         C->>S: fix commits + review-notes.md<br/>(gate re-runs, max 2 rounds)
     end
 
+    S->>S: verify — third-vendor trajectory score (best-effort)
     S->>S: push + draft PR (notes in body)
     S->>F: result.json — ready
     F->>U: verdict · preview.sh if frontend
@@ -195,6 +196,23 @@ Optional (only for the auto-recorded PR demo videos on frontend runs):
 - **[`rclone`](https://rclone.org/)** — uploads the video to object storage
   (any S3-compatible bucket: Cloudflare R2, AWS S3, Backblaze B2, MinIO).
 - **`ffmpeg`** — transcodes the recording and builds the preview GIF.
+
+Optional (only for [the verifier](#the-verifier--a-third-vendor-scores-the-trajectory),
+the advisory trajectory score after the review):
+
+- **`python3`** (≥ 3.9, with `venv`) — `install.sh --verifier` builds
+  `~/.claude/harness/verifier-venv` and installs
+  [`llm-verifier`](https://github.com/llm-as-a-verifier/llm-as-a-verifier) into
+  it. Nothing else in the pipeline needs Python.
+- **A third-vendor API key that returns logprobs** — DeepSeek
+  (`deepseek-v4-flash`, the documented default), Gemini *via Vertex*
+  (`gemini-2.5-flash`; the plain Gemini API exposes no logprobs), or any
+  OpenAI-compatible server that returns them. Never Claude and never the two
+  subscriptions the pipeline runs on: neither exposes logprobs, and no model
+  should grade its own homework.
+
+Without both, the stage records one line in `verify.log` and the run is exactly
+what it was.
 
 Optional (only for the copyable Postgres preflight example): **`docker`** and
 **`nc`**.
@@ -910,7 +928,10 @@ and `status.sh --watch` gives you the same picture on demand.
 The paper trail per run: `brief.md`, `specs/` (converted spec attachments, when
 the task had any), `QUESTIONS.md`, `implementer-notes.md`, `review-notes.md`,
 `feed.log`, `gate-*.log`, `result.json`, `opus-head`, `capacity.log`
-(the [preflight's](#capacity-preflight-a-run-that-defers-itself) verdict), and
+(the [preflight's](#capacity-preflight-a-run-that-defers-itself) verdict),
+`verify.json` and `verify.log`
+(the [verifier's](#the-verifier--a-third-vendor-scores-the-trajectory) score and
+why it did or did not produce one), and
 `attempts/<n>/` plus `attempts.log` — every earlier attempt's stream, gate
 rounds and final message, kept instead of overwritten
 ([Attempts](#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)).
@@ -1194,6 +1215,86 @@ fields are `null`/empty):
 | `metrics.implementer_num_turns` | `num_turns` from the implementer's stream-json result event. |
 | `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Recorded beside `num_turns` because the two count different things — see [the turns caveat](#reading-the-pipelines-own-vitals). |
 | `metrics.implementer_usage` | Token `usage` from the same event. |
+| `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], model, provider, evaluations, steps, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier--a-third-vendor-scores-the-trajectory). |
+
+### The verifier — a third vendor scores the trajectory
+
+Everything above is operational: how long, how many turns, how many rounds, how
+many lines. None of it says how well a run satisfied its brief, so the corpus
+could not be sorted by quality and the paired experiment in
+[`bench/DESIGN.md`](bench/DESIGN.md) had no cheap proxy. After the review stage,
+on **every** arm, the harness hands the run's own trajectory to
+[llm-as-a-verifier](https://github.com/llm-as-a-verifier/llm-as-a-verifier) and
+records what comes back.
+
+**What it reads.** The trajectory `verify.py` builds is the run, in order: every
+attempt's implementer stream (each assistant message a narration step, each tool
+call folded together with its observed output into one step), then the gate
+rounds, then the reviewer's notes or rejection and the commits it added, and
+finally the observed end state — the whole diff against base with lockfiles
+excluded, and the standing gate verdict. Nothing is invented: a run whose
+implementer left no stream is skipped, not scored.
+
+**What it returns.** A number in [0, 1]: the expectation over the **logprobs**
+of a 20-letter (A–T) score token, averaged over K repeats, answering one
+question per checkpoint — *given everything the agent has done up to here, would
+its current state satisfy the task's hidden grader?* The library is explicitly
+told to distrust the agent's narration and read the observed output instead. Two
+checkpoints are scored overall — the end of the implementer's work and the end
+of the run — so the pair says what the review stage was worth. Each acceptance
+criterion is then scored on its own, by re-asking with that one criterion
+written in as the hidden grader's single check (the library has no per-criterion
+absolute mode; pairwise `compare()`/`select()` is a different question).
+
+**Why a third vendor.** The score needs logprobs, which neither Claude nor the
+ChatGPT subscription exposes — so the verifier runs on DeepSeek, on Gemini via
+Vertex, or on any OpenAI-compatible server that returns them. That constraint
+happens to enforce the rule the review stage already follows: no model grades
+its own homework.
+
+**It is advisory, and it never gates.** No status, no gate verdict, no PR
+decision, no ready-promotion and no notification priority depends on the number.
+A verifier that is off, unkeyed, uninstalled, timed out, crashed or writing
+garbage leaves the run byte-for-byte what it would have been — same `status`,
+same `pr_url`, same PR body. It is data.
+
+**What it costs.** `(1 + criteria) × K` calls, each carrying the clipped
+trajectory — with the defaults, 9 calls per run over a trajectory bounded at
+400 000 characters. `HARNESS_VERIFY_MAX_CRITERIA=0` (overall only),
+`HARNESS_VERIFY_EVALS=1` and a smaller `HARNESS_VERIFY_MAX_CHARS` are the dials,
+in that order of effect.
+
+```bash
+./install.sh --verifier                    # opt-in: builds the venv, installs the library
+(umask 077; printf '%s' 'sk-…' > ~/.claude/harness/verifier-api-key)
+```
+
+Like `linear-api-key`, that one file is **not seeded by the installer, because
+it is a credential** — you create it by hand, mode 600. Only its *path* is
+exported to the adapter (as `HARNESS_VERIFY_KEY_FILE`), which reads the key
+in-process: the key itself never appears in `ps`, in `verify.log`, in
+`verify.json` or in `result.json`.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_VERIFY` | `0` disables the stage entirely. | `1` |
+| `HARNESS_VERIFY_PYTHON` | Interpreter that runs the adapter. Must be executable, or the stage skips. | `$HARNESS_DIR/verifier-venv/bin/python` |
+| `VERIFIER_API_KEY_FILE` | The key file. Must be readable, or the stage skips. | `$HARNESS_DIR/verifier-api-key` |
+| `HARNESS_VERIFY_PROVIDER` | `deepseek` \| `vertex` \| `openai`. Exactly one backend env var is set from the key file; the other two are cleared, so an ambient variable can never pick a backend the run did not ask for. | `deepseek` |
+| `HARNESS_VERIFY_BASE_URL` | `OPENAI_BASE_URL` for the `openai` provider (any server that returns logprobs). | unset |
+| `HARNESS_VERIFY_MODEL` | Model id; the library's own default for the chosen client when unset (`deepseek-v4-flash`, `gemini-2.5-flash`). | unset |
+| `HARNESS_VERIFY_EVALS` | K — how many times each checkpoint is scored before averaging. | `3` |
+| `HARNESS_VERIFY_MAX_CRITERIA` | Cap on acceptance criteria scored individually. `0` = the overall score only. | `8` |
+| `HARNESS_VERIFY_STEP_CHARS` | Per-step clip, marker included. | `2000` |
+| `HARNESS_VERIFY_MAX_CHARS` | Whole-trajectory clip. Over budget, the head and tail are kept and the middle becomes one `[N agent steps elided]` step, counted in `elided_steps`. | `400000` |
+| `HARNESS_VERIFY_TIMEOUT` | Seconds the whole stage may take before it is killed (and recorded as a failure that changes nothing). | `900` |
+| `HARNESS_VERIFY_EFFORT` | Passed through as `DEEPSEEK_EFFORT` (`off` \| `low` \| `high` \| `max`). | the library's |
+
+Two files per run: **`verify.json`** (the score, the per-criterion table, the
+model, K, the trajectory size, token usage and how long it took — copied
+verbatim into `result.json` as `metrics.verifier`) and **`verify.log`** (one
+line per attempt: the score, or `skipped (<reason>)`, or `failed (<reason>)`).
+Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
 
 ### `metrics.sh` — tabulate runs
 
@@ -1205,9 +1306,10 @@ fields are `null`/empty):
 
 Columns: run, arm, implementer model and effort, reviewer model and effort,
 status, gate rounds (e.g. `fail,pass`), implementer/reviewer commit counts,
-± lines, and wall minutes — so an effort sweep or a reviewer-model ablation
-reads straight off the table. Runs predating a field (no `metrics` object, or
-written before the model/effort knobs) render with blanks, not errors.
+± lines, wall minutes, and the verifier's `score` — so an effort sweep or a
+reviewer-model ablation reads straight off the table. Runs predating a field (no
+`metrics` object, no verifier score, or written before the model/effort knobs)
+render with blanks, not errors.
 
 ### Reading the pipeline's own vitals
 
@@ -1581,9 +1683,10 @@ code**, against your repositories. Be clear-eyed about what that means.
 | `wall.sh` `wall/` | [Ghost Shift](#ghost-shift): the big-screen live dashboard (node server + one static page + fixtures) |
 | `metrics.sh` | Per-run metrics from `result.json` (table / `--csv`) and the [aggregate health report](#reading-the-pipelines-own-vitals) (`--report`) |
 | `demo-auth.sh` `auth-capture.py` | One-time login capture for demo recordings |
+| `verify.py` | [The verifier](#the-verifier--a-third-vendor-scores-the-trajectory): builds the run's trajectory and scores it with a third vendor (`--dry-run` needs no library and no key) |
 | `gate.sh` | This repo's own CI gate (`shellcheck` + `bash -n` on every script, then the test suites) |
 | `install.sh` | Idempotent installer |
-| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`, `pipeline-telemetry`, `codex-fallback`) |
+| `tests/` | The suites `gate.sh` runs (`setup-repo`, `statusline`, `docs`, `preprod`, `context-mount`, `mirror`, `schedule`, `quartermaster`, `capacity-preflight`, `wall`, `pipeline-telemetry`, `codex-fallback`, `verify`) |
 | `examples/` | Copyable templates (e.g. the Postgres preflight) |
 | `bench/DESIGN.md` | Paired public-benchmark experiment design (SWE-bench Verified) |
 | `FLOW.md` / `harness-flow.html` | Pipeline diagrams |

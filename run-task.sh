@@ -218,7 +218,7 @@ REVIEW_OK=1  # 0 = the stage ran and NO backend left review evidence: review_fai
 # whatever is available and nulls/empties the rest — partial metrics are fine.
 collect_metrics() {
   local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
-  local numstat files ins del impl attempts self_resumes
+  local numstat files ins del impl attempts self_resumes verifier
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
   if [ -n "$started" ]; then wall=$((now - started)); else wall=null; fi
@@ -324,6 +324,16 @@ EOF
     [ -n "$impl" ] || impl='{}'
   fi
 
+  # The third-vendor trajectory score, verbatim, when the verifier stage wrote
+  # one this attempt. Null covers every other case — the stage disabled, no key,
+  # no library, a timeout, a crash, a half-written file — so a reader never has
+  # to tell "not scored" apart from "scored zero".
+  verifier=null
+  if [ -f "$RUN_DIR/verify.json" ]; then
+    verifier=$(jq -c . "$RUN_DIR/verify.json" 2>/dev/null || echo null)
+    [ -n "$verifier" ] || verifier=null
+  fi
+
   jq -n \
     --argjson wall "$wall" \
     --argjson stage_durations "$stage_durations" \
@@ -336,6 +346,7 @@ EOF
     --argjson codex_commits "$codex_c" \
     --argjson files "${files:-null}" --argjson ins "${ins:-null}" --argjson del "${del:-null}" \
     --argjson impl "$impl" \
+    --argjson verifier "$verifier" \
     '{
       wall_seconds: $wall,
       stage_durations: $stage_durations,
@@ -348,7 +359,8 @@ EOF
       implementer_num_turns: ($impl.num_turns // null),
       implementer_max_turns: $max_turns,
       implementer_usage: ($impl.usage // null),
-      diff: {files_changed: $files, insertions: $ins, deletions: $del}
+      diff: {files_changed: $files, insertions: $ins, deletions: $del},
+      verifier: $verifier
     }'
 }
 
@@ -634,7 +646,7 @@ max_turns_hit() {
 #
 # The attempt number is the count of `__invocation__` markers in the
 # append-only stages.log, so it survives everything except deleting the run dir.
-ATTEMPT_FILES="opus-stream.jsonl gate-rounds.log opus.log"
+ATTEMPT_FILES="opus-stream.jsonl gate-rounds.log opus.log verify.json verify.log"
 invocations_so_far() {
   local n=0
   [ -f "$RUN_DIR/stages.log" ] && n=$(awk '$2 == "__invocation__" { n++ } END { print n + 0 }' \
@@ -1636,6 +1648,99 @@ ticket_sync() {  # uses TICKET, PR_URL, BRANCH; always returns 0
   return 0
 }
 
+# --- Verifier (third vendor, script-driven — best-effort, and never a gate) ---
+# The harness measures how a run BEHAVED and nothing about how well it satisfied
+# its brief. verify.py hands the run's own trajectory — the implementer's
+# stream, the gate rounds, the reviewer's evidence, the final diff — to
+# llm-as-a-verifier, whose reward is the expectation over the logprobs of a
+# score token. That needs a third vendor: neither Claude nor the ChatGPT
+# subscription exposes logprobs, and it also keeps the score off the models
+# whose homework it is.
+#
+# Everything here is advisory. The stage cannot change STATUS, GATE_STATUS,
+# REVIEW_OK or the PR decision, and it returns 0 on every path — a missing
+# interpreter, a missing key, a timeout, a crash and a garbled verify.json all
+# leave the run exactly as it would have ended with HARNESS_VERIFY=0. Each of
+# those is one line in runs/<TICKET>/verify.log and nothing else.
+VERIFY_KEY_FILE="${VERIFIER_API_KEY_FILE:-$HARNESS_DIR/verifier-api-key}"
+DEFAULT_VERIFY_TIMEOUT=900
+verify_stage() {  # uses RUN_DIR, WORKTREE, BASE_REF; always returns 0
+  local log="$RUN_DIR/verify.log" py adapter secs rc reason score
+  [ "${HARNESS_VERIFY:-1}" = 1 ] \
+    || { echo "skipped: HARNESS_VERIFY=${HARNESS_VERIFY:-1}" >> "$log"; return 0; }
+  py="${HARNESS_VERIFY_PYTHON:-$HARNESS_DIR/verifier-venv/bin/python}"
+  [ -x "$py" ] \
+    || { echo "skipped: no verifier interpreter at $py (install.sh --verifier)" >> "$log"; return 0; }
+  [ -r "$VERIFY_KEY_FILE" ] \
+    || { echo "skipped: no verifier key file at $VERIFY_KEY_FILE" >> "$log"; return 0; }
+  adapter="$SELF_DIR/verify.py"
+  [ -f "$adapter" ] \
+    || { echo "skipped: no verify.py beside run-task.sh" >> "$log"; return 0; }
+  secs="${HARNESS_VERIFY_TIMEOUT:-$DEFAULT_VERIFY_TIMEOUT}"
+  case "$secs" in ''|*[!0-9]*) secs=$DEFAULT_VERIFY_TIMEOUT ;; esac
+
+  stage "verify — trajectory score (verifier · third vendor)"
+  # env(1) sits between the timeout and the interpreter because with_timeout is
+  # a shell function: env cannot exec one. Only the adapter's own knobs and the
+  # PATH to the key travel — the key itself is read inside the process, so it is
+  # in no argv, no log and no result file.
+  with_timeout "$secs" \
+    env HARNESS_VERIFY_KEY_FILE="$VERIFY_KEY_FILE" \
+        HARNESS_VERIFY_PROVIDER="${HARNESS_VERIFY_PROVIDER:-}" \
+        HARNESS_VERIFY_BASE_URL="${HARNESS_VERIFY_BASE_URL:-}" \
+        HARNESS_VERIFY_MODEL="${HARNESS_VERIFY_MODEL:-}" \
+        HARNESS_VERIFY_EVALS="${HARNESS_VERIFY_EVALS:-}" \
+        HARNESS_VERIFY_MAX_CRITERIA="${HARNESS_VERIFY_MAX_CRITERIA:-}" \
+        HARNESS_VERIFY_STEP_CHARS="${HARNESS_VERIFY_STEP_CHARS:-}" \
+        HARNESS_VERIFY_MAX_CHARS="${HARNESS_VERIFY_MAX_CHARS:-}" \
+        HARNESS_VERIFY_EFFORT="${HARNESS_VERIFY_EFFORT:-}" \
+    "$py" "$adapter" "$RUN_DIR" "$WORKTREE" "$BASE_REF" >> "$log" 2>&1
+  rc=$?
+  reason=$(tail -1 "$log" 2>/dev/null || echo "")
+  score=$(jq -r '.score // empty' "$RUN_DIR/verify.json" 2>/dev/null || echo "")
+  if [ "$rc" -eq 0 ] && [ -n "$score" ]; then
+    printf 'verifier: %s\n' "$score" >> "$log"
+  elif [ "$rc" -eq 0 ]; then
+    # It claimed success and left nothing readable behind. Everything downstream
+    # already treats that as no score; say so here rather than reporting a
+    # failure with exit code 0 beside it.
+    printf 'verifier: failed (no score in verify.json)\n' >> "$log"
+  elif [ "$rc" -eq 3 ]; then
+    printf 'verifier: skipped (%s)\n' "$reason" >> "$log"
+  elif [ "$rc" -eq 124 ] || [ "$rc" -eq 142 ]; then
+    # 124 is timeout(1); 142 is the perl alarm wrapper's SIGALRM. Both mean the
+    # verifier outlived its cap, which is a data point, not a run failure.
+    printf 'verifier: failed (timed out after %ss)\n' "$secs" >> "$log"
+  else
+    printf 'verifier: failed (exit %s)\n' "$rc" >> "$log"
+  fi
+  return 0
+}
+
+# The `## Verifier` section of the PR body, printed only when this attempt
+# actually scored: absent verify.json (or one jq cannot read a score out of)
+# leaves the body byte-identical to what it has always been.
+verify_pr_section() {
+  local v="$RUN_DIR/verify.json"
+  [ -f "$v" ] || return 0
+  jq -e '.score | numbers' "$v" >/dev/null 2>&1 || return 0
+  echo
+  jq -r '
+    ["## Verifier", "",
+     ("Trajectory score **\(.score)**"
+       + (if .at_implementer == null then ""
+          else " (implementer \(.at_implementer) → final \(.score))" end)
+       + (if (.model // "") == "" then "" else " · \(.model)" end)
+       + (if .evaluations == null then "" else " · \(.evaluations) evaluations" end))]
+    + (if ((.criteria // []) | length) > 0 then
+         ["", "| Criterion | Score |", "| --- | --- |"]
+         + [.criteria[] | "| \(.name) | \(.score // "-") |"]
+       else [] end)
+    + ["",
+       "Advisory only: a third-vendor verifier read the trajectory of this run and scored how well it satisfies the brief. Nothing in the pipeline gates on it — no status, no gate verdict and no PR decision depends on this number."]
+    | .[]' "$v" 2>/dev/null || true
+}
+
 run_gate 1 || true
 
 # --- Review + fix rounds ------------------------------------------------------
@@ -1825,6 +1930,15 @@ if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
 fi
 fi   # end: review stage
 
+# Every arm passes through here, including no_review (where the score is the
+# implementer's alone) and the runs about to end rejected or gate_failed — those
+# are exactly the trajectories worth having a number for. It sits before
+# base-sync, push and PR so the score describes the tree the reviewer saw, and
+# after the review so the reviewer's own evidence is part of what it reads.
+# Paths that exit before the review stage — needs_input, implementer_failed,
+# capacity deferrals — never reach it and are untouched.
+verify_stage
+
 # --- 6. Outcome ---------------------------------------------------------------
 [ -f "$WORKTREE/.harness/review-notes.md" ] && cp "$WORKTREE/.harness/review-notes.md" "$RUN_DIR/review-notes.md"
 if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
@@ -1895,6 +2009,7 @@ else
     { echo "Ref: $TICKET"; echo
       if [ -f "$WORKTREE/.harness/implementer-notes.md" ]; then cat "$WORKTREE/.harness/implementer-notes.md"; fi
       if [ -f "$WORKTREE/.harness/review-notes.md" ]; then echo; echo "## Review notes"; cat "$WORKTREE/.harness/review-notes.md"; fi
+      verify_pr_section
     } > "$RUN_DIR/pr-body.md"
     # On re-dispatch a PR may already exist for this branch: reuse it (and do NOT
     # overwrite its body — the orchestrator may have rewritten it) instead of failing.
