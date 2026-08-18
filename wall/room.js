@@ -338,7 +338,7 @@
     pennant: { file: 'prop-pennant.png', plane: 'wall' },
   };
 
-  // The person at the desk is not a sprite but a SET of seventeen frames, and
+  // The person at the desk is not a sprite but a SET of sixty-five frames, and
   // which set that is depends on whose run this is — the one fact in this room
   // that is about a human rather than about the work. Every set under
   // wall/assets/crew/ names its frames the same way; the room's own worker
@@ -346,10 +346,10 @@
   // committed with, and its base still is worker-type-0.png rather than a
   // base.png, which is what ALIAS is for.
   //
-  // One base and two eight-frame cycles. Eight because four at 300 ms is 3.3
-  // poses a second, and at 4x on a preview — 12 device pixels per authored one
-  // on the office panel — 3.3 poses a second is a slideshow with a jump in it
-  // where the loop wraps. Eight at 120 ms is a hand.
+  // One base, five eight-frame HOLDS and three eight-frame MOVES. Eight because
+  // four at 300 ms is 3.3 poses a second, and at 4x on a preview — 12 device
+  // pixels per authored one on the office panel — 3.3 poses a second is a
+  // slideshow with a jump in it where the loop wraps. Eight at 120 ms is a hand.
   //
   // The BASE is a drawn frame now, not merely the still the generator was
   // handed: every drawn worker is the base above the split and the cycle's own
@@ -358,7 +358,24 @@
   const cycleFrames = (name) => Array.from({ length: CYCLE }, (_, i) => name + '-' + i);
   const TYPE_SET = cycleFrames('type8');
   const WAIT_SET = cycleFrames('wait8');
-  const FRAMES = ['base'].concat(TYPE_SET, WAIT_SET);
+  // The three poses this room learnt when the plate stopped being the only thing
+  // that said which stage a run was on. A body per stage: the test gate is
+  // running and nobody is typing anything, the reviewer is reading a diff, the
+  // PR is out. Each is a HOLD — a pose with one slow cycle in it — and each has
+  // a MOVE, the eight frames that carry the person from the base into it.
+  const WATCH_SET = cycleFrames('watch8');
+  const READ_SET = cycleFrames('read8');
+  const DONE_SET = cycleFrames('done8');
+  const LEAN_SET = cycleFrames('lean');
+  const REACH_SET = cycleFrames('reach');
+  const TOAST_SET = cycleFrames('toast');
+  const HOLDS = {
+    type8: TYPE_SET, wait8: WAIT_SET, watch8: WATCH_SET, read8: READ_SET,
+    done8: DONE_SET,
+  };
+  const MOVES = { lean: LEAN_SET, reach: REACH_SET, toast: TOAST_SET };
+  const FRAMES = ['base'].concat(TYPE_SET, WAIT_SET, WATCH_SET, READ_SET,
+    DONE_SET, LEAN_SET, REACH_SET, TOAST_SET);
   const PREFIX = { room: 'worker-' };
   const ALIAS = { room: { base: 'type-0' } };
   const FALLBACK = 'room';
@@ -370,35 +387,55 @@
     + ((ALIAS[set] || {})[frame] || frame) + '.png';
 
   // Where one figure is cut in two. Above this row the drawn worker is the
-  // base and nothing else; below it the cycle's frame. Measured per set off the
+  // base and nothing else; below it the cycle's frame. Measured off the
   // committed PNGs rather than guessed: the row is chosen where the base's
   // silhouette and every frame's agree, because a seam is only invisible where
   // the jacket outline does not step. The heroes' jackets sit at different
   // heights in their 64x64 box, so one number does not seat all four.
-  // Measured over the sixteen committed frames of each set: the row whose worst
-  // single-frame left/right edge mismatch against the base's row above it is
-  // smallest, out of the rows that still leave the forearms and hands below the
-  // cut. Room 41 and Angel 41 step by at most one pixel in one frame, Emre 43 by
-  // one in seven of sixteen, Ran 40 by two — Ran's sleeve is the widest thing in
-  // any of these boxes and two pixels of it is the price of keeping every one of
-  // her moving rows in the animated band.
-  const SPLIT = { room: 41, 'crew/angel': 41, 'crew/emre': 43, 'crew/ran': 40 };
-  const SPLIT_DEFAULT = 41;
-  const splitOf = (set) => (SPLIT[set] === undefined ? SPLIT_DEFAULT : SPLIT[set]);
-
-  // What one drawn worker is made of, as two bands and the row between them.
-  // Returned by a pure function rather than decided inside the draw call so the
-  // suite can ask the room which file each band came from — a head drawn from
-  // frame N is the whole defect this cycle exists to remove, and it must not be
-  // possible to reintroduce it without failing a test.
   //
-  // `typing` is the reveal's override: while a line is appearing on the tube the
-  // hands are working, whatever the burst schedule was about to do. The person
-  // is typing what the screen is showing.
-  function bandsOf(set, beat, alarm, typing) {
-    const body = alarm ? WAIT_SET[beat.waiting]
-      : ((beat.burst || typing) ? TYPE_SET[beat.typing] : 'base');
-    return { split: splitOf(set), head: 'base', body };
+  // Per (set, CYCLE) now, and not per set. `type8` and `wait8` keep their hands on
+  // the keyboard, so a row at the bottom of the ribcage leaves everything that
+  // moves below the cut — that is the 41/41/43/40 PR #47 measured and none of it
+  // changes. The three poses the stages brought put the ARMS somewhere else in the
+  // chair: folded across the chest, out to the right on a mouse, holding a mug up.
+  // Their moving rows start at the collar, so their cut has to be at the collar
+  // too, or the pin throws away the very thing that makes the pose read — a mug cut
+  // off at row 30 is a pale slab growing out of a shoulder, which is what the first
+  // measurement of it looked like.
+  //
+  // Chosen as the row whose worst single-frame left/right edge mismatch against the
+  // base's row above it is smallest, out of the rows that still leave the pose below
+  // the cut AND below the set's own head: Ran's bob reaches row 29 and Emre's mug
+  // rides one row higher than everyone else's, which is why no two of these columns
+  // are the same. Emre's `done8` at 28 is the lowest cut in the table and still four
+  // rows clear of his hair. The numbers, and what each of them costs, are in the run
+  // notes; the suite re-measures all four claims from these PNGs.
+  //
+  // A MOVE is cut where the HOLD it leads into is cut, always: the frame that ends
+  // `lean` is the frame `watch8` was animated from, and a split that moved between
+  // the two would step in the middle of the move. There is a probe for it.
+  const SPLIT = {
+    room: {
+      type8: 41, wait8: 41, watch8: 32, lean: 32, read8: 32, reach: 32, done8: 30, toast: 30,
+    },
+    'crew/angel': {
+      type8: 41, wait8: 41, watch8: 31, lean: 31, read8: 31, reach: 31, done8: 31, toast: 31,
+    },
+    'crew/emre': {
+      type8: 43, wait8: 43, watch8: 31, lean: 31, read8: 31, reach: 31, done8: 28, toast: 28,
+    },
+    'crew/ran': {
+      type8: 40, wait8: 40, watch8: 34, lean: 34, read8: 34, reach: 34, done8: 34, toast: 34,
+    },
+  };
+  // A set nobody measured — which can only be one the roster named and the server
+  // then refused, so nothing is drawn from it — falls back on the room's own rows
+  // rather than on a number that would put a cut through somebody's face.
+  const SPLIT_DEFAULT = SPLIT[FALLBACK];
+  function splitOf(set, cycle) {
+    const rows = SPLIT[set] || SPLIT_DEFAULT;
+    const at = rows[cycle];
+    return at === undefined ? SPLIT_DEFAULT.type8 : at;
   }
 
   // Whose character sits at the desk. The server already lower-cases an owner
@@ -590,6 +627,35 @@
   const WAIT_MS = 220;
   const WAIT_FRAMES = CYCLE;
 
+  // And the three the stages brought. A hold BREATHES, it does not fidget: one
+  // slow cycle and nothing else, at a rate that says what the body is doing.
+  //
+  //   watch8  240 ms, a 1.92 s breath — the body of somebody who has started the
+  //           suite and can do nothing about the result. Slower than the hands
+  //           and about the pace of the alarm's own breath, because it is the
+  //           same act.
+  //   read8   160 ms, and the fastest of the three: a wrist flicking a scroll
+  //           wheel is quick, and this is the one hold with a real gesture in it.
+  //           It comes in BOUTS (see BOUTS below) and rests on frame 0 between
+  //           them, so the 1.28 s cycle is never played round and round.
+  //   done8   250 ms, a 2 s breath — a step slower than waiting, because holding
+  //           a mug up is the least urgent thing anybody in this room does.
+  //
+  // All three land on six distinct poses against the gate's 750 ms sample, the
+  // same property TYPE_MS and WAIT_MS were chosen for: 240 gives 0 3 6 1 4 7,
+  // 160 gives 0 4 1 6 2 7, 250 gives 0 3 6 1 4 7.
+  const WATCH_MS = 240;
+  const READ_MS = 160;
+  const DONE_MS = 250;
+
+  // And the moves, which are not loops: eight frames played once, 120 ms each, so
+  // arms cross or a mug comes up over 960 ms. The same cadence as the hands, for
+  // the same reason — a move that crosses three or four pixels a frame reads as a
+  // move.
+  const MOVE_MS = 120;
+  const MOVE_FRAMES = CYCLE;
+  const MOVE_SECS = (MOVE_MS * MOVE_FRAMES) / 1000;
+
   // The cursor on the tube. 530 ms is a terminal's own blink interval, and this
   // one is on the room's clock like everything else.
   const BLINK_MS = 530;
@@ -613,28 +679,49 @@
   const BURSTS = [[2.4, 0.6], [3.6, 0.9], [2.0, 0.4], [3.0, 1.0]];
   const BURST_CYCLE = BURSTS.reduce((total, pair) => total + pair[0] + pair[1], 0);
 
+  // A READER has bouts, not bursts. Somebody scrolling a diff moves the wheel for
+  // a second or two and then stops to read what came into view, and the two are a
+  // different length and a different shape from a typist's runs — so this is its
+  // own table, on its own period, and NOT the typing schedule borrowed. A reader
+  // and a typist do not share a rhythm; sharing one would put the two poses on the
+  // same bar and make the room look like it has one metronome in it.
+  //
+  // Scroll 0.6-1.8 s, rest 0.5-1.4 s, summing to 8.2 s — coprime enough with the
+  // bursts' 13.9 that the two never come back into step inside a room hold.
+  const BOUTS = [[1.2, 0.7], [0.6, 1.4], [1.8, 0.5], [0.9, 1.1]];
+  const BOUT_CYCLE = BOUTS.reduce((total, pair) => total + pair[0] + pair[1], 0);
+
   // Murmur3's finaliser, which is the cheapest thing that actually mixes into the
   // LOW bits — the two obvious shortcuts do not. A plain multiply by an odd
   // constant is the identity under mod 4, and one shift-xor after it lands on 0,
   // 3, 3, 3, 3...: both would have been "rotate by a constant" wearing the word
   // hash. This one gives 0 3 2 3 1 1 0 0 3 3 0 0 3 2 ... over the first
   // super-cycles, which is what an irregular working rhythm is made of.
-  function step(turn) {
+  function mix(turn) {
     let h = turn >>> 0;
     h ^= h >>> 16;
     h = Math.imul(h, 0x85ebca6b);
     h ^= h >>> 13;
     h = Math.imul(h, 0xc2b2ae35);
     h ^= h >>> 16;
-    return (h >>> 0) % BURSTS.length;
+    return h >>> 0;
   }
 
-  function burstAt(elapsed) {
-    const turn = Math.floor(elapsed / BURST_CYCLE);
-    let at = elapsed - turn * BURST_CYCLE;
-    const from = step(turn);
-    for (let i = 0; i < BURSTS.length; i++) {
-      const pair = BURSTS[(i + from) % BURSTS.length];
+  const step = (turn) => mix(turn) % BURSTS.length;
+  // The bouts get their own draw off the same mixer rather than the same one: two
+  // schedules that rotate in lockstep are one schedule. The golden-ratio constant
+  // is the usual way to ask a hash for an independent stream of the same clock.
+  const bout = (turn) => mix((turn ^ 0x9e3779b9) >>> 0) % BOUTS.length;
+
+  // Which half of a (working, resting) table a second is in. Walked from the
+  // super-cycle's own start, so a room that has been up for an hour costs exactly
+  // what one that just opened costs.
+  function segmentAt(table, total, order, elapsed) {
+    const turn = Math.floor(elapsed / total);
+    let at = elapsed - turn * total;
+    const from = order(turn);
+    for (let i = 0; i < table.length; i++) {
+      const pair = table[(i + from) % table.length];
       if (at < pair[0]) return true;
       at -= pair[0];
       if (at < pair[1]) return false;
@@ -642,6 +729,158 @@
     }
     // A float that lands on the last seam works rather than freezes.
     return true;
+  }
+
+  const burstAt = (elapsed) => segmentAt(BURSTS, BURST_CYCLE, step, elapsed);
+  const scrollAt = (elapsed) => segmentAt(BOUTS, BOUT_CYCLE, bout, elapsed);
+
+  // --- a pose per stage ---------------------------------------------------
+  // WHICH BODY the person at the desk is in, keyed on the actor whose work the
+  // floor represents. This is the whole of "the room acts the stage": the plate
+  // has always said GATE, REVIEW, PUSH, and the body said IMPLEMENT in all three.
+  //
+  // Keyed on `workActorKey` and not on the floor name, because the server already
+  // owns that attribution — in an alarm `actorKey` becomes the red status light
+  // and `workActorKey` stays the person behind it — and a second copy of the
+  // pipeline ladder in this file is a second thing to keep in step.
+  //
+  // A key this table does not know draws a WORKING person. The room never shows an
+  // empty chair, and `unknown` is a stage nobody has taught it yet rather than a
+  // reason to stop drawing somebody at a desk.
+  const POSE = {
+    // IMPLEMENT — the hands, in bursts. Unchanged, and the only pose that was
+    // ever right.
+    opus: 'type8', deferred: 'type8', unknown: 'type8',
+    // GATE — the suite is running and there is nothing to type.
+    gate: 'watch8',
+    // REVIEW — somebody is reading the diff. A skipped or silently-failed review
+    // is still the review floor, and the room says which floor it is on.
+    codex: 'read8', skipped: 'read8', unreviewed: 'read8',
+    // DEMO and PUSH — it is off the desk.
+    demo: 'done8', pr: 'done8',
+    // SETUP, and the two stages that are setup by another name: settling in.
+    setup: 'wait8', sync: 'wait8', failed: 'wait8',
+  };
+  const POSE_DEFAULT = 'type8';
+
+  // And the one key that is not a stage but an outcome. A run that shipped keeps
+  // the mug up; one that finished any other way is sat back with its hands off the
+  // keys, which is the same body the alarm has and means the same thing about the
+  // work: nobody is touching it.
+  function cycleOf(v) {
+    if (v.alarm) return 'wait8';
+    if (v.workActorKey === 'done') return v.shipped ? 'done8' : 'wait8';
+    return POSE[v.workActorKey] || POSE_DEFAULT;
+  }
+
+  // The strip a pose is entered and left through. `type8` and `wait8` have none:
+  // both are AT the keyboard, which is where the base is, so there is nothing to
+  // travel. The other three are somewhere else in the chair and a cut straight
+  // into them is the one thing the doctrine forbids outright.
+  const MOVE = { watch8: 'lean', read8: 'reach', done8: 'toast' };
+
+  // And the beat of the BASE that goes between two poses which share no strip.
+  // `type8` and `wait8` are both at the keyboard, so a change between them — the
+  // alarm arriving, or clearing — has nothing to travel through, and drawing
+  // `type8-4` straight into `wait8-2` is exactly the cut this run exists to remove
+  // however similar the two frames are. One held beat of the base is the answer, and
+  // 250 ms is the floor at which a still frame reads as a beat rather than a dropped
+  // one.
+  const BASE_MS = 250;
+
+  // Which frame the body is on DURING a change of pose, `since` seconds after the
+  // resolved cycle last changed — or '' once the change is over and the hold has it.
+  //
+  // Out first, then in. Leaving watch8 for read8 plays `lean` backwards to the
+  // base and then `reach` forwards, so the arms uncross through the base into the
+  // hand reaching for the mouse: two strips, 1.92 s, and not one frame of a cut.
+  //
+  // Only on a CHANGE. A fresh show() has no pose to travel out of and settles into
+  // its hold at once: the alarm room the visual gate photographs breathes from t = 0
+  // exactly as it does today, and a dive into a gate room lands on a person who is
+  // already sat back rather than on one who has to get there first.
+  //
+  // In whole MILLISECONDS, not seconds. `since` arrives as a difference of two
+  // frame-clock readings in seconds, and 11 x 0.12 is 1.3199999999999998 there — one
+  // millisecond short of the boundary, which drew frame 2 of the strip twice and
+  // frame 3 never. Rounding to the millisecond once, at the top, is exact at every
+  // one of the eight boundaries and costs nothing.
+  //
+  // And a NEGATIVE `since` is "just changed", not "settled". show() paints once with
+  // performance.now() and stamps the change with it; the loop's next paint comes
+  // with the rAF timestamp of the frame that was already in flight, which is a few
+  // milliseconds EARLIER. Treating that frame as settled drew the new hold's frame
+  // 0 for one paint before the strip out of the old pose began — a one-frame pop
+  // at every change of stage. Clamping to zero draws the strip's first frame there
+  // instead, which is what "the pose changed just now" means.
+  const STRIP_MS = MOVE_MS * MOVE_FRAMES;
+  function moveAt(pose) {
+    const since = pose && pose.since;
+    if (!Number.isFinite(since)) return '';
+    if (!pose.from || pose.from === pose.cycle) return '';
+    const out = MOVE[pose.from];
+    const into = MOVE[pose.cycle];
+    let at = Math.max(0, Math.round(since * 1000));
+    if (!out && !into) return at < BASE_MS ? 'base' : '';
+    if (out) {
+      if (at < STRIP_MS) return out + '-' + (MOVE_FRAMES - 1 - Math.floor(at / MOVE_MS));
+      at -= STRIP_MS;
+    }
+    if (into && at < STRIP_MS) return into + '-' + Math.floor(at / MOVE_MS);
+    return '';
+  }
+
+  // And which frame of the hold, once it has the body. Four of the five are a
+  // plain loop on the clock; the two with a schedule over them are the ones whose
+  // gesture stops:
+  //
+  //   type8  rests on the BASE between bursts — hands on the keys, still. `typing`
+  //          is the reveal's override: while a line is appearing on the tube the
+  //          hands are working, whatever the burst schedule was about to do,
+  //          because the person is typing what the screen is showing.
+  //   read8  rests on FRAME 0 between bouts — the hand still on the mouse, not
+  //          scrolling. Never the base: a reader whose rest put their hand back on
+  //          the keyboard would be a reader who starts typing every second.
+  function holdAt(cycle, beat, typing) {
+    if (cycle === 'type8') return (beat.burst || typing) ? TYPE_SET[beat.typing] : 'base';
+    if (cycle === 'read8') return READ_SET[beat.scroll ? beat.reading : 0];
+    if (cycle === 'watch8') return WATCH_SET[beat.watching];
+    if (cycle === 'done8') return DONE_SET[beat.toasting];
+    return WAIT_SET[beat.waiting];
+  }
+
+  // What one drawn worker is made of, as two bands and the row between them.
+  // Returned by a pure function rather than decided inside the draw call so the
+  // suite can ask the room which file each band came from — a head drawn from
+  // frame N is the whole defect the pin exists to remove, and it must not be
+  // possible to reintroduce it without failing a test.
+  //
+  // `pose` is `{ cycle, from, since, typing }`: the hold this run resolves to, the
+  // one it was in before, how long ago that changed, and the reveal's override. A
+  // `since` that is not a finite number — which is what a still room hands over —
+  // is a settled pose, so reduced motion never lands mid-strip.
+  function bandsOf(set, beat, pose) {
+    const move = moveAt(pose);
+    const body = move || holdAt(pose.cycle, beat, pose.typing);
+    // A strip is cut at the row its own HOLD is cut at, never at the base's: the
+    // frame that ends `lean` is the frame `watch8` was animated from, and a split
+    // that moved between the two would step in the middle of the move. The base is
+    // cut anywhere — it is the same picture either side of any row — so the pose
+    // being entered decides, which keeps the number the probes read stable.
+    const cut = move && move !== 'base'
+      ? move.slice(0, move.lastIndexOf('-')) : pose.cycle;
+    return { split: splitOf(set, cut), head: 'base', body };
+  }
+
+  // And whether the mug is in their hand at this frame rather than on the desk.
+  // Asked of the DRAWN FRAME, not of the resolved pose: on the way out the pose
+  // has already changed to the next stage while the reversed `toast` strip is still
+  // putting the mug down, and a desk mug that reappeared for those 0.96 s would be
+  // the second mug this rule exists to prevent.
+  const HANDS_A_MUG = TOAST_SET.concat(DONE_SET);
+  function holdsAMug(beat, pose) {
+    const move = moveAt(pose);
+    return HANDS_A_MUG.indexOf(move || holdAt(pose.cycle, beat, pose.typing)) >= 0;
   }
 
   // --- the lens -----------------------------------------------------------
@@ -694,6 +933,15 @@
       burst: reduced ? true : burstAt(elapsed),
       // And which breath a waiting worker is on.
       waiting: Math.floor((elapsed * 1000) / WAIT_MS) % WAIT_FRAMES,
+      // The three the stages brought, on the same one reading of the clock: the
+      // breath of somebody watching a suite run, the wrist on a scroll wheel, the
+      // breath of somebody holding a mug up. Reduced motion pins all three to
+      // frame 0 with everything else, and `scroll` is true there for the same
+      // reason `burst` is — a still room shows the pose, not the pause in it.
+      watching: Math.floor((elapsed * 1000) / WATCH_MS) % CYCLE,
+      reading: Math.floor((elapsed * 1000) / READ_MS) % CYCLE,
+      scroll: reduced ? true : scrollAt(elapsed),
+      toasting: Math.floor((elapsed * 1000) / DONE_MS) % CYCLE,
       // The cursor, lit half the time. Lit in a still room rather than dark:
       // reduced motion is a room standing still, not a room switched off.
       blink: reduced ? true : (Math.floor((elapsed * 1000) / BLINK_MS) & 1) === 0,
@@ -866,6 +1114,12 @@
       // The server owns stage/floor attribution. In an alarm actorKey is the
       // red status light, while workActorKey is the person behind the alert.
       workActorKey: run.workActorKey || (alarm ? 'unknown' : run.actorKey) || 'unknown',
+      // Whether it SHIPPED, which is the one thing `done` does not say. The server
+      // parks a finished run on the floor it stopped at and its state carries the
+      // outcome: `ready` is a PR that went out, and anything else is a burnout.
+      // The room needs the difference because a run that shipped gets the mug up
+      // and one that was rejected gets its hands off the keys.
+      shipped: run.state === 'ready',
       actor: (run.actor || '').toUpperCase(),
       owner: (run.owner || '').toUpperCase(),
       // The same name twice, because the room says it and looks it up: the
@@ -1005,6 +1259,13 @@
     let scale = 1;
     let stamp = 0;            // the frame time this room last drew at, in seconds
     let startedAt = null;     // and the one the hold on screen began at
+    // The one piece of local memory the pose table needs, and the only state in
+    // this room that is neither a snapshot nor a pure function of the clock: which
+    // hold the body is in, which one it came out of, and WHEN — the instant the
+    // move strips are timed from. Everything else about a pose is arithmetic.
+    let poseNow = '';         // the resolved cycle, '' before the first paint
+    let posePrev = '';        // the one before it, '' meaning the base
+    let poseAt = 0;           // and the frame time it last changed at
 
     // The tube's own state, and the only thing in this room that is not a pure
     // function of the clock: lines ARRIVE. `rows` is what is on the screen,
@@ -1446,10 +1707,16 @@
     // All of them, in slot order. The view carries one name per place and an
     // empty string for a place nothing was put in, so this loop is the whole of
     // "an unknown prop leaves its slot empty".
-    function theirThings(v) {
+    //
+    // `holding` is the one thing on this desk a pose can take away. Two of the
+    // four people keep a mug on their desk (wall/crew.json), and the pose that
+    // says a run shipped is that person raising one — so while the mug is in their
+    // hand it is not also standing on the desk. A room with two mugs in it is a
+    // room that does not mean anything.
+    function theirThings(v, holding) {
       const put = Array.isArray(v.props) ? v.props : [];
       for (let i = 0; i < SLOTS.length; i++) {
-        if (put[i]) thing(SLOTS[i], put[i]);
+        if (put[i] && !(holding && put[i] === 'mug')) thing(SLOTS[i], put[i]);
       }
     }
 
@@ -1735,7 +2002,7 @@
     // what the wide city does either — out there the blocked car keeps its
     // light. The alarm is loud on the alert sources (the monitor, the wash it
     // throws) and nowhere else; the jacket stays the actor's own.
-    function worker(v, beat, typing) {
+    function worker(v, beat, pose) {
       // Whose desk this is. A set the roster named but that is not in hand —
       // which only happens before the roster answers — falls back rather than
       // leaving the chair empty.
@@ -1743,7 +2010,7 @@
       if (!cast[set]) set = FALLBACK;
       const who = cast[set];
       if (!who) return;
-      const bands = bandsOf(set, beat, v.alarm, typing);
+      const bands = bandsOf(set, beat, pose);
       const head = who[bands.head];
       const body = who[bands.body];
       if (!head || !body) return;
@@ -1831,12 +2098,14 @@
     // The three still planes, drawn once for a run and kept. The key is the view
     // itself: the hero can hand over and the stage under it can climb a floor
     // while the room is up, and both change what the plate and the nameplate
-    // say — nothing else in here does.
-    function bakePlanes(v) {
+    // say — plus, now, whether the desk mug is in somebody's hand, which is the
+    // one thing about the CLOCK these planes depend on. It flips twice per shipped
+    // run rather than sixty times a second, so it belongs in the key.
+    function bakePlanes(v, holding) {
       // The feed is left out of the key. It lives on the tube, which is
       // repainted every frame anyway, and a snapshot that only appended one line
       // must not redraw forty rectangles of wall grain to show it.
-      const key = JSON.stringify({ ...v, feed: null });
+      const key = JSON.stringify({ ...v, feed: null, holding });
       if (key === baked) return;
       baked = key;
       bake(plateBack, backWall);
@@ -1857,7 +2126,7 @@
         // Their own things go on last, so a thing stands on the desk rather than
         // inside it — and under the lamp and the tube, which are the next two
         // layers up and are what light them.
-        theirThings(v);
+        theirThings(v, holding);
       });
       bake(plateFront, () => {
         nameplate(v);
@@ -1865,9 +2134,39 @@
       });
     }
 
+    // WHICH POSE, and since when. The pose itself is a pure function of the view,
+    // so it is worked out every frame and costs nothing; what the room has to
+    // REMEMBER is the one instant it last changed, because that is what the move
+    // strips are timed from and there is nothing else in the view to time them by.
+    //
+    // Set here and nowhere else, and only when the resolved cycle actually differs:
+    // show() is called on every snapshot, once a second, and a snapshot that does
+    // not change the pose must not re-time a single frame of it.
+    //
+    // `from` is '' until the pose has changed once, which is what makes a fresh
+    // show() settle straight into its hold: there is nothing to travel out of.
+    function poseOf() {
+      const cycle = cycleOf(view);
+      if (cycle !== poseNow) {
+        posePrev = poseNow;
+        poseNow = cycle;
+        poseAt = stamp;
+      }
+      return {
+        cycle: poseNow,
+        from: posePrev,
+        // A still room is a SETTLED room: no strip, the hold's own frame 0. An
+        // infinity here rather than a flag, because that is what "the pose changed
+        // long ago" means to moveAt().
+        since: still.matches ? Infinity : stamp - poseAt,
+        typing: revealing(),
+      };
+    }
+
     // One frame: three baked planes, and between them everything the beat
     // touches. `at` is the frame clock in seconds — the loop hands its own rAF
     // timestamp in, and a paint from outside the loop reads the same origin.
+
     function paint(at) {
       if (!ready || !view) return;
       stamp = at === undefined ? nowOf() : at;
@@ -1879,7 +2178,8 @@
       // to be somewhere else in their cycle.
       feedIn(view, stamp);
       feedStep(stamp);
-      bakePlanes(view);
+      const pose = poseOf();
+      bakePlanes(view, holdsAMug(beat, pose));
       ctx.clearRect(0, 0, W, H);
       ctx.drawImage(plateBack, 0, 0);
       stripLight(beat);
@@ -1888,7 +2188,7 @@
       floorLight(view, beat);
       lamp(view, beat);
       monitor(view, beat);
-      worker(view, beat, revealing());
+      worker(view, beat, pose);
       ctx.drawImage(plateFront, 0, 0);
       present(beat);
     }
@@ -1962,8 +2262,12 @@
       },
       hide() {
         stop();
-        // The next dive is a new shot and starts its own push from the top.
+        // The next dive is a new shot and starts its own push from the top — and
+        // its own settle into whatever pose it lands on, out of the base, rather
+        // than resuming a hold from a room nobody was looking at.
         startedAt = null;
+        poseNow = '';
+        posePrev = '';
         delete canvas.dataset.on;
       },
       get holding() { return canvas.dataset.on === '1'; },
@@ -1974,12 +2278,17 @@
     create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
     fileOf, splitOf, bandsOf, lineOf, keyOf, markOf, burstAt, revealed,
     spoken, wrapped, cropAt, propsOf, slotsOf,
+    cycleOf, moveAt, holdAt, holdsAMug, scrollAt,
     CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES,
     PLATE, BEZEL, WORKER,
     SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX, PROP_ART, SLOTS, THING,
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
-    TYPE_SET, WAIT_SET, FALLBACK, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
-    BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
+    TYPE_SET, WAIT_SET, WATCH_SET, READ_SET, DONE_SET,
+    LEAN_SET, REACH_SET, TOAST_SET, HOLDS, MOVES, POSE, POSE_DEFAULT, MOVE, SPLIT,
+    FALLBACK, CYCLE, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
+    WATCH_MS, READ_MS, DONE_MS, MOVE_MS, MOVE_FRAMES, MOVE_SECS, BASE_MS,
+    BLINK_MS, BURSTS, BURST_CYCLE, BOUTS, BOUT_CYCLE,
+    FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
     FEED_MARK, FEED_TOP, FEED_PITCH, FEED_TICKS, SCROLL_MS, REVEAL_CPS,
   };
 }));

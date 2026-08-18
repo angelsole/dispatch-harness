@@ -285,30 +285,48 @@ check "assets: every sprite is quantised to the 32-colour lock, and so is the ro
 # The POSE LOCK, from the pixels. A character set is only interchangeable with
 # another if every frame of it lands in the same box, and "the manifest says so"
 # is not a check — so this measures the committed PNGs, through room.js's own
-# splits and frame names, and fails on the numbers.
+# per-(set, cycle) splits and frame names, and fails on the numbers.
 #
-# Two bounds, because the room draws a figure in two bands and only one of them
-# comes from a generated frame:
+# Every number is measured on what is DRAWN — the base's rows above the split plus
+# the frame's rows at and below it — never on raw generator output: the animator
+# grows the head upward systematically and the room throws those rows away, so a
+# frame's own bounds are a fact about the animator rather than about the picture.
 #
-#   (a) the DRAWN composite — the base's rows above the set's split plus the
-#       frame's rows at and below it, which is the figure that goes on the wall —
-#       within +/-1 px of the set's base box. This is the one that decides whether
-#       a set can sit at the room's worker origin.
-#   (b) the ANIMATED BAND on its own — x, width and bottom edge of the rows at and
-#       below the split — within +/-3 px of the base's same rows. Without this,
-#       (a) would pass a frame whose arms had floated off the keyboard, because the
-#       base's head would still be setting the top of the box.
+# The ceilings are the brief's round-2 numbers and every one of them is a FIXED
+# ceiling. Nothing here is measured-and-reported in place of being bounded.
 #
-# The rows a frame carries ABOVE the split are not measured, because the room
-# discards them: every generated frame redraws the whole figure, and their drift
-# is a fact about the animator rather than about the picture. The raw numbers are
-# in the run notes.
+#   (a) SEAM, both ways. At the drawn row just above the split (the base's) against
+#       the row at the split (the frame's): a PINCH — the frame's row narrower, so
+#       the base's shoulder overhangs nothing and the jacket outline steps inward —
+#       at most 2 px on each side; a FLARE — the frame's row wider, a mug or a hand
+#       whose top edge sits at the cut — at most 12 px on each side. Both bounded.
+#   (b) HOLDS AND JOINS. Consecutive frames of a hold: animated-band opaque bounds
+#       within 3 px (x, w, bottom). A strip's last frame against its hold's frame 0,
+#       and the base composite against a strip's frame 0: 3 px. A strip's own
+#       consecutive frames: 10 px, AND no single frame carries more than 60 % of that
+#       strip's total travel on the same measure, floor 4 px — a move travels, it
+#       does not teleport, and it does not spend the whole journey in one frame.
+#   (c) SAME CHAIR. Bottom edge of every drawn composite: `type8`/`wait8` within 1 px
+#       of the base's; the three new poses and their strips within 3 px (a hand that
+#       leaves the keys and rests on the desk sits lower — the room seats this sprite
+#       so its last row lands on DESK_Y). Width: no composite wider than the base
+#       + 6 px; narrower is allowed, because folding two arms across a chest takes
+#       10 px off Angel's silhouette and 19 off Ran's, whose own forearms are the
+#       widest thing in her base — and a rescaled person is caught from the other
+#       side, by a hold's eight frames agreeing on their own width within 3 px and a
+#       strip's frame 0 being within 3 px of the base's width.
+#   (d) The typing and waiting frames and the bases are neither regenerated nor
+#       rewritten. Their bytes are pinned to their MANIFEST rows by the asset guard
+#       above; what is pinned HERE is the row each of them is cut at.
+#
+# And the split itself: `type8`/`wait8` at rows 38-46 as they were, the three new
+# cycles at 26-46 and never above the row where that set's base CHIN ends — measured
+# here from the base's own silhouette rather than written down, as the row before the
+# first place below the skull where the outline flares into a shoulder.
 #
 # What this does NOT check is which rows came from where — a bounding box cannot
-# see that, and on these sprites the box happens to be the same whichever side of
-# the split the shoulders come from. That claim is `headAlwaysBase` further down,
-# over the room's own band table, and `splitsSane`, which refuses a split outside
-# the jacket. Three probes, three claims; none of them stands in for another.
+# see that. That claim is `headAlwaysBase` further down, over the room's own band
+# table, and `splitsSane`.
 LOCK_PROBE="$ROOT/lock-probe.js"
 cat > "$LOCK_PROBE" <<'JS'
 const fs = require("fs");
@@ -318,8 +336,6 @@ const R = require(path.join(root, "wall", "room.js"));
 const { decode, opaque, bounds } = require(process.argv[3]);
 
 const png = (rel) => decode(fs.readFileSync(path.join(root, "wall", rel)));
-const near = (a, b, tol) => Math.abs(a - b) <= tol;
-
 // The figure the room draws: base above the split, frame at and below it. Built
 // the same way worker() builds it — the band is CLEARED and then taken from the
 // frame, so a base pixel cannot show through a frame's transparent one.
@@ -334,6 +350,21 @@ function composite(base, frame, split) {
   return out;
 }
 
+// Where a base's CHIN ends: the row before the first place below the skull where the
+// outline flares into a shoulder. Walked from row 10 so the top of the head — which
+// widens two pixels a row on the way down — is not mistaken for it, and the flare has
+// to reach 20 px wide so a stray pixel of hair cannot claim it.
+function chinOf(base) {
+  const wide = (y) => {
+    const row = bounds(base, y, y + 1);
+    return row ? row[2] : 0;
+  };
+  for (let y = 10; y < base.h - 1; y++) {
+    if (wide(y + 1) - wide(y) >= 3 && wide(y + 1) >= 20) return y;
+  }
+  return 10;
+}
+
 // Every set the roster names, plus the one every unknown owner falls back to —
 // which is exactly the list the room loads.
 const crew = JSON.parse(fs.readFileSync(path.join(root, "wall", "crew.json"), "utf8"));
@@ -341,86 +372,243 @@ const sets = [...new Set(Object.keys(crew)
   .map((owner) => R.setOf(crew, owner))
   .concat(R.FALLBACK))].sort();
 
-const cycles = R.TYPE_SET.concat(R.WAIT_SET);
+// A hold and the strip that leads into it are one PAIR: the strip's last frame is
+// the frame the hold was animated from, so the two joins between them are claims
+// this probe can make and nothing else can.
+const PAIRS = Object.keys(R.HOLDS).map((hold) => ({
+  hold, strip: R.MOVE[hold] || "",
+}));
+// How far the bottom edge may drift, by cycle: the two that keep their hands on the
+// keyboard are pinned to the base's own last row, the three that take a hand off it
+// may put it on the desk, which is the row under the sprite.
+const SEATED = { type8: 1, wait8: 1 };
+const SEATED_DEFAULT = 3;
+
 const bad = [];
-let drawnWorst = 0;
-let bandWorst = 0;
+let pinchWorst = 0;
+let flareWorst = 0;
+let holdWorst = 0;
+let moveWorst = 0;
+let moveShareWorst = 0;
+let joinWorst = 0;
+let bottomWorst = 0;
+let widerWorst = 0;
+let holdWidthWorst = 0;
+let stripWidthWorst = 0;
 let counted = 0;
-// Per set as well as overall — REPORTED, not asserted. Which set is nearest the
-// ceiling is worth reading off a failure, but the ceilings themselves are the
-// contract: freezing today's incidental numbers would fail a regenerated asset
-// that is perfectly inside them.
+// Per set as well as overall — REPORTED beside the assertions, never instead of one.
 const perSet = {};
+const chins = {};
+
+function measure(set, base, whole, cycle, frame, split) {
+  const img = png(R.fileOf(set, frame));
+  if (img.w !== base.w || img.h !== base.h) {
+    bad.push(set + "/" + frame + ": " + img.w + "x" + img.h + " is not the base's canvas");
+    return null;
+  }
+  counted++;
+  const band = bounds(img, split, img.h);
+  const drawn = bounds(composite(base, img, split), 0, base.h);
+  if (!band || !drawn) {
+    bad.push(set + "/" + frame + ": nothing opaque");
+    return null;
+  }
+  // (a) the seam, in both directions and on each side.
+  const above = bounds(base, split - 1, split);
+  const at = bounds(img, split, split + 1);
+  if (!above || !at) {
+    bad.push(set + "/" + frame + ": no silhouette on both sides of row " + split);
+  } else {
+    const left = at[0] - above[0];
+    const right = (above[0] + above[2]) - (at[0] + at[2]);
+    const pinch = Math.max(left, right);
+    const flare = Math.max(-left, -right);
+    pinchWorst = Math.max(pinchWorst, pinch);
+    flareWorst = Math.max(flareWorst, flare);
+    perSet[set][0] = Math.max(perSet[set][0], pinch);
+    if (pinch > 2) {
+      bad.push(set + "/" + frame + ": outline pinches " + pinch + " px at row " + split);
+    }
+    if (flare > 12) {
+      bad.push(set + "/" + frame + ": outline flares " + flare + " px at row " + split);
+    }
+  }
+  // (c) same chair.
+  const seated = SEATED[cycle] === undefined ? SEATED_DEFAULT : SEATED[cycle];
+  const bottom = Math.abs((drawn[1] + drawn[3]) - (whole[1] + whole[3]));
+  bottomWorst = Math.max(bottomWorst, bottom);
+  if (bottom > seated) {
+    bad.push(set + "/" + frame + ": bottom edge " + (drawn[1] + drawn[3])
+      + " vs base " + (whole[1] + whole[3]) + ", over " + seated);
+  }
+  const wider = drawn[2] - whole[2];
+  widerWorst = Math.max(widerWorst, wider);
+  if (wider > 6) {
+    bad.push(set + "/" + frame + ": drawn " + drawn[2] + " px wide vs base " + whole[2]);
+  }
+  return { band: [band[0], band[2], band[1] + band[3]], width: drawn[2] };
+}
+
+// (b) neighbour to neighbour. A hold gets 3 px flat. A strip gets 10 px AND 60 % of
+// its own travel: what would be wrong is a move that spends its whole journey in one
+// frame and eight frames standing still.
+function walk(set, label, run, flat, share) {
+  const travel = run[0].band
+    .map((v, k) => Math.max(...run.map((f) => Math.abs(f.band[k] - v))));
+  let step = 0;
+  let worstShare = 0;
+  for (let i = 1; i < run.length; i++) {
+    for (let k = 0; k < 3; k++) {
+      const d = Math.abs(run[i].band[k] - run[i - 1].band[k]);
+      step = Math.max(step, d);
+      perSet[set][1] = Math.max(perSet[set][1], d);
+      if (d > flat) {
+        bad.push(set + "/" + label + ": band jumps " + d + " px at frame " + i
+          + ", over " + flat);
+      }
+      if (share) {
+        // 60 % of this strip's own travel on this measure, and never under 4 px:
+        // the room worker's KEYBOARD is the widest thing in that sprite and does not
+        // travel, so its `reach` box moves 4 px in total while the hand inside it
+        // crosses ten. What is bounded is the EXCESS over that allowance, which is
+        // zero or the frame is a teleport.
+        const allowance = Math.max(4, travel[k] * share);
+        worstShare = Math.max(worstShare, d - allowance);
+        if (d > allowance) {
+          bad.push(set + "/" + label + ": one frame carries " + d + " px of a "
+            + travel[k] + " px travel at frame " + i + ", over " + allowance);
+        }
+      }
+    }
+  }
+  return { step, share: worstShare };
+}
 
 for (const set of sets) {
-  const split = R.splitOf(set);
   perSet[set] = [0, 0];
   const base = png(R.fileOf(set, "base"));
-  const box = bounds(base, 0, base.h);
-  const bandBox = bounds(base, split, base.h);
-  if (!box || !bandBox) { bad.push(set + ": base has no opaque pixels"); continue; }
-  for (const frame of cycles) {
-    const img = png(R.fileOf(set, frame));
-    if (img.w !== base.w || img.h !== base.h) {
-      bad.push(set + "/" + frame + ": " + img.w + "x" + img.h + " is not the base's canvas");
-      continue;
+  const whole = bounds(base, 0, base.h);
+  if (!whole) { bad.push(set + ": base has no opaque pixels"); continue; }
+  const chin = chinOf(base);
+  chins[set] = chin;
+  for (const pair of PAIRS) {
+    const holdSplit = R.splitOf(set, pair.hold);
+    // The split lives in the jacket, and never in a face: the two cycles that were
+    // on the wall before this run keep their own rows, and a new pose may not be cut
+    // above the row where this set's chin ends.
+    const range = pair.strip ? [26, 46] : [38, 46];
+    if (holdSplit < range[0] || holdSplit > range[1]) {
+      bad.push(set + "/" + pair.hold + ": cut at " + holdSplit
+        + ", outside " + range.join("-"));
     }
-    counted++;
-    const drawn = bounds(composite(base, img, split), 0, base.h);
-    const band = bounds(img, split, img.h);
-    if (!drawn || !band) { bad.push(set + "/" + frame + ": nothing opaque"); continue; }
-    // (a) the whole drawn figure, all four numbers.
-    for (let i = 0; i < 4; i++) {
-      drawnWorst = Math.max(drawnWorst, Math.abs(drawn[i] - box[i]));
-      perSet[set][0] = Math.max(perSet[set][0], Math.abs(drawn[i] - box[i]));
+    if (pair.strip && holdSplit < chin) {
+      bad.push(set + "/" + pair.hold + ": cut at " + holdSplit
+        + ", above the chin at " + chin);
     }
-    if (!drawn.every((v, i) => near(v, box[i], 1))) {
-      bad.push(set + "/" + frame + ": drawn " + drawn.join(",") + " vs base " + box.join(","));
+    const hold = R.HOLDS[pair.hold]
+      .map((frame) => measure(set, base, whole, pair.hold, frame, holdSplit)).filter(Boolean);
+    if (hold.length !== R.CYCLE) continue;
+    holdWorst = Math.max(holdWorst, walk(set, pair.hold, hold, 3, 0).step);
+    // The eight frames of a hold agree on their own width: a pose that resized
+    // itself mid-breath is the rescaled person (c) is looking for.
+    const widths = hold.map((f) => f.width);
+    const spread = Math.max(...widths) - Math.min(...widths);
+    holdWidthWorst = Math.max(holdWidthWorst, spread);
+    if (spread > 3) {
+      bad.push(set + "/" + pair.hold + ": width wanders " + spread + " px over the hold");
     }
-    // (b) the animated band: x, width, and where the bottom edge lands. The
-    // band's own TOP is the split by construction, so it says nothing.
-    const got = [band[0], band[2], band[1] + band[3]];
-    const want = [bandBox[0], bandBox[2], bandBox[1] + bandBox[3]];
-    for (let i = 0; i < 3; i++) {
-      bandWorst = Math.max(bandWorst, Math.abs(got[i] - want[i]));
-      perSet[set][1] = Math.max(perSet[set][1], Math.abs(got[i] - want[i]));
+    if (!pair.strip) continue;
+    // A strip is cut at its own hold's row, so the two are measured at one split
+    // and the join between them is a real comparison.
+    const stripSplit = R.splitOf(set, pair.strip);
+    if (stripSplit !== holdSplit) {
+      bad.push(set + "/" + pair.strip + ": cut at " + stripSplit
+        + " but " + pair.hold + " at " + holdSplit);
     }
-    if (!got.every((v, i) => near(v, want[i], 3))) {
-      bad.push(set + "/" + frame + ": band x/w/bottom " + got.join(",") + " vs base " + want.join(","));
+    const strip = R.MOVES[pair.strip]
+      .map((frame) => measure(set, base, whole, pair.strip, frame, stripSplit)).filter(Boolean);
+    if (strip.length !== R.CYCLE) continue;
+    const moved = walk(set, pair.strip, strip, 10, 0.6);
+    moveWorst = Math.max(moveWorst, moved.step);
+    moveShareWorst = Math.max(moveShareWorst, moved.share);
+    // The move starts where the base is and ends where the hold begins.
+    const from = bounds(base, stripSplit, base.h);
+    const joins = [
+      ["out of the base", strip[0].band, [from[0], from[2], from[1] + from[3]]],
+      ["into " + pair.hold, strip[strip.length - 1].band, hold[0].band],
+    ];
+    for (const [what, got, want] of joins) {
+      const step = Math.max(...got.map((v, k) => Math.abs(v - want[k])));
+      joinWorst = Math.max(joinWorst, step);
+      if (step > 3) bad.push(set + "/" + pair.strip + ": " + what + " steps " + step + " px");
+    }
+    const startWidth = Math.abs(strip[0].width - whole[2]);
+    stripWidthWorst = Math.max(stripWidthWorst, startWidth);
+    if (startWidth > 3) {
+      bad.push(set + "/" + pair.strip + "-0: " + strip[0].width
+        + " px wide vs base " + whole[2]);
     }
   }
 }
 
 console.log(JSON.stringify({
   sets: sets.join(" "),
-  splits: sets.map((s) => s + "=" + R.splitOf(s)).join(" "),
+  cycles: Object.keys(R.HOLDS).concat(Object.keys(R.MOVES)).sort().join(" "),
   frames: counted,
-  drawnWorst,
-  bandWorst,
+  pinchWorst,
+  flareWorst,
+  holdWorst,
+  moveWorst,
+  moveShareWorst,
+  joinWorst,
+  bottomWorst,
+  widerWorst,
+  holdWidthWorst,
+  stripWidthWorst,
+  chins: sets.map((s) => s + "=" + chins[s]).join(" "),
   perSet: sets.map((s) => s + "=" + perSet[s][0] + "/" + perSet[s][1]).join(" "),
+  // (d) The two cycles that were already on the wall are cut where they were cut.
+  keys: sets.map((s) => s + "=" + R.splitOf(s, "type8") + "/" + R.splitOf(s, "wait8"))
+    .join(" "),
   bad: bad.join("; "),
 }));
 JS
 LOCK="$(node "$LOCK_PROBE" "$SRC" "$PNG_JS" 2>&1)"
 lock_of() { printf '%s' "$LOCK" | jq -r ".$1" 2>/dev/null; }
-check "lock: every frame of every set was measured" "$(lock_of frames)" "64"
+check "lock: every frame of every set was measured" "$(lock_of frames)" "256"
 check "lock: and every one is a set the room will actually draw" \
   "$(lock_of sets)" "crew/angel crew/emre crew/ran room"
+check "lock: five holds and three moves, per set" \
+  "$(lock_of cycles)" "done8 lean reach read8 toast type8 wait8 watch8"
 check "lock: nothing is out of tolerance" "$(lock_of bad)" ""
-if [ "$(lock_of drawnWorst)" -le 1 ] 2>/dev/null; then
-  ok "lock: the drawn figure is its base's box to $(lock_of drawnWorst) px (ceiling 1)"
-else
-  bad "lock: the drawn figure is off its base's box by $(lock_of drawnWorst) px (ceiling 1)"
-fi
-if [ "$(lock_of bandWorst)" -le 3 ] 2>/dev/null; then
-  ok "lock: the animated band holds x/width/bottom to $(lock_of bandWorst) px (ceiling 3)"
-else
-  bad "lock: the animated band drifts $(lock_of bandWorst) px on x/width/bottom (ceiling 3)"
-fi
-# And where each set actually sits, printed rather than asserted: the two ceilings
-# above are the contract, and a line that froze today's per-set numbers would fail
-# a regenerated asset that is comfortably inside them.
-ok "lock: per set, drawn/band — $(lock_of perSet)"
+lock_at() {
+  if [ "$(lock_of "$2")" -le "$3" ] 2>/dev/null; then
+    ok "lock: $1 — $(lock_of "$2") (ceiling $3)"
+  else
+    bad "lock: $1 — $(lock_of "$2") is over the ceiling of $3"
+  fi
+}
+lock_at "(a) the outline never pinches at the seam" pinchWorst 2
+lock_at "(a) nor flares past what a mug in a hand takes" flareWorst 12
+lock_at "(b) a held pose breathes rather than shifting" holdWorst 3
+lock_at "(b) a move joins the base and its hold without a step" joinWorst 3
+lock_at "(b) a move's largest single frame" moveWorst 10
+lock_at "(b) and none of them past 60 % of that strip's own travel, floor 4 px" \
+  moveShareWorst 0
+lock_at "(c) every drawn figure sits in its base's chair" bottomWorst 3
+lock_at "(c) none of them is wider than the base" widerWorst 6
+lock_at "(c) a hold keeps one width across its eight frames" holdWidthWorst 3
+lock_at "(c) and a move starts at the base's own width" stripWidthWorst 3
+# The two cycles that were on the wall before this run are cut where they were cut:
+# the asset guard pins their BYTES to their manifest rows, and this pins the row.
+check "lock: the typing and waiting cycles keep the rows PR #47 measured" \
+  "$(lock_of keys)" \
+  "crew/angel=41/41 crew/emre=43/43 crew/ran=40/40 room=41/41"
+# And where each set actually sits, printed beside the assertions above rather than
+# instead of them: the ceilings are the contract, and a line that froze today's
+# per-set numbers would fail a regenerated asset comfortably inside them.
+ok "lock: per set, pinch/band — $(lock_of perSet)"
+ok "lock: the chin each base's own silhouette ends at — $(lock_of chins)"
 
 # Who is at the desk. wall/crew.json is the one place an owner is mapped to a
 # character, and a set it names that is missing a frame is a room that never
@@ -3206,6 +3394,17 @@ for (const run of api.runs) {
     if (!R.MARKS[row.mark]) missing.push("MARK:" + row.mark);
   }
 }
+// Every actor key the SERVER can put in a snapshot, read off its own tables rather
+// than copied into this file. server.js is not the room's to edit and does not
+// export them, so they are parsed out of the source — a second hand-kept copy of
+// that list is exactly the thing that goes stale the week a stage is added, which
+// is the failure this probe exists to catch.
+const SERVER_SRC = fs.readFileSync(path.join(process.argv[4], "wall", "server.js"), "utf8");
+const SERVER_KEYS = [...new Set(
+  [...SERVER_SRC.matchAll(/^\s*\[\/.*\/, '[^']*', '([a-z]+)'\],$/gm)].map((m) => m[1])
+    .concat(/const FLOOR_ACTOR = \[([^\]]+)\]/.exec(SERVER_SRC)[1].match(/[a-z]+/g))
+    // actorOf() falls through to this one, and it is in no table.
+    .concat(["unknown"]))].sort();
 const still = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
   JSON.stringify(R.beatAt(t, true)));
 const moving = [0, 1, 7.5, 3600, 86399, 1755000000.25].map((t) =>
@@ -3231,30 +3430,79 @@ const spans = (working) => segments.filter((s) => s[0] === working)
   .map((s) => Number(s[1].toFixed(1)));
 const burstSig = (from) => Array.from({ length: 1390 },
   (_, i) => (R.burstAt(from + i * 0.01) ? "1" : "0")).join("");
-// Which frame each band of the drawn worker comes from, over every set, both
-// states, and either side of the reveal override.
+// The bouts, walked the same way, over their own table.
+const bouts = [];
+{
+  let on = R.scrollAt(0);
+  let from = 0;
+  for (let ms = 1; ms <= 8 * R.BOUT_CYCLE * 1000; ms++) {
+    const now = R.scrollAt(ms / 1000);
+    if (now !== on) { bouts.push([on, (ms - from) / 1000]); on = now; from = ms; }
+  }
+}
+const runs = (table, scrolling) => table.filter((s) => s[0] === scrolling)
+  .map((s) => Number(s[1].toFixed(1)));
+const boutSig = (from) => Array.from({ length: 820 },
+  (_, i) => (R.scrollAt(from + i * 0.01) ? "1" : "0")).join("");
+// Which frame each band of the drawn worker comes from, over every set, every
+// hold, and either side of the reveal override. `since` is past both strips, so
+// this is the SETTLED body — the strips get their own walk below.
+const SETTLED = 4 * R.MOVE_SECS;
 const bands = [];
 for (const set of SETS) {
   for (let t = 0; t < 40; t += 0.017) {
-    for (const alarm of [false, true]) {
+    for (const cycle of Object.keys(R.HOLDS)) {
       for (const typing of [false, true]) {
-        bands.push({ set, ...R.bandsOf(set, R.beatAt(t, false, 0), alarm, typing) });
+        bands.push({
+          set,
+          ...R.bandsOf(set, R.beatAt(t, false, 0), { cycle, from: cycle, since: SETTLED, typing }),
+        });
       }
     }
   }
 }
 // And every frame the body band is ever drawn from, over one long hold. `when`
-// picks the seconds this asks about: the ones the schedule is working through,
-// the ones it is resting through, or all of them.
-const bodies = (alarm, typing, when) => {
+// picks the seconds this asks about: the ones the schedule is working or scrolling
+// through, the ones it is resting through, or all of them.
+const bodies = (cycle, typing, when) => {
   const seen = new Set();
   for (let t = 0; t < 40; t += 0.017) {
     const beat = R.beatAt(t, false, 0);
-    if (when !== undefined && beat.burst !== when) continue;
-    seen.add(R.bandsOf("room", beat, alarm, typing).body);
+    const gate = cycle === "read8" ? beat.scroll : beat.burst;
+    if (when !== undefined && gate !== when) continue;
+    seen.add(R.bandsOf("room", beat, { cycle, from: cycle, since: SETTLED, typing }).body);
   }
   return [...seen].sort().join(",");
 };
+// The whole drawn sequence across a pose change, frame by frame, sampled fast enough
+// to catch a 250 ms beat of the base: what a run actually shows when the plate climbs
+// a floor. `from` is the pose being left, `cycle` the one being entered.
+const STEP_MS = 40;
+const across = (from, cycle) => {
+  const total = (R.MOVE[from] ? R.MOVE_SECS : 0) + (R.MOVE[cycle] ? R.MOVE_SECS : 0)
+    + (!R.MOVE[from] && !R.MOVE[cycle] ? R.BASE_MS / 1000 : 0);
+  const out = [R.bandsOf("room", R.beatAt(0, false, 0),
+    { cycle: from, from: "", since: SETTLED }).body];
+  for (let ms = 0; ms <= Math.round(total * 1000) + STEP_MS; ms += STEP_MS) {
+    const since = ms / 1000;
+    out.push(R.bandsOf("room", R.beatAt(since, false, 0), { cycle, from, since }).body);
+  }
+  // Consecutive duplicates say nothing about a cut; what matters is the ORDER the
+  // distinct frames come in, which is what the eye sees.
+  return out.filter((f, i) => !i || f !== out[i - 1]);
+};
+// The cut rule, and nothing that stands in for it. Between two frames from DIFFERENT
+// cycles the drawn sequence must contain a strip frame or the literal base — a
+// `type8-N` next to a `wait8-N` is a cut however alike the two pictures are, and the
+// round-1 probe passed it by calling both of them "the base".
+const cycleOf = (f) => (f === "base" ? "base" : f.slice(0, f.lastIndexOf("-")));
+const isStrip = (f) => !!R.MOVES[cycleOf(f)];
+const noCut = (run) => run.every((frame, i) => {
+  if (!i) return true;
+  const was = run[i - 1];
+  if (cycleOf(was) === cycleOf(frame)) return true;
+  return was === "base" || frame === "base" || isStrip(was) || isStrip(frame);
+});
 console.log(JSON.stringify({
   hero: hero.id,
   // A blocked run shows the alarm, not the stage it stopped on — and the floor
@@ -3460,6 +3708,37 @@ console.log(JSON.stringify({
   waitLoops: Array.from({ length: R.WAIT_FRAMES + 1 },
     (_, i) => R.beatAt((i * R.WAIT_MS) / 1000, false).waiting).join(","),
   waitMs: R.WAIT_MS,
+  // The three the stages brought, on the same one reading of the clock and chosen
+  // for the same property: six distinct poses across a six-frame contact sheet.
+  watchCadence: GATE.map((t) => R.beatAt(t, false).watching).join(","),
+  readCadence: GATE.map((t) => R.beatAt(t, false).reading).join(","),
+  doneCadence: GATE.map((t) => R.beatAt(t, false).toasting).join(","),
+  holdLoops: [["watching", R.WATCH_MS], ["reading", R.READ_MS], ["toasting", R.DONE_MS]]
+    .every(([field, ms]) => Array.from({ length: R.CYCLE + 1 },
+      (_, i) => R.beatAt((i * ms) / 1000, false)[field]).join(",") === "0,1,2,3,4,5,6,7,0"),
+  holdMs: [R.WATCH_MS, R.READ_MS, R.DONE_MS].join(","),
+  // A breath is slower than a hand and a wrist flicking a wheel is quicker than
+  // one; a mug held up is the least urgent thing in the room.
+  holdPace: R.READ_MS > R.TYPE_MS && R.READ_MS < R.WAIT_MS
+    && R.WATCH_MS >= R.WAIT_MS && R.DONE_MS > R.WAIT_MS,
+  moveMs: R.MOVE_MS,
+  moveSecs: R.MOVE_SECS,
+  // Reduced motion is ONE frame per state at every second of the clock, and it is
+  // the hold's own frame 0 — never a strip, because a still room is a settled room.
+  reducedOneFrame: Object.keys(R.HOLDS).every((cycle) => {
+    const at = [0, 1, 7.5, 3600, 86399].map((t) =>
+      R.bandsOf("room", R.beatAt(t, true), { cycle, from: "type8", since: Infinity }).body);
+    return new Set(at).size === 1 && at[0] === cycle + "-0";
+  }),
+  stillIsSettled: R.moveAt({ cycle: "watch8", from: "type8", since: Infinity }) === ""
+    && R.moveAt({ cycle: "watch8", from: "type8" }) === "",
+  // A NEGATIVE since is a change that happened this very frame — show()'s
+  // performance.now() stamp is a few milliseconds ahead of the rAF timestamp the
+  // loop paints the same frame with — and it draws the strip's FIRST frame, never
+  // the new hold: one settled frame there was a one-frame pop at every stage flip.
+  justChangedIsTheStrip: R.moveAt({ cycle: "read8", from: "watch8", since: -0.008 }) === "lean-7"
+    && R.moveAt({ cycle: "watch8", from: "type8", since: -0.008 }) === "lean-0"
+    && R.moveAt({ cycle: "wait8", from: "type8", since: -0.008 }) === "base",
   // The bursts. A person types for a few seconds and then reads for half of one,
   // and the schedule that says so is arithmetic on the shot clock: pure, so two
   // recordings of the same second are the same picture, and irregular, so it is
@@ -3478,20 +3757,133 @@ console.log(JSON.stringify({
   // from frame N is the whole defect this run removes, and this is the probe
   // that refuses to let it back in.
   headAlwaysBase: bands.every((b) => b.head === "base"),
-  headNeverACycle: bands.every((b) =>
-    !R.TYPE_SET.includes(b.head) && !R.WAIT_SET.includes(b.head)),
+  headNeverACycle: bands.every((b) => b.head === "base"
+    && !Object.values(R.HOLDS).concat(Object.values(R.MOVES)).flat().includes(b.head)),
   bandIsAFrame: bands.every((b) => R.FRAMES.includes(b.body)),
-  // The split sits below the shoulders and above the hands, per set, and every
-  // set has one of its own.
-  splits: SETS.map((s) => s + "=" + R.splitOf(s)).join(" "),
-  splitsSane: SETS.every((s) => R.splitOf(s) >= 38 && R.splitOf(s) <= 46),
+  // --- a pose per stage ----------------------------------------------------
+  // The table, resolved for every key the SERVER can put in a snapshot. A key it
+  // does not know draws a working person rather than an empty chair, so this can
+  // never come back empty — what it can come back as is a cycle the room has no
+  // frames for, which is the failure this refuses.
+  poses: Object.keys(R.POSE).sort().map((k) => k + "=" + R.POSE[k]).join(" "),
+  serverKeys: SERVER_KEYS.join(" "),
+  everyKeyResolves: SERVER_KEYS
+    .every((key) => {
+      const shipped = key === "done";
+      return [false, true].every((ready) =>
+        !!R.HOLDS[R.cycleOf({ workActorKey: key, alarm: false, shipped: shipped && ready })]);
+    }),
+  strangeKeyWorks: R.cycleOf({ workActorKey: "no-such-stage", alarm: false }),
+  // And resolved for every fixture the wall can serve: the run, not the table.
+  fixturePoses: api.runs.map((run) => run.id + "="
+    + R.cycleOf(R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS))).sort().join(" "),
+  // The alarm breathes whatever floor the work stopped on. This is the gate's own
+  // shot of this room and it is the one pose this run does not touch.
+  alarmAlwaysWaits: Object.keys(R.POSE).concat(["done", "nope"])
+    .every((key) => R.cycleOf({ workActorKey: key, alarm: true, shipped: true }) === "wait8"),
+  // A finished run keeps the mug up only if it actually shipped.
+  shippedPose: R.cycleOf({ workActorKey: "done", alarm: false, shipped: true }),
+  burntPose: R.cycleOf({ workActorKey: "done", alarm: false, shipped: false }),
+  shippedFlag: api.runs.filter((run) =>
+    R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS).shipped).map((r) => r.id).sort().join(","),
+  // Every hold has a full set of frames, and the three that are somewhere else in
+  // the chair have a strip to get there and back.
+  holds: Object.keys(R.HOLDS).sort().join(" "),
+  moveCycles: Object.keys(R.MOVES).sort().join(" "),
+  holdsAreFrames: Object.values(R.HOLDS).concat(Object.values(R.MOVES))
+    .every((set) => set.length === R.CYCLE && set.every((f) => R.FRAMES.includes(f))),
+  atTheKeyboard: Object.keys(R.HOLDS).filter((c) => !R.MOVE[c]).sort().join(" "),
+  // --- the move strips -----------------------------------------------------
+  // Into a pose out of the base, and out of one pose into another THROUGH the base:
+  // the exact sequence a run draws.
+  intoWatch: across("type8", "watch8").join(","),
+  outOfWatch: across("watch8", "type8").join(","),
+  watchToRead: across("watch8", "read8").join(","),
+  doneToWait: across("done8", "wait8").join(","),
+  // And the two pairs that have no strip between them at all: IMPLEMENT to the alarm
+  // and back. One beat of the literal base goes between, because two cycles butted
+  // together are a cut whatever they look like.
+  typeToWait: across("type8", "wait8").join(","),
+  waitToType: across("wait8", "type8").join(","),
+  baseBeat: R.BASE_MS,
+  // No cut, over every ordered pair of holds there is — the twenty, the two alarm
+  // pairs among them.
+  cutPairs: Object.keys(R.HOLDS).flatMap((from) =>
+    Object.keys(R.HOLDS).filter((to) => to !== from)
+      .filter((to) => !noCut(across(from, to))).map((to) => from + ">" + to)).join(","),
+  pairsWalked: Object.keys(R.HOLDS).length * (Object.keys(R.HOLDS).length - 1),
+  // A FRESH show is not a change: there is no pose to travel out of, so the body is
+  // the hold's from the first frame. This is the alarm room the visual gate
+  // photographs, and it may not gain a base frame at t = 0.
+  freshShow: Object.keys(R.HOLDS).map((cycle) =>
+    cycle + "=" + R.bandsOf("room", R.beatAt(0, false, 0),
+      { cycle, from: "", since: 0 }).body).join(" "),
+  // A strip plays ONCE. Past both of them the body is the hold's own frame and
+  // stays there, however long the run sits on that stage.
+  stripEnds: [2, 5, 30, 600].every((t) =>
+    R.HOLDS.watch8.includes(R.bandsOf("room", R.beatAt(t, false, 0),
+      { cycle: "watch8", from: "type8", since: t }).body)),
+  // And a snapshot that does not change the pose does not re-time it: the same
+  // `since` is the same frame, always.
+  stripDeterministic: [0.05, 0.4, 1.1, 1.8].every((since) =>
+    R.bandsOf("room", R.beatAt(since, false, 0), { cycle: "read8", from: "watch8", since })
+      .body === R.bandsOf("room", R.beatAt(since, false, 0),
+        { cycle: "read8", from: "watch8", since }).body),
+  // The split sits below the head and above the hands, per (set, cycle) — and a
+  // strip is cut where its own hold is, because the frame that ends one is the
+  // frame the other was animated from.
+  splits: SETS.map((s) => s + "="
+    + Object.keys(R.HOLDS).sort().map((c) => R.splitOf(s, c)).join("/")).join(" "),
+  splitsSane: SETS.every((s) => Object.keys(R.HOLDS).concat(Object.keys(R.MOVES))
+    .every((c) => R.splitOf(s, c) >= 26 && R.splitOf(s, c) <= 46)),
+  stripSharesItsHoldsRow: SETS.every((s) => Object.keys(R.MOVE)
+    .every((hold) => R.splitOf(s, hold) === R.splitOf(s, R.MOVE[hold]))),
+  splitTable: SETS.every((s) => Object.keys(R.HOLDS).concat(Object.keys(R.MOVES))
+    .every((c) => R.SPLIT[s][c] === R.splitOf(s, c))),
+  // A set nobody drew still gets a row rather than an undefined one.
+  strangeSetSplit: R.splitOf("crew/nobody", "watch8") + "/" + R.splitOf("crew/nobody", "type8"),
   // Which frames the body band is ever drawn from: the whole typing cycle while
   // working, the whole waiting cycle in an alarm, and the base itself — hands on
-  // the keys, still — while the person is resting between bursts.
-  workingBodies: bodies(false, false, true),
-  restingBodies: bodies(false, false, false),
-  revealBodies: bodies(false, true, false),
-  alarmBodies: bodies(true, false),
+  // the keys, still — while the person is resting between bursts. And the reader,
+  // whose rest is frame 0 of its OWN cycle: a hand that went back to the keyboard
+  // every second is a reader who keeps starting to type.
+  workingBodies: bodies("type8", false, true),
+  restingBodies: bodies("type8", false, false),
+  revealBodies: bodies("type8", true, false),
+  alarmBodies: bodies("wait8", false),
+  watchBodies: bodies("watch8", false),
+  scrollingBodies: bodies("read8", false, true),
+  readingRest: bodies("read8", false, false),
+  doneBodies: bodies("done8", false),
+  // --- the scroll bouts ----------------------------------------------------
+  // A reader has bouts, not bursts, and they are their own table on their own
+  // period: arithmetic on the shot clock, so a recording of the same second is the
+  // same picture, and irregular, so it is not a metronome.
+  boutScrolling: runs(bouts, true).length
+    ? Math.min(...runs(bouts, true)) + ".." + Math.max(...runs(bouts, true)) : "none",
+  boutResting: runs(bouts, false).length
+    ? Math.min(...runs(bouts, false)) + ".." + Math.max(...runs(bouts, false)) : "none",
+  boutDeterministic: boutSig(0) === boutSig(0) && boutSig(3.7) === boutSig(3.7),
+  boutVaries: boutSig(0) !== boutSig(R.BOUT_CYCLE)
+    && boutSig(0) !== boutSig(2 * R.BOUT_CYCLE),
+  // And it is NOT the typing schedule wearing another name.
+  boutsAreNotBursts: R.BOUT_CYCLE !== R.BURST_CYCLE
+    && boutSig(0) !== Array.from({ length: 820 },
+      (_, i) => (R.burstAt(i * 0.01) ? "1" : "0")).join(""),
+  // --- the mug ------------------------------------------------------------
+  // The desk mug is not drawn while the person is holding one, and the question is
+  // asked of the DRAWN FRAME: on the way out the pose has already changed while the
+  // reversed strip is still putting the mug down.
+  mugWhileToasting: R.holdsAMug(R.beatAt(3, false, 0),
+    { cycle: "done8", from: "done8", since: SETTLED }),
+  mugGoingIn: R.holdsAMug(R.beatAt(0.5, false, 0),
+    { cycle: "done8", from: "type8", since: 0.5 }),
+  mugComingOut: R.holdsAMug(R.beatAt(0.5, false, 0),
+    { cycle: "type8", from: "done8", since: 0.5 }),
+  mugBackOnTheDesk: R.holdsAMug(R.beatAt(3, false, 0),
+    { cycle: "type8", from: "done8", since: SETTLED }),
+  mugNotWhileTyping: Object.keys(R.HOLDS).filter((cycle) =>
+    R.holdsAMug(R.beatAt(3, false, 0), { cycle, from: cycle, since: SETTLED })).join(","),
   // The push only ever goes in. A lens that eased back, even by a rounding
   // error, is the cut the whole shot exists to avoid.
   pushNeverBacks: (() => {
@@ -3736,9 +4128,9 @@ check "things: and the view carries them per run, so the plane rebakes on a swap
 # thing baked into the middle plane, and the worker is drawn over that plane every
 # frame. A prop cannot be in front of a hand it is drawn behind.
 ROOM_ALL="$(cat "$SRC/wall/room.js")"
-grep_ok "$ROOM_ALL" '        theirThings(v);' \
+grep_ok "$ROOM_ALL" '        theirThings(v, holding);' \
   "things: they are baked with the still planes, not redrawn every frame"
-grep_ok "$ROOM_ALL" '      worker(view, beat, revealing());' \
+grep_ok "$ROOM_ALL" '      worker(view, beat, pose);' \
   "things: and the worker is drawn over that plane, so nothing crosses a forearm"
 THING_FN="$(awk '/^    function thing\(slot, name\) \{/, /^    \}$/' "$SRC/wall/room.js")"
 THING_CODE="$(printf '%s\n' "$THING_FN" | grep -v '^ *//')"
@@ -3809,9 +4201,16 @@ check "room: and never from a frame of either cycle" \
   "$(room_of headNeverACycle)" "true"
 check "room: the band under the split is a frame the room loaded" \
   "$(room_of bandIsAFrame)" "true"
-check "room: every set is cut at its own row, below the shoulders" \
-  "$(room_of splits)" "room=41 crew/angel=41 crew/emre=43 crew/ran=40"
+check "room: every set is cut at its own row per cycle — done8/read8/type8/wait8/watch8" \
+  "$(room_of splits)" \
+  "room=30/32/41/41/32 crew/angel=31/31/41/41/31 crew/emre=28/31/43/43/31 crew/ran=34/34/40/40/34"
 check "room: and no cut lands outside the jacket" "$(room_of splitsSane)" "true"
+check "room: a move is cut where the hold it leads into is cut" \
+  "$(room_of stripSharesItsHoldsRow)" "true"
+check "room: the flat table and the lookup agree on every one of them" \
+  "$(room_of splitTable)" "true"
+check "room: and a set nobody drew still gets a row" \
+  "$(room_of strangeSetSplit)" "32/41"
 check "room: a working worker's hands are the whole typing cycle" \
   "$(room_of workingBodies)" "type8-0,type8-1,type8-2,type8-3,type8-4,type8-5,type8-6,type8-7"
 check "room: a resting one holds the base — hands on the keys, still" \
@@ -3820,6 +4219,125 @@ check "room: unless a line is arriving, and then they are typing it" \
   "$(room_of revealBodies)" "type8-0,type8-1,type8-2,type8-3,type8-4,type8-5,type8-6,type8-7"
 check "room: a blocked one breathes through the whole waiting cycle" \
   "$(room_of alarmBodies)" "wait8-0,wait8-1,wait8-2,wait8-3,wait8-4,wait8-5,wait8-6,wait8-7"
+
+# A pose per stage. The plate has always said GATE, REVIEW, PUSH; the body said
+# IMPLEMENT in all three. The table is keyed on the actor whose work the floor
+# represents — which the server already owns — and what is checked here is that
+# every key it can produce lands on a cycle this room has frames for, that every
+# committed fixture resolves to the pose the contract names, and that the alarm
+# still breathes whatever floor the work stopped on.
+check "stage: the pose table, key by key" "$(room_of poses)" \
+  "codex=read8 deferred=type8 demo=done8 failed=wait8 gate=watch8 opus=type8 pr=done8 setup=wait8 skipped=read8 sync=wait8 unknown=type8 unreviewed=read8"
+check "stage: read off the server's own tables, not a second copy of them" \
+  "$(room_of serverKeys)" \
+  "alarm codex deferred demo done failed gate opus pr setup skipped sync unknown unreviewed"
+check "stage: and every one of them resolves to a cycle the room can draw" \
+  "$(room_of everyKeyResolves)" "true"
+check "stage: a stage nobody has taught it yet draws a working person" \
+  "$(room_of strangeKeyWorks)" "type8"
+check "stage: five holds" "$(room_of holds)" "done8 read8 type8 wait8 watch8"
+check "stage: three of them are somewhere else in the chair, and have a move" \
+  "$(room_of moveCycles)" "lean reach toast"
+check "stage: the other two are at the keyboard, where the base is" \
+  "$(room_of atTheKeyboard)" "type8 wait8"
+check "stage: every frame of every one of them is a file the room loads" \
+  "$(room_of holdsAreFrames)" "true"
+check "stage: every fixture the wall serves resolves to its own stage's pose" \
+  "$(room_of fixturePoses)" \
+  "BOT-2287=wait8 BOT-2291=wait8 LEGACY-0042=type8 OLYX-1598=done8 OLYX-1631=type8 OLYX-1642=wait8 OLYX-1648=type8 OLYX-1655=read8 OLYX-1660=watch8 OLYX-1667=type8 OLYX-1673=done8 adhoc-kpi-sparklines=done8"
+check "stage: an alarm breathes whatever the work actor is" \
+  "$(room_of alarmAlwaysWaits)" "true"
+check "stage: a run that shipped keeps the mug up" "$(room_of shippedPose)" "done8"
+check "stage: and one that burnt out puts its hands down" "$(room_of burntPose)" "wait8"
+check "stage: which is a fact the server ships and the view now carries" \
+  "$(room_of shippedFlag)" "OLYX-1598"
+
+# The moves. A pose is entered and left through its own eight frames on the room
+# clock — forward once into it, reversed out of it — and a change between two held
+# poses goes out through one strip and in through the other. Nothing cuts.
+check "move: into the gate's pose, out of the base" "$(room_of intoWatch)" \
+  "type8-0,lean-0,lean-1,lean-2,lean-3,lean-4,lean-5,lean-6,lean-7,watch8-4"
+check "move: and back out of it the way it came" "$(room_of outOfWatch)" \
+  "watch8-0,lean-7,lean-6,lean-5,lean-4,lean-3,lean-2,lean-1,lean-0,type8-0"
+check "move: gate to review uncrosses the arms and then reaches for the mouse" \
+  "$(room_of watchToRead)" \
+  "watch8-0,lean-7,lean-6,lean-5,lean-4,lean-3,lean-2,lean-1,lean-0,reach-0,reach-1,reach-2,reach-3,reach-4,reach-5,reach-6,reach-7,read8-0"
+check "move: and a shipped run puts the mug down before it waits" \
+  "$(room_of doneToWait)" \
+  "done8-0,toast-7,toast-6,toast-5,toast-4,toast-3,toast-2,toast-1,toast-0,wait8-4"
+check "move: no pair of poses anywhere cuts from one cycle to another" \
+  "$(room_of cutPairs)" ""
+check "move: over all twenty ordered pairs of the five holds" \
+  "$(room_of pairsWalked)" "20"
+check "move: IMPLEMENT to the alarm goes through one beat of the literal base" \
+  "$(room_of typeToWait)" "type8-0,base,wait8-1"
+check "move: and back out of it the same way" \
+  "$(room_of waitToType)" "wait8-0,base,type8-2"
+check "move: which is long enough to read as a beat" "$(room_of baseBeat)" "250"
+check "move: a fresh show is not a change — the hold has the body at t = 0" \
+  "$(room_of freshShow)" \
+  "type8=type8-0 wait8=wait8-0 watch8=watch8-0 read8=read8-0 done8=done8-0"
+check "move: a strip plays once and the hold keeps the body after it" \
+  "$(room_of stripEnds)" "true"
+check "move: and the same second is the same frame, every time it is asked" \
+  "$(room_of stripDeterministic)" "true"
+if [ "$(room_of moveMs)" = "120" ]; then
+  ok "move: at the hands' own cadence, eight frames in $(room_of moveSecs) s"
+else
+  bad "move: at the hands' own cadence (got $(room_of moveMs) ms a frame)"
+fi
+
+# The three new holds, and what each of them is drawn from.
+check "hold: the gate's breath is the whole watching cycle" \
+  "$(room_of watchBodies)" "watch8-0,watch8-1,watch8-2,watch8-3,watch8-4,watch8-5,watch8-6,watch8-7"
+check "hold: a shipped run's is the whole toast" \
+  "$(room_of doneBodies)" "done8-0,done8-1,done8-2,done8-3,done8-4,done8-5,done8-6,done8-7"
+check "hold: the reader scrolls through its whole cycle" \
+  "$(room_of scrollingBodies)" "read8-0,read8-1,read8-2,read8-3,read8-4,read8-5,read8-6,read8-7"
+check "hold: and rests on its OWN frame 0, hand still on the mouse" \
+  "$(room_of readingRest)" "read8-0"
+check "hold: each lands on a different pose in every gate frame — watching" \
+  "$(room_of watchCadence)" "0,3,6,1,4,7"
+check "hold: reading" "$(room_of readCadence)" "0,4,1,6,2,7"
+check "hold: toasting" "$(room_of doneCadence)" "0,3,6,1,4,7"
+check "hold: and every one of them loops rather than ping-pongs" \
+  "$(room_of holdLoops)" "true"
+check "hold: watching, reading, toasting, in ms a pose" "$(room_of holdMs)" "240,160,250"
+check "hold: a wrist is quicker than a breath and a raised mug is slower" \
+  "$(room_of holdPace)" "true"
+check "room: reduced motion is one frame per state, and the hold's own frame 0" \
+  "$(room_of reducedOneFrame)" "true"
+check "room: a still room is a settled room, never one caught mid-move" \
+  "$(room_of stillIsSettled)" "true"
+check "room: a change that happened this frame draws the strip, never one settled frame of the new hold" \
+  "$(room_of justChangedIsTheStrip)" "true"
+
+# The bouts. A reader moves the wheel for a second or two and then stops to read
+# what came into view; a typist works for three and pauses for half of one. Two
+# tables, two periods, and the reader's is not the typist's wearing another name.
+check "bout: scrolling comes in runs of half a second to two" \
+  "$(room_of boutScrolling)" "0.6..1.8"
+check "bout: with a rest of half a second to one and a half between them" \
+  "$(room_of boutResting)" "0.5..1.4"
+check "bout: the schedule is the same schedule every time it is asked" \
+  "$(room_of boutDeterministic)" "true"
+check "bout: while not being the same bar over and over" "$(room_of boutVaries)" "true"
+check "bout: and it is not the typing schedule under another name" \
+  "$(room_of boutsAreNotBursts)" "true"
+
+# The mug. Two of the four people keep one on their desk, and the pose that says a
+# run shipped is that person raising one — so while it is in their hand it is not
+# also standing on the desk. Asked of the DRAWN FRAME, because on the way out the
+# pose has already changed while the reversed strip is still putting it down.
+check "mug: it is in their hand while they are toasting" \
+  "$(room_of mugWhileToasting)" "true"
+check "mug: from the first frame of the reach for it" "$(room_of mugGoingIn)" "true"
+check "mug: and still in it while they are putting it back" \
+  "$(room_of mugComingOut)" "true"
+check "mug: which is where it stands again once they have" \
+  "$(room_of mugBackOnTheDesk)" "false"
+check "mug: and no other pose in the room is holding one" \
+  "$(room_of mugNotWhileTyping)" "done8"
 
 # What the tube says. Four rows of the run's own feed.log, in the one face the
 # room has, with the punctuation code is written in.
@@ -3923,7 +4441,7 @@ grep_ok "$PAGE_SRC" 'Room.create({ canvas: roomCanvas, still, random: seededRand
 # The still planes are drawn once per run rather than at the display's refresh:
 # the wall, the window, the plate, the floor and the desk are facts about a run,
 # and forty rectangles of wall grain a frame is work with no picture in it.
-grep_ok "$ROOM_SRC" 'function bakePlanes(v) {' \
+grep_ok "$ROOM_SRC" 'function bakePlanes(v, holding) {' \
   "room: the still planes are baked, not redrawn every frame"
 for plane in plateBack plateMid plateFront; do
   grep_ok "$ROOM_SRC" "ctx.drawImage($plane, 0, 0);" "room: and $plane is composited in"
