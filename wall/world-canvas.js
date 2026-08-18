@@ -114,7 +114,7 @@
   const PLOT_WIDE = 0.95;
   // The top third of the plot frame is empty night. Sky is what tells the eye how
   // tall the thing under it is, and the critic's one_fix asked for it by name.
-  const PLOT_SKY = 0.35;
+  const PLOT_SKY = 1 / 3;
   // The owner's lamp on a roof: a hard little core with a bloom around it, which is
   // how every readable light on this wall is built — the crew tube on a shoulder is
   // a solid tinted rect added over the wall, and the tower's beacon is the same glow
@@ -125,17 +125,21 @@
   const MARKER_CORE = 3;      // the lamp itself, in world pixels
   const MARKER_ALPHA = 0.95;  // the core at its brightest
   const MARKER_HALO = 0.5;    // and its bloom
-  // THE RACK FOCUS. A camera with a real lens does not brighten a whole city to say
-  // which building it is looking at — it separates planes. What stands IN FRONT of
-  // the subject goes nearly away, what stands BEHIND goes back a stop, and the hero
-  // keeps the same depth tint it has in the wide. The street haze goes all the way
-  // out: magnified at the plot lens it becomes a full-frame wash rather than weather.
-  // Shop tubes stay readable but secondary to the lit frontage they name.
+  // THE RACK FOCUS. A camera with a real lens does not dim a city to say which
+  // building it is looking at — it FOCUSES one distance, and everything nearer and
+  // further goes soft. This world cannot blur (a blurred pixel is not a pixel any
+  // more), so it does the same thing in value, on the three planes the district
+  // already has: what stands IN FRONT of the subject goes nearly away, because the
+  // street row was the thing standing between the eye and the building that just
+  // shipped; what stands BEHIND it goes back a stop, so the city is still there to
+  // stand in; and the skyline, which is drawn in front of the whole band, goes with
+  // the front. The subject keeps its own value AND loses its band's veil for the
+  // beat — it comes to the front of the eye without moving one pixel in the layout.
   //
   // One table, eased in over `over`, held through `plot`, eased out over `out`. Every
   // number in it is 1 at u = 0, which is what makes "after the film the city is byte
   // for byte what it was" arithmetic rather than a promise.
-  const FOCUS = { front: 0.1, back: 0.22, skyline: 0.08, signs: 0.38, haze: 0 };
+  const FOCUS = { front: 0.18, back: 0.5, skyline: 0.22 };
 
   // THE BIRTH, in seconds from the moment the builders arrive. Every one of these
   // is a position in a span, so a browser that opens four seconds into a birth
@@ -1075,8 +1079,10 @@
       front: to(FOCUS.front),
       back: to(FOCUS.back),
       skyline: to(FOCUS.skyline),
-      signs: to(FOCUS.signs),
-      haze: to(FOCUS.haze),
+      // How much of the subject's own band veil has come off. A block's veil is a
+      // multiply tint, so lifting it is the one way to make a building brighter
+      // without touching the sprite it is drawn from.
+      lift: share,
     };
   }
 
@@ -1090,13 +1096,14 @@
     return step.phase === 'plot' ? 1 : 0;
   }
 
-  // And where ONE block stands in that focus. The subject keeps its value and veil;
-  // anything in a nearer band goes to the front's share; anything in its
-  // own band or further back goes to the back's. The hero keeps its band tint: value
-  // separation comes from what surrounds it, not from washing its facade white.
+  // And where ONE block stands in that focus. The subject keeps its value and loses
+  // its veil; anything in a nearer band goes to the front's share; anything in its
+  // own band or further back goes to the back's — a neighbour at the same distance
+  // is not in front of the subject, so it does not have to get out of the way, it
+  // only has to stop competing.
   function focusOn(focus, depth, hero, heroDepth) {
     if (focus.k <= 0) return { alpha: 1, veil: 0 };
-    if (hero) return { alpha: 1, veil: 0 };
+    if (hero) return { alpha: 1, veil: focus.lift };
     return { alpha: depth > heroDepth ? focus.front : focus.back, veil: 0 };
   }
 
@@ -2136,7 +2143,9 @@
         // mass behind.
         body.setTint(veil);
         root.add(body);
-        const parts = { root, box, block, body, textures: [dt.key] };
+        // `tint` is the band's own veil, kept because the plot beat lifts it and has
+        // to be able to put it back byte for byte.
+        const parts = { root, box, block, body, tint: veil, veil: 0, textures: [dt.key] };
 
         // TODAY'S SHIPS ARE THE LIT ONES. The same building with more of its
         // windows on, crossfaded over the settled one and cooling to nothing on
@@ -3247,9 +3256,10 @@
         cam.setZoom(pose.zoom);
         cam.centerOn(pose.x, pose.y);
         // THE FOCUS. Everything in front of the plot gets out of the way, everything
-        // behind it goes back a stop, and the block itself keeps the value and depth
-        // tint it has in the wide. Nothing that is STILL ever focuses: a city under
-        // reduced motion is a settled city, and a settled city is the one main draws.
+        // behind it goes back a stop, and the block itself keeps its value and loses
+        // its veil — a rack focus, in the only currency a pixel-art wall has. Nothing
+        // that is STILL ever focuses: a city under reduced motion is a settled city,
+        // and a settled city is the one main draws.
         const hero = onPlot ? (filming ? filming.run : this.shipTarget(s)) : '';
         const target = this.blocks.get(hero);
         const focus = focusAt(onPlot && !still.matches ? shipFocusAt(step) : 0);
@@ -3259,10 +3269,6 @@
         this.cityC.setAlpha(focus.skyline);
         this.streetC.setAlpha(this.streetBase * focus.front);
         this.nearC.setAlpha(focus.front);
-        // Haze is a low strip in the wide and a full-frame wash after the plot lens
-        // magnifies it. Take that weather pass out with the focus so the subject is
-        // cut against the sky instead of floating in a pale brown field.
-        this.hazeC.setAlpha(focus.haze);
         // Last week is the furthest thing back there is.
         this.ghostG.setAlpha(this.ghostBase * focus.back);
         if (this.landmark) {
@@ -3324,12 +3330,22 @@
         const landed = settling ? Math.min(1, age / 0.9) : 1;
         const drop = settling ? Math.round(Math.max(0, 1 - age / 0.9) * 14) : 0;
         // And where this building stands in the rack focus: the subject keeps its
-        // value and band tint, what is nearer gets out of the way, and what is
-        // further back goes back a stop. Off the film, all of it is 1.
+        // value and loses its band's veil, what is nearer than it gets out of the way,
+        // what is further back goes back a stop. Off the film, all of it is 1 and 0.
         const focus = focusOn(this.plot.focus, box.depth,
                               this.plot.hero === block.id, this.plot.depth);
         const here = focus.alpha;
         parts.root.setAlpha(landed * here);
+        // A veil is a multiply tint, so lifting it toward white is the one way to
+        // bring a building forward without touching the sprite it is stamped from —
+        // and at lift 0 the mix returns the band's own veil, exactly.
+        if (parts.veil !== focus.veil) {
+          parts.veil = focus.veil;
+          const lifted = mix(parts.tint, 0xffffff, focus.veil);
+          parts.body.setTint(lifted);
+          if (parts.hot) parts.hot.setTint(lifted);
+          parts.lift[0].setTint(lifted);
+        }
         parts.root.setY(drop);
         for (const sign of parts.signs) sign.g.setY(sign.y + drop);
 
@@ -3369,13 +3385,12 @@
         // The shopfront's own sign hangs in the band's shared sign layer rather than
         // inside this block, so it takes the step-back by hand.
         const on = landed * fit * here;
-        const signOn = on * this.plot.focus.signs;
-        if (shop.lamp) shop.lamp.setAlpha(shop.lampBase * signOn);
-        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23) * signOn);
+        if (shop.lamp) shop.lamp.setAlpha(shop.lampBase * on);
+        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23) * on);
         if (shop.glyph) {
           const lit = tubeAt(phase, shop.glyphPhase, 23);
-          shop.glyph.setAlpha(lit * signOn);
-          if (shop.plate) shop.plate.setAlpha((0.5 + lit * 0.4) * signOn);
+          shop.glyph.setAlpha(lit * on);
+          if (shop.plate) shop.plate.setAlpha((0.5 + lit * 0.4) * on);
         }
         parts.panes.forEach((pane, i) =>
           pane.g.setAlpha(paneAt(phase, i, pane.phase * 13) * BAND_PANE * fit));
