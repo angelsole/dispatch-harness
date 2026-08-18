@@ -3129,14 +3129,14 @@ for (const kind of KINDS) {
     }
   }
 }
-// REINIER is the longest label on the roster, so it is the widest board the
-// district can hang — measured through room.js's own face rather than guessed.
-const R = require(process.argv[4]);
-const WIDEST = 'REINIER'.length * R.SMALL.pitch * 2 - 2 + 6;
 const inFrame = (pose, r) => r.x >= pose.x - pose.w / 2 - 0.01
   && r.x + r.w <= pose.x + pose.w / 2 + 0.01
   && r.y >= pose.y - pose.h / 2 - 0.01
   && r.y + r.h <= pose.y + pose.h / 2 + 0.01;
+// One ordinary block's box, for the birth's own arithmetic: the shortest building
+// the ledger can produce, which is most of this district.
+const BOX = C.blockBox(blocks[0]);
+const BUILD_END = 7.2;   // past the strike, before the birth is over
 const room = C.roomBoxAt({ x: 639, y: 531, w: 7, h: 22 });
 const plot = C.plotBoxAt(C.blockBox(blocks[0]));
 // The `over` beat, walked. The scene's shipPose() is one line per beat over this
@@ -3161,70 +3161,132 @@ console.log(JSON.stringify({
   // lens run backwards from the plot.
   dive: JSON.stringify(C.lensAt(0.42, C.widePose(), C.roomPose(room)))
     === JSON.stringify(C.poseAt(0.42, room)),
-  // `over` is ONE continuous move: the lens goes out and never turns round inside
-  // the beat, and the centre travels from the pane to the block.
-  overMonotone: over.every((p, i) => i === 0 || p.zoom <= over[i - 1].zoom + 1e-9)
-    && over[0].zoom === G.roomPix && over[100].zoom === G.plotPix,
+  // `over` is ONE continuous move: the lens travels one way and never turns round
+  // inside the beat, and the centre travels from the pane to the block. Which way it
+  // travels is the block's business — the room is shown at a whole multiple of its
+  // own 320x180 and a plot at whichever whole multiple that building wants, so a
+  // tall block pulls the lens out and a shophouse pulls it further in.
+  overMonotone: (() => {
+    const out = plot.zoom <= G.roomPix;
+    return over.every((p, i) => i === 0
+        || (out ? p.zoom <= over[i - 1].zoom + 1e-9 : p.zoom >= over[i - 1].zoom - 1e-9))
+      && over[0].zoom === G.roomPix && over[100].zoom === plot.zoom;
+  })(),
   overTravels: Math.abs(over[0].x - (room.x + room.w / 2)) < 0.01
     && Math.abs(over[100].x - plot.x) < 0.01
     && Math.abs(over[100].y - plot.y) < 0.01,
-  // The plot beat parks on blockBox() at the plot lens, with the board in frame
-  // and the whole building — three storeys or fourteen — inside the picture.
-  plotLens: C.plotBoxAt(C.blockBox(blocks[0])).zoom === G.plotPix
-    && G.plotPix === Math.round(2.5 * G.pix),
+  // ONE BUILDING OWNS THE FRAME. The lens is picked per block — whole device pixels
+  // per world pixel, never below the plot beat's own floor, never above its ceiling.
+  plotLens: blocks.every((block) => {
+    const zoom = C.plotLens(C.blockBox(block));
+    return Number.isInteger(zoom) && zoom >= Math.ceil(C.PLOT_ZOOM.min * G.pix)
+      && zoom <= C.PLOT_ZOOM.max * G.pix;
+  }),
+  // The whole block is in frame — its silhouette is the half of it the room reads,
+  // so a hero cut down its own sides is not a hero — it is centred across the frame
+  // unless the world's edge stops it, and the frame itself never leaves the world.
   plotHolds: blocks.every((block) => {
     const box = C.blockBox(block);
     const pose = C.plotBoxAt(box);
-    return inFrame(pose, C.boardBox(box, WIDEST))
-      && inFrame(pose, { x: box.x, y: box.y, w: box.w, h: box.h })
-      // ...and the frame never leaves the world, however near an edge the plot is.
-      && pose.x - pose.w / 2 >= -0.01 && pose.x + pose.w / 2 <= G.gw + 0.01
+    const left = pose.x - pose.w / 2;
+    const right = pose.x + pose.w / 2;
+    const edge = left <= 0.01 || right >= G.gw - 0.01;
+    return inFrame(pose, { x: box.x, y: box.y, w: box.w, h: box.h })
+      && (edge || Math.abs((box.x + box.w / 2) - pose.x) <= 0.51)
+      && box.w <= C.PLOT_WIDE * pose.w + 0.01
+      && left >= -0.01 && right <= G.gw + 0.01
       && pose.y - pose.h / 2 >= -0.01 && pose.y + pose.h / 2 <= G.gh + 0.01;
   }),
-  // And a board wider than the block paying for it centres and projects, the way
-  // a wide shop board already does — while sitting ON the roofline rather than on
-  // the façade. The district's own buildings are two to four storeys over a 32 px
-  // shopfront, so a name hung on the wall lands on the shop's own board and the
-  // street reads ANGELCAFE; every board therefore clears the shopfront strip by
-  // construction, at every storey count the ledger can produce.
-  boardProjects: (() => {
-    const narrow = C.blockBox({ id: 'x', kind: 'spire', depth: 0, x: 0.5, storeys: 3,
-                               shape: { form: 'mast', grade: 0 } });
-    const wide = C.boardBox(narrow, WIDEST);
-    return wide.w > narrow.w
-      && Math.abs((wide.x + wide.w / 2) - (narrow.x + narrow.w / 2)) <= 0.5
-      && wide.y + wide.h > narrow.y && wide.y + wide.h <= narrow.y + 2;
-  })(),
-  boardClearsTheShop: blocks.every((block) => {
+  // ...and the top PLOT_SKY of the frame is night above its roofline, which is what
+  // tells the eye how tall the thing under it is. The critic asked for it by name.
+  plotSky: blocks.every((block) => {
     const box = C.blockBox(block);
-    const board = C.boardBox(box, WIDEST);
-    // The shopfront's own board hangs a cell above the ground floor (makeBlock).
-    const shopTop = box.y + box.h - 32 - C.CELL;
-    return board.y + board.h <= shopTop;
+    const pose = C.plotBoxAt(box);
+    return (box.y - (pose.y - pose.h / 2)) / pose.h >= C.PLOT_SKY - 0.001;
   }),
-  // THE BIRTH, second by second: the scaffold up over the first two, the façade
-  // arriving bottom-up over the next four, the frame struck over the seventh, and
-  // the sweep, the board and the green beacon on the sixth.
-  scaffold: C.birthAt(0, false).up === 0 && C.birthAt(2, false).up === 1
-    && C.birthAt(4, false).up === 1 && C.birthAt(6.5, false).up < 1
-    && C.birthAt(7, false).up === 0 && C.birthAt(9, false).up === 0,
-  reveal: C.birthAt(1.9, false).wall === 0 && C.birthAt(6, false).wall === 1
-    && Array.from({ length: 201 }, (_, i) => C.birthAt(i / 25, false).wall)
-      .every((w, i, all) => i === 0 || w >= all[i - 1]),
-  sweep: C.birthAt(5.9, false).sweep < 0 && C.birthAt(6.1, false).sweep >= 0
-    && C.birthAt(7.4, false).sweep < 1 && C.birthAt(7.6, false).sweep < 0,
+  // And it fills the frame's height to the band — or, where it cannot, it is because
+  // one step tighter is refused by one of the three rules and not by a choice made
+  // here: it would push the block past the top of the band, it would crop the block
+  // down its own sides, or it is past the lens ceiling. The ceiling is what keeps
+  // this a city rather than a macro shot of a shopfront, and the district's own
+  // shortest buildings are 48 pixels of a 720-pixel frame.
+  plotFills: blocks.every((block) => {
+    const box = C.blockBox(block);
+    const pose = C.plotBoxAt(box);
+    const fill = box.h / pose.h;
+    if (fill > C.PLOT_FILL.hi + 0.001) return false;
+    if (fill >= C.PLOT_FILL.lo) return true;
+    const next = pose.zoom + 1;
+    return next > C.PLOT_ZOOM.max * G.pix
+      || box.w * next > C.PLOT_WIDE * G.w
+      || box.h * next > C.PLOT_FILL.hi * G.h;
+  }),
+  plotFillRange: (() => {
+    const fills = blocks.map((block) => {
+      const box = C.blockBox(block);
+      return box.h / C.plotBoxAt(box).h;
+    });
+    return Math.min(...fills).toFixed(2) + '..' + Math.max(...fills).toFixed(2);
+  })(),
+  // THE BIRTH, second by second, AS THE NUMBERS A BUILDING IS SET TO — the integration
+  // and not the beats in isolation. A plot is bare until the builders arrive, and they
+  // arrive when the film's camera can: one derivation off SHIP, no second constant.
+  lead: C.BUILD.lead === (C.SHIP.in + C.SHIP.room + C.SHIP.over) / 1000,
+  barePlot: [0, 1, C.BUILD.lead - 0.2].every((age) => {
+    const f = C.birthFrame(age, BOX, false);
+    return f.shown === 0 && f.up === 0 && f.fit === 0 && f.sign === 0 && !f.done;
+  }),
+  scaffold: (() => {
+    const rising = C.birthFrame(C.BUILD.lead + 1.5, BOX, false);
+    const held = C.birthFrame(C.BUILD.lead + 4, BOX, false);
+    const struck = C.birthFrame(C.BUILD.lead + BUILD_END, BOX, false);
+    return rising.up > 0 && rising.shown === 0
+      && held.up === held.tall && struck.up === 0
+      // Whole lifts only: a scaffold that ended mid-module is not a scaffold.
+      && [rising, held].every((f) => f.up % C.LIFT.h === 0);
+  })(),
+  reveal: (() => {
+    const walk = Array.from({ length: 60 },
+      (_, i) => C.birthFrame(C.BUILD.lead + i / 6, BOX, false));
+    return walk.every((f, i) => i === 0 || f.shown >= walk[i - 1].shown)
+      // Whole 32 px courses, climbing, and finished by the reveal's own second.
+      && walk.every((f) => f.shown % 32 === 0 || f.shown === f.tall)
+      && C.birthFrame(C.BUILD.lead + C.BUILD.reveal, BOX, false).shown === BOX.h + 32
+      && C.birthFrame(C.BUILD.lead + 4, BOX, false).shown > 0;
+  })(),
+  // The frontage opens with the top of the wall, never before it.
+  fit: C.birthFrame(C.BUILD.lead + 4, BOX, false).fit === 0
+    && C.birthFrame(C.BUILD.lead + C.BUILD.reveal, BOX, false).fit === 1,
+  sweep: C.birthFrame(C.BUILD.lead + 5.9, BOX, false).sweep < 0
+    && C.birthFrame(C.BUILD.lead + 6.1, BOX, false).sweep >= 0
+    && C.birthFrame(C.BUILD.lead + 7.4, BOX, false).sweep < 1
+    && C.birthFrame(C.BUILD.lead + 7.6, BOX, false).sweep < 0,
   beacon: C.birthAt(5.9, false).beacon < 0 && C.birthAt(6.1, false).beacon >= 0
     && C.birthAt(6 + C.CEREMONY - 0.1, false).beacon >= 0
     && C.birthAt(6 + C.CEREMONY + 0.1, false).beacon < 0
     && 6 + C.CEREMONY <= 13.5,
-  sign: C.birthAt(5.9, false).sign === 0 && C.birthAt(6.5, false).sign === 1,
-  done: C.birthAt(C.BUILD.total - 0.1, false).done === false
-    && C.birthAt(C.BUILD.total, false).done === true,
-  // Reduced motion: born complete. No scaffold, no sweep, no beacon, the name up.
-  frozen: JSON.stringify(C.birthAt(0.5, true)) === JSON.stringify(C.birthAt(400, true))
-    && C.birthAt(0.5, true).wall === 1 && C.birthAt(0.5, true).up === 0
-    && C.birthAt(0.5, true).sweep === -1 && C.birthAt(0.5, true).beacon === -1
-    && C.birthAt(0.5, true).sign === 1 && C.birthAt(0.5, true).done === true,
+  // The roof marker strikes with the sweep, on the beat the wall lights up.
+  sign: C.birthFrame(C.BUILD.lead + 5.9, BOX, false).sign === 0
+    && C.birthFrame(C.BUILD.lead + 6.5, BOX, false).sign === 1,
+  done: C.birthFrame(C.BUILD.lead + C.BUILD.total - 0.1, BOX, false).done === false
+    && C.birthFrame(C.BUILD.lead + C.BUILD.total, BOX, false).done === true,
+  // A page that opens mid-birth joins it where the block is, and one that opens
+  // after finds a building standing: no rule about what this page witnessed.
+  joins: (() => {
+    const mid = C.birthFrame(C.BUILD.lead + 4, BOX, false);
+    const late = C.birthFrame(C.BUILD.lead + C.BUILD.total + 600, BOX, false);
+    return mid.shown > 0 && mid.shown < mid.tall && !mid.done
+      && late.shown === late.tall && late.done && late.up === 0;
+  })(),
+  // Reduced motion: born complete. No scaffold, no sweep, no beacon, marker on.
+  frozen: JSON.stringify(C.birthFrame(0.5, BOX, true))
+      === JSON.stringify(C.birthFrame(400, BOX, true))
+    && C.birthFrame(0.5, BOX, true).shown === BOX.h + 32
+    && C.birthFrame(0.5, BOX, true).up === 0
+    && C.birthFrame(0.5, BOX, true).sweep === -1
+    && C.birthFrame(0.5, BOX, true).beacon === -1
+    && C.birthFrame(0.5, BOX, true).sign === 1
+    && C.birthFrame(0.5, BOX, true).fit === 1,
   // Today's ships are the lit ones, and the share they carry is above the band's
   // settled one in every depth band and still under a tower's.
   litShare: [0, 1, 2].every((depth) => {
@@ -3236,8 +3298,7 @@ console.log(JSON.stringify({
   dives: ['wide', 'in', 'room', 'over', 'plot', 'out'].map(C.shipDiveOf).join(','),
 }));
 JS
-SHIP="$(node "$SHIP_PROBE" "$SRC/wall/world-canvas.js" "$SRC/wall/scene.js" \
-  "$SRC/wall/room.js" 2>&1)"
+SHIP="$(node "$SHIP_PROBE" "$SRC/wall/world-canvas.js" "$SRC/wall/scene.js" 2>&1)"
 ship_of() { printf '%s' "$SHIP" | jq -r ".$1" 2>/dev/null; }
 check "ship: one film is wide, in, the room, over, the plot, out — and nothing else" \
   "$(ship_of order)" "wide,in,room,over,plot,out"
@@ -3252,28 +3313,38 @@ check "ship: 'over' is one continuous move — the lens only ever goes out" \
   "$(ship_of overMonotone)" "true"
 check "ship: and its centre travels from the pane to the block" \
   "$(ship_of overTravels)" "true"
-check "ship: the plot beat is a fixed lens, 2.5x the wide on whole device pixels" \
+check "ship: the plot lens is picked per building, on whole device pixels" \
   "$(ship_of plotLens)" "true"
-check "ship: parked on the block's own box, with its board and its sky in frame" \
+check "ship: one building owns the frame, whole and centred, and the frame is city" \
   "$(ship_of plotHolds)" "true"
-check "ship: a name wider than the block centres on it and projects" \
-  "$(ship_of boardProjects)" "true"
-check "board: and every one of them clears the shopfront's own sign, at every height" \
-  "$(ship_of boardClearsTheShop)" "true"
+check "ship: with the top third of the picture night above its roofline" \
+  "$(ship_of plotSky)" "true"
+check "ship: filling the frame's height to the band, or as near as its width allows" \
+  "$(ship_of plotFills)" "true"
+check "ship: and this is the range that lands over the whole fixture city" \
+  "$(ship_of plotFillRange)" "0.40..0.65"
 check "ship: the wall says which shot it is showing, plot included" \
   "$(ship_of shots)" "establishing,room,room,plot,plot,establishing"
 check "ship: and the dive is the room's half of the film only" \
   "$(ship_of dives)" ",push,inside,back,,"
-check "birth: the scaffold rises over two seconds and is struck by the seventh" \
+check "birth: the builders arrive when the film's camera can, off one derivation" \
+  "$(ship_of lead)" "true"
+check "birth: until they do, a plot is a plot — nothing poured, nothing lit" \
+  "$(ship_of barePlot)" "true"
+check "birth: then the scaffold rises in whole lifts and is struck again" \
   "$(ship_of scaffold)" "true"
-check "birth: the façade arrives bottom-up over the next four, and never falls back" \
+check "birth: the façade arrives bottom-up in whole courses, and never falls back" \
   "$(ship_of reveal)" "true"
+check "birth: the frontage opens with the top of the wall, never before it" \
+  "$(ship_of fit)" "true"
 check "birth: the sweep climbs the mass between six and seven and a half" \
   "$(ship_of sweep)" "true"
 check "birth: the green beacon runs one ceremony and is out well before fourteen" \
   "$(ship_of beacon)" "true"
-check "birth: the name board strikes with it" "$(ship_of sign)" "true"
-check "birth: and eight seconds is the whole of it" "$(ship_of done)" "true"
+check "birth: the roof marker strikes with it" "$(ship_of sign)" "true"
+check "birth: and eight seconds is the whole of it" "$(ship_of 'done')" "true"
+check "birth: a page opened mid-birth joins it; one opened after finds it standing" \
+  "$(ship_of joins)" "true"
 check "birth: reduced motion is a building STANDING, at every second of the clock" \
   "$(ship_of frozen)" "true"
 check "birth: today's ship carries more lit windows than its band has settled at" \
@@ -3292,16 +3363,37 @@ grep_ok "$CANVAS_SRC" 'this.exit = { at, u: this.u };' \
   "ship: the reel is pre-empted by the ease-home it already had, never by a cut"
 grep_ok "$CANVAS_SRC" 'if (s.forcedRoom) {' \
   "ship: and the gate's parked room still outranks everything"
-grep_ok "$CANVAS_SRC" 'const seen = clock ? clock.born : (block.at || 0) > this.origin;' \
-  "birth: a page does not replay a birth it was not open for"
 grep_ok "$CANVAS_SRC" 'if (birth.sweep >= 0) this.paintSweep(parts.cascade, box, birth.sweep);' \
   "birth: the sweep is the tower's own gesture on a smaller mass, not a second one"
 grep_ok "$CANVAS_SRC" 'this.light(box.x + box.w / 2, box.y, 2.2 * REM, 2.2 * REM, DONE, 0)' \
   "birth: the beacon is a green LIGHT on the roof, never a green pixel in the atlas"
-grep_ok "$CANVAS_SRC" 'const word = this.wordBoard(block.label, ink);' \
-  "board: a name is set in the wall's own face, like every other word in this city"
 grep_ok "$CANVAS_SRC" 'if (parts.hot) parts.hot.setAlpha(cool);' \
-  "board: and the lit share cools on the same clock the shoulder tube always has"
+  "ship: and the lit share cools on the same clock the shoulder tube always has"
+
+# THE CITY SPEAKS IN COLOUR. A word on a roofline in this city means a BUSINESS —
+# HOTEL, CAFE, 麵 — so a person's name up there read as a bar called Emre and
+# competed with the shopfront it was standing over. The district says who the way it
+# has always said who: with a light. Words belong to the HUD, which can set type at
+# a size the room can read. This pass therefore adds NO lettering to the city, and
+# the check is that it stays that way.
+MARKER_SRC="$(printf '%s\n' "$CANVAS_SRC" | grep -v '^ *//')"
+for banned in wordBoard'(block' boardBox boardY BOARD_DIM 'parts.board'; do
+  grep_not "$MARKER_SRC" "$banned" "board: no [$banned] — the district is not lettered"
+done
+grep_ok "$CANVAS_SRC" 'parts.marker = { core, halo, base: halo.scaleX };' \
+  "marker: whose building it is, said in their own colour on their own roof"
+grep_ok "$CANVAS_SRC" 'const roof = box.x + (roofs.length ? roofs[0].x : box.w / 2);' \
+  "marker: standing on the roof furniture the seeded draw already put there"
+grep_ok "$CANVAS_SRC" 'const on = cool * hum * birth.sign * landed;' \
+  "marker: struck at the beat the wall lights up, cooling with everything else"
+grep_ok "$CANVAS_SRC" 'if (block.label) {' \
+  "marker: on a building somebody's name is on, and no other kind"
+# ...and the wall's own two words for "which one am I looking at" are the SAME word:
+# the skyline and the district both step back to one number while the camera is out.
+grep_ok "$CANVAS_SRC" 'const back = onPlot ? this.shipDim(step) : 1;' \
+  "ship: out on a plot, everything that is not the hero steps back together"
+grep_ok "$CANVAS_SRC" 'const here = this.plot.hero === block.id ? 1 : this.plot.dim;' \
+  "ship: which is what turns brighter into that one, for a block as for a tower"
 grep_ok "$PAGE_SRC" "const forcedPlot = roomParams.get('shot') === 'ship';" \
   "ship: ?shot=ship is read where the page reads its query string"
 grep_ok "$PAGE_SRC" "const wantedShip = roomParams.get('ship') || '';" \
@@ -3355,7 +3447,7 @@ CREW_FALL="$(node -e '
   const S = require(path.join(process.argv[1], "wall", "scene.js"));
   const out = [];
   // Somebody who dispatched a run before anybody wrote them down still gets a
-  // stable colour of their own, and no board at all.
+  // stable colour of their own, and no marker at all.
   const stranger = { owner: "nobody", ownerKind: "human" };
   out.push(S.CREW_TINTS.includes(S.crewTint(stranger, { angel: { tint: "#e0a23c" } })));
   out.push(S.crewLabel(stranger, { angel: { label: "ANGEL" } }) === "");
@@ -3384,8 +3476,121 @@ CREW_FALL="$(node -e '
   out.push(S.buildScene({ city: [record] }, 20).blocks[0].label === "");
   process.stdout.write(out.every(Boolean) ? "ok" : out.join(","));
 ' "$SRC" 2>&1)"
-check "crew: an unwritten dispatcher keeps a hashed tint and gets no board" \
+check "crew: an unwritten dispatcher keeps a hashed tint and gets no marker" \
   "$CREW_FALL" "ok"
+
+# WORDS BELONG TO THE HUD. The towers cannot carry type the room can read, so one run
+# at a time gets big letters — and for the few seconds it is happening, a ship is
+# worth those letters. The plate's eligibility, run out of the page's own function
+# with the page's own globals stubbed: an alarm is the only thing asking for
+# something and keeps the plate outright; below it a run inside its completion
+# moment outranks live work; past that moment it drops out on its own.
+PLATE_PROBE="$ROOT/plate-probe.js"
+{
+  printf '%s\n' 'const NOW = 1000;'
+  printf '%s\n' 'const now = () => NOW;'
+  printf '%s\n' 'let runs = [];'
+  printf '%s\n' 'let latest = { completionSeconds: 30 };'
+  # The two functions verbatim out of wall/wall.js, so what is checked is the page's
+  # own arithmetic and not a second copy of it that agrees today.
+  awk '/^  function shipped\(run\) \{/,/^  \}$/' "$SRC/wall/wall.js"
+  awk '/^  function plateQueue\(\) \{/,/^  \}$/' "$SRC/wall/wall.js"
+  printf '%s\n' 'const ids = (list) => list.map((r) => r.id).join(",");'
+  printf '%s\n' 'const A = { id: "A", state: "alarm" };'
+  printf '%s\n' 'const L = { id: "L", state: "active" };'
+  printf '%s\n' 'const S = { id: "S", state: "ready", since: NOW - 5 };'
+  printf '%s\n' 'const OLD = { id: "OLD", state: "ready", since: NOW - 31 };'
+  printf '%s\n' 'const out = {};'
+  printf '%s\n' 'runs = [L, S]; out.shipFirst = ids(plateQueue());'
+  printf '%s\n' 'runs = [A, L, S]; out.alarmWins = ids(plateQueue());'
+  printf '%s\n' 'runs = [L, OLD]; out.expired = ids(plateQueue());'
+  printf '%s\n' 'runs = [OLD]; out.nothing = ids(plateQueue());'
+  printf '%s\n' 'runs = [L, S]; latest = null; out.noWindow = ids(plateQueue());'
+  printf '%s\n' 'console.log(JSON.stringify(out));'
+} > "$PLATE_PROBE"
+PLATE="$(node "$PLATE_PROBE" 2>&1)"
+plate_of() { printf '%s' "$PLATE" | jq -r ".$1" 2>/dev/null; }
+check "plate: a run inside its completion moment outranks live work" \
+  "$(plate_of shipFirst)" "S,L"
+check "plate: and an alarm outranks it — a ship never hides a human's question" \
+  "$(plate_of alarmWins)" "A"
+check "plate: past the moment it drops out, exactly as it leaves the skyline" \
+  "$(plate_of expired)" "L"
+check "plate: a wall with nothing live and nothing fresh has an empty plate" \
+  "$(plate_of nothing)" ""
+check "plate: and before the first snapshot names the window, nothing is fresh" \
+  "$(plate_of noWindow)" "L"
+# The DOM world's own ranking is a different table and stays pinned where it was.
+grep_ok "$PAGE_SRC" 'const SHOT_RANK = { alarm: 3, active: 2, ready: 1 };' \
+  "plate: the DOM world's shot ranking is untouched by this"
+
+# THE LAST THING THIS WALL SHIPPED, as a scene fact. `towers[].shipped` is the run
+# inside its completion moment and goes when that moment does; the parked ship shot
+# has to be able to ask which building is the newest hours later.
+SHIPPED_PROBE="$(node -e '
+  const path = require("path");
+  const S = require(path.join(process.argv[1], "wall", "scene.js"));
+  const run = (id, state, since) => ({ id, state, since, owner: "emre",
+                                       ownerKind: "human", floor: 1, actorKey: "done" });
+  const out = [];
+  out.push(S.buildScene({ runs: [run("A", "active", 10)] }, 100).shipped === "");
+  out.push(S.buildScene({ runs: [run("A", "active", 10), run("R", "ready", 20)] },
+    100).shipped === "R");
+  // Newest by the second it finished, whatever order the server listed them in.
+  out.push(S.buildScene({ runs: [run("OLD", "ready", 10), run("NEW", "ready", 90)] },
+    100).shipped === "NEW");
+  out.push(S.buildScene({ runs: [run("NEW", "ready", 90), run("OLD", "ready", 10)] },
+    100).shipped === "NEW");
+  // ...and the id breaks a tie, so two runs landing in one second is not a coin flip.
+  out.push(S.buildScene({ runs: [run("B", "ready", 50), run("A", "ready", 50)] },
+    100).shipped === "A");
+  out.push(S.buildScene({ runs: [run("A", "ready", 50), run("B", "ready", 50)] },
+    100).shipped === "A");
+  process.stdout.write(out.every(Boolean) ? "ok" : out.join(","));
+' "$SRC" 2>&1)"
+check "ship: the scene carries the newest shipped run, outliving its own tower" \
+  "$SHIPPED_PROBE" "ok"
+grep_ok "$CANVAS_SRC" 'if (model && model.shipped && this.blocks.has(model.shipped)) return model.shipped;' \
+  "ship: which is what ?shot=ship parks on"
+
+# A FIXTURE RENDER MUST NOT DEPEND ON THE CALENDAR. wall/crew.json carries a birthday
+# per person and the room puts balloons on that person's desk on their day, so the
+# room the visual gate measures was one room on Monday and another on Tuesday. The
+# contract pins the day; this is the check that the pinned day is nobody's.
+PINNED_DAY="$(sed -n 's/.*WALL_TODAY=\([0-9][0-9]-[0-9][0-9]\).*/\1/p' \
+  "$SRC/.creative/visual.conf.sh" | head -1)"
+check "gate: the visual contract pins the day the fixture render happens on" \
+  "$(test -n "$PINNED_DAY" && echo pinned)" "pinned"
+BIRTHDAYS="$(node -e '
+  const fs = require("fs"), path = require("path");
+  const crew = JSON.parse(fs.readFileSync(
+    path.join(process.argv[1], "wall", "crew.json"), "utf8"));
+  const day = process.argv[2];
+  const clash = Object.keys(crew).filter((o) => (crew[o] || {}).birthday === day);
+  process.stdout.write(clash.length ? clash.join(",") : "nobody");
+' "$SRC" "$PINNED_DAY" 2>&1)"
+check "gate: and it is nobody's birthday, so no balloons sway through the frames" \
+  "$BIRTHDAYS" "nobody"
+# And the fixture district's newest building landed long enough ago that no gate
+# frame can catch it mid-birth.
+SETTLED="$(node -e '
+  const path = require("path");
+  const W = require(path.join(process.argv[1], "wall", "server.js"));
+  const C = require(path.join(process.argv[1], "wall", "world-canvas.js"));
+  const { cityRecords } = require(path.join(process.argv[1], "wall/fixtures/city.js"));
+  const need = C.BUILD.lead + C.BUILD.total;
+  const bad = [];
+  // Every second of a minute, because the fixture window is quantised to one.
+  for (let s = 0; s < 60; s++) {
+    const now = 1786900000 + s;
+    const rows = cityRecords(now, W.weekStartOf);
+    const newest = rows.reduce((a, r) => Math.max(a, r.epoch), 0);
+    if (now - newest < need + 5) bad.push(s + ":" + (now - newest));
+  }
+  process.stdout.write(bad.length ? bad.slice(0, 4).join(" ") : "settled");
+' "$SRC" 2>&1)"
+check "gate: and the fixture district's newest building is long since standing" \
+  "$SETTLED" "settled"
 
 # --- the director films the city --------------------------------------------------
 # The wall can film itself: a slow camera that holds the skyline, pushes in on
