@@ -51,7 +51,14 @@ VISUAL_URL='http://127.0.0.1:{port}'
 VISUAL_SHOTS=("wide|/?world=$VISUAL_WORLD|750" "room|/?world=$VISUAL_WORLD&shot=room|750" "ship|/?world=$VISUAL_WORLD&shot=ship|750")
 VISUAL_FRAMES=6
 VISUAL_WAIT_MS=750
-VISUAL_SETTLE_MS=3000
+# Fifteen seconds, counted from the moment the page says it is ready: the room
+# the camera parks in starts its own twelve-second lens with the shot (room.js,
+# `push`), and at a whole-number 4x every authored pixel that lens crosses is a
+# four-pixel step of the whole frame — 0.10-0.12 of continuity per step,
+# measured on the office mini, i.e. the ceiling below on a coin flip. The gate
+# measures the destination, not the ride: it captures once the lens holds. The
+# wide and the ship shot were settled long before (0.03-0.05 either way).
+VISUAL_SETTLE_MS=15000
 VISUAL_WIDTH=1280
 VISUAL_HEIGHT=720
 VISUAL_DPR=1
