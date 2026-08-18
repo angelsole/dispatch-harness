@@ -59,7 +59,14 @@ const CROWNS = 4;         // roof furniture (mast, water tank, sign rig) per bod
 // nothing left standing in it goes with it. Nobody watching a wall wants
 // yesterday's green ticks; they want to see the work move. The page mirrors this
 // number as --completion (shipped in every snapshot) to time the animation.
-const COMPLETION_S = 20;
+//
+// Thirty rather than twenty from this pass on: a ship now gets a film — out of
+// the room, down to the plot, and home to the wide, about twenty seconds of it
+// (SHIP, world-canvas.js) — and a roof beacon that went out while the camera
+// was still on its way back would leave the wall saying nothing happened. A
+// design constant, and the only thing it lengthens is how long a finished run
+// stands in the skyline it has already left.
+const COMPLETION_S = 30;
 
 // How long a landed building carries its dispatcher's crew tint before cooling
 // to the district's own neutral. Long enough that this morning's ships are still
@@ -999,6 +1006,28 @@ function roster() {
   return out;
 }
 
+// The half of the roster the CITY needs, and only that half: whose name goes on
+// a building and what colour it is written in. It rides every snapshot because
+// wall/scene.js is pure arithmetic over one — a renderer that fetched crew.json
+// for itself would be a second opinion about who somebody is, and the district,
+// the skyline and the room would drift apart the first time one of them was
+// slow. The sprite guard `roster()` runs is deliberately not repeated here: a
+// name and a hex are facts about a person, not files this server has to prove
+// it can read, and this runs on every poll.
+function crewSigns() {
+  const table = readJSON(CREW_FILE) || {};
+  const out = {};
+  for (const owner of Object.keys(table)) {
+    const entry = table[owner];
+    if (!entry || typeof entry !== 'object') continue;
+    out[owner] = {
+      label: typeof entry.label === 'string' ? entry.label : '',
+      tint: typeof entry.tint === 'string' ? entry.tint : '',
+    };
+  }
+  return out;
+}
+
 function serveAsset(res, file, type) {
   fs.readFile(file, (err, buf) => {
     if (err) {
@@ -1039,6 +1068,8 @@ function payload() {
     today,
     runsDir: RUNS,
     crew: CREW,
+    // Who the wall knows, by lane key: their own spelling and their own colour.
+    roster: crewSigns(),
     floors: FLOORS,
     completionSeconds: COMPLETION_S,
     signSeconds: SIGN_S,
@@ -1165,5 +1196,5 @@ if (require.main === module) {
 module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
   shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
-  assetOf, ASSETS, roster, todayOf,
+  assetOf, ASSETS, roster, crewSigns, todayOf,
 };

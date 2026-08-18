@@ -1,6 +1,6 @@
 {
-  "angel": { "set": "crew/angel", "label": "ANGEL", "props": ["mug", "cactus", "poster"] },
-  "emre": { "set": "crew/emre", "label": "EMRE", "props": ["ball", "pennant"] },
-  "ran": { "set": "crew/ran", "label": "RAN", "props": ["photo", "mug"] },
-  "reinier": { "set": "room", "label": "REINIER", "props": ["figurine", "books"], "birthday": "08-18" }
+  "angel": { "set": "crew/angel", "label": "ANGEL", "tint": "#e0a23c", "props": ["mug", "cactus", "poster"] },
+  "emre": { "set": "crew/emre", "label": "EMRE", "tint": "#7ad6ec", "props": ["ball", "pennant"] },
+  "ran": { "set": "crew/ran", "label": "RAN", "tint": "#e8cfa6", "props": ["photo", "mug"] },
+  "reinier": { "set": "room", "label": "REINIER", "tint": "#ff9a5e", "props": ["figurine", "books"], "birthday": "08-18" }
 }

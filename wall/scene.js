@@ -61,16 +61,46 @@
   const SYNTHETIC_TINT = '#f2eee2';   // milk-white. Synthetics do not bleed red.
   const UNOWNED_TINT = '#7c8b96';
 
+  // ONE SOURCE OF TRUTH FOR WHOSE COLOUR THIS IS. wall/crew.json carries a
+  // `tint` per person and the server hands that roster down in every snapshot,
+  // so the name board on a building, the tube on its shoulder and the lamp
+  // under a car are the same hex — chosen once, by a human, in the one file
+  // where a crew member's own spelling already lives. The hash below is the
+  // fallback and stays exactly as it was: somebody who dispatched a run before
+  // anybody wrote them into the roster still gets a stable colour of their own.
+  const TINT = /^#[0-9a-fA-F]{6}$/;
+  const laneOf = (run) => String((run && run.owner) || '').trim().toLowerCase();
+  function rosterOf(roster, run) {
+    if (!roster || typeof roster !== 'object') return null;
+    const entry = roster[laneOf(run)];
+    return entry && typeof entry === 'object' ? entry : null;
+  }
+
   // A crew member keeps the same tint whoever else is on the wall, so the room
   // learns "the pale blue lamp is Reinier" — an index into the current runs
   // would repaint everyone every time somebody's queue emptied.
-  function crewTint(run) {
+  function crewTint(run, roster) {
     if (run.ownerKind === 'synthetic') return SYNTHETIC_TINT;
     if (run.ownerKind === 'unowned') return UNOWNED_TINT;
+    const entry = rosterOf(roster, run);
+    const tint = entry && typeof entry.tint === 'string' ? entry.tint.toLowerCase() : '';
+    if (TINT.test(tint)) return tint;
     const owner = run.owner || '';
     let h = 0;
     for (let i = 0; i < owner.length; i++) h = (h * 31 + owner.charCodeAt(i)) >>> 0;
     return CREW_TINTS[h % CREW_TINTS.length];
+  }
+
+  // And the name that goes on a building. Only ever the roster's own spelling —
+  // a board is a person's name in light on the side of the city, so it is the
+  // name they wrote for themselves or there is no board at all. A synthetic's
+  // nightly sweep, an unowned run and anybody nobody has written down keep the
+  // district they always had: a tinted tube on the shoulder and nothing else.
+  function crewLabel(run, roster) {
+    if (run.ownerKind === 'synthetic' || run.ownerKind === 'unowned') return '';
+    const entry = rosterOf(roster, run);
+    const label = entry && typeof entry.label === 'string' ? entry.label.trim() : '';
+    return label;
   }
 
   // --- weather --------------------------------------------------------------------
@@ -301,7 +331,7 @@
 
   // A tower, with every run standing in it already resolved: a renderer never
   // has to go back to the snapshot to find out what a shaft is doing.
-  function towerOf(tower, byId, floors, at) {
+  function towerOf(tower, byId, floors, at, roster) {
     const n = tower.runIds.length;
     const shafts = [];
     for (const id of tower.runIds) {
@@ -316,7 +346,7 @@
         // Half a floor up from the slab it stopped on, so a car reads as
         // standing on that floor rather than balancing on the line between two.
         level: (run.floor + 0.55) / floors,
-        crew: crewTint(run),
+        crew: crewTint(run, roster),
         since: run.since || at,
         age: Math.max(0, at - (run.since || at)),
       });
@@ -352,7 +382,7 @@
 
   // A building, with its typology and its ground floor already drawn from the
   // run id — the same two draws both worlds would otherwise make separately.
-  function blockOf(record, at) {
+  function blockOf(record, at, roster) {
     return {
       id: record.id,
       project: record.project || '',
@@ -363,7 +393,11 @@
       at: record.at,
       owner: record.owner || '',
       ownerKind: record.ownerKind,
-      crew: crewTint(record),
+      crew: crewTint(record, roster),
+      // Whose building this is, in the letters they chose. Empty is a fact and
+      // not a gap: a district full of boards is a directory, and only a person
+      // the roster knows has a name to put on one.
+      label: crewLabel(record, roster),
       // Same idiom as the completion moment: a browser opening this afternoon
       // fast-forwards a building that landed this morning to where it already
       // is, rather than replaying every settle in the week at once.
@@ -385,13 +419,17 @@
     const floors = Array.isArray(snap.floors) && snap.floors.length
       ? snap.floors.length : DEFAULT_FLOORS;
     const week = snap.week && typeof snap.week === 'object' ? snap.week : { ships: 0, life: {} };
+    // The roster travels with the snapshot, so who somebody is — their colour
+    // and their name — is one fact about the city rather than a second fetch
+    // every renderer has to make and agree about.
+    const roster = snap.roster && typeof snap.roster === 'object' ? snap.roster : null;
     const towers = (Array.isArray(snap.towers) ? snap.towers : [])
       // The server's stable skyline order is itself a scene fact. Carry the
       // rank explicitly so a renderer never has to infer it from mutable DOM or
       // display-list position after objects have already been created.
-      .map((tower, rank) => ({ ...towerOf(tower, byId, floors, when), rank }));
+      .map((tower, rank) => ({ ...towerOf(tower, byId, floors, when, roster), rank }));
     const blocks = (Array.isArray(snap.city) ? snap.city : [])
-      .map((record) => blockOf(record, when));
+      .map((record) => blockOf(record, when, roster));
     const ghosts = (Array.isArray(snap.ghost) ? snap.ghost : []).map((g) => ({
       x: g.x,
       storeys: g.storeys,
@@ -406,6 +444,7 @@
       floors,
       completionSeconds: Number(snap.completionSeconds) || 0,
       signSeconds: Number(snap.signSeconds) || 0,
+      roster,
       week: { ships: Math.max(0, Math.floor(Number(week.ships) || 0)) },
       // Nothing climbing. Both worlds step the ground floor back when there is,
       // and the page decides what the chrome says about it.
@@ -441,7 +480,8 @@
   return {
     buildScene,
     // The pure fabric, exported because both worlds and the suite draw on it.
-    seedOf, storefrontOf, formOf, nightlifeOf, streetOf, crewTint, towerOf, blockOf,
+    seedOf, storefrontOf, formOf, nightlifeOf, streetOf, crewTint, crewLabel,
+    towerOf, blockOf,
     clamp01, wetness, weatherSeed, seededRandom, dawn,
     SHOP_KINDS, SHOP_GLYPH, SHOP_SCRIPT, SIGN_MAX, BAYS, FLICKER_SPREAD,
     FORM_SHARES, FORM_GRADES,
