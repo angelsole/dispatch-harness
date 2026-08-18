@@ -577,9 +577,27 @@
   // time gets big letters. A blocked run pins the plate: it is the only thing
   // on the wall that is asking for something.
 
+  // Who may hold the plate, most urgent first. An alarm is the only thing on this
+  // wall that is asking for something, so it takes the plate outright and a ship
+  // never hides a human's question. Below it, a run inside its completion moment
+  // outranks live work: for those few seconds it is the one thing that has just
+  // HAPPENED, the city is out filming its building going up, and the plate is where
+  // the room reads a name and a ticket — the towers cannot carry type anybody can
+  // read from the sofa, which is what the plate has always been for. Past the moment
+  // it drops out on its own, exactly as it leaves the skyline.
+  //
+  // No new typography: a shipped run is painted by the same paintPlate() every other
+  // run is, and its accent is the `done` green the stylesheet already carries.
+  function shipped(run) {
+    if (run.state !== 'ready') return false;
+    const window = (latest && latest.completionSeconds) || 0;
+    return window > 0 && now() - (run.since || 0) <= window;
+  }
+
   function plateQueue() {
     const alarms = runs.filter((r) => r.state === 'alarm');
-    return alarms.length ? alarms : runs.filter((r) => r.state === 'active');
+    if (alarms.length) return alarms;
+    return runs.filter(shipped).concat(runs.filter((r) => r.state === 'active'));
   }
 
   function paintPlate(run, index, total) {

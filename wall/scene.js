@@ -439,9 +439,19 @@
     }));
     const plan = nightlifeOf(week.ships);
     const quiet = towers.length === 0;
+    // THE LAST THING THIS WALL SHIPPED, whether or not it is still standing in the
+    // skyline. `towers[].shipped` is the run inside its completion moment and goes
+    // when that moment does; this outlives it, because a renderer that wants to
+    // point a camera at the newest building — the parked ship shot does — has to be
+    // able to ask which one that is hours later. Newest by the second it finished,
+    // with the id as the tie-break so two runs that landed in the same second are
+    // not a coin flip.
+    const shipped = runs.filter((run) => run.state === 'ready')
+      .sort((a, b) => ((b.since || 0) - (a.since || 0)) || (a.id < b.id ? -1 : 1))[0];
     return {
       at: when,
       floors,
+      shipped: shipped ? shipped.id : '',
       completionSeconds: Number(snap.completionSeconds) || 0,
       signSeconds: Number(snap.signSeconds) || 0,
       roster,
