@@ -230,6 +230,124 @@
     "prompt": "not typing, waiting, both hands taken off the keyboard and held clear above the keys with the wrists raised and the fingers straight and relaxed, nothing is being pressed, breathing slowly in and out, the head and the shoulders stay completely still"
   },
   {
+    "id": "room-prop-mug",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "view": "side",
+    "seed": 18520,
+    "prompt": "one single ceramic coffee mug with a handle on the right, seen from the side, centred, nothing else in the image, lit from the left, no text, no letters, no words",
+    "post": "halve, trim"
+  },
+  {
+    "id": "room-prop-cactus",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "view": "side",
+    "seed": 18512,
+    "prompt": "a small round barrel cactus in a square pot, side view, warm desk lamp light from the left, no flowers, no text, no letters, one object only, no background",
+    "post": "halve, trim"
+  },
+  {
+    "id": "room-prop-books",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "view": "side",
+    "seed": 18521,
+    "prompt": "one single stack of three closed hardback books lying flat on top of each other, seen from the side, centred, nothing else in the image, lit from the left, plain covers, no text, no letters, no words",
+    "post": "recolour #ff2f45 -> #531820, halve, trim"
+  },
+  {
+    "id": "room-prop-photo",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "view": "side",
+    "seed": 18523,
+    "prompt": "one single small photograph in a plain rectangular frame standing upright, seen straight on, centred, nothing else in the image, the picture inside is one simple dark silhouette of two people, lit from the left, no text, no letters, no words",
+    "post": "halve, trim"
+  },
+  {
+    "id": "room-prop-figurine",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "view": "side",
+    "seed": 18525,
+    "prompt": "one single small chunky toy robot figurine standing upright, seen from the side, centred, nothing else in the image, lit from the left, no text, no letters, no words",
+    "post": "halve, trim"
+  },
+  {
+    "id": "room-prop-ball",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "view": "side",
+    "seed": 18526,
+    "prompt": "one single round football with pentagon panels, one ball only, seen from the side, centred, nothing else in the image, lit from the left, no text, no letters, no words",
+    "post": "halve, trim"
+  },
+  {
+    "id": "room-prop-poster",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "seed": 18527,
+    "prompt": "one single rectangular poster hanging flat on a wall, seen straight on, centred, nothing else in the image, the picture on it is a dark mountain range against a deep blue night sky, dark and dim, no text, no letters, no words, no writing",
+    "post": "trim"
+  },
+  {
+    "id": "room-prop-pennant",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "outline": "single color black outline",
+    "shading": "basic shading",
+    "detail": "low detail",
+    "seed": 18528,
+    "prompt": "one single triangular felt sports pennant hanging flat on a wall, point to the right, seen straight on, centred, nothing else in the image, dark slate grey felt with one pale cream stripe, no red, no text, no letters, no words, no writing",
+    "post": "trim"
+  },
+  {
     "id": "crew-angel",
     "tool": "pixellab.image",
     "palette": ".creative/palette.png",
@@ -241,8 +359,12 @@
     "outline": "single color black outline",
     "shading": "basic shading",
     "detail": "medium detail",
-    "seed": 17470,
-    "prompt": "one person seated at a keyboard, facing the viewer, hunched forward, both forearms out in front resting on a keyboard, open olive green work jacket over a pale grey t-shirt, messy shoulder-length dark hair, short dark beard, head and torso and arms only, plain single figure, no desk, no monitor, no room, no background"
+    "seed": 18470,
+    "prompt": "one person seated at a keyboard, facing the viewer, hunched forward, both forearms out in front resting on a keyboard, open olive green work jacket over a pale grey t-shirt, short cropped brown hair, full thick brown beard, grey hair at the temples, head and torso and arms only, plain single figure, no desk, no monitor, no room, no background",
+    "was": {
+      "seed": 17470,
+      "prompt": "one person seated at a keyboard, facing the viewer, hunched forward, both forearms out in front resting on a keyboard, open olive green work jacket over a pale grey t-shirt, messy shoulder-length dark hair, short dark beard, head and torso and arms only, plain single figure, no desk, no monitor, no room, no background"
+    }
   },
   {
     "id": "crew-angel-type",
@@ -268,8 +390,12 @@
     "from": "crew-angel",
     "frame_count": 8,
     "no_background": true,
-    "seed": 17941,
-    "prompt": "typing on the keyboard, only the hands and forearms move, the fingers strike down onto the keys in a rolling wave and the wrists lift and fall between strokes, the head and the shoulders stay completely still"
+    "seed": 18945,
+    "prompt": "the fingertips press down on the keys one after another and lift again, and nothing else in the picture moves at all: the forearms, the elbows, the sleeves, the shoulders, the jacket, the head and the keyboard all stay exactly where they are and keep exactly the same width",
+    "was": {
+      "seed": 17941,
+      "prompt": "typing on the keyboard, only the hands and forearms move, the fingers strike down onto the keys in a rolling wave and the wrists lift and fall between strokes, the head and the shoulders stay completely still"
+    }
   },
   {
     "id": "crew-angel-wait8",
@@ -277,8 +403,11 @@
     "from": "crew-angel",
     "frame_count": 8,
     "no_background": true,
-    "seed": 17992,
-    "prompt": "not typing, waiting, both hands taken off the keyboard and held clear above the keys with the wrists raised and the fingers straight and relaxed, nothing is being pressed, breathing slowly in and out, the head and the shoulders stay completely still"
+    "seed": 18992,
+    "prompt": "not typing, waiting, both hands taken off the keyboard and held clear above the keys with the wrists raised and the fingers straight and relaxed, nothing is being pressed, breathing slowly in and out, the head and the shoulders stay completely still",
+    "was": {
+      "seed": 17992
+    }
   },
   {
     "id": "crew-emre",

@@ -346,9 +346,15 @@ const bad = [];
 let drawnWorst = 0;
 let bandWorst = 0;
 let counted = 0;
+// Per set as well as overall — REPORTED, not asserted. Which set is nearest the
+// ceiling is worth reading off a failure, but the ceilings themselves are the
+// contract: freezing today's incidental numbers would fail a regenerated asset
+// that is perfectly inside them.
+const perSet = {};
 
 for (const set of sets) {
   const split = R.splitOf(set);
+  perSet[set] = [0, 0];
   const base = png(R.fileOf(set, "base"));
   const box = bounds(base, 0, base.h);
   const bandBox = bounds(base, split, base.h);
@@ -364,7 +370,10 @@ for (const set of sets) {
     const band = bounds(img, split, img.h);
     if (!drawn || !band) { bad.push(set + "/" + frame + ": nothing opaque"); continue; }
     // (a) the whole drawn figure, all four numbers.
-    for (let i = 0; i < 4; i++) drawnWorst = Math.max(drawnWorst, Math.abs(drawn[i] - box[i]));
+    for (let i = 0; i < 4; i++) {
+      drawnWorst = Math.max(drawnWorst, Math.abs(drawn[i] - box[i]));
+      perSet[set][0] = Math.max(perSet[set][0], Math.abs(drawn[i] - box[i]));
+    }
     if (!drawn.every((v, i) => near(v, box[i], 1))) {
       bad.push(set + "/" + frame + ": drawn " + drawn.join(",") + " vs base " + box.join(","));
     }
@@ -372,7 +381,10 @@ for (const set of sets) {
     // band's own TOP is the split by construction, so it says nothing.
     const got = [band[0], band[2], band[1] + band[3]];
     const want = [bandBox[0], bandBox[2], bandBox[1] + bandBox[3]];
-    for (let i = 0; i < 3; i++) bandWorst = Math.max(bandWorst, Math.abs(got[i] - want[i]));
+    for (let i = 0; i < 3; i++) {
+      bandWorst = Math.max(bandWorst, Math.abs(got[i] - want[i]));
+      perSet[set][1] = Math.max(perSet[set][1], Math.abs(got[i] - want[i]));
+    }
     if (!got.every((v, i) => near(v, want[i], 3))) {
       bad.push(set + "/" + frame + ": band x/w/bottom " + got.join(",") + " vs base " + want.join(","));
     }
@@ -385,6 +397,7 @@ console.log(JSON.stringify({
   frames: counted,
   drawnWorst,
   bandWorst,
+  perSet: sets.map((s) => s + "=" + perSet[s][0] + "/" + perSet[s][1]).join(" "),
   bad: bad.join("; "),
 }));
 JS
@@ -404,6 +417,10 @@ if [ "$(lock_of bandWorst)" -le 3 ] 2>/dev/null; then
 else
   bad "lock: the animated band drifts $(lock_of bandWorst) px on x/width/bottom (ceiling 3)"
 fi
+# And where each set actually sits, printed rather than asserted: the two ceilings
+# above are the contract, and a line that froze today's per-set numbers would fail
+# a regenerated asset that is comfortably inside them.
+ok "lock: per set, drawn/band — $(lock_of perSet)"
 
 # Who is at the desk. wall/crew.json is the one place an owner is mapped to a
 # character, and a set it names that is missing a frame is a room that never
@@ -3152,6 +3169,11 @@ const path = require("path");
 const R = require(process.argv[2]);
 const api = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 const CREW = JSON.parse(fs.readFileSync(path.join(process.argv[4], "wall", "crew.json"), "utf8"));
+// Their things are files as well as names, so this probe reads pixels and asks
+// the server's own asset guard about them: the same two instruments the sprite
+// checks at the top of this suite use, rather than a second opinion on either.
+const { decode, bounds } = require(process.argv[5]);
+const S = require(path.join(process.argv[4], "wall", "server.js"));
 const FLOORS = api.floors;
 const by = (id) => api.runs.find((r) => r.id === id);
 // The plate's hero, which is what a dive with no run named lands on: alarms
@@ -3169,6 +3191,16 @@ for (const run of api.runs) {
   const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
   for (const ch of v.word + v.id) if (!R.BIG.rows[ch]) missing.push("BIG:" + ch);
   for (const ch of v.repo + v.owner + v.floorName) if (!R.SMALL.rows[ch]) missing.push("SMALL:" + ch);
+  // The card is type too, and its words come from a markdown heading somebody
+  // typed rather than from a closed vocabulary the server owns — so it is the
+  // one string in this room that could arrive with a glyph in it that no face
+  // has. It goes through the same probe as everything else.
+  for (const ch of R.fit(R.BIG, v.id, R.CARD_ROOM)) {
+    if (!R.BIG.rows[ch]) missing.push("CARD-ID:" + ch);
+  }
+  for (const line of v.card) {
+    for (const ch of line) if (!R.SMALL.rows[ch]) missing.push("CARD:" + ch);
+  }
   for (const row of v.feed) {
     for (const ch of row.text) if (!R.SMALL.rows[ch]) missing.push("FEED:" + ch);
     if (!R.MARKS[row.mark]) missing.push("MARK:" + row.mark);
@@ -3238,6 +3270,162 @@ console.log(JSON.stringify({
   gateActor: gate.workActorKey,
   // Nothing the room draws is missing a glyph...
   missing: missing.join(","),
+  // --- the job card --------------------------------------------------------
+  // WHICH ticket and WHAT IT IS, folded into the floor plate. The words come
+  // from the brief's own first heading, which the server has been shipping all
+  // along, so what is checked here is the wrapping and the single-plane layout.
+  cardCells: R.CARD_CELLS,
+  cardLines: R.CARD_LINES,
+  // The identifier has no surface of its own: every edge of its slot is inside
+  // the existing plate. The plate itself stops three rows before the monitor's
+  // halo, so combining the two does not create an overlap.
+  cardFoldedIntoPlate: R.CARD.x >= R.PLATE.x && R.CARD.y >= R.PLATE.y
+    && R.CARD.x + R.CARD.w <= R.PLATE.x + R.PLATE.w
+    && R.CARD.y + R.CARD.h <= R.PLATE.y + R.PLATE.h,
+  cardClearOfTheMonitor: R.PLATE.y + R.PLATE.h <= R.BEZEL.y - 3,
+  // Every run the fixtures can serve, wrapped: never more lines than the sheet
+  // has, never a line wider than the sheet, and never one that overruns in
+  // pixels either — the cell count and the pixel width are two different claims
+  // and only the second one is what the eye sees.
+  cardFits: api.runs.every((run) => {
+    const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
+    return v.card.length > 0 && v.card.length <= R.CARD_LINES
+      && v.card.every((line) => line.length <= R.CARD_CELLS
+        && R.widthOf(R.SMALL, line) <= R.CARD_ROOM);
+  }),
+  // The id is in the BIG face and the sheet holds sixteen of them; an ad-hoc
+  // ticket longer than that is cut the way the tube cuts, not shrunk.
+  cardIdFits: api.runs.every((run) => {
+    const v = R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS);
+    return R.widthOf(R.BIG, R.fit(R.BIG, v.id, R.CARD_ROOM)) <= R.CARD_ROOM;
+  }),
+  cardLongId: R.fit(R.BIG, "ADHOC-KPI-SPARKLINES", R.CARD_ROOM),
+  // What one real fixture's heading turns into, exactly.
+  cardTitle: R.viewOf({ ...by("OLYX-1631"), crew: "#e8cfa6" }, FLOORS).card.join(" | "),
+  // The blocked run keeps its card, and it says the ticket rather than the
+  // alarm: NEEDS INPUT is the monitor's job and the red is the monitor's alone.
+  cardAlarm: seen.card.join(" | "),
+  // A title too long for three lines ends in the three stops the face can
+  // spell, because the ellipsis a heading is written with is a glyph neither
+  // face has.
+  cardEllipsis: R.wrapped(R.SMALL,
+    "Retire the legacy quote renderer and the invoice exporter behind it and "
+    + "everything that ever called either of them", R.CARD_CELLS, R.CARD_LINES)
+    .join("|"),
+  // A word no line can hold is cut rather than dropped.
+  cardLongWord: R.wrapped(R.SMALL, "Internationalisation", 12, 3).join("|"),
+  // An accent is the same letter at three pixels of width, so it folds to the
+  // letter the face has instead of leaving a hole mid-word.
+  cardAccents: R.wrapped(R.SMALL, "Facturación & anexos — límites", R.CARD_CELLS,
+    R.CARD_LINES).join("|"),
+  // A run whose brief has no heading says which repo it is instead of showing an
+  // empty sheet.
+  cardNoTitle: R.viewOf({ id: "x", projectLabel: "olyxbase" }, FLOORS).card.join("|"),
+  cardNoTitleNoRepo: R.viewOf({ id: "x" }, FLOORS).card.join("|"),
+  // Every fixture carries a heading, so the card always has something to say.
+  cardTitled: api.runs.every((run) => !!(run.title && run.title.trim())),
+  // The whole combined plate remains in shot for the complete lens push.
+  cardInShot: Array.from({ length: 201 }, (_, i) => R.cropAt(i / 200)).every((c) =>
+    R.PLATE.x - 1 >= c.x && R.PLATE.y - 1 >= c.y
+    && R.PLATE.x + R.PLATE.w + 1 <= c.x + c.w
+    && R.PLATE.y + R.PLATE.h + 1 <= c.y + c.h),
+  lensOrigin: (() => {
+    const at = R.cropAt(1);
+    return at.x + "," + at.y;
+  })(),
+  // The lens only ever pushes IN, which is what makes the line above a bound
+  // rather than a sample: the crop origin never travels back out.
+  lensNeverBacks: Array.from({ length: 201 }, (_, i) => R.cropAt(i / 200))
+    .every((c, i, all) => i === 0 || (c.x >= all[i - 1].x && c.y >= all[i - 1].y)),
+  // --- their things --------------------------------------------------------
+  // A room is a room; a desk is somebody's. The pool is closed and lives in
+  // room.js, the roster picks from it, and the three places are the same in every
+  // room — so what is checked is that a hand-edited line cannot break the room
+  // and that the four people are four people.
+  slots: R.SLOTS.map((s) => s.key + "=" + s.plane).join(" "),
+  // Every prop the pool names is a file this repo committed, and the asset route
+  // will serve it: the same guard the sprites and the crew sets come down.
+  propFiles: Object.values(R.PROP_ART)
+    .every((art) => fs.existsSync(path.join(process.argv[4], "wall", "assets", "room", art.file))),
+  propsServable: Object.values(R.PROP_ART)
+    .every((art) => S.assetOf("/assets/room/" + art.file) !== ""),
+  // Every prop FITS the slot its plane sends it to. Measured from the committed
+  // PNGs, because the room is a flat elevation and a thing wider than the gap it
+  // stands in is a thing under somebody's forearm. The slot widths are the
+  // NARROWEST row of each gap, not the widest.
+  propsFit: Object.entries(R.PROP_ART).map(([name, art]) => {
+    const img = decode(fs.readFileSync(
+      path.join(process.argv[4], "wall", "assets", "room", art.file)));
+    const slot = R.SLOTS.find((s) => s.plane === art.plane);
+    const worst = R.SLOTS.filter((s) => s.plane === art.plane)
+      .reduce((least, s) => Math.min(least, s.wide), Infinity);
+    return (img.w <= worst && img.h <= slot.tall) ? "" : name + " " + img.w + "x" + img.h;
+  }).filter(Boolean).join(","),
+  // And it is trimmed to its own drawing, which is what lets the room place a
+  // thing by one corner instead of carrying a padding table for it.
+  propsTrimmed: Object.values(R.PROP_ART).every((art) => {
+    const img = decode(fs.readFileSync(
+      path.join(process.argv[4], "wall", "assets", "room", art.file)));
+    const box = bounds(img, 0, img.h);
+    return box && box[0] === 0 && box[1] === 0 && box[2] === img.w && box[3] === img.h;
+  }),
+  // Who has what. Four people, four DISTINCT sets, and every one of them two or
+  // three things: the point of the line in crew.json is that an owner can edit
+  // their own, so this is the first assignment rather than a law.
+  whoseThings: Object.keys(CREW).sort()
+    .map((who) => who + "=" + R.propsOf(CREW, who).join("+")).join(" "),
+  thingsDistinct: (() => {
+    const sets = Object.keys(CREW).map((who) => R.propsOf(CREW, who).join("+"));
+    return new Set(sets).size === sets.length;
+  })(),
+  thingsSized: Object.keys(CREW).every((who) => {
+    const n = R.propsOf(CREW, who).length;
+    return n >= 2 && n <= R.SLOTS.length;
+  }),
+  // Every name any owner wrote is in the pool, so no line resolves to nothing.
+  thingsKnown: Object.keys(CREW)
+    .every((who) => R.propsOf(CREW, who).every((name) => !!R.PROP_ART[name])),
+  // A name the pool does not have still HOLDS ITS PLACE: the slot it was written
+  // in stays empty and nothing slides up into it. Otherwise a typo does not look
+  // like a typo — the desk comes out one object short with everything shifted,
+  // and nobody can see which line is wrong.
+  unknownThing: JSON.stringify(R.slotsOf(["nope", "mug"])),
+  unknownMidLine: JSON.stringify(R.slotsOf(["mug", "nope", "cactus"])),
+  unknownOnly: JSON.stringify(R.slotsOf(["nope"])),
+  noThings: JSON.stringify(R.slotsOf([])),
+  // A poster does not stand on a desk, and more things than places puts the
+  // extras nowhere rather than on top of each other.
+  wallThingStaysOnTheWall: JSON.stringify(R.slotsOf(["poster", "mug"])),
+  tooManyThings: JSON.stringify(R.slotsOf(["mug", "books", "ball", "poster", "pennant"])),
+  // A hand-edited roster cannot take the room out through the asset route or make
+  // it throw: everything below is a line somebody could plausibly write wrong.
+  hostileThings: JSON.stringify([
+    R.slotsOf(["../../server", "assets/room/prop-mug.png", 7, null, ""]),
+    R.slotsOf("mug"),
+    R.propsOf({ x: { set: "room", props: "mug" } }, "x"),
+    R.propsOf({ x: { set: "room" } }, "x"),
+    R.propsOf(null, "x"),
+    R.propsOf(CREW, null),
+  ]),
+  // An owner nobody drew borrows REINIER's desk, by name. Searching for "the first
+  // entry whose set is the fallback set" agrees with that today and stops agreeing
+  // the moment a second owner writes `"set": "room"` — after which object key
+  // order decides whose desk a stranger gets, silently and differently depending
+  // on how somebody hand-edited the file. So the probe puts another owner on that
+  // set FIRST and asks again.
+  strangerThings: R.propsOf(CREW, "nobody").join("+"),
+  unownedThings: R.propsOf(CREW, "").join("+"),
+  strangerIsNotFirstMatch: R.propsOf({
+    aaa: { set: "room", label: "AAA", props: ["ball"] },
+    reinier: { set: "room", label: "REINIER", props: ["figurine", "books"] },
+  }, "nobody").join("+"),
+  strangerWithNoReinier: JSON.stringify(
+    R.propsOf({ aaa: { set: "room", props: ["ball"] } }, "nobody")),
+  // And the view carries them per fixture owner, resolved once so the baked plane
+  // redraws when the desk changes and never otherwise.
+  viewThings: api.runs.map((run) =>
+    run.id + "=" + R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS, CREW).props.join("/"))
+    .sort().join(" "),
   // ...and no stage in the ladder is too wide for the tube it is drawn on.
   fits: FLOORS.every((name) => R.widthOf(R.BIG, name) <= 64),
   // Reduced motion is ONE frame at every second of the clock, and a lit one:
@@ -3429,7 +3617,7 @@ console.log(JSON.stringify({
   unnamed: R.labelOf(CREW, R.viewOf({ owner: "nobody" }, FLOORS)),
 }));
 JS
-ROOM="$(node "$ROOM_PROBE" "$SRC/wall/room.js" "$ROOT/api.json" "$SRC" 2>&1)"
+ROOM="$(node "$ROOM_PROBE" "$SRC/wall/room.js" "$ROOT/api.json" "$SRC" "$PNG_JS" 2>&1)"
 room_of() { printf '%s' "$ROOM" | jq -r ".$1" 2>/dev/null; }
 check "room: the dive lands on the run the plate is pinned to" "$(room_of hero)" "OLYX-1642"
 check "room: a blocked run's monitor asks for a human" "$(room_of word)" "NEEDS INPUT"
@@ -3442,6 +3630,125 @@ check "room: and is not drawn as an alarm" "$(room_of gateAlarm)" "false"
 check "room: the worker is the actor that owns the stage" "$(room_of gateActor)" "gate"
 check "room: nothing it draws is missing a glyph" "$(room_of missing)" ""
 check "room: no stage in the ladder overruns the tube" "$(room_of fits)" "true"
+
+# The job card. The room said which stage, which floor and who; it never said
+# WHICH TICKET or WHAT THE JOB IS. Those words now share the existing floor
+# plate, leaving the wall between window and monitor empty.
+check "card: the plate holds fifteen cells of the small face" \
+  "$(room_of cardCells)" "15"
+check "card: and the title never runs past two lines" "$(room_of cardLines)" "2"
+check "card: every run in the city wraps inside it, in cells and in pixels" \
+  "$(room_of cardFits)" "true"
+check "card: the ticket fits the big face, whatever it is called" \
+  "$(room_of cardIdFits)" "true"
+check "card: an ad-hoc id is cut rather than shrunk" \
+  "$(room_of cardLongId)" "ADHOC-KPI."
+check "card: a real heading reads as the sentence somebody wrote" \
+  "$(room_of cardTitle)" "INVOICE EXPORT | ENDPOINT - C..."
+check "card: a blocked run keeps its card, and it says the job" \
+  "$(room_of cardAlarm)" "RETIRE THE | LEGACY QUOTE..."
+check "card: a heading too long for the sheet ends in three stops" \
+  "$(room_of cardEllipsis)" \
+  "RETIRE THE|LEGACY QUOTE..."
+check "card: a word no line can hold is cut, not dropped" \
+  "$(room_of cardLongWord)" "INTERNATI..."
+check "card: an accent folds to the letter the face has" \
+  "$(room_of cardAccents)" "FACTURACION|ANEXOS -..."
+check "card: a run with no heading says which repo it is" \
+  "$(room_of cardNoTitle)" "OLYXBASE"
+check "card: and one with neither still has a sheet with something on it" \
+  "$(room_of cardNoTitleNoRepo)" "UNCHARTED"
+check "card: every committed fixture carries a heading to put on it" \
+  "$(room_of cardTitled)" "true"
+check "card: it is folded entirely into the existing floor plate" \
+  "$(room_of cardFoldedIntoPlate)" "true"
+check "card: clear of the monitor's own halo" \
+  "$(room_of cardClearOfTheMonitor)" "true"
+check "card: and it is in shot at every second of the push, not only the first" \
+  "$(room_of cardInShot)" "true"
+check "card: which is a bound because the lens crop only ever travels in" \
+  "$(room_of lensNeverBacks)" "true"
+check "card: to x 39, y 15 by the end of the hold" "$(room_of lensOrigin)" "39,15"
+
+# The card carries no state and no surface of its own: it adds only type to the
+# floor plate. An alarm keeps the words, while the red belongs to the monitor.
+CARD_FN="$(awk '/^    function jobDetails\(v\) \{/, /^    \}$/' "$SRC/wall/room.js")"
+CARD_CODE="$(printf '%s\n' "$CARD_FN" | grep -v '^ *//')"
+grep_not "$CARD_CODE" 'box(' "card: it adds no independent wall surface"
+grep_not "$CARD_CODE" 'alarm' "card: nothing on it depends on the alarm"
+grep_not "$CARD_CODE" 'ALARM' "card: and the klaxon red is never drawn on it"
+grep_not "$CARD_CODE" 'v.crew' "card: nor the crew tint, which belongs to the lamp"
+grep_ok "$(cat "$SRC/wall/room.js")" '      jobDetails(v);' \
+  "card: and it is part of the plate baked with the still planes"
+
+# Their things. Four rooms with four faces in them were still four copies of one
+# room. The pool is closed and lives in room.js, wall/crew.json says who owns
+# what, and there are three places — so what is checked is that a hand-edited
+# line cannot break the room, that every prop fits the gap it stands in, and that
+# the four people read as four people.
+check "things: three places, the same three in every room" \
+  "$(room_of slots)" "deskWarm=desk deskCold=desk wall=wall"
+check "things: every one in the pool is a file this repo committed" \
+  "$(room_of propFiles)" "true"
+check "things: and one the asset route will actually serve" \
+  "$(room_of propsServable)" "true"
+check "things: every one fits the narrowest row of its own gap" \
+  "$(room_of propsFit)" ""
+check "things: and is trimmed to its own drawing, so there is no padding table" \
+  "$(room_of propsTrimmed)" "true"
+check "things: who has what, as crew.json first assigned it" \
+  "$(room_of whoseThings)" \
+  "angel=mug+cactus+poster emre=ball+pennant ran=photo+mug reinier=figurine+books"
+check "things: four people, four different sets" "$(room_of thingsDistinct)" "true"
+check "things: two or three each, never more places than there are" \
+  "$(room_of thingsSized)" "true"
+check "things: and every name any of them wrote is in the pool" \
+  "$(room_of thingsKnown)" "true"
+check "things: a name the pool does not have holds its own place empty" \
+  "$(room_of unknownThing)" '["","mug",""]'
+check "things: and nothing slides up into it from further down the line" \
+  "$(room_of unknownMidLine)" '["mug","",""]'
+check "things: a line of nothing but typos is an empty desk" \
+  "$(room_of unknownOnly)" '["","",""]'
+check "things: an owner with no things has an empty desk, not a crash" \
+  "$(room_of noThings)" '["","",""]'
+check "things: a poster does not stand on a desk" \
+  "$(room_of wallThingStaysOnTheWall)" '["mug","","poster"]'
+check "things: more things than places puts the extras nowhere" \
+  "$(room_of tooManyThings)" '["mug","books","poster"]'
+check "things: nothing a hand-edited roster can say reaches the asset route" \
+  "$(room_of hostileThings)" \
+  '[["","",""],["","",""],[],[],[],["figurine","books"]]'
+check "things: an owner nobody drew borrows Reinier's desk" \
+  "$(room_of strangerThings)" "figurine+books"
+check "things: by name, not by whoever is first on the fallback set" \
+  "$(room_of strangerIsNotFirstMatch)" "figurine+books"
+check "things: and a roster with no Reinier in it is an empty desk, not a throw" \
+  "$(room_of strangerWithNoReinier)" "[]"
+check "things: and so does a run with no owner at all" \
+  "$(room_of unownedThings)" "figurine+books"
+check "things: and the view carries them per run, so the plane rebakes on a swap" \
+  "$(room_of viewThings)" \
+  "BOT-2287=figurine/books/ BOT-2291=figurine/books/ LEGACY-0042=figurine/books/ OLYX-1598=ball//pennant OLYX-1631=mug/cactus/poster OLYX-1642=figurine/books/ OLYX-1648=figurine/books/ OLYX-1655=mug/cactus/poster OLYX-1660=mug/cactus/poster OLYX-1667=photo/mug/ OLYX-1673=ball//pennant adhoc-kpi-sparklines=mug/cactus/poster"
+
+# Nothing on the desk may cross the forearms or the keyboard, and the way that is
+# guaranteed is an ORDER rather than a measurement: their things are the last
+# thing baked into the middle plane, and the worker is drawn over that plane every
+# frame. A prop cannot be in front of a hand it is drawn behind.
+ROOM_ALL="$(cat "$SRC/wall/room.js")"
+grep_ok "$ROOM_ALL" '        theirThings(v);' \
+  "things: they are baked with the still planes, not redrawn every frame"
+grep_ok "$ROOM_ALL" '      worker(view, beat, revealing());' \
+  "things: and the worker is drawn over that plane, so nothing crosses a forearm"
+THING_FN="$(awk '/^    function thing\(slot, name\) \{/, /^    \}$/' "$SRC/wall/room.js")"
+THING_CODE="$(printf '%s\n' "$THING_FN" | grep -v '^ *//')"
+grep_ok "$THING_CODE" 'edge(slot.warm, GLOW, 0.24);' \
+  "things: lit warm on the side the lamp is on"
+grep_ok "$THING_CODE" 'edge(slot.cold, CYAN, 0.16);' \
+  "things: and cold on the side the tube is"
+grep_not "$THING_CODE" 'v.crew' \
+  "things: never in the crew tint, which the wide city gives to the lamp"
+grep_not "$THING_CODE" 'ALARM' "things: and never in the alarm's red"
 check "room: reduced motion is one frame at every second of the clock" \
   "$(room_of frozen)" "true"
 check "room: and the same room without it genuinely moves" "$(room_of moves)" "true"

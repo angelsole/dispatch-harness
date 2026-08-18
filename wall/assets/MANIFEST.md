@@ -83,6 +83,55 @@ the wording each seed was drawn against. Every `animate` job took
 the hood, the headphones, the jacket, the keyboard — is the same person in every
 frame the room can show.
 
+## Their things
+
+The furniture above is the ROOM. These are the DESK, and a desk belongs to
+somebody: `wall/crew.json` names two or three of them per owner, `wall/room.js`
+holds the closed pool a line may pick from, and there are three places to put
+them — beside the lamp, beside the monitor, and on the wall over the desk.
+
+The first assignment puts a DIFFERENT object in the place the eye lands on first,
+on all four desks: Angel's mug, Emre's football, Ran's photograph, Reinier's
+figurine. The mug is on two desks in two different places, which is what a mug
+is. The line in `crew.json` is the point — each owner edits their own.
+
+| path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
+|---|---|---|---|---|---|---|---|---|
+| `room/prop-mug.png` | a mug, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-mug` | `18520` | 2026-08-17 | generated for this repo | `c680e87651666df4268afdf46d945067a6382da362911efd6cb8075d1ea48637` |
+| `room/prop-cactus.png` | a small cactus in a pot, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-cactus` | `18512` | 2026-08-17 | generated for this repo | `9235d7c876ad4e2c787b27803f7aa3f5bbab200a76a27bf3394ded7bafa24025` |
+| `room/prop-books.png` | a stack of books, for the desk; one klaxon-red cover recoloured onto the palette's deep red | pixellab.image + recolour + halve + trim | `/create-image-pixflux` | `room-prop-books` | `18521` | 2026-08-17 | generated for this repo | `0098d2a62e6de5a2316f20ce3caae1a83b0b30fb6b7292aa18c4e7c36ed9efc1` |
+| `room/prop-photo.png` | a framed photograph, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-photo` | `18523` | 2026-08-17 | generated for this repo | `5218a65059e4fa3baede822f902668a14c8435d3bf6f3675ea93acb1610932e7` |
+| `room/prop-figurine.png` | a small toy figurine, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-figurine` | `18525` | 2026-08-17 | generated for this repo | `6ad29a722970b23eaad4cbebd3c86d39717be5d5cadc941972fb82d6f64dd0b7` |
+| `room/prop-ball.png` | a football, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-ball` | `18526` | 2026-08-17 | generated for this repo | `e092f7d9f941d6a3c6fefb581eb9acab93562f616675c997bf27d6cc8d1f73d7` |
+| `room/prop-poster.png` | a framed night landscape, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-poster` | `18527` | 2026-08-17 | generated for this repo | `4e9f9ec53a15337fc88a1164621961c9307d8c5ace1d9e6e78389ecea5d148e6` |
+| `room/prop-pennant.png` | a felt pennant, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-pennant` | `18528` | 2026-08-17 | generated for this repo | `7539387a6ba16ab38c48226b3ae8de072c892ecf0d05e038acece3de34baa89b` |
+
+Three things about these files that the columns cannot say:
+
+- **`halve` is not a resample.** The factory's smallest square canvas is 32x32 —
+  its floor is 1024 px of area, so a 16x16 request is refused — and a mug drawn to
+  fill 32x32 is a mug as tall as the desk lamp beside it. This room's scale is
+  not negotiable: a person is 56 px and the lamp is 28, so a mug is 13. The desk
+  props come down by exactly two, each 2x2 block voting: the winning opaque
+  colour takes the output pixel, a block that is mostly transparent stays
+  transparent. No new colour can appear and no edge goes soft. The two WALL props
+  are not halved — a poster next to a 66 px window really is 24 px.
+- **`trim` is why there is no padding table.** Every prop is cropped to its own
+  drawing, so the committed file IS its content box and `room.js` places a thing
+  by one corner. The furniture above still carries a `BOX` entry each, because
+  those files predate the idea.
+- **One recolour, for meaning and never for value.** `prop-books` came back with
+  a bright `#ff2f45` cover, and in this palette that red is an alarm; it is on
+  `#531820` now, pixel for pixel, the same call `room/plant.png` got when it came
+  back in emerald. Nothing was recoloured for being too bright — an asset is
+  authored at full value and the renderer is what veils it, which is why the
+  football keeps its white and the room sinks it instead.
+
+Nine props were generated and eight are here. `room-prop-headphones` was rolled
+twice, at `18514` and `18524`, and came back both times as a spindle nobody would
+read as headphones at 4x; it was thrown away rather than retouched, and the pool
+is eight.
+
 ## Eight frames, and a head that holds
 
 `type-0..3` and `wait-1/2` are the four-and-two the room shipped with, and they
@@ -175,7 +224,7 @@ seed drifted it was re-rolled rather than retouched. What shipped:
 
 | set | base | drift from the lock | frames |
 |---|---|---|---|
-| `crew/angel` | 53x55+5+5 | -3, +2, +1, -2 | 51-54 wide, 54-57 tall |
+| `crew/angel` | 56x55+4+5 | 0, +2, 0, -2 | 56 wide, 55 tall, every frame |
 | `crew/emre` | 58x56+0+7 | +2, +3, **-4**, 0 | 56-58 wide, 56-61 tall |
 | `crew/ran` | 58x51+2+5 | +2, -2, -2, -2 | 56-59 wide, 50-52 tall |
 
@@ -194,31 +243,79 @@ the room puts on the wall is each base's own to within **1 px** for all
 sixty-four, and each animated band holds its base's x, width and bottom edge to
 within **2 px**. Both are asserted from these PNGs by `tests/wall.test.sh`.
 
+## Angel, on the owner's own description
+
+`crew/angel` was regenerated on the owner's word: *short hair, a full beard, brown
+hair with grey at the sides.* The set it replaces had messy shoulder-length dark
+hair and a short beard, and was simply the wrong person. Everything else about the
+entry is unchanged — seated, facing the viewer, forearms on a keyboard, olive
+jacket over a pale tee, head and torso and arms only, no background.
+
+Four seeds were drawn against the new wording and all four are in
+`.harness/angel-candidates.png` at 4x, so the pick can be argued with by seed.
+**18470** is the one committed. It was chosen on the description read off the
+pixels rather than off an impression: its hair is `#4f4441` brown with `#525852`
+and `#79907e` at both temples and down both sideburns, the beard is a full warm
+mass over the whole jaw, and the hair is short. 18472 has the grey more obviously
+at the sides but reads grey-haired overall and sits 4 px wider than the pose lock;
+18471 and 18473 lose the face to warm blocks at 4x. 18470 is also the only one of
+the four inside ±3 of `room/worker-type-0.png` on all four numbers.
+
+The typing cycle took five `animate` jobs to land, and the reason is worth
+writing down because it is not about seeds. This base's SLEEVES set the animated
+band's outer columns, and the first prompt — the one both the room worker and the
+previous Angel used, *"the fingers strike down onto the keys in a rolling wave and
+the wrists lift and fall between strokes"* — made the animator lean the figure in:
+the elbows came together and the band lost 4 px of width at mid-cycle, over the
+±3 ceiling. Two more seeds of the same wording measured 5 and 6 px, and pinning
+the last frame to the base (interpolating a closed loop instead of an open one)
+measured 6. What fixed it was the wording, at the first seed it was tried on:
+naming every part that must NOT move — *"and nothing else in the picture moves at
+all: the forearms, the elbows, the sleeves, the shoulders, the jacket, the head
+and the keyboard all stay exactly where they are and keep exactly the same
+width"*. Seed `18945` holds the base's box and its animated band to **0 px** on
+all sixteen frames, at every split row from 36 to 47.
+
+What that costs is range: 57 to 321 band pixels change between consecutive drawn
+frames, against 72-381 for the room's own worker, and one pair (poses 4 and 5) is
+quieter than the room's floor. The hands still travel — `.harness/angel-hands-strip.png`
+is 24 real-time frames at 8 fps off the running room — and a set that reads as
+typing everywhere beats a set that reads as leaning in twice a second.
+
+`wait8` needed one job: seed `18992` holds x, width and bottom to 0 px on all
+eight.
+
+The four-and-two under `crew/angel/` — `type-0..3` and `wait-1/2` — are the
+PREVIOUS Angel's, kept exactly as they were, and the room has not drawn them since
+the eight-frame cycles landed. `.creative/assets.json` keeps the wording and seed
+they were drawn against in the `was` field of the rewritten entries, which is what
+makes those rows still readable.
+
 | path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
 |---|---|---|---|---|---|---|---|---|
-| `crew/angel/base.png` | the still every other frame of this set came from - the pose lock | pixellab.image | `/create-image-pixflux` | `crew-angel` | `17470` | 2026-08-17 | generated for this repo | `f9997780b2857e33653b0893a8aa301b4e67afd1862ea89cf9dc20a4126a4dc5` |
+| `crew/angel/base.png` | the still every other frame of this set came from - the pose lock; regenerated to the owner's own description | pixellab.image | `/create-image-pixflux` | `crew-angel` | `18470` | 2026-08-17 | generated for this repo | `c5cd0e59b2c289f04f995d00221f0c6c34a2a16805a7fcbdb41a8667bf875f72` |
 | `crew/angel/type-0.png` | typing, frame 1 of 4 | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type` | `17441` | 2026-08-17 | generated for this repo | `5a6bfb0d11f1fceff9c88fc2581a3cf703998505a86b310568c6bd360411fb4f` |
 | `crew/angel/type-1.png` | typing, frame 2 of 4 | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type` | `17441` | 2026-08-17 | generated for this repo | `dd94a5ec4d18d53a6b5a3ab2ba7772936f399369314aa6e5f8ab81e6d904080b` |
 | `crew/angel/type-2.png` | typing, frame 3 of 4 | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type` | `17441` | 2026-08-17 | generated for this repo | `d813b773bae1924c34986c94d1e838d9f15757f0efc33e573306d4ed00c5b45f` |
 | `crew/angel/type-3.png` | typing, frame 4 of 4 | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type` | `17441` | 2026-08-17 | generated for this repo | `62c92abbab003edfa41ab5930d834245de25c342e9c466fca3821a6972862666` |
 | `crew/angel/wait-1.png` | waiting, hands off the keys - what a blocked run looks like | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait` | `17442` | 2026-08-17 | generated for this repo | `b6128840fcdb440e6002935e951434c3f27d8fb532e2f6bea893f6276b4df58f` |
 | `crew/angel/wait-2.png` | waiting, second frame | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait` | `17442` | 2026-08-17 | generated for this repo | `4630d173fe12565d5b1a0039e9636d27f06d4dd469601f1825105a2ab8176203` |
-| `crew/angel/type8-0.png` | typing, pose 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `9e89db224d7b867fa2705e5c9fd4779a0756f37c1693d3a92162dde4d0e838de` |
-| `crew/angel/type8-1.png` | typing, pose 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `915af6547619bcb9984f3325cb73c827ae0d772d94bd6117d3370819b1d6f306` |
-| `crew/angel/type8-2.png` | typing, pose 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `87f31338bd211f11c9adf925151341abc1d480b315c32531a136c9338a4cd01f` |
-| `crew/angel/type8-3.png` | typing, pose 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `ab5ec51b7ea1f6763f79aa5a6a0c31d48a21d923929d64b90b9d32b34424358f` |
-| `crew/angel/type8-4.png` | typing, pose 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `de3d728990f19e3289cc48e1fd80a8d2c882607323ef477b2bc391a6ffe2ffc7` |
-| `crew/angel/type8-5.png` | typing, pose 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `959e216edbd40ea9301415a8ff98c930f1110ad24f30193c2912cb5705e62109` |
-| `crew/angel/type8-6.png` | typing, pose 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `e578f60b6063a9f2ca2c204d5b86ad6cf8f55d99c1859768f708b3e5f9334b4b` |
-| `crew/angel/type8-7.png` | typing, pose 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `17941` | 2026-08-17 | generated for this repo | `c24bd5c9310b283d184c85f0bf4f9e3e765c61fa250c923a3f9c0003f4c56f02` |
-| `crew/angel/wait8-0.png` | waiting, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `de9a21d73b9bbac9e327dba69fbe0a655a1409d2a28cdf4fae7b863c363776e6` |
-| `crew/angel/wait8-1.png` | waiting, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `e6c72d51e3d49d0e150e6c1dc67a35857a329c4a458780cc21dc7fd555ec20d4` |
-| `crew/angel/wait8-2.png` | waiting, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `e8f36e2edee97cd51c4c3ec1aacd5e9f928fbe025e21bb0e9afa6b771e9398dc` |
-| `crew/angel/wait8-3.png` | waiting, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `534439e3fda7eeb5c76fcf6a2e3037685d4fe3c7c2c79be73fc5ff6e58b4bdfd` |
-| `crew/angel/wait8-4.png` | waiting, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `e0b9ecb2bbabb6f48dc507028fb4dead04e1e07d80215ddeb1a308b78ef2f156` |
-| `crew/angel/wait8-5.png` | waiting, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `b924800317464b85be1c8c36d75238a590de54f883f9d55701ee5362739a024f` |
-| `crew/angel/wait8-6.png` | waiting, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `f3923eeb1c2f28a3d42cbea3c6ec697521a32ebd73c72ce62b32d1a3ffe5ec54` |
-| `crew/angel/wait8-7.png` | waiting, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `17992` | 2026-08-17 | generated for this repo | `ff5e7786b6e2abf2ccbd2b3decb9b75d9c4c57fb5aefd541c2f85f31f6b56142` |
+| `crew/angel/type8-0.png` | typing, pose 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `00019722038232f6c408eb7de26371d0e44893a652c14276c1c03ea32374fcf2` |
+| `crew/angel/type8-1.png` | typing, pose 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `f7c2bb8f2d5f67d8706791b1650b300568cc86ca41b003dcdd9d65dfe181ba50` |
+| `crew/angel/type8-2.png` | typing, pose 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `b7bade82dde9d4c980246cbff2a4bffb79a5ba2cdfa7e418c53c7090c414ec3f` |
+| `crew/angel/type8-3.png` | typing, pose 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `13410c4c8eb78b9988f2f94247095f7a1c379b5641d90dc8d85e85bcb7e02773` |
+| `crew/angel/type8-4.png` | typing, pose 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `1e0243e5ca93f3ded766b496c18d53d5b158ecfc749d0bf7378b121312f5813a` |
+| `crew/angel/type8-5.png` | typing, pose 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `b7b97530810bb1f7fae9ad0c8cd1bae3925a4c15a86c0afbf887b154d70b812b` |
+| `crew/angel/type8-6.png` | typing, pose 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `f8091b44bc754d45b3355ae898ceaa599491b729fbb24798cf51efea9d250657` |
+| `crew/angel/type8-7.png` | typing, pose 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-type8` | `18945` | 2026-08-17 | generated for this repo | `88f2762a2b7c7a8b9ac45f4a46c04338ecf974905567716f7b71c37493494dd1` |
+| `crew/angel/wait8-0.png` | waiting, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `c25114660e812d29db60eaad61be1c19f1877c6d05a8fe24b18bdd9a4e30a6c4` |
+| `crew/angel/wait8-1.png` | waiting, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `3081c37b9b2cce979e3455577ad03ed6a56e09006a836288f433e1b59cf8cdbb` |
+| `crew/angel/wait8-2.png` | waiting, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `a8283f29eb8b875505acde96fb071ee0ccd2944eb60d5c9bdb8cc25a672b1e52` |
+| `crew/angel/wait8-3.png` | waiting, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `46c714d07a2ddb6719f595b6f27814f86d3ec34e3e9bdec623a480c09796520d` |
+| `crew/angel/wait8-4.png` | waiting, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `f92d22a6f9c88932e69033819c797247e09cb119156707879604041e5ab63ecc` |
+| `crew/angel/wait8-5.png` | waiting, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `897249936713c782ff2334416d943cf6e7eacb60a5064605f6d186476d1e535c` |
+| `crew/angel/wait8-6.png` | waiting, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `2aa863fc97bc0ec4e4bea5a1915fd364d3f1399d50045f28a7aaa0a4e5e7970e` |
+| `crew/angel/wait8-7.png` | waiting, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-wait8` | `18992` | 2026-08-17 | generated for this repo | `957f0c62e29f8ccc0f91e0a4c62f8a10617157b9fc1e7b1d902ebd878e541756` |
 | `crew/emre/base.png` | the still every other frame of this set came from - the pose lock | pixellab.image | `/create-image-pixflux` | `crew-emre` | `17455` | 2026-08-17 | generated for this repo | `e0ab7cf5c27ca7003b967117c0f5efe2dd4d7896b1508cbdaf50060208709ea1` |
 | `crew/emre/type-0.png` | typing, frame 1 of 4 | pixellab.animate | `/animate-with-text-v3` | `crew-emre-type` | `17451` | 2026-08-17 | generated for this repo | `b89b7c3f6aa36cbef099869884eff9c0bc61979e491b32b557ff9b18778e0f33` |
 | `crew/emre/type-1.png` | typing, frame 2 of 4 | pixellab.animate | `/animate-with-text-v3` | `crew-emre-type` | `17451` | 2026-08-17 | generated for this repo | `b6e2eeb5eccf1c12c7827a93f29fa1445b4b9e1bc1d0b1380ca690b808c4debc` |

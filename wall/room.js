@@ -71,6 +71,7 @@
   const ICE = '#96c3c8';
   const MINT = '#a9d9c6';
   const RUST = '#531820';
+  const CREAM = '#e8cfa6';
   const GLOW = '#ffc27d';
   const WORK = '#ffc680';
   const EMBER = '#ff9a5e';
@@ -312,6 +313,31 @@
     shelf: 'shelf.png',
   };
 
+  // --- their things -------------------------------------------------------
+  // The furniture above is the ROOM. This is the DESK, and a desk belongs to
+  // somebody: four rooms with four faces in them were still four copies of one
+  // room, so there is now a small pool of small things and a few places to put
+  // them, and wall/crew.json says who owns what.
+  //
+  // The pool is CLOSED and it lives here rather than in the roster, because a
+  // name somebody types into crew.json must never be able to become a path. A
+  // hand-edited line picks from this table; it cannot add to it, and a name the
+  // table does not have is simply not a thing.
+  //
+  // `plane` is the only thing that decides where a thing can go — a poster does
+  // not stand on a desk and a mug does not hang on a wall — and within a plane
+  // the slots fill in the order the owner wrote their line.
+  const PROP_ART = {
+    mug: { file: 'prop-mug.png', plane: 'desk' },
+    cactus: { file: 'prop-cactus.png', plane: 'desk' },
+    books: { file: 'prop-books.png', plane: 'desk' },
+    photo: { file: 'prop-photo.png', plane: 'desk' },
+    figurine: { file: 'prop-figurine.png', plane: 'desk' },
+    ball: { file: 'prop-ball.png', plane: 'desk' },
+    poster: { file: 'prop-poster.png', plane: 'wall' },
+    pennant: { file: 'prop-pennant.png', plane: 'wall' },
+  };
+
   // The person at the desk is not a sprite but a SET of seventeen frames, and
   // which set that is depends on whose run this is — the one fact in this room
   // that is about a human rather than about the work. Every set under
@@ -336,6 +362,10 @@
   const PREFIX = { room: 'worker-' };
   const ALIAS = { room: { base: 'type-0' } };
   const FALLBACK = 'room';
+  // The marker one of their things carries through the loader. An object rather
+  // than a string, so no set name a hand-edited roster could invent is ever
+  // mistaken for it.
+  const THING = {};
   const fileOf = (set, frame) => 'assets/' + set + '/' + (PREFIX[set] || '')
     + ((ALIAS[set] || {})[frame] || frame) + '.png';
 
@@ -402,6 +432,65 @@
     return label || view.owner;
   }
 
+  // Whose desk an unknown owner sits at. NAMED, not searched: the contract says
+  // the fallback room shows Reinier's things, and finding "the first entry whose
+  // set is the fallback set" is a different rule that happens to agree today. The
+  // moment a second owner also writes `"set": "room"`, object key order decides
+  // whose desk a stranger gets — silently, and differently depending on how
+  // somebody hand-edited the file.
+  const FALLBACK_OWNER = 'reinier';
+
+  // And what they keep on it. crew.json is written by hand, so everything below
+  // assumes the worst: no entry, no props key, a props that is a string, a name
+  // nobody drew. None of those may cost the room a frame.
+  //
+  // An owner with an entry and no things has an EMPTY desk, which is a choice
+  // somebody made. An owner with no entry at all borrows Reinier's — they are
+  // already sitting in the character Reinier's own room uses, so they sit at his
+  // desk too, because a room with a face in it and nothing on the desk is a room
+  // somebody moved out of.
+  function propsOf(crew, owner) {
+    const table = crew && typeof crew === 'object' ? crew : {};
+    const key = String(owner || '').trim().toLowerCase();
+    let entry = table[key];
+    if (!entry || typeof entry !== 'object') entry = table[FALLBACK_OWNER];
+    const list = entry && typeof entry === 'object' && Array.isArray(entry.props)
+      ? entry.props : [];
+    return list.filter((name) => typeof name === 'string')
+      .map((name) => name.trim().toLowerCase());
+  }
+
+  // Their things, in the places there are. Walked in the order the line was
+  // written; a known name takes the next free place of its own PLANE, because a
+  // plane is not a position — a poster is asked for on the wall wherever in the
+  // line it appears, and the desk places are filled by the desk things in their
+  // own order.
+  //
+  // An unknown name still HOLDS A PLACE. That is the whole difference from the
+  // first version, which skipped it and let the next thing slide up: a line that
+  // reads `["nope", "mug"]` must leave a hole and put the mug in the second place,
+  // not quietly promote the mug into the first. Otherwise a typo does not look
+  // like a typo — the desk simply comes out one object short with everything
+  // shifted, and nobody can see which line is wrong. It holds the first place
+  // still going, because the plane it wanted is unknowable.
+  //
+  // More things than places is the same rule from the far end: once every place of
+  // a plane is held, the extras of that plane are not put anywhere.
+  function slotsOf(names) {
+    const out = SLOTS.map(() => '');
+    const held = SLOTS.map(() => false);
+    for (const name of Array.isArray(names) ? names : []) {
+      const art = PROP_ART[name];
+      const at = art
+        ? SLOTS.findIndex((slot, i) => slot.plane === art.plane && !held[i])
+        : held.indexOf(false);
+      if (at < 0) continue;
+      held[at] = true;
+      if (art) out[at] = name;
+    }
+    return out;
+  }
+
   // Where each sprite's own drawing sits inside its file, measured once off the
   // committed PNGs, so the room places the DESK rather than the desk's padding.
   const BOX = {
@@ -421,12 +510,64 @@
     w: BOX.windowFrame.hole.w,
     h: BOX.windowFrame.hole.h,
   };
-  const PLATE = { x: 228, y: 26, w: 72, h: 32 };         // the floor sign on the wall
+  const PLATE = { x: 228, y: 26, w: 72, h: 45 };         // floor + job sign on the wall
   const SCREEN = { x: 176, y: 78, w: 68, h: 38 };        // what the monitor shows
   const BEZEL = { x: 172, y: 74, w: 76, h: 52 };
   const WORKER = { x: 96, y: 74 };                       // the sprite's origin
   const LAMP = { x: 60, y: DESK_Y - BOX.lamp.y - BOX.lamp.h };
   const RAIN_SPEED = 6;                                  // room px / second
+
+  // The job identifier is folded into the floor plate instead of claiming a
+  // second rectangle on the wall. The monitor says the state, the top of this
+  // plate says the floor, and its lower half answers which ticket and what it is.
+  // The dark span between the window and the plate therefore stays completely
+  // empty, as it was in the champion.
+  const CARD = { x: PLATE.x + 4, y: PLATE.y + 23, w: PLATE.w - 9, h: 20 };
+  const CARD_PAD = 2;
+  // What the plate's lower half holds, in glyphs of each face: the ticket in the
+  // big one and the brief's heading under it in the small one.
+  const CARD_ROOM = CARD.w - CARD_PAD * 2;
+  const CARD_CELLS = cells(SMALL, CARD_ROOM);
+  const CARD_LINES = 2;
+
+  // The lower half is deliberately tight: one big row and two small rows, with
+  // no paper fill, frame, pin, or extra rule to turn it into another object.
+  const CARD_ID_Y = CARD.y;
+  const CARD_TEXT_Y = CARD.y + 8;
+  const CARD_PITCH = 6;
+
+  // And where somebody's own things go. Three places, the same three in every
+  // room, measured off the committed sprites rather than off a screenshot —
+  // because the room is a FLAT ELEVATION and what a thing has to fit is the
+  // NARROWEST row of the gap it stands in, not the widest:
+  //
+  //   deskWarm  on the desk between the lamp and the keyboard, inside the lamp's
+  //             own pool. The gap closes to 14 px at the row where the lamp's arm
+  //             crosses it, and opens to 22 lower down.
+  //   deskCold  on the desk between the person's right sleeve and the monitor:
+  //             17 px at its narrowest, lit by the tube rather than the lamp.
+  //   wall      the bare wall over the desk, left of whoever is sitting there —
+  //             under the window frame, above the skirting, clear of their
+  //             shoulder, and lit from below by the lamp.
+  //
+  // `x` is the left edge and `y` is the row the thing STANDS ON, so a prop is
+  // placed by one corner and the committed file's own height does the rest. That
+  // is why every prop sprite is trimmed to its own drawing: there is no table of
+  // paddings to keep in step with the art.
+  const SLOTS = [
+    {
+      key: 'deskWarm', plane: 'desk', x: 88, y: DESK_Y, wide: 14, tall: 26,
+      warm: 'left', cold: 'right',
+    },
+    {
+      key: 'deskCold', plane: 'desk', x: 152, y: DESK_Y, wide: 17, tall: 26,
+      warm: 'left', cold: 'right',
+    },
+    {
+      key: 'wall', plane: 'wall', x: 60, y: 108, wide: 30, tall: 26,
+      warm: 'bottom', cold: 'top',
+    },
+  ];
 
   // The typing loop: eight poses, 120 ms each, so the cycle is 960 ms and the
   // hands run at 8.3 poses a second. That is the floor for reading as typing —
@@ -501,6 +642,30 @@
     }
     // A float that lands on the last seam works rather than freezes.
     return true;
+  }
+
+  // --- the lens -----------------------------------------------------------
+  // Which whole source pixels the shot is cropped to at a given push. At the end
+  // of it the monitor and the worker share the middle of the frame; the outer
+  // pillar and shelf move out first, which is what makes the three room planes
+  // do visible camera work without adding another object.
+  //
+  // Pure and out here rather than inside the draw call, because it decides what
+  // is IN SHOT — and the plate a human reads has to remain in the frame at the
+  // end of the twelve seconds, not only at the start. The crop origin travels to
+  // x 39, y 15 over a full hold.
+  function cropAt(push) {
+    const zoom = 1 + push * 0.14;
+    const w = Math.round(W / zoom);
+    const h = Math.round(H / zoom);
+    const cx = W / 2 + (BEZEL.x + BEZEL.w / 2 - W / 2) * push * 0.48;
+    const cy = H / 2 + (BEZEL.y + BEZEL.h / 2 - H / 2) * push * 0.4;
+    return {
+      x: Math.max(0, Math.min(W - w, Math.round(cx - w / 2))),
+      y: Math.max(0, Math.min(H - h, Math.round(cy - h / 2))),
+      w,
+      h,
+    };
   }
 
   // --- the beat -----------------------------------------------------------
@@ -621,10 +786,74 @@
 
   const keyOf = (row) => row.key;
 
+  // --- what the card says -------------------------------------------------
+  // A brief's first heading is prose a person typed into a markdown file: an
+  // em dash, an ampersand, an accent, a stray arrow. The card is drawn out of
+  // the same two hand-set faces as everything else in this room, and neither
+  // has a glyph for any of those — so the string is put through the face
+  // before it is measured, not after.
+  //
+  // The accented Latin letters a heading written by this team actually carries.
+  // At three pixels of width an accent is not a mark, it is noise — Ó IS O at
+  // this size — so the letter folds to the one the face has. Without this a
+  // Spanish or Dutch heading loses a letter to a space and `FACTURACIÓN` reads
+  // as two words nobody wrote. Kept out of the tube's own look-alike table on
+  // purpose: this is the card's problem and the feed is not being touched.
+  const ACCENTS = {
+    'Á': 'A', 'À': 'A', 'Ä': 'A', 'Â': 'A', 'Ã': 'A', 'Å': 'A', 'Æ': 'AE',
+    'Ç': 'C', 'É': 'E', 'È': 'E', 'Ë': 'E', 'Ê': 'E', 'Í': 'I', 'Ì': 'I',
+    'Ï': 'I', 'Î': 'I', 'Ñ': 'N', 'Ó': 'O', 'Ò': 'O', 'Ö': 'O', 'Ô': 'O',
+    'Õ': 'O', 'Ø': 'O', 'Œ': 'OE', 'Ú': 'U', 'Ù': 'U', 'Ü': 'U', 'Û': 'U',
+    'Ý': 'Y',
+  };
+  const ACCENTED = new RegExp('[' + Object.keys(ACCENTS).join('') + ']', 'g');
+
+  // Three steps, and the first is the tube's: the look-alikes normalise (an em
+  // dash IS a hyphen at this size), the accents fold, and then anything the face
+  // still cannot draw becomes a SPACE rather than a blank cell — a space is a
+  // word break, so `INVOICES & QUOTES` reads as two words instead of leaving a
+  // hole where the ampersand was.
+  const spoken = (face, str) => String(str || '').toUpperCase()
+    .replace(LOOKALIKES, (ch) => LOOKALIKE[ch])
+    .replace(ACCENTED, (ch) => ACCENTS[ch])
+    .split('')
+    .map((ch) => (face.rows[ch] ? ch : ' '))
+    .join('');
+
+  // And then it is wrapped on whole words, to at most `rows` lines of `cells`
+  // glyphs. Two rules the room's other type does not need:
+  //
+  //   a word no line can hold is CUT rather than dropped, the same way the tube
+  //     cuts one — the card would rather say AUTHENTICATION. than say nothing
+  //     about the longest word in the title
+  //   what is left over after the last line ends in three stops, because the
+  //     ellipsis a heading is written with is one character neither face has and
+  //     `...` is the three the small face does
+  //
+  // Pure, and outside create(), so the suite can ask what a heading wraps to
+  // without a canvas.
+  function wrapped(face, str, wide, rows) {
+    const all = [];
+    let at = '';
+    for (const word of spoken(face, str).split(/\s+/).filter(Boolean)) {
+      const one = word.length <= wide ? word : word.slice(0, Math.max(1, wide - 3)) + '...';
+      const next = at ? at + ' ' + one : one;
+      if (next.length <= wide) { at = next; continue; }
+      all.push(at);
+      at = one;
+    }
+    if (at) all.push(at);
+    if (all.length <= rows) return all;
+    const kept = all.slice(0, rows);
+    kept[rows - 1] = kept[rows - 1].slice(0, Math.max(0, wide - 3))
+      .replace(/\s+$/, '') + '...';
+    return kept;
+  }
+
   // --- the view -----------------------------------------------------------
   // Everything the room needs about a run, and nothing else: the page hands
   // this over, the room never reaches for a snapshot.
-  function viewOf(run, floors) {
+  function viewOf(run, floors, crew) {
     const ladder = Array.isArray(floors) && floors.length ? floors : ['SETUP'];
     const alarm = run.state === 'alarm';
     return {
@@ -647,6 +876,31 @@
       // The monitor's headline. A run asking for a human says so instead of
       // naming a stage nobody is working on.
       word: alarm ? 'NEEDS INPUT' : (run.floorName || ladder[0]).toUpperCase(),
+      // WHAT THE JOB IS, which is the one thing this room has never said. The
+      // server already ships it: the first `# heading` of the run's own
+      // brief.md, which is the sentence whoever opened the ticket wrote.
+      title: (run.title || '').trim().toUpperCase(),
+      // And the same thing as the card draws it — wrapped here rather than in
+      // the draw call, so a probe can ask what a heading turns into without a
+      // canvas, and so the baked plane's key changes when the words do.
+      //
+      // A run with no heading — no brief.md, or one that opens with prose —
+      // gets the repo instead of an empty plate: the card's job is to answer
+      // "which ticket, and what is it", and half of that answer still tells
+      // somebody on the sofa which codebase is being worked on.
+      card: (() => {
+        const lines = wrapped(SMALL, run.title || '', CARD_CELLS, CARD_LINES);
+        return lines.length ? lines
+          : [fit(SMALL, (run.projectLabel || run.project || 'UNCHARTED').toUpperCase(),
+            CARD_ROOM)];
+      })(),
+      // WHOSE DESK, in objects rather than in a name. Resolved here rather than
+      // in the draw call so the baked plane's key changes when the owner does:
+      // the things on the desk are a fact about a run exactly like the plate and
+      // the nameplate, and the room redraws them when they change and never
+      // otherwise. Empty until the roster has answered, which is before the room
+      // is ever allowed to paint.
+      props: slotsOf(propsOf(crew, run.owner)),
       // And the work itself, in the run's own words. A few more lines than the
       // tube shows, so the room can tell an appended line from a re-sent one
       // across two snapshots.
@@ -725,7 +979,18 @@
     const tintCtx = tintPad.getContext('2d');
     tintCtx.imageSmoothingEnabled = false;
 
+    // And a smaller one for their things, for the same reason: a prop is veiled
+    // and edge-lit on its own pixels, and source-atop straight onto the room
+    // would repaint the desk under it.
+    const PROP_PAD = 32;
+    const propPad = document.createElement('canvas');
+    propPad.width = PROP_PAD;
+    propPad.height = PROP_PAD;
+    const propCtx = propPad.getContext('2d');
+    propCtx.imageSmoothingEnabled = false;
+
     const art = {};             // the furniture, by key
+    const things = {};          // their own things, by prop name
     const cast = {};            // and the people, by set name then frame name
     let crew = {};              // crew.json, once it has answered
     let roster = false;         // whether it has answered at all, either way
@@ -733,7 +998,8 @@
     let answered = 0;           // and how many have come back, either way
     let ready = false;
     let broken = false;
-    let view = null;
+    let shown = null;           // the run and ladder show() was last handed
+    let view = null;            // and what this room made of them
     let running = false;
     let raf = 0;
     let scale = 1;
@@ -770,9 +1036,19 @@
       paint();
     }
 
+    // The one place a view is made. Everything the room draws comes from the run
+    // it was handed plus the roster it read, and those two arrive independently —
+    // so this is called by show() and again by register(), and never inlined.
+    function derive() {
+      if (shown) view = viewOf(shown.run, shown.floors, crew);
+    }
+
     // `set` names the character set this file belongs to, and is left off for
     // the furniture. Every file answers exactly once, whether it arrived or
     // not, so dropping a set never leaves the count waiting on it.
+    //
+    // THING is the third case, and it is an object rather than a name so that no
+    // crew set can ever collide with it: one of somebody's own things.
     function image(src, set) {
       const img = new Image();
       expected++;
@@ -789,12 +1065,11 @@
           stop();
           return;
         }
-        // A crew set is one person. Drop it and its owners sit down as the
-        // worker this room drew for everybody before anyone had a face — an
-        // empty chair for one dispatcher is not worth the whole room. The
-        // server only ever puts a complete set on the roster, so reaching here
-        // means the file went missing while the wall was up.
-        delete cast[set];
+        // One of their things going missing is one empty corner of one desk. The
+        // draw call already refuses an image that never arrived, so there is
+        // nothing to undo here — and dropping the whole room over a mug would be
+        // the wrong trade by a mile.
+        if (set !== THING) delete cast[set];
         answer();
       });
       img.src = src;
@@ -802,6 +1077,14 @@
     }
 
     for (const key of Object.keys(PROPS)) art[key] = image('assets/room/' + PROPS[key]);
+
+    // The whole pool, loaded with the furniture rather than when a run whose
+    // owner wants one arrives: eight sprites of a dozen colours each is less
+    // weight than one of the desks, and a room that fetched a mug mid-dive would
+    // show an empty desk for as long as that took.
+    for (const name of Object.keys(PROP_ART)) {
+      things[name] = image('assets/room/' + PROP_ART[name].file, THING);
+    }
 
     // Who there is to draw. Every set the roster names is loaded up front
     // rather than when its owner's run arrives: a set is seventeen 64x64
@@ -825,6 +1108,11 @@
         for (const frame of FRAMES) cast[set][frame] = image(fileOf(set, frame), set);
       }
       roster = true;
+      // The roster is what says whose things these are, and it can land AFTER a
+      // run has been handed over — show() is called the moment the page has a
+      // snapshot, and crew.json is a second fetch. So the view is derived again
+      // here rather than left holding an empty desk for the life of the room.
+      derive();
       settle();
     }
 
@@ -1072,7 +1360,9 @@
     }
 
     // The floor the run has climbed to, as the plate beside a lift. Six pips,
-    // one lit — the same ladder the tower's cars climb outside.
+    // one lit — the same ladder the tower's cars climb outside. The job sits in
+    // the lower half of this same physical plate, so the wall gains information
+    // without gaining another plane.
     function floorPlate(v) {
       // This plate reports a floor, not an alert. A blocked run already owns
       // the monitor, so its plate stays neutral instead of making a second red
@@ -1088,7 +1378,78 @@
       text(SMALL, fit(SMALL, v.floorName, PLATE.w - 26), PLATE.x + 24, PLATE.y + 7, MINT, 0.8);
       for (let i = 0; i < v.floors; i++) {
         const on = i === v.floor;
-        box(PLATE.x + 24 + i * 6, PLATE.y + 18, 4, 3, on ? tint : STEEL, on ? 0.95 : 0.7);
+        box(PLATE.x + 24 + i * 6, PLATE.y + 15, 4, 3, on ? tint : STEEL, on ? 0.95 : 0.7);
+      }
+      jobDetails(v);
+      // The plate is useful chrome, not a second screen. One flat exposure step
+      // keeps its number and floor readable while leaving the monitor as the
+      // brightest state-bearing plane when the lens moves through the room.
+      box(PLATE.x, PLATE.y, PLATE.w, PLATE.h, NIGHT, 0.12);
+    }
+
+    // WHICH JOB THIS IS, in the existing plate rather than on a tan wall block.
+    // There is no state here: the alarm keeps its ticket and title, while red
+    // remains the monitor's alone. Nor is there a rectangle to compete with it;
+    // this helper adds only type to the plate floorPlate() already drew.
+    function jobDetails(v) {
+      // The id at a glance, the title on the second look — under the floor
+      // label (0.92) and above texture: the owner's call is that the job reads.
+      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.72);
+      for (let i = 0; i < v.card.length && i < CARD_LINES; i++) {
+        text(SMALL, v.card[i], CARD.x + CARD_PAD, CARD_TEXT_Y + i * CARD_PITCH,
+          CREAM, 0.6);
+      }
+    }
+
+    // One of somebody's things, in one of the room's places.
+    //
+    // Authored at full value like every other sprite here — the football keeps
+    // its white and the mug its cream — and it is THIS renderer that makes it a
+    // night object: sunk with the same idea the desk is sunk with, then given the
+    // two lights the room actually has, on whichever edge each one is on. Dark
+    // object, lit edges, which is exactly what the plant and the shelf are.
+    //
+    // The two lights and no third. Warm is the palette's own lamp colour and cold
+    // is the tube's, never the crew tint: the wide city allows crew colour in two
+    // places, the lamp and the name in type, and a mug is not one of them.
+    function thing(slot, name) {
+      const art = PROP_ART[name];
+      const img = art && things[name];
+      if (!img || !img.complete || !img.naturalWidth) return;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const edge = (side, colour, alpha) => {
+        if (!side) return;
+        propCtx.globalAlpha = alpha;
+        propCtx.fillStyle = colour;
+        if (side === 'left') propCtx.fillRect(0, 0, 2, h);
+        else if (side === 'right') propCtx.fillRect(w - 2, 0, 2, h);
+        else if (side === 'top') propCtx.fillRect(0, 0, w, 2);
+        else propCtx.fillRect(0, h - 2, w, 2);
+      };
+      propCtx.clearRect(0, 0, PROP_PAD, PROP_PAD);
+      propCtx.drawImage(img, 0, 0);
+      propCtx.globalCompositeOperation = 'source-atop';
+      propCtx.globalAlpha = 0.48;
+      propCtx.fillStyle = NIGHT;
+      propCtx.fillRect(0, 0, w, h);
+      edge(slot.warm, GLOW, 0.24);
+      edge(slot.cold, CYAN, 0.16);
+      propCtx.globalAlpha = 1;
+      propCtx.globalCompositeOperation = 'source-over';
+      // One row of contact shadow where it stands, so a thing on a desk is ON the
+      // desk instead of hanging over it — the same two pixels the worker gets.
+      box(slot.x - 1, slot.y, w + 2, 1, NIGHT, 0.55);
+      ctx.drawImage(propPad, 0, 0, w, h, slot.x, slot.y - h, w, h);
+    }
+
+    // All of them, in slot order. The view carries one name per place and an
+    // empty string for a place nothing was put in, so this loop is the whole of
+    // "an unknown prop leaves its slot empty".
+    function theirThings(v) {
+      const put = Array.isArray(v.props) ? v.props : [];
+      for (let i = 0; i < SLOTS.length; i++) {
+        if (put[i]) thing(SLOTS[i], put[i]);
       }
     }
 
@@ -1493,6 +1854,10 @@
         // tube.
         box(56, DESK_Y, 216, DESK_END - DESK_Y, NIGHT, 0.46);
         box(56, DESK_END, 216, 3, NIGHT, 0.5);
+        // Their own things go on last, so a thing stands on the desk rather than
+        // inside it — and under the lamp and the tube, which are the next two
+        // layers up and are what light them.
+        theirThings(v);
       });
       bake(plateFront, () => {
         nameplate(v);
@@ -1536,18 +1901,8 @@
         out.drawImage(sceneCanvas, 0, 0);
         return;
       }
-
-      // At the end of the push the monitor and the worker share the middle of
-      // the shot. The outer pillar and shelf move out first, making the three
-      // room planes do visible camera work without adding another object.
-      const zoom = 1 + push * 0.14;
-      const sw = Math.round(W / zoom);
-      const sh = Math.round(H / zoom);
-      const cx = W / 2 + (BEZEL.x + BEZEL.w / 2 - W / 2) * push * 0.48;
-      const cy = H / 2 + (BEZEL.y + BEZEL.h / 2 - H / 2) * push * 0.4;
-      const sx = Math.max(0, Math.min(W - sw, Math.round(cx - sw / 2)));
-      const sy = Math.max(0, Math.min(H - sh, Math.round(cy - sh / 2)));
-      out.drawImage(sceneCanvas, sx, sy, sw, sh, 0, 0, W, H);
+      const at = cropAt(push);
+      out.drawImage(sceneCanvas, at.x, at.y, at.w, at.h, 0, 0, W, H);
     }
 
     // The timestamp rAF hands in is the room's clock, in the same origin
@@ -1593,9 +1948,13 @@
 
     return {
       // Which run the room is showing. Called with a run and the ladder; the
-      // room turns that into its own view and nothing else.
+      // room turns that into its own view and nothing else. The run itself is
+      // kept because the view depends on the roster as well as on the run, and
+      // the roster can answer after this: derive() is the one place a view is
+      // ever made, and register() calls it again when crew.json lands.
       show(run, floors) {
-        view = viewOf(run, floors);
+        shown = { run, floors };
+        derive();
         canvas.dataset.on = '1';
         measure();
         paint();
@@ -1614,6 +1973,10 @@
   return {
     create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
     fileOf, splitOf, bandsOf, lineOf, keyOf, markOf, burstAt, revealed,
+    spoken, wrapped, cropAt, propsOf, slotsOf,
+    CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES,
+    PLATE, BEZEL, WORKER,
+    SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX, PROP_ART, SLOTS, THING,
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
     TYPE_SET, WAIT_SET, FALLBACK, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
     BLINK_MS, BURSTS, BURST_CYCLE, FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
