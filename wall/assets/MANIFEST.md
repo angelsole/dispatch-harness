@@ -87,8 +87,9 @@ frame the room can show.
 
 The furniture above is the ROOM. These are the DESK, and a desk belongs to
 somebody: `wall/crew.json` names two or three of them per owner, `wall/room.js`
-holds the closed pool a line may pick from, and there are three places to put
-them — beside the lamp, beside the monitor, and on the wall over the desk.
+holds the closed pool a line may pick from, and there are four places to put
+them — beside the lamp, beside the monitor, on the wall over the desk, and in
+the air in front of that wall, which is the one place no line may name.
 
 The first assignment puts a DIFFERENT object in the place the eye lands on first,
 on all four desks: Angel's mug, Emre's football, Ran's photograph, Reinier's
@@ -105,6 +106,7 @@ is. The line in `crew.json` is the point — each owner edits their own.
 | `room/prop-ball.png` | a football, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-ball` | `18526` | 2026-08-17 | generated for this repo | `e092f7d9f941d6a3c6fefb581eb9acab93562f616675c997bf27d6cc8d1f73d7` |
 | `room/prop-poster.png` | a framed night landscape, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-poster` | `18527` | 2026-08-17 | generated for this repo | `4e9f9ec53a15337fc88a1164621961c9307d8c5ace1d9e6e78389ecea5d148e6` |
 | `room/prop-pennant.png` | a felt pennant, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-pennant` | `18528` | 2026-08-17 | generated for this repo | `7539387a6ba16ab38c48226b3ae8de072c892ecf0d05e038acece3de34baa89b` |
+| `room/prop-balloons.png` | a bunch of three party balloons, for the air; the klaxon-red rim recoloured onto the palette's deep red | pixellab.image + recolour + trim | `/create-image-pixflux` | `room-prop-balloons` | `18532` | 2026-08-18 | generated for this repo | `673ce10f331b4f469a3c64f12c1fc3884d840c27afbe5b307562a0f5a897b545` |
 
 Three things about these files that the columns cannot say:
 
@@ -120,17 +122,28 @@ Three things about these files that the columns cannot say:
   drawing, so the committed file IS its content box and `room.js` places a thing
   by one corner. The furniture above still carries a `BOX` entry each, because
   those files predate the idea.
-- **One recolour, for meaning and never for value.** `prop-books` came back with
-  a bright `#ff2f45` cover, and in this palette that red is an alarm; it is on
-  `#531820` now, pixel for pixel, the same call `room/plant.png` got when it came
-  back in emerald. Nothing was recoloured for being too bright — an asset is
-  authored at full value and the renderer is what veils it, which is why the
-  football keeps its white and the room sinks it instead.
+- **Two recolours, for meaning and never for value.** `prop-books` came back with
+  a bright `#ff2f45` cover and `prop-balloons` with a fourteen-pixel rim of the
+  same red, and in this palette that red is an alarm; both are on `#531820` now,
+  pixel for pixel, the same call `room/plant.png` got when it came back in
+  emerald. Nothing was recoloured for being too bright — an asset is authored at
+  full value and the renderer is what veils it, which is why the football keeps
+  its white and the room sinks it instead.
 
 Nine props were generated and eight are here. `room-prop-headphones` was rolled
 twice, at `18514` and `18524`, and came back both times as a spindle nobody would
 read as headphones at 4x; it was thrown away rather than retouched, and the pool
 is eight.
+
+`room-prop-balloons` made it nine, and it is the only one of them nobody owns: a
+line in `crew.json` cannot ask for it. It is granted by a DATE — the `birthday`
+on somebody's roster entry, against the day the server says it is — and it hangs
+in the air on the lamp's side of the room for that day only. Four rolls at
+`18530`, `18531`, `18532` and `18534`: the first put the three balloons on one
+thick bouquet stem, the second read the prompt's "side by side" literally and
+returned three separate balloons with no strings at all, and the fourth came back
+as flowers. `18532` is the one with three balloons clustered and something
+hanging, which at 19x28 against a dark wall is what a bunch of balloons is.
 
 ## Eight frames, and a head that holds
 
