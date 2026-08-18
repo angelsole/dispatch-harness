@@ -580,7 +580,14 @@
 
   function plateQueue() {
     const alarms = runs.filter((r) => r.state === 'alarm');
-    return alarms.length ? alarms : runs.filter((r) => r.state === 'active');
+    if (alarms.length) return alarms;
+    const active = runs.filter((r) => r.state === 'active');
+    if (active.length) return active;
+    // result.json first carries the verifier score when a run finishes. Keep
+    // that run on the plate for the completion moment the server already gives
+    // its skyline; otherwise the score chip can never be visible on a first
+    // attempt, because the plate would disappear exactly when the data arrives.
+    return runs.filter((r) => skyline.has(r.id));
   }
 
   function paintPlate(run, index, total) {
@@ -611,8 +618,7 @@
       : '';
     plate.score.textContent = score;
     plate.score.hidden = score === '';
-    // Only live runs reach the plate, so the note is the blocking question or
-    // nothing at all.
+    // Only an alarm carries a note; active and completing runs carry none.
     const note = run.state === 'alarm'
       ? '⚠ ' + (run.blocked || 'needs your input — see QUESTIONS.md')
       : '';

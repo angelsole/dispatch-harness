@@ -750,6 +750,8 @@ grep_ok "$PAGE_SRC" "run.verifier && typeof run.verifier.score === 'number'" \
   "plate: which only renders on a run that carries a real number"
 grep_ok "$PAGE_SRC" "plate.score.hidden = score === ''" \
   "plate: and is hidden like the note when there is none"
+grep_ok "$PAGE_SRC" "return runs.filter((r) => skyline.has(r.id))" \
+  "plate: a finished score remains visible for the existing completion moment"
 grep_ok "$CSS_SRC" '.brief__score { flex: none; color: var(--phosphor-dim);' \
   "plate: painted in a token the plate already had, not a new colour"
 check "plate: the chip introduces no neon of its own" \
