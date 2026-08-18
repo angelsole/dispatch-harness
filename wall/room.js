@@ -779,24 +779,41 @@
   // into them is the one thing the doctrine forbids outright.
   const MOVE = { watch8: 'lean', read8: 'reach', done8: 'toast' };
 
-  // Which frame of which strip is playing, `since` seconds after the resolved pose
-  // last changed — or '' once both strips have run and the hold has the body.
+  // And the beat of the BASE that goes between two poses which share no strip.
+  // `type8` and `wait8` are both at the keyboard, so a change between them — the
+  // alarm arriving, or clearing — has nothing to travel through, and drawing
+  // `type8-4` straight into `wait8-2` is exactly the cut this run exists to remove
+  // however similar the two frames are. One held beat of the base is the answer, and
+  // 250 ms is the floor at which a still frame reads as a beat rather than a dropped
+  // one.
+  const BASE_MS = 250;
+
+  // Which frame the body is on DURING a change of pose, `since` seconds after the
+  // resolved cycle last changed — or '' once the change is over and the hold has it.
   //
   // Out first, then in. Leaving watch8 for read8 plays `lean` backwards to the
   // base and then `reach` forwards, so the arms uncross through the base into the
   // hand reaching for the mouse: two strips, 1.92 s, and not one frame of a cut.
+  //
+  // Only on a CHANGE. A fresh show() has no pose to travel out of and settles into
+  // its hold at once: the alarm room the visual gate photographs breathes from t = 0
+  // exactly as it does today, and a dive into a gate room lands on a person who is
+  // already sat back rather than on one who has to get there first.
+  //
   // In whole MILLISECONDS, not seconds. `since` arrives as a difference of two
   // frame-clock readings in seconds, and 11 x 0.12 is 1.3199999999999998 there — one
   // millisecond short of the boundary, which drew frame 2 of the strip twice and
   // frame 3 never. Rounding to the millisecond once, at the top, is exact at every
   // one of the eight boundaries and costs nothing.
   const STRIP_MS = MOVE_MS * MOVE_FRAMES;
-  function stripAt(pose) {
+  function moveAt(pose) {
     const since = pose && pose.since;
     if (!Number.isFinite(since) || since < 0) return '';
+    if (!pose.from || pose.from === pose.cycle) return '';
     const out = MOVE[pose.from];
     const into = MOVE[pose.cycle];
     let at = Math.round(since * 1000);
+    if (!out && !into) return at < BASE_MS ? 'base' : '';
     if (out) {
       if (at < STRIP_MS) return out + '-' + (MOVE_FRAMES - 1 - Math.floor(at / MOVE_MS));
       at -= STRIP_MS;
@@ -835,13 +852,16 @@
   // `since` that is not a finite number — which is what a still room hands over —
   // is a settled pose, so reduced motion never lands mid-strip.
   function bandsOf(set, beat, pose) {
-    const strip = stripAt(pose);
-    const body = strip || holdAt(pose.cycle, beat, pose.typing);
+    const move = moveAt(pose);
+    const body = move || holdAt(pose.cycle, beat, pose.typing);
     // A strip is cut at the row its own HOLD is cut at, never at the base's: the
     // frame that ends `lean` is the frame `watch8` was animated from, and a split
-    // that moved between the two would step in the middle of the move.
-    const cycle = strip ? strip.slice(0, strip.lastIndexOf('-')) : pose.cycle;
-    return { split: splitOf(set, cycle), head: 'base', body };
+    // that moved between the two would step in the middle of the move. The base is
+    // cut anywhere — it is the same picture either side of any row — so the pose
+    // being entered decides, which keeps the number the probes read stable.
+    const cut = move && move !== 'base'
+      ? move.slice(0, move.lastIndexOf('-')) : pose.cycle;
+    return { split: splitOf(set, cut), head: 'base', body };
   }
 
   // And whether the mug is in their hand at this frame rather than on the desk.
@@ -851,8 +871,8 @@
   // the second mug this rule exists to prevent.
   const HANDS_A_MUG = TOAST_SET.concat(DONE_SET);
   function holdsAMug(beat, pose) {
-    const strip = stripAt(pose);
-    return HANDS_A_MUG.indexOf(strip || holdAt(pose.cycle, beat, pose.typing)) >= 0;
+    const move = moveAt(pose);
+    return HANDS_A_MUG.indexOf(move || holdAt(pose.cycle, beat, pose.typing)) >= 0;
   }
 
   // --- the lens -----------------------------------------------------------
@@ -2106,9 +2126,6 @@
       });
     }
 
-    // One frame: three baked planes, and between them everything the beat
-    // touches. `at` is the frame clock in seconds — the loop hands its own rAF
-    // timestamp in, and a paint from outside the loop reads the same origin.
     // WHICH POSE, and since when. The pose itself is a pure function of the view,
     // so it is worked out every frame and costs nothing; what the room has to
     // REMEMBER is the one instant it last changed, because that is what the move
@@ -2117,6 +2134,9 @@
     // Set here and nowhere else, and only when the resolved cycle actually differs:
     // show() is called on every snapshot, once a second, and a snapshot that does
     // not change the pose must not re-time a single frame of it.
+    //
+    // `from` is '' until the pose has changed once, which is what makes a fresh
+    // show() settle straight into its hold: there is nothing to travel out of.
     function poseOf() {
       const cycle = cycleOf(view);
       if (cycle !== poseNow) {
@@ -2129,11 +2149,15 @@
         from: posePrev,
         // A still room is a SETTLED room: no strip, the hold's own frame 0. An
         // infinity here rather than a flag, because that is what "the pose changed
-        // long ago" means to stripAt().
+        // long ago" means to moveAt().
         since: still.matches ? Infinity : stamp - poseAt,
         typing: revealing(),
       };
     }
+
+    // One frame: three baked planes, and between them everything the beat
+    // touches. `at` is the frame clock in seconds — the loop hands its own rAF
+    // timestamp in, and a paint from outside the loop reads the same origin.
 
     function paint(at) {
       if (!ready || !view) return;
@@ -2246,7 +2270,7 @@
     create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
     fileOf, splitOf, bandsOf, lineOf, keyOf, markOf, burstAt, revealed,
     spoken, wrapped, cropAt, propsOf, slotsOf,
-    cycleOf, stripAt, holdAt, holdsAMug, scrollAt,
+    cycleOf, moveAt, holdAt, holdsAMug, scrollAt,
     CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES,
     PLATE, BEZEL, WORKER,
     SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX, PROP_ART, SLOTS, THING,
@@ -2254,7 +2278,7 @@
     TYPE_SET, WAIT_SET, WATCH_SET, READ_SET, DONE_SET,
     LEAN_SET, REACH_SET, TOAST_SET, HOLDS, MOVES, POSE, POSE_DEFAULT, MOVE, SPLIT,
     FALLBACK, CYCLE, TYPE_MS, TYPE_FRAMES, WAIT_MS, WAIT_FRAMES,
-    WATCH_MS, READ_MS, DONE_MS, MOVE_MS, MOVE_FRAMES, MOVE_SECS,
+    WATCH_MS, READ_MS, DONE_MS, MOVE_MS, MOVE_FRAMES, MOVE_SECS, BASE_MS,
     BLINK_MS, BURSTS, BURST_CYCLE, BOUTS, BOUT_CYCLE,
     FEED_INK, FEED_ROWS, FEED_CELLS, FEED_W,
     FEED_MARK, FEED_TOP, FEED_PITCH, FEED_TICKS, SCROLL_MS, REVEAL_CPS,
