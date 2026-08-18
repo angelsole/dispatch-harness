@@ -1,0 +1,35 @@
+{
+  "frames": {
+    "city-build-scaffold": {
+      "frame": {
+        "h": 32,
+        "w": 32,
+        "x": 1,
+        "y": 1
+      },
+      "rotated": false,
+      "sourceSize": {
+        "h": 32,
+        "w": 32
+      },
+      "spriteSourceSize": {
+        "h": 32,
+        "w": 32,
+        "x": 0,
+        "y": 0
+      },
+      "trimmed": false
+    }
+  },
+  "meta": {
+    "app": "creative/postpass.py",
+    "format": "RGBA8888",
+    "image": "build.png",
+    "scale": 1,
+    "size": {
+      "h": 64,
+      "w": 64
+    },
+    "version": "1.0"
+  }
+}

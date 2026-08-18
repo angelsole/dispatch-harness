@@ -578,15 +578,33 @@
   // time gets big letters. A blocked run pins the plate: it is the only thing
   // on the wall that is asking for something.
 
+  // Who may hold the plate, most urgent first. An alarm is the only thing on this
+  // wall that is asking for something, so it takes the plate outright and a ship
+  // never hides a human's question. Below it, a run inside its completion moment
+  // outranks live work: for those few seconds it is the one thing that has just
+  // HAPPENED, the city is out filming its building going up, and the plate is where
+  // the room reads a name and a ticket — the towers cannot carry type anybody can
+  // read from the sofa, which is what the plate has always been for. Past the moment
+  // it drops out on its own, exactly as it leaves the skyline.
+  //
+  // No new typography: a shipped run is painted by the same paintPlate() every other
+  // run is, and its accent is the `done` green the stylesheet already carries.
+  function shipped(run) {
+    if (run.state !== 'ready') return false;
+    const window = (latest && latest.completionSeconds) || 0;
+    return window > 0 && now() - (run.since || 0) <= window;
+  }
+
   function plateQueue() {
     const alarms = runs.filter((r) => r.state === 'alarm');
     if (alarms.length) return alarms;
+    // A run inside its completion moment first (see above), then live work, then
+    // whatever finished run is still standing on the skyline — result.json first
+    // carries the verifier score when a run finishes, and the score chip could
+    // never be seen on a first attempt if the plate vanished as the data arrived.
+    const moment = runs.filter(shipped);
     const active = runs.filter((r) => r.state === 'active');
-    if (active.length) return active;
-    // result.json first carries the verifier score when a run finishes. Keep
-    // that run on the plate for the completion moment the server already gives
-    // its skyline; otherwise the score chip can never be visible on a first
-    // attempt, because the plate would disappear exactly when the data arrives.
+    if (moment.length || active.length) return moment.concat(active);
     return runs.filter((r) => skyline.has(r.id));
   }
 
@@ -1013,6 +1031,14 @@
   const roomParams = new URLSearchParams(window.location.search);
   const forcedRoom = roomParams.get('shot') === 'room';
   const wantedRun = roomParams.get('run') || '';
+  // The ship moment's two switches, read here because this is where the wall
+  // reads its query string and nowhere else. Both belong to the world that
+  // draws its own city — the DOM world has no plot to fly to — so they are
+  // passed straight out through reelSignals() and this file does nothing else
+  // with them. ?shot=ship is the parked still the visual gate shoots; ?ship=<id>
+  // rehearses the whole film for one run from its first frame.
+  const forcedPlot = roomParams.get('shot') === 'ship';
+  const wantedShip = roomParams.get('ship') || '';
 
   let room = null;      // the renderer, built the first time the wall asks for it
   let roomOn = false;   // whether the room is what this wall is showing now
@@ -1570,6 +1596,8 @@
       still,
       forced,                                   // ?cinema=1 / ?cinema=0
       forcedRoom,                               // ?shot=room, the parked still
+      forcedPlot,                               // ?shot=ship, the parked plot
+      ship: wantedShip,                         // ?ship=, the film to rehearse
       run: wantedRun,                           // ?run=, whose room to show
       canvas: roomCanvas,                       // what wall/room.js paints on
       wantsCinema,                              // the whole truth table, verbatim

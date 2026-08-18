@@ -25,21 +25,46 @@ VISUAL_WORLD="${VISUAL_WORLD:-dom}"
 # first line (VISUAL_SERVER_PORT_RE, default) and substitutes it below.
 # $VISUAL_TMP is the gate's scratch dir — the city ledger is per-run state and
 # must never be written inside the repo.
-VISUAL_SERVER_CMD='bash wall.sh --host 127.0.0.1 --port 0 --runs wall/fixtures/runs --city "$VISUAL_TMP/city.jsonl"'
+# WALL_TODAY pins the calendar day the fixture render happens on, and it has to be
+# pinned: wall/crew.json carries a birthday per person and PR #52 puts a bunch of
+# swaying balloons on that person's desk on their day. The room this gate measures
+# is the ALARM room — Reinier's — and on 08-18 his balloons drift through the six
+# frames the continuity check compares, so a render that was "the same room" on
+# Monday and a different room on Tuesday is the calendar leaking into a fixture.
+# 06-15 is nobody's birthday in the roster (tests/wall.test.sh pins that), so the
+# gate measures the room the champion frame was taken of, every day of the year.
+#
+# Spelled with `env` rather than as a bare VAR=value prefix on purpose. A prefix is
+# shell syntax: a runner that hands this string to a shell honours it, and one that
+# splits it and execs directly tries to run a program called `WALL_TODAY=06-15` and
+# dies with ENOENT before the wall ever starts. `env` is a real program, so both
+# spawn the same server — and this file should not care which one the harness is.
+VISUAL_SERVER_CMD='env WALL_TODAY=06-15 bash wall.sh --host 127.0.0.1 --port 0 --runs wall/fixtures/runs --city "$VISUAL_TMP/city.jsonl"'
 VISUAL_URL='http://127.0.0.1:{port}'
 
 # One shot, six frames: a 3x2 contact sheet of 640x360 tiles is the cheap end
 # of the vision-token sweet spot, and six consecutive frames are what make the
 # continuity axis answerable at all.
-# Two shots now: the city, and the room the camera dives into. ?shot=room is the
-# still of that dive — the room at full frame with the camera parked — so the
-# gate measures the destination without having to wait out a reel. Same frames,
-# same thresholds: a room may be darker than the skyline but it may not be
+# Three shots now: the city, the room the camera dives into, and the plot it comes
+# back out to. ?shot=room is the still of that dive — the room at full frame with
+# the camera parked — so the gate measures the destination without having to wait
+# out a reel. ?shot=ship is the same idea for the ship moment's last beat: the
+# camera parked over the newest named building at the plot lens, with its birth
+# clamped past its last second, so what the gate measures is the building that got
+# built rather than whichever second of a scaffold it happened to arrive at. Same
+# frames, same thresholds: a room may be darker than the skyline but it may not be
 # blacker, and its type and its worker have to survive the same downscale.
-VISUAL_SHOTS=("wide|/?world=$VISUAL_WORLD|750" "room|/?world=$VISUAL_WORLD&shot=room|750")
+VISUAL_SHOTS=("wide|/?world=$VISUAL_WORLD|750" "room|/?world=$VISUAL_WORLD&shot=room|750" "ship|/?world=$VISUAL_WORLD&shot=ship|750")
 VISUAL_FRAMES=6
 VISUAL_WAIT_MS=750
-VISUAL_SETTLE_MS=3000
+# Fifteen seconds, counted from the moment the page says it is ready: the room
+# the camera parks in starts its own twelve-second lens with the shot (room.js,
+# `push`), and at a whole-number 4x every authored pixel that lens crosses is a
+# four-pixel step of the whole frame — 0.10-0.12 of continuity per step,
+# measured on the office mini, i.e. the ceiling below on a coin flip. The gate
+# measures the destination, not the ride: it captures once the lens holds. The
+# wide and the ship shot were settled long before (0.03-0.05 either way).
+VISUAL_SETTLE_MS=15000
 VISUAL_WIDTH=1280
 VISUAL_HEIGHT=720
 VISUAL_DPR=1

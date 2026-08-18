@@ -84,14 +84,29 @@ const LAST_WEEK = [
 // off the raw clock would put every sign on its own slightly different fade.
 const MINUTE = 60;
 
+// And the window stops short of the minute the wall came up. A building now has a
+// BIRTH — a scaffold, a façade arriving, a cascade, a beacon, about twenty seconds
+// of it from the ship (world-canvas.js, SHIP and BUILD) — so a newest row stamped
+// at the boot minute would have the district's freshest plot mid-scaffold at some
+// unpredictable point of that twenty seconds, and the visual gate's wide shot would
+// catch a building going up on roughly one run in eight. The fixtures stage a
+// lived-in Thursday, not a ship happening right now: the newest of them landed
+// comfortably before the wall opened its eyes. A run that ships while the wall is
+// watching is what `?ship=` and the real pipeline are for.
+const SETTLED_S = 30;
+
 // `weekStartOf` is handed in rather than imported. The server owns the
 // definition of Monday — local midnight, DST weeks of 23 and 25 hours and all —
 // and a second implementation of it here would drift the first time one of them
 // learned something. Requiring it back out of ../server.js is not on offer
 // either: server.js is what requires this file.
 function cityRecords(now, weekStartOf) {
-  const base = Math.floor(now / MINUTE) * MINUTE;
-  const weekStart = weekStartOf(base);
+  const minute = Math.floor(now / MINUTE) * MINUTE;
+  // Monday is decided by the minute the wall came up, not by the shifted window:
+  // a wall booted in the first half-minute of a week would otherwise lay down last
+  // week's district as this week's.
+  const weekStart = weekStartOf(minute);
+  const base = Math.max(weekStart, minute - SETTLED_S);
   const previousStart = weekStartOf(weekStart - 1);
   const spread = (rows, from, span) =>
     rows.map(([share, id, repo, owner, insertions, deletions]) => ({

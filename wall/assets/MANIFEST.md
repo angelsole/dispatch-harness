@@ -803,6 +803,43 @@ generator's floor, and halved before the post-pass:
 | `city/atlas.png` | the packed set — every frame above, one texture | postpass.py --atlas | `city` | 2026-08-17 | generated for this repo | `d67a40bb60bb6eeb03aef99efa3e13baeac67508c92f78a170049ac8b27abce3` |
 | `city/atlas.json` | the frame table Phaser loads it with | postpass.py --atlas | `city` | 2026-08-17 | generated for this repo | `eadd42ad0b052eaab706cd1c9e1c4c96ffa1227057a7a763c531e3d8c2032752` |
 
+## A building going up
+
+The set above is the city STANDING. This is the eight seconds before that, and it
+is a second small atlas rather than a repack of `city/atlas.png`: adding a
+scaffold to the set would rewrite every byte of a texture nothing else about the
+ship moment touches, and the wall fetches two files instead of one.
+
+| frame | what | size | tool | prompt | seed | date | origin |
+|---|---|---|---|---|---|---|---|
+| `city-build-scaffold` | the scaffold: an open steel framework, tiled up a plot while the building arrives behind it | 32 x 32 | pixellab.image | `city-build-scaffold` | `19514` | 2026-08-18 | generated for this repo |
+
+Two things about it are worth the room, because both are the repo's own rules
+rather than a decision taken here:
+
+- **The renderer tiles the SHAFT, not the frame.** The generator draws a pylon —
+  a head, a braced shaft, a foot — and a scaffold is the shaft repeated, so
+  `world-canvas.js` takes an 8 x 16 lift out of the middle of it with the same
+  `cut()` the street already uses to make a bollard out of the lower half of
+  `city-prop-lamp`. The committed PNG is the whole roll, untouched.
+- **Red is a word in this palette.** The roll came back with a red lamp on the
+  pylon's head — thirteen pixels of the alarm's own `#ff2f45`, which is the
+  palette telling the room a lie. They were recoloured onto `#5e3437` exactly as
+  the city set's stray alarm reds and `room/plant.png` were, and the asset was
+  post-passed afterwards, so what is committed is what the atlas is packed from.
+
+`city-build-crane` was specified beside it and is **not here**. Five rolls of it
+came back as street scenes — a lit brick frontage beside the jib, a road under it,
+in one case a billboard with invented lettering across it — and a scene is thrown
+away rather than cropped, which is the rule `room/`'s first batch set and the road
+tile above already paid. A jib is optional decoration on a 16 px lift; a
+retouched asset is not something this repo has.
+
+| path | what | tool | prompt | date | origin | sha256 |
+|---|---|---|---|---|---|---|
+| `city/build.png` | the packed frame — what a plot wears while it is being built | postpass.py --atlas | `build` | 2026-08-18 | generated for this repo | `b56b50693556604950cc4a838e1232a37396efa96b478a77d1f4b937574ad111` |
+| `city/build.json` | the frame table Phaser loads it with | postpass.py --atlas | `build` | 2026-08-18 | generated for this repo | `13019cd819563d7ff345fa5d3f43da21c5f3bddf1aefc3a25478e1e4b8856d5c` |
+
 ## How they are served
 
 `wall/crew.json` has its own route in `wall/server.js`. It is a fact about this
