@@ -89,6 +89,7 @@
     actor: document.getElementById('briefActor'),
     stage: document.getElementById('briefStage'),
     timer: document.getElementById('briefTimer'),
+    score: document.getElementById('briefScore'),
     note: document.getElementById('briefNote'),
     dots: document.getElementById('briefDots'),
   };
@@ -602,6 +603,14 @@
       ? run.stage + '  ·  ' + run.activity
       : run.stage || '(no stage yet)';
     plate.timer.textContent = run.since ? '⧗ ' + dur(now() - run.since) : '';
+    // How well a third vendor thinks this run satisfies its brief. Advisory —
+    // it decides nothing here either, so it is the quietest thing on the plate,
+    // and a run nobody scored simply does not carry it.
+    const score = run.verifier && typeof run.verifier.score === 'number'
+      ? '◎ ' + run.verifier.score.toFixed(2)
+      : '';
+    plate.score.textContent = score;
+    plate.score.hidden = score === '';
     // Only live runs reach the plate, so the note is the blocking question or
     // nothing at all.
     const note = run.state === 'alarm'

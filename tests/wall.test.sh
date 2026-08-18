@@ -742,6 +742,18 @@ grep_ok "$PAGE_SRC" "run.state === 'alarm' ? 'alarm' : run.actorKey" \
   "plate: an alarm outranks the actor neon on the accent edge"
 check "plate: the ticket type is untouched by the chrome pass" \
   "$(printf '%s\n' "$CSS_SRC" | sed -n '/^\.brief__id {/,/^}/p' | grep -c 'font-size: 2.5rem')" "1"
+# The verifier chip: the quietest thing on the plate, borrowing the readout
+# colour beside it rather than introducing one, and absent — not zero, not a
+# dash — on every run nobody scored.
+grep_ok "$PAGE_SRC" 'id="briefScore"' "plate: the score chip has its own element"
+grep_ok "$PAGE_SRC" "run.verifier && typeof run.verifier.score === 'number'" \
+  "plate: which only renders on a run that carries a real number"
+grep_ok "$PAGE_SRC" "plate.score.hidden = score === ''" \
+  "plate: and is hidden like the note when there is none"
+grep_ok "$CSS_SRC" '.brief__score { flex: none; color: var(--phosphor-dim);' \
+  "plate: painted in a token the plate already had, not a new colour"
+check "plate: the chip introduces no neon of its own" \
+  "$(printf '%s\n' "$CSS_SRC" | grep -c -- '--verifier:')" "0"
 
 # --- the shipping ceremony ------------------------------------------------------
 # A run reaching `done: ready` gets a short beat before the normal completion
@@ -1051,7 +1063,7 @@ check "actor: done -> done"          "$(state_of OLYX-1598 actor)"    "done"
 # an exhausted review "Codex" or parking review_failed on the PUSH roof.
 REVIEW_WALL="$ROOT/review-wall"
 REVIEW_NOW=$(date +%s)
-for id in UNREVIEWED-1 REVIEW-FAILED-1; do
+for id in UNREVIEWED-1 REVIEW-FAILED-1 VERIFYING-1; do
   mkdir -p "$REVIEW_WALL/$id"
   printf '%s\n' "$((REVIEW_NOW - 60))" > "$REVIEW_WALL/$id/started"
   printf '/tmp/review-wall-%s\n' "$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')" \
@@ -1061,6 +1073,8 @@ printf '%s review failed silently — diff is unreviewed\n' "$REVIEW_NOW" \
   > "$REVIEW_WALL/UNREVIEWED-1/status"
 printf '%s done: review_failed\n' "$REVIEW_NOW" \
   > "$REVIEW_WALL/REVIEW-FAILED-1/status"
+printf '%s verify — trajectory score (verifier · third vendor)\n' "$REVIEW_NOW" \
+  > "$REVIEW_WALL/VERIFYING-1/status"
 serve "$REVIEW_WALL" "$ROOT/review-wall.log"; REVIEW_PORT="$PORT_OUT"
 if [ -n "$REVIEW_PORT" ]; then
   REVIEW_API="$(get "$REVIEW_PORT" /api/runs)"
@@ -1076,6 +1090,15 @@ if [ -n "$REVIEW_PORT" ]; then
     "$(review_state_of REVIEW-FAILED-1 floor)" "3"
   check "state: review_failed is terminal failure" \
     "$(review_state_of REVIEW-FAILED-1 state)" "failed"
+  # The verifier is a stage the wall names but does not celebrate: its own
+  # label, the review floor it runs on, and the neutral key the city already
+  # uses for stages no model owns — no new neon, no new floor.
+  check "actor: the verifier stage is named, not folded into Codex" \
+    "$(review_state_of VERIFYING-1 actor)" "verifier"
+  check "actor: on the neutral key, so the city gains no colour" \
+    "$(review_state_of VERIFYING-1 actorKey)" "skipped"
+  check "floor: and it stands on the review floor" \
+    "$(review_state_of VERIFYING-1 floor)" "3"
 else
   bad "review attribution: server starts against focused fixtures"
 fi
@@ -1120,6 +1143,22 @@ check "detail: gate rounds surface"    "$(state_of OLYX-1598 'gateRounds | lengt
 check "detail: diff size surfaces"     "$(state_of OLYX-1598 'diff.insertions')" "214"
 grep_ok "$(state_of OLYX-1642 blocked)" "Legacy quotes" "detail: the blocking question surfaces"
 grep_ok "$(state_of BOT-2287 reason)"  "opposite directions" "detail: the rejection reason surfaces"
+# The verifier's advisory score rides the snapshot like every other metric, and
+# a run that was never scored carries null rather than a zero somebody could
+# mistake for a verdict. LEGACY-0042 has no result.json at all — the oldest
+# shape there is, and the one the plate must render nothing for.
+check "detail: the verifier score surfaces" \
+  "$(state_of OLYX-1598 'verifier.score')" "0.83"
+check "detail: with the implementer-end checkpoint beside it" \
+  "$(state_of OLYX-1598 'verifier.at_implementer')" "0.71"
+check "detail: and the per-criterion detail" \
+  "$(state_of OLYX-1598 'verifier.criteria | length')" "2"
+check "detail: a rejected run is scored too — that is the point of scoring it" \
+  "$(state_of BOT-2287 'verifier.score')" "0.24"
+check "detail: a run from before the verifier carries null, not zero" \
+  "$(state_of LEGACY-0042 verifier)" "null"
+check "detail: and so does a live run nobody has scored yet" \
+  "$(state_of OLYX-1631 verifier)" "null"
 
 echo "== wall: ordering =="
 ORDER="$(printf '%s' "$API" | jq -r '.runs[].id' | tr '\n' ' ')"
