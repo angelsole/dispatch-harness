@@ -1394,10 +1394,10 @@
     function jobDetails(v) {
       // The id at a glance, the title on the second look — under the floor
       // label (0.92) and above texture: the owner's call is that the job reads.
-      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.72);
+      text(BIG, fit(BIG, v.id, CARD_ROOM), CARD.x + CARD_PAD, CARD_ID_Y, BONE, 0.64);
       for (let i = 0; i < v.card.length && i < CARD_LINES; i++) {
         text(SMALL, v.card[i], CARD.x + CARD_PAD, CARD_TEXT_Y + i * CARD_PITCH,
-          CREAM, 0.6);
+          CREAM, 0.5);
       }
     }
 
