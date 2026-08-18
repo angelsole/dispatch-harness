@@ -1559,12 +1559,6 @@
   // cadence, and four hooks back into the page; it decides where the camera
   // goes and nothing else.
   function reelSignals() {
-    // The parked room carries more hard light-dark edges than the wide city. Keep
-    // its exposure a half-step below the live dive: the same authored pixels and
-    // motion remain legible, while a one-pixel move of the slow inner lens reads
-    // as movement rather than a full-frame flash. This belongs to the parked
-    // composition only; the room inside either reel keeps its live exposure.
-    roomCanvas.style.filter = forcedRoom ? 'brightness(0.94)' : '';
     return {
       still,
       forced,                                   // ?cinema=1 / ?cinema=0
