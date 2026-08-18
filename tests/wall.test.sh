@@ -3731,8 +3731,14 @@ console.log(JSON.stringify({
     return new Set(at).size === 1 && at[0] === cycle + "-0";
   }),
   stillIsSettled: R.moveAt({ cycle: "watch8", from: "type8", since: Infinity }) === ""
-    && R.moveAt({ cycle: "watch8", from: "type8" }) === ""
-    && R.moveAt({ cycle: "watch8", from: "type8", since: -1 }) === "",
+    && R.moveAt({ cycle: "watch8", from: "type8" }) === "",
+  // A NEGATIVE since is a change that happened this very frame — show()'s
+  // performance.now() stamp is a few milliseconds ahead of the rAF timestamp the
+  // loop paints the same frame with — and it draws the strip's FIRST frame, never
+  // the new hold: one settled frame there was a one-frame pop at every stage flip.
+  justChangedIsTheStrip: R.moveAt({ cycle: "read8", from: "watch8", since: -0.008 }) === "lean-7"
+    && R.moveAt({ cycle: "watch8", from: "type8", since: -0.008 }) === "lean-0"
+    && R.moveAt({ cycle: "wait8", from: "type8", since: -0.008 }) === "base",
   // The bursts. A person types for a few seconds and then reads for half of one,
   // and the schedule that says so is arithmetic on the shot clock: pure, so two
   // recordings of the same second are the same picture, and irregular, so it is
@@ -4303,6 +4309,8 @@ check "room: reduced motion is one frame per state, and the hold's own frame 0" 
   "$(room_of reducedOneFrame)" "true"
 check "room: a still room is a settled room, never one caught mid-move" \
   "$(room_of stillIsSettled)" "true"
+check "room: a change that happened this frame draws the strip, never one settled frame of the new hold" \
+  "$(room_of justChangedIsTheStrip)" "true"
 
 # The bouts. A reader moves the wheel for a second or two and then stops to read
 # what came into view; a typist works for three and pauses for half of one. Two

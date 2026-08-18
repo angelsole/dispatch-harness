@@ -805,14 +805,22 @@
   // millisecond short of the boundary, which drew frame 2 of the strip twice and
   // frame 3 never. Rounding to the millisecond once, at the top, is exact at every
   // one of the eight boundaries and costs nothing.
+  //
+  // And a NEGATIVE `since` is "just changed", not "settled". show() paints once with
+  // performance.now() and stamps the change with it; the loop's next paint comes
+  // with the rAF timestamp of the frame that was already in flight, which is a few
+  // milliseconds EARLIER. Treating that frame as settled drew the new hold's frame
+  // 0 for one paint before the strip out of the old pose began — a one-frame pop
+  // at every change of stage. Clamping to zero draws the strip's first frame there
+  // instead, which is what "the pose changed just now" means.
   const STRIP_MS = MOVE_MS * MOVE_FRAMES;
   function moveAt(pose) {
     const since = pose && pose.since;
-    if (!Number.isFinite(since) || since < 0) return '';
+    if (!Number.isFinite(since)) return '';
     if (!pose.from || pose.from === pose.cycle) return '';
     const out = MOVE[pose.from];
     const into = MOVE[pose.cycle];
-    let at = Math.round(since * 1000);
+    let at = Math.max(0, Math.round(since * 1000));
     if (!out && !into) return at < BASE_MS ? 'base' : '';
     if (out) {
       if (at < STRIP_MS) return out + '-' + (MOVE_FRAMES - 1 - Math.floor(at / MOVE_MS));
