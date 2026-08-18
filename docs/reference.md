@@ -1,0 +1,443 @@
+# Reference
+
+Every knob and every file: the environment variables the pipeline reads, the
+per-repo pin, the local config files, what a run leaves on disk, the monitoring
+surfaces, and the metrics a run records.
+
+The narrative for most of these is in [operations](operations.md); the reasoning
+behind the odder ones is in [the design notes](design-notes.md).
+
+## Environment variables
+
+`HARNESS_*` is the pipeline. Set them on the `run-task.sh` invocation (or export
+them before `schedule.sh`, which snapshots the whole set into the job it arms).
+`QM_*` belongs to the overnight quartermaster and lives with it, in
+[The Quartermaster](operations.md#the-quartermaster).
+
+### Capacity and deferral
+
+See [Capacity preflight](operations.md#capacity-preflight-a-run-that-defers-itself).
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_PREFLIGHT` | `off` disables the capacity preflight *and* the mid-run classifier | `on` |
+| `HARNESS_MIN_SESSION_TOKENS` | Output-token headroom a dispatch wants before it will spawn | `20000` |
+| `HARNESS_DEFER_BUFFER_SECS` | Clearance added past the block's reset time when arming | `300` |
+| `HARNESS_MAX_DEFERRALS` | Auto-deferrals allowed per run before it fails honestly | `2` |
+
+### Turn ceiling and resumes
+
+See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_MAX_TURNS` | Turn ceiling for the implementer's session; pinned at first dispatch | `200` |
+| `HARNESS_MAX_RESUMES` | Automatic resumes allowed on turn exhaustion before the run fails (`0` opts out) | `2` |
+
+### Dispatch and identity
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_DIR` | Where the harness is installed. Every script honors it; install with `HARNESS_DIR=/path ./install.sh` | `~/.claude/harness` |
+| `HARNESS_OWNER` | Who dispatched the run. Pinned into the run dir on the first dispatch, so a resume from someone else's session never re-attributes it | your login name |
+| `HARNESS_REDISPATCH` | `1` dispatches a run that already reached `done: ready` | unset |
+| `HARNESS_TICKET_SYNC` | `0` disables the [ticket sync](operations.md#ticket-sync) that comments the PR and moves the ticket to In Review | `1` |
+| `HARNESS_MIRROR` | ssh target (`host:path`) or local path a live run dir is mirrored to — see [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror) | unset |
+
+### Notifications and monitoring
+
+`notify.conf` is the usual home for the first three; the shipped
+`notify.conf.example` documents them too.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_NTFY_TOPIC` | ntfy topic every stage handoff is pushed to. Empty disables phone push | empty |
+| `HARNESS_NTFY_SERVER` | Self-hosted ntfy server | `https://ntfy.sh` |
+| `HARNESS_NOTIFY` | `0` silences the local desktop banners (macOS `osascript`) | `1` |
+| `HARNESS_WATCH_INTERVAL` | Seconds between redraws in `status.sh --watch` | `2` |
+| `HARNESS_STALE_SECS` | How long a run whose status has not moved stays on the statusline | `21600` (6h) |
+
+### The review stage
+
+See [When Codex dies mid-run](operations.md#when-codex-dies-mid-run-out-of-credits)
+and [What the reviewer is allowed to reach](design-notes.md#what-the-reviewer-is-allowed-to-reach).
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_REVIEW_MIN_SECONDS` | Floor below which a review that produced no evidence is treated as a stage that never ran (and retried once on the Codex side). | `60` |
+| `HARNESS_REVIEW_TRIVIAL_LINES` | Changed lines vs. base at or below which the floor does not apply — a two-line diff genuinely can be reviewed in seconds. A diff whose size cannot be *read* (a base ref that is not there, a worktree that moved) is unknown rather than small, and gets the retry. | `20` |
+| `HARNESS_REVIEW_NETWORK` | `0` restores the old sandbox exactly: no loopback, no isolated config dir, and a `codex` command line and environment byte-identical to what they were before this existed. Anything else (or unset) enables both. | `1` |
+| `HARNESS_CODEX_HOME_FALLBACK` | `CODEX_HOME` of a second Codex account the review retry uses when the primary is out of credits (or came up empty). Unset: behaviour is byte-identical to a single-account harness. | unset |
+
+### Ablation knobs
+
+Two of these turn a normal run into a controlled **arm** — the same brief run
+*without* the review stage, or with a *different* implementer model — so you can
+measure what each stage buys. All are **pinned at first dispatch**: the chosen
+arm, models and efforts are written into the run dir on the first invocation and
+reused verbatim on resume, so a re-dispatch whose environment differs can't
+silently switch a run to a different condition. With **neither** knob set,
+control flow is identical to before — this is instrumentation, not a redesign.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5` |
+| `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `xhigh` is Anthropic's recommended starting point for agentic coding on Opus 5; drop it where your own runs show quality holds. | `xhigh` |
+| `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
+| `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
+| `HARNESS_SKIP_REVIEW` | `1` skips the review stage **and** its fix rounds — the `no_review` arm, and the only arm that ships without a review. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review — on codex when it is installed, otherwise on a Claude worker). A machine with no `codex` CLI pins `claude_only` instead and reviews on the Claude tier: see [Claude-only mode](operations.md#claude-only-mode). | unset (`full` arm) |
+
+```bash
+# Baseline arm: same brief, no cross-vendor review, on Sonnet
+HARNESS_SKIP_REVIEW=1 IMPLEMENTER_MODEL=sonnet \
+  ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
+```
+
+### Not a knob: HARNESS_GATE_STEP
+
+`HARNESS_GATE_STEP` is the path of the side file the gate's traps write the
+failing step to. It is **not a knob you set** — `run-task.sh` exports it into
+the gate subshell for the trap to write to, and a failed write is swallowed
+(`|| :`) so it can never be visible to your gate. It is documented here because
+it is the one `HARNESS_*` name in `run-task.sh` that a reader may meet without
+it being theirs to configure. How the step is captured is in
+[the design notes](design-notes.md#which-gate-step-failed).
+
+## The verifier
+
+After the review stage, on **every** arm, the harness hands the run's own
+trajectory to
+[llm-as-a-verifier](https://github.com/llm-as-a-verifier/llm-as-a-verifier) and
+records what comes back. It is advisory, and it never gates; why it exists and
+what it costs are in [the design notes](design-notes.md#the-verifier-why-a-third-vendor).
+
+**What it reads.** The trajectory `verify.py` builds is the run, in order: every
+attempt's implementer stream (each assistant message a narration step, each tool
+call folded together with its observed output into one step), then the gate
+rounds, then the reviewer's notes or rejection and the commits it added, and
+finally the observed end state — the whole diff against base with lockfiles
+excluded, and the standing gate verdict. Nothing is invented: a run whose
+implementer left no stream is skipped, not scored.
+
+**What it returns.** A number in [0, 1]: the expectation over the **logprobs**
+of a 20-letter (A–T) score token, averaged over K repeats, answering one
+question per checkpoint — *given everything the agent has done up to here, would
+its current state satisfy the task's hidden grader?* The library is explicitly
+told to distrust the agent's narration and read the observed output instead. Two
+checkpoints are scored overall — the end of the implementer's work and the end
+of the run — so the pair says what the review stage was worth. Each acceptance
+criterion is then scored on its own, by re-asking with that one criterion
+written in as the hidden grader's single check (the library has no per-criterion
+absolute mode; pairwise `compare()`/`select()` is a different question).
+
+**Turning it on.**
+
+```bash
+./install.sh --verifier                    # opt-in: builds the venv, installs the library
+(umask 077; printf '%s' 'sk-…' > ~/.claude/harness/verifier-api-key)
+```
+
+Like `linear-api-key`, that one file is **not seeded by the installer, because
+it is a credential** — you create it by hand, mode 600. Only its *path* is
+exported to the adapter (as `HARNESS_VERIFY_KEY_FILE`), which reads the
+credential in-process: it never appears in `ps`, in `verify.log`, in
+`verify.json` or in `result.json`, and a traceback has both a bare key and a
+service account's private-key material scrubbed out of it.
+
+**Vertex, for a corporate account.** Under Google Cloud terms Vertex does not
+train on inputs and can be pinned to an EU region, which makes it the
+corporate-safe backend where DeepSeek is fine for personal repos. It will not
+take an API key: one created with
+`gcloud services api-keys create --api-target=service=aiplatform.googleapis.com`
+comes back `401 UNAUTHENTICATED: API keys are not supported by this API.
+Expected OAuth2 access token or other authentication credentials that assert a
+principal`. So the key file holds a **service-account JSON** instead, and the
+adapter authenticates as that principal:
+
+```bash
+gcloud iam service-accounts create harness-verifier --project "$PROJECT"
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member "serviceAccount:harness-verifier@$PROJECT.iam.gserviceaccount.com" \
+  --role roles/aiplatform.user
+gcloud iam service-accounts keys create ~/.claude/harness/verifier-api-key \
+  --iam-account "harness-verifier@$PROJECT.iam.gserviceaccount.com"
+chmod 600 ~/.claude/harness/verifier-api-key
+export HARNESS_VERIFY_GCP_LOCATION=europe-west4   # EU residency; default is global
+```
+
+Nothing else changes: the file's *shape* selects the backend, so a station goes
+corporate-safe by dropping that JSON in place of the DeepSeek key — no export,
+no config file. Only the path reaches the environment (as
+`GOOGLE_APPLICATION_CREDENTIALS`); the JSON's contents never do.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_VERIFY` | `0` disables the stage entirely. | `1` |
+| `HARNESS_VERIFY_PYTHON` | Interpreter that runs the adapter. Must be executable, or the stage skips. | `$HARNESS_DIR/verifier-venv/bin/python` |
+| `VERIFIER_API_KEY_FILE` | The credential file — a one-line API key, or a service-account JSON. Must be readable, or the stage skips. | `$HARNESS_DIR/verifier-api-key` |
+| `HARNESS_VERIFY_PROVIDER` | `deepseek` \| `vertex` \| `openai`. **Unset infers it from the credential**: a service-account JSON means `vertex`, anything else `deepseek`. Exactly one backend env var is set from the key file; the others are cleared, so an ambient variable (or a stray `.env`) can never pick a backend the run did not ask for. | inferred |
+| `HARNESS_VERIFY_BASE_URL` | `OPENAI_BASE_URL` for the `openai` provider (any server that returns logprobs). | unset |
+| `HARNESS_VERIFY_GCP_PROJECT` | Vertex project. | the JSON's `project_id` |
+| `HARNESS_VERIFY_GCP_LOCATION` | Vertex region — pin an EU one for data residency. Recorded in `verify.json` as `location`. | `global` |
+| `HARNESS_VERIFY_MODEL` | Model id; the library's own default for the chosen client when unset (`deepseek-v4-flash`, `gemini-2.5-flash`). | unset |
+| `HARNESS_VERIFY_EVALS` | K — how many times each checkpoint is scored before averaging. | `3` |
+| `HARNESS_VERIFY_MAX_CRITERIA` | Cap on acceptance criteria scored individually. `0` = the overall score only. | `8` |
+| `HARNESS_VERIFY_STEP_CHARS` | Per-step clip, marker included. | `2000` |
+| `HARNESS_VERIFY_MAX_CHARS` | Whole-trajectory clip. Over budget, the head and tail are kept and the middle becomes one `[N agent steps elided]` step, counted in `elided_steps`. | `400000` |
+| `HARNESS_VERIFY_TIMEOUT` | Seconds the whole stage may take before it is killed (and recorded as a failure that changes nothing). | `900` |
+| `HARNESS_VERIFY_EFFORT` | Passed through as `DEEPSEEK_EFFORT` (`off` \| `low` \| `high` \| `max`). | the library's |
+
+Two files per run: **`verify.json`** (the score, the per-criterion table, the
+model, the provider, K, the trajectory size, token usage, how long it took, and
+`location` on Vertex — copied verbatim into `result.json` as `metrics.verifier`)
+and **`verify.log`** (one line per attempt: the score, or `skipped (<reason>)`,
+or `failed (<reason>)`).
+Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
+
+## The repo pin
+
+`repos.conf.sh` (shipped) auto-detects sensible defaults for any repo: install
+and gate commands from the lockfile, base branch from the remote's default. To
+**pin** settings for a specific repo, add a `repo_config_local()` case arm to
+`~/.claude/harness/repos.local.sh` (gitignored — `install.sh` seeds it for you).
+It runs *before* auto-detection; any field you leave blank is still
+auto-detected.
+
+Keys are the repo's directory name (`basename`). Worktrees are named
+`<repo>-<ticket>`, so match both `<repo>` and `<repo>-*`.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `BASE_BRANCH` | Base branch PRs target | detected: `staging` → `main` → `master` |
+| `INSTALL_CMD` | Install deps in a fresh worktree | from lockfile (`npm ci` / `yarn install` / `uv sync`) |
+| `GATE_CMD` | The deterministic test gate | from lockfile (`npm test` / `yarn test` / `uv run pytest`) |
+| `MCP_CONFIG` | Path to an `.mcp.json` the worker loads | none (skipped if the path is missing) |
+| `ENV_SUBDIRS` | Extra dirs besides `.` to copy `.env*` into | none |
+| `DEV_CMD` | Dev server command for `preview.sh` | `npm run dev` |
+| `PREFLIGHT_CMD` | Env check run *before* the implementer (e.g. test DB up + migrated) | none |
+| `DEMO_DEV_CMD` | Dev server command for demo recording (must pin the port) | none |
+| `DEMO_PORT` | Port `DEMO_DEV_CMD` binds (storyboard origin + post-demo cleanup) | none |
+| `PREPROD` | `1` = repo is not in production yet: both worker prompts get the greenfield posture | none |
+
+`GATE_CMD` is the heart of it: it is the objective checkpoint both models are
+measured against. Point it at the strictest fast feedback your repo has —
+types, lint, and tests.
+
+`PREFLIGHT_CMD` fails a run fast on a broken environment *before* burning an
+implementer pass. See
+[`examples/preflight-postgres.example.sh`](../examples/preflight-postgres.example.sh)
+for a Postgres test-DB check.
+
+### Generating a pin
+
+Hand-writing a pin means reading the repo and getting `GATE_CMD` exactly right
+(a wrong one silently weakens the whole pipeline). `setup-repo.sh` does that
+inspection instead:
+
+```bash
+setup-repo.sh <repo-path>            # print the proposed entry + a rationale
+                                     #   per field; writes nothing (dry run)
+setup-repo.sh <repo-path> --write    # save it into repos.local.sh
+setup-repo.sh <repo-path> --verify   # prove INSTALL_CMD + GATE_CMD pass first
+setup-repo.sh <repo-path> --ai       # let a model refine the proposal
+```
+
+It reads `package.json` scripts, `pyproject.toml` / `uv.lock`,
+`.github/workflows`, `.env*` layout, the dev-server port and `.mcp.json` to
+compose a complete entry — e.g. a `GATE_CMD` of `npm run type-check && npm test`
+rather than a bare `npm test`. It never invents commands: a field it can't
+determine is left blank (honestly reported) for runtime auto-detection.
+
+- **`--verify`** runs `INSTALL_CMD` then `GATE_CMD` in a throwaway worktree and
+  refuses to `--write` if either fails, so you never pin an entry that doesn't
+  actually pass.
+- **`--ai`** makes one *read-only* `claude -p` call (model via `SETUP_MODEL`,
+  default `sonnet`; set `opus` for a harder look) that can only read the repo,
+  validates its JSON, and falls back to the deterministic proposal on any
+  failure — it works fine with `claude` absent.
+- **`--write`** manages the arms between the `# >>> setup-repo managed >>>`
+  markers in `repos.local.sh`; re-running a repo updates its arm in place. A
+  hand-written file without those markers is never modified — it prints the
+  block for you to paste. New installs get the managed structure from
+  `repos.local.sh.example`; existing ones keep working unchanged.
+
+`setup-repo.sh` only *suggests* a `PREFLIGHT_CMD` (e.g. when it spots a
+docker-compose DB) — it never writes an untested preflight path.
+
+### PREPROD: the pre-production posture
+
+Both models default to conservative, compatibility-preserving changes. That is
+the right instinct for a live system and the wrong one for a repo that has no
+users yet, where a compatibility layer is dead weight from the day it lands.
+Pin `PREPROD=1` and `run-task.sh` appends a posture block to the implementer
+**and** the reviewer prompts: remove obsolete paths instead of adding
+compatibility layers, fallbacks or migrations; choose the simplest
+implementation that fully meets the current requirements; grow the system in
+layers without trading a working product for unfinished complexity; keep
+components modular; prefer established libraries, and the dependencies already
+in the project, over your own implementation; decide architecture for the long
+term rather than accepting a stopgap. The reviewer is told the same thing
+explicitly — otherwise it spends its round demanding the back-compat shims the
+implementer was told not to write.
+
+It is a pin, never a detection: no heuristic gets to decide a repo is
+pre-production. With `PREPROD` unset both prompts are byte-identical to a run
+without the feature — [`tests/preprod.test.sh`](../tests/preprod.test.sh)
+captures the real prompts from a fabricated run and asserts it.
+
+## Local config files
+
+All gitignored. `install.sh` seeds each of these from its `*.example` the first
+time and never overwrites an existing copy:
+
+- **`repos.local.sh`** — per-repo pins (above).
+- **`notify.conf`** — desktop + phone (ntfy) notifications on stage handoffs.
+- **`demo.conf.sh`** — object-storage remote (`R2_REMOTE`, `R2_PUBLIC`) for
+  uploading PR demo videos.
+
+Two more files are **not** seeded, because they are credentials and you should
+create them deliberately, mode 600:
+
+- **`linear-api-key`** (`LINEAR_API_KEY_FILE` to move it), read by
+  [the Quartermaster](operations.md#the-quartermaster) and by
+  [ticket sync](operations.md#ticket-sync). Without it the quartermaster still
+  reports capacity and simply says the queue was unreadable.
+- **`verifier-api-key`** (`VERIFIER_API_KEY_FILE` to move it), read by
+  [the verifier](#the-verifier).
+
+## The run directory
+
+Each run writes plain files under `~/.claude/harness/runs/<RUN-ID>/`, and every
+tool in the harness reads them and nothing else. The paper trail per run:
+
+| File | What it holds |
+| --- | --- |
+| `brief.md` | The task contract the planner wrote |
+| `specs/` | Converted spec attachments, when the task had any (below) |
+| `QUESTIONS.md` | The implementer's blocking questions — the run is `needs_input` while it exists |
+| `implementer-notes.md` | What the implementer changed and decided (it becomes the PR body) |
+| `review-notes.md` / `REJECTED.md` | The reviewer's findings, or its rejection |
+| `feed.log` | Live transcript across both model stages |
+| `gate-*.log`, `gate-rounds.log` | Each gate round's output and its one-line verdict |
+| `result.json` | The run's machine-readable outcome and metrics ([schema](#metrics-schema)) |
+| `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's |
+| `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
+| `verify.json`, `verify.log` | The [verifier's](#the-verifier) score, and why it did or did not produce one |
+| `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds and final message, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
+| `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
+| `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
+
+### Spec attachments
+
+When the real spec lives in an office document — a Word feature spec, an Excel
+rules table, a PDF — the planner converts it to markdown with
+[anydoc](https://github.com/firecrawl/anydoc) (`npx -y @firecrawl/anydoc <file>
+-o <run-dir>/specs/<name>.md`: 14 formats, auto-detected, nothing to install)
+and leaves it in the run dir. Everything under the run dir's `specs/` is mounted
+at `.harness/specs/` in the worktree before the implementer starts, and both
+workers are told to read it as part of the task contract — so the detail the
+brief distils stays consultable instead of being paraphrased away. When the run
+dir has a `specs/` directory, re-dispatching replaces the mounted set wholesale
+with its current contents, so a revised spec never piles up next to the version
+it supersedes. To withdraw every spec from a run in flight, leave that directory
+present but empty; an absent source directory is a no-op. The pipeline never
+runs `anydoc` itself; conversion is planner-side only.
+
+## Monitoring surfaces
+
+Wire the statusline once and monitoring is ambient; skip it and
+`status.sh --watch` gives you the same picture on demand.
+
+- **Statusline** (`statusline.sh`) — a line per active run in every Claude
+  session on the machine: run id, which model has it, the tool/file it is
+  touching right now, `±lines` against the base, elapsed minutes. A red `⏸`
+  line means `needs_input`. Finished runs, and runs whose status hasn't moved
+  in 6h, drop off by themselves.
+
+  `install.sh` offers to wire it into `~/.claude/settings.json` for you (only
+  with your consent, and it backs the file up first). By hand:
+
+  ```jsonc
+  "statusLine": {"type": "command", "command": "~/.claude/harness/statusline.sh"}
+  ```
+
+  Already have a statusline command? Keep it and append the run lines:
+
+  ```bash
+  <your command>; ~/.claude/harness/statusline.sh --runs-only
+  ```
+
+  `--runs-only` emits nothing but run lines and reads no stdin — the session
+  JSON can only be consumed once, so your own script keeps it.
+
+- **`status.sh --watch`** — the zero-config alternative: a live dashboard in any
+  terminal (run, actor, stage, current activity, time in stage, total),
+  redrawn in place every 2s (`HARNESS_WATCH_INTERVAL` to retune).
+- **Notifications** — a desktop banner (macOS `osascript`) and/or a phone push
+  (ntfy) on every stage handoff. Silence the desktop ones with `HARNESS_NOTIFY=0`.
+  The two stages you have to act on carry more than the stage text: a terminal
+  `done:` push appends the PR URL and makes the notification tappable (plus an
+  **Open PR** button), and `waiting — implementer needs your input` goes out at
+  high priority with a warning tag so it survives a silenced phone. Every other
+  stage stays a quiet tick.
+- **`HARNESS_MIRROR`** — mirror this machine's run dirs onto another machine
+  while they run, so its wall shows them too:
+  [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror).
+- **`status.sh`** — one-shot table of all runs; `status.sh <RUN-ID>` prints a
+  run's full timeline and result.
+- **`feed.log`** — a live transcript across both model stages
+  (`tail -f ~/.claude/harness/runs/<RUN-ID>/feed.log`): the implementer's tool
+  calls and thinking, then the reviewer's output prefixed `◆ codex`.
+- **`attach.sh <RUN-ID>`** — step into the worker's session interactively, with
+  full context (it warns before forking a still-running worker).
+- **`preview.sh <RUN-ID>`** — run the dev server inside the worktree to see the
+  change live before approving.
+- **[`wall.sh`](wall.md)** — the same picture for a room instead of a terminal.
+
+## Metrics
+
+```bash
+~/.claude/harness/metrics.sh          # aligned table across all runs
+~/.claude/harness/metrics.sh --csv    # same data as CSV for stats tools
+~/.claude/harness/metrics.sh --report # the aggregate health picture
+```
+
+Columns: run, arm, implementer model and effort, reviewer model and effort,
+status, gate rounds (e.g. `fail,pass`), implementer/reviewer commit counts,
+± lines, wall minutes, and the verifier's `score` — so an effort sweep or a
+reviewer-model ablation reads straight off the table. Runs predating a field (no
+`metrics` object, no verifier score, or written before the model/effort knobs)
+render with blanks, not errors.
+
+`--report` is the aggregate health picture across every `result.json`; how to
+read it, and what each of its labels means, is in
+[the design notes](design-notes.md#reading-the-pipelines-own-vitals).
+
+### Metrics schema
+
+Alongside the existing fields, each run records `arm`
+(`full` | `claude_only` | `no_review`), `implementer_model`,
+`implementer_effort`, `reviewer_model`, `reviewer_effort` (the last two name
+whichever backend actually reviewed — see
+[Claude-only mode](operations.md#claude-only-mode)), and a `metrics`
+object — populated on **every** exit path, partial on early failures (missing
+fields are `null`/empty):
+
+| Field | Meaning |
+| --- | --- |
+| `review` | How the review stage actually went: `reviewed` \| `reviewed_claude` \| `failed_silent` \| `skipped`, empty when the run never reached it. Runs recorded before this ticket may also carry the retired `no_evidence` — an empty Codex review now falls through to the Claude tier instead of shipping. See [Reading the pipeline's own vitals](design-notes.md#reading-the-pipelines-own-vitals). |
+| `review_account` | Which backend the review attempt ran on: `primary` \| `fallback` \| `claude`. Absent (not empty) on the arm that never attempts a review. Set the moment a tier is entered, so it names the attempt, not the outcome — `review` is what says a diff was read. See [A second Codex account](operations.md#a-second-codex-account-for-a-dry-primary). |
+| `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
+| `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
+| `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `result` is `pass` \| `fail` \| `skipped` (see [When the post-review gate is skipped](design-notes.md#when-the-post-review-gate-is-skipped)); a skipped round records `0` seconds. `failed_step` is the command a failing round died on, `null` on a passing or skipped round and on rounds recorded before this existed. |
+| `metrics.turn_resumes` | How many times the implementer was resumed rather than started fresh **within this invocation** (turn-ceiling resumes plus the re-dispatch's own resume). Segmented by the `__invocation__` markers in `stages.log`, so it is never the run's lifetime total. |
+| `attempt` / `attempts_total` | This invocation's ordinal, and how many attempts the run has had. See [Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch). |
+| `metrics.attempts` | The attempt ledger: `[{n, status, started, ended}]`, one row per invocation, which is what makes attempt-level rates and the idle gaps between attempts computable from `result.json` alone. |
+| `metrics.self_resumes` | Mid-run session limits this run rescheduled itself out of. |
+| `metrics.opus_commits` | Commit count `base..opus_head` (the implementer's). |
+| `metrics.codex_commits` | Commit count `opus_head..HEAD` (the reviewer's). |
+| `metrics.diff` | `{files_changed, insertions, deletions}` vs. base. |
+| `metrics.implementer_num_turns` | `num_turns` from the implementer's stream-json result event. |
+| `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Recorded beside `num_turns` because the two count different things — see [the turns caveat](design-notes.md#reading-the-pipelines-own-vitals). |
+| `metrics.implementer_usage` | Token `usage` from the same event. |
+| `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], model, provider, evaluations, steps, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier). |
