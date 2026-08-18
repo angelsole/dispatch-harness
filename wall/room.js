@@ -646,13 +646,17 @@
   //             under the window frame, above the skirting, clear of their
   //             shoulder, and lit from below by the lamp.
   //   air       the empty air in front of that wall, on the LAMP's side of the
-  //             room. Nothing stands here; a thing in this place is hanging.
-  //             The window frame's last drawn row is 81 and the lamp's own
-  //             leftmost pixel above its base is x 67, so the gap is 20 px wide
-  //             and runs from row 84 down to row 116 — two rows clear of
-  //             FLOOR_Y, so the strings end in the room rather than on the
-  //             skirting. It is the one place that CROSSES another (`over`), and
-  //             the one thing in this room that is somebody's and still moves.
+  //             room. Nothing stands here; a thing in this place is hanging,
+  //             and it is the biggest place in the room because the thing in it
+  //             has to read from three metres rather than from the sofa arm.
+  //             The window frame's last drawn row is 81, so the top of the gap
+  //             is 82 — under the frame, never over the glass. The bottom is
+  //             129, which is eleven rows past FLOOR_Y and three short of the
+  //             desk: a string that ends in the air above the desk is a string
+  //             holding something up. Its 26 px is the narrowest row of the
+  //             gap, which is row 107, where the lamp's leftmost pixel is 67.
+  //             It is the one place that CROSSES another (`over`), and the one
+  //             thing in this room that is somebody's and still moves.
   //
   // `x` is the left edge and `y` is the row the thing STANDS ON — or, for a
   // place that floats, the row its strings end at — so a prop is placed by one
@@ -673,7 +677,7 @@
       warm: 'bottom', cold: 'top',
     },
     {
-      key: 'air', plane: 'air', x: 47, y: 116, wide: 20, tall: 32,
+      key: 'air', plane: 'air', x: 41, y: 129, wide: 26, tall: 46,
       // The lamp is below and to the right of this gap and the window above it,
       // so the warm rim is the one on the lamp's side — which is also the side
       // that reads, because it lands on the balloons themselves rather than on
@@ -681,6 +685,12 @@
       warm: 'right', cold: 'top', floats: true, over: 'wall',
     },
   ];
+
+  // The offscreen pad a thing is veiled and edge-lit on, sized off the places
+  // there are rather than set to a round number: the air is 26x46 and a pad of
+  // 32 would have silently clipped fourteen rows of string off the bottom of
+  // the one prop in this room that is taller than it is wide.
+  const PROP_PAD = SLOTS.reduce((most, slot) => Math.max(most, slot.wide, slot.tall), 0);
 
   // The typing loop: eight poses, 120 ms each, so the cycle is 960 ms and the
   // hands run at 8.3 poses a second. That is the floor for reading as typing —
@@ -1340,8 +1350,8 @@
 
     // And a smaller one for their things, for the same reason: a prop is veiled
     // and edge-lit on its own pixels, and source-atop straight onto the room
-    // would repaint the desk under it.
-    const PROP_PAD = 32;
+    // would repaint the desk under it. Its size is PROP_PAD, which is measured
+    // off the places there are rather than chosen.
     const propPad = document.createElement('canvas');
     propPad.width = PROP_PAD;
     propPad.height = PROP_PAD;
@@ -2424,7 +2434,8 @@
     cycleOf, moveAt, holdAt, holdsAMug, scrollAt,
     CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES,
     PLATE, BEZEL, WORKER, LAMP,
-    SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX, PROP_ART, SLOTS, THING, HAND, GRANTS,
+    SOFFIT, FLOOR_Y, DESK_Y, WINDOW, BOX, PROP_ART, SLOTS, PROP_PAD, THING,
+    HAND, GRANTS,
     BIG, SMALL, MARKS, W, H, SCREEN, LOCK, ACTOR, PROPS, FRAMES,
     TYPE_SET, WAIT_SET, WATCH_SET, READ_SET, DONE_SET,
     LEAN_SET, REACH_SET, TOAST_SET, HOLDS, MOVES, POSE, POSE_DEFAULT, MOVE, SPLIT,

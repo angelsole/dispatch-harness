@@ -3834,6 +3834,52 @@ console.log(JSON.stringify({
     return air.x >= at.x && air.x + air.wide <= at.x + at.w
       && air.y <= at.y + at.h && air.y - air.tall - 1 >= at.y;
   })(),
+  // The top of the gap is under the window frame and never over the glass, and
+  // the bottom of it is past the floor line without reaching into the desk: a
+  // string that ends in the air above a desk is a string holding something up.
+  airUnderTheFrameNotTheGlass: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const top = air.y - air.tall - 1;   // the highest row the drift can reach
+    const frame = R.WINDOW.y + R.BOX.windowFrame.y + R.BOX.windowFrame.h;
+    const glass = R.WINDOW.y + R.BOX.windowFrame.hole.y + R.BOX.windowFrame.hole.h;
+    return top >= glass && top >= frame - 1 && air.y > R.FLOOR_Y && air.y <= R.DESK_Y;
+  })(),
+  // The pad a thing is veiled on is measured off the places there are, not set
+  // to a round number: at 32 it would have clipped fourteen rows of string off
+  // the bottom of the one prop that is taller than it is wide, silently.
+  padFitsEveryPlace: R.PROP_PAD
+    >= R.SLOTS.reduce((most, s) => Math.max(most, s.wide, s.tall), 0),
+  padFitsEveryProp: Object.values(R.PROP_ART).every((art) => {
+    const img = decode(fs.readFileSync(path.join(process.argv[4], "wall", "assets", "room",
+      art.file)));
+    return img.w <= R.PROP_PAD && img.h <= R.PROP_PAD;
+  }),
+  // The balloons are the one asset in this room allowed to be LOUD, because they
+  // are the one that has to carry from three metres. Measured off the committed
+  // pixels: most of the sprite is the palette's lively end, at least three of
+  // those colours hold a real share of it — three balloons, three colours — and
+  // none of it is the alarm's red, which means something else on this wall.
+  balloonsAreLively: (() => {
+    const LIVELY = ["#e0a23c", "#ffc27d", "#ffc680", "#ff9a5e", "#7ad6ec", "#4c9dff"];
+    const img = decode(fs.readFileSync(path.join(process.argv[4], "wall", "assets", "room",
+      R.PROP_ART.balloons.file)));
+    const seen = new Map();
+    let opaque = 0;
+    for (let i = 0; i < img.w * img.h; i++) {
+      const at = i * img.bpp;
+      if (img.bpp === 4 && img.px[at + 3] === 0) continue;
+      opaque++;
+      const c = "#" + [0, 1, 2].map((k) => img.px[at + k].toString(16).padStart(2, "0")).join("");
+      seen.set(c, (seen.get(c) || 0) + 1);
+    }
+    const share = (c) => (seen.get(c) || 0) / opaque;
+    return JSON.stringify({
+      lively: LIVELY.reduce((sum, c) => sum + share(c), 0) >= 0.66,
+      three: LIVELY.filter((c) => share(c) >= 0.08).length >= 3,
+      alarm: !seen.has("#ff2f45"),
+      size: img.w + "x" + img.h,
+    });
+  })(),
   // The drift itself: one pixel, on the shot clock, and a still room is a
   // photograph of it rather than a slower version of it.
   sway: [0, 0.75, 1.5, 2.25, 3, 3.75].map((t) => R.beatAt(t, false).sway).join(","),
@@ -4327,6 +4373,18 @@ check "birthday: and they are clear of everything that has to stay readable" \
   "$(room_of airClearOf)" ""
 check "birthday: including at the deepest the lens pushes" \
   "$(room_of airInFrameAtFullPush)" "true"
+check "birthday: they hang under the window frame and never over the glass" \
+  "$(room_of airUnderTheFrameNotTheGlass)" "true"
+check "birthday: and they are loud enough to carry, on the lock and off the alarm" \
+  "$(room_of balloonsAreLively)" \
+  '{"lively":true,"three":true,"alarm":true,"size":"26x45"}'
+# The pad every prop is veiled and edge-lit on is measured off the places there
+# are. A round 32 clipped fourteen rows of string off the bottom of the balloons
+# and said nothing about it.
+check "things: the prop pad is measured off the biggest place, not chosen" \
+  "$(room_of padFitsEveryPlace)" "true"
+check "things: and every prop in the pool fits on it" \
+  "$(room_of padFitsEveryProp)" "true"
 check "birthday: they drift one pixel on the shot clock" \
   "$(room_of sway)" "0,0,1,1,0,0"
 check "birthday: one pixel and never two" "$(room_of swayIsOnePixel)" "true"
@@ -4398,6 +4456,21 @@ grep_not "$THING_CODE" 'ALARM' "things: and never in the alarm's red"
 # twice.
 grep_ok "$ROOM_ALL" '      theirAir(view, beat);' \
   "birthday: the air is drawn live, over the plane the desk is baked into"
+# WHERE in the stack, as an order rather than as a line: the balloons go down
+# after the plane their owner's other things are baked into and before the near
+# plane is composited over everything, which is the same band the desk props are
+# in. They carry their own value; the veil down the left edge does not reach
+# them and does not reach the mug either.
+PAINT_ORDER="$(awk '/^    function paint\(at\) \{/, /^    \}$/' "$SRC/wall/room.js" \
+  | grep -v '^ *//' \
+  | awk '
+      /ctx\.drawImage\(plate/ { sub(/.*ctx\.drawImage\(/, ""); sub(/,.*/, ""); print }
+      /^ *theirAir\(/ { print "theirAir" }
+      /^ *lamp\(/     { print "lamp" }
+      /^ *worker\(/   { print "worker" }
+    ' | tr '\n' ' ' | sed 's/ *$//')"
+check "birthday: and it lands between the baked desk and the near plane" \
+  "$PAINT_ORDER" "plateBack plateMid theirAir lamp worker plateFront"
 grep_ok "$ROOM_ALL" '        if (SLOTS[i].floats) continue;' \
   "birthday: and the bake leaves it alone, so nothing is drawn twice"
 AIR_FN="$(awk '/^    function theirAir\(v, beat\) \{/, /^    \}$/' "$SRC/wall/room.js")"
