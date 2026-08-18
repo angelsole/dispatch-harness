@@ -17,6 +17,10 @@ set -u
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 README="$SRC/README.md"
+# The scheduling contract moved out of README and into the operator guide when
+# the docs were split; the assertions below follow the text rather than the
+# filename. README keeps the one-paragraph product-level promise, asserted too.
+OPSDOC="$SRC/docs/operations.md"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/schedule-test.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
 
@@ -392,17 +396,24 @@ check "cancel: cancelling dispatched none of its tickets" \
 echo "== shipped and documented alongside run-task =="
 # ---------------------------------------------------------------------------
 file_has "$SRC/install.sh" "schedule.sh" "install: schedule.sh is installed with the rest"
-file_has "$README" 'schedule.sh <TICKET> <repo-path> <branch-name>' "README: documents the argument contract"
-file_has "$README" 'schedule.sh --list'   "README: documents --list"
-file_has "$README" 'schedule.sh --cancel' "README: documents --cancel"
-file_has "$README" 'launchd'  "README: names the mechanism"
-file_has "$README" 'GH_TOKEN' "README: warns that the wrapper can hold a token"
-file_has "$README" 'mode 600' "README: documents the wrapper's permissions"
-if grep -q 'as soon as the machine wakes' "$README"; then
-  ok "README: is honest about a machine that sleeps through the fire time"
-else
-  bad "README: is honest about a machine that sleeps through the fire time"
-fi
+file_has "$OPSDOC" 'schedule.sh <TICKET> <repo-path> <branch-name>' "docs: documents the argument contract"
+file_has "$OPSDOC" 'schedule.sh --list'   "docs: documents --list"
+file_has "$OPSDOC" 'schedule.sh --cancel' "docs: documents --cancel"
+file_has "$OPSDOC" 'launchd'  "docs: names the mechanism"
+file_has "$OPSDOC" 'GH_TOKEN' "docs: warns that the wrapper can hold a token"
+file_has "$OPSDOC" 'mode 600' "docs: documents the wrapper's permissions"
+# The sleep caveat is the one an operator gets wrong at 08:11, so it is asserted
+# twice: in full in the operator guide, and in the product-level paragraph the
+# front page keeps.
+for f in "$OPSDOC" "$README"; do
+  if grep -q 'as soon as the machine wakes' "$f"; then
+    ok "$(basename "$f"): is honest about a machine that sleeps through the fire time"
+  else
+    bad "$(basename "$f"): is honest about a machine that sleeps through the fire time"
+  fi
+done
+# README still has to send a reader to the guide rather than dead-ending.
+file_has "$README" 'docs/operations.md#scheduling-a-run-for-later' "README: links to the scheduling guide"
 
 echo
 printf 'schedule: %d passed, %d failed\n' "$pass" "$fail"

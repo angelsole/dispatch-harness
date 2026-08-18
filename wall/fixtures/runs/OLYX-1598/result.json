@@ -29,6 +29,31 @@
       "files_changed": 7,
       "insertions": 214,
       "deletions": 63
+    },
+    "verifier": {
+      "score": 0.83,
+      "at_implementer": 0.71,
+      "criteria": [
+        {
+          "name": "The KPI query is cached",
+          "score": 0.91
+        },
+        {
+          "name": "The TTL is configurable",
+          "score": 0.74
+        }
+      ],
+      "model": "deepseek-v4-flash",
+      "provider": "deepseek",
+      "evaluations": 3,
+      "steps": 61,
+      "elided_steps": 0,
+      "usage": {
+        "calls": 9,
+        "input_tokens": 184000,
+        "output_tokens": 900
+      },
+      "seconds": 71.4
     }
   }
 }

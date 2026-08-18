@@ -182,6 +182,10 @@ const ACTORS = [
   [/Claude reviewer/, 'Claude', 'opus'],
   [/^review failed silently/, 'unreviewed', 'unreviewed'],
   [/^(review|fix)/, 'Codex', 'codex'],
+  // The third-vendor trajectory score. It runs on the review floor and is
+  // nobody the city has a neon for — no model of the pipeline, no decision of
+  // its own — so it borrows the neutral grey the other non-model stages use.
+  [/^verify/, 'verifier', 'skipped'],
   [/^test gate.* skipped/, 'skipped', 'skipped'],
   [/^test gate/, 'gate', 'gate'],
   [/^ticket sync/, 'ticket', 'pr'],
@@ -399,6 +403,7 @@ function readRun(id, current) {
     implementer: result.implementer_model || '',
     reviewer: result.reviewer_model || '',
     diff: metrics.diff || null,
+    verifier: metrics.verifier || null,
     blocked: state === 'alarm' ? firstProse(path.join(dir, 'QUESTIONS.md')) : '',
     reason: state === 'failed' ? firstProse(path.join(dir, 'REJECTED.md')) : '',
     feed: feedOf(dir),

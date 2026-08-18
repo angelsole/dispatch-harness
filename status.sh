@@ -94,12 +94,22 @@ if [ $# -eq 1 ]; then
   echo "== $1 timeline =="
   cat "$dir/timeline" 2>/dev/null || echo "(no timeline yet)"
   [ -f "$dir/result.json" ] && { echo "== result =="; jq -r 'to_entries[] | "\(.key): \(.value)"' "$dir/result.json"; }
+  # The verifier's advisory score, spelled out: the generic dump above renders
+  # the whole metrics object as one unreadable line, and this is the one number
+  # in it a human reads on purpose. Silent on every run that has none.
+  [ -f "$dir/result.json" ] && jq -r '.metrics.verifier // empty
+    | select(.score != null)
+    | "verifier: \(.score)"
+      + (if .at_implementer == null then "" else " (implementer \(.at_implementer))" end)
+      + " · \((.criteria // []) | length) criteria"
+      + (if (.model // "") == "" then "" else " · \(.model)" end)' \
+    "$dir/result.json" 2>/dev/null
   exit 0
 fi
 
 now=$(date +%s)
 found=0
-printf '%-26s %-46s %-12s %s\n' "RUN" "STAGE" "IN STAGE" "TOTAL"
+printf '%-26s %-46s %-12s %-9s %s\n' "RUN" "STAGE" "IN STAGE" "TOTAL" "SCORE"
 # Newest-first: run-id dir names are ticket IDs / adhoc slugs (no whitespace),
 # so word-splitting ls -t output is safe here.
 # shellcheck disable=SC2045
@@ -109,9 +119,12 @@ for name in $(ls -t "$RUNS" 2>/dev/null); do
   found=1
   read -r ts stagetext < "$dir/status"
   started=$(cat "$dir/started" 2>/dev/null || echo "$ts")
+  # The verifier's advisory score, blank on every run that never got one — which
+  # is every run before this existed, and every run whose verifier was off.
+  score=$(jq -r '.metrics.verifier.score // empty' "$dir/result.json" 2>/dev/null || echo "")
   case "$stagetext" in
-    done:*) printf '%-26s %-46s %-12s %s\n' "$name" "$stagetext" "-" "$(fmt $((ts - started)))" ;;
-    *)      printf '%-26s %-46s %-12s %s\n' "$name" "$stagetext" "$(fmt $((now - ts)))" "$(fmt $((now - started)))" ;;
+    done:*) printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "-" "$(fmt $((ts - started)))" "$score" ;;
+    *)      printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "$(fmt $((now - ts)))" "$(fmt $((now - started)))" "$score" ;;
   esac
 done
 [ $found -eq 1 ] || echo "no runs yet"

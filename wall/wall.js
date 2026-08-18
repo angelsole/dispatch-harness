@@ -89,6 +89,7 @@
     actor: document.getElementById('briefActor'),
     stage: document.getElementById('briefStage'),
     timer: document.getElementById('briefTimer'),
+    score: document.getElementById('briefScore'),
     note: document.getElementById('briefNote'),
     dots: document.getElementById('briefDots'),
   };
@@ -597,7 +598,14 @@
   function plateQueue() {
     const alarms = runs.filter((r) => r.state === 'alarm');
     if (alarms.length) return alarms;
-    return runs.filter(shipped).concat(runs.filter((r) => r.state === 'active'));
+    // A run inside its completion moment first (see above), then live work, then
+    // whatever finished run is still standing on the skyline — result.json first
+    // carries the verifier score when a run finishes, and the score chip could
+    // never be seen on a first attempt if the plate vanished as the data arrived.
+    const moment = runs.filter(shipped);
+    const active = runs.filter((r) => r.state === 'active');
+    const standing = runs.filter((r) => !shipped(r) && r.state !== "active" && skyline.has(r.id));
+    return moment.concat(active, standing);
   }
 
   function paintPlate(run, index, total) {
@@ -620,8 +628,15 @@
       ? run.stage + '  ·  ' + run.activity
       : run.stage || '(no stage yet)';
     plate.timer.textContent = run.since ? '⧗ ' + dur(now() - run.since) : '';
-    // Only live runs reach the plate, so the note is the blocking question or
-    // nothing at all.
+    // How well a third vendor thinks this run satisfies its brief. Advisory —
+    // it decides nothing here either, so it is the quietest thing on the plate,
+    // and a run nobody scored simply does not carry it.
+    const score = run.verifier && typeof run.verifier.score === 'number'
+      ? '◎ ' + run.verifier.score.toFixed(2)
+      : '';
+    plate.score.textContent = score;
+    plate.score.hidden = score === '';
+    // Only an alarm carries a note; active and completing runs carry none.
     const note = run.state === 'alarm'
       ? '⚠ ' + (run.blocked || 'needs your input — see QUESTIONS.md')
       : '';
