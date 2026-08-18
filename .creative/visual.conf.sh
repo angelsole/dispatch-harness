@@ -25,7 +25,15 @@ VISUAL_WORLD="${VISUAL_WORLD:-dom}"
 # first line (VISUAL_SERVER_PORT_RE, default) and substitutes it below.
 # $VISUAL_TMP is the gate's scratch dir — the city ledger is per-run state and
 # must never be written inside the repo.
-VISUAL_SERVER_CMD='bash wall.sh --host 127.0.0.1 --port 0 --runs wall/fixtures/runs --city "$VISUAL_TMP/city.jsonl"'
+# WALL_TODAY pins the calendar day the fixture render happens on, and it has to be
+# pinned: wall/crew.json carries a birthday per person and PR #52 puts a bunch of
+# swaying balloons on that person's desk on their day. The room this gate measures
+# is the ALARM room — Reinier's — and on 08-18 his balloons drift through the six
+# frames the continuity check compares, so a render that was "the same room" on
+# Monday and a different room on Tuesday is the calendar leaking into a fixture.
+# 06-15 is nobody's birthday in the roster (tests/wall.test.sh pins that), so the
+# gate measures the room the champion frame was taken of, every day of the year.
+VISUAL_SERVER_CMD='WALL_TODAY=06-15 bash wall.sh --host 127.0.0.1 --port 0 --runs wall/fixtures/runs --city "$VISUAL_TMP/city.jsonl"'
 VISUAL_URL='http://127.0.0.1:{port}'
 
 # One shot, six frames: a 3x2 contact sheet of 640x360 tiles is the cheap end
