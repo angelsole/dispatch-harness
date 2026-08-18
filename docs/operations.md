@@ -5,8 +5,10 @@ run does when the subscription window empties, how attempts are counted, the
 overnight Quartermaster, ticket sync, mirroring to another machine's wall, and
 what the review stage does when a reviewer dies mid-run.
 
-Every knob named here has its row in [the reference](reference.md); the
-incidents that shaped these behaviours are in [the design notes](design-notes.md).
+The pipeline's `HARNESS_*` tables are in [the reference](reference.md); the
+Quartermaster's `QM_*` variables stay beside its operational narrative below
+and are repeated in the reference for lookup. The incidents that shaped these
+behaviours are in [the design notes](design-notes.md).
 
 ## Scheduling a run for later
 
@@ -419,19 +421,20 @@ first.
 
 ## Demo recordings
 
-On a frontend run the implementer writes a shot-scraper storyboard, and the
-pipeline records it against a dev server started inside the worktree — so the PR
-body carries a video of the change instead of a description of it. Two pins in
-the repo's entry turn it on: `DEMO_DEV_CMD` (a dev-server command that pins its
-port) and `DEMO_PORT` (the port it binds), both in
-[the repo pin](reference.md#the-repo-pin). `shot-scraper` records, `ffmpeg`
-transcodes and builds the preview GIF, and `rclone` uploads the result to the
-object-storage remote named in `demo.conf.sh`; without that config the demo is
-recorded but not uploaded, and the run is otherwise unaffected. A site behind a
-login gets its session captured once, by hand, with `demo-auth.sh` — which falls
-back to `python3` running `auth-capture.py` when `shot-scraper` was installed
-outside uv's default tool directory. Every part of this is guarded: a missing
-binary or a failed recording never fails a run.
+On a frontend run whose brief includes a Demo storyboard, the implementer writes
+the shot-scraper file and the pipeline can record it against a dev server inside
+the worktree — so the PR body carries a video of the change instead of a
+description of it. `DEMO_DEV_CMD` pins the command used by `demo-auth.sh`, and
+`DEMO_PORT` pins the storyboard origin and lets the recording stage reject a
+busy port; both live in [the repo pin](reference.md#the-repo-pin). Recording is
+enabled only when `shot-scraper` is installed and `demo.conf.sh` names a valid
+`rclone` remote. Then `shot-scraper` records, `ffmpeg` transcodes and builds the
+preview GIF, and `rclone` uploads both before the PR body is updated. Without
+that upload configuration the stage is skipped, and the run is otherwise
+unaffected. A site behind a login gets its session captured once, by hand, with
+`demo-auth.sh` — which falls back to `python3` running `auth-capture.py` when
+`shot-scraper` was installed outside uv's default tool directory. Every part of
+this is guarded: a missing binary or a failed recording never fails a run.
 
 ## Claude-only mode
 

@@ -216,9 +216,9 @@ laptop's run shows on the office wall — and never blocks a run if that fails.
 re-merges the base into an already-pushed branch and hands the conflicts to the
 same reviewer backend the run used, escalating rather than guessing.
 
-**[A video in the PR body.](docs/operations.md#demo-recordings)** On a frontend
-run the pipeline records the implementer's storyboard against a dev server in
-the worktree and embeds the result. Two more are under [Measuring](#measuring).
+**[A video in the PR body.](docs/operations.md#demo-recordings)** With demo
+upload configured, a frontend run records the implementer's storyboard against
+a dev server in the worktree and embeds it. Two more are under [Measuring](#measuring).
 
 ## Prerequisites
 
@@ -375,7 +375,7 @@ test.
 | `install.sh` `notify.conf.example` `demo.conf.sh.example` `repos.local.sh.example` `demo-auth.sh` `auth-capture.py` | Idempotent installer, the templates it seeds your local config from, and the one-time login capture for demo recordings |
 | `gate.sh` `tests/` `.github/workflows/gate.yml` | This repo's own gate (`shellcheck` + `bash -n`, then every suite) and the same gate on Linux CI |
 | `docs/` `bench/DESIGN.md` `examples/` | [Operations](docs/operations.md) · [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) · [Design notes](docs/design-notes.md), the benchmark design, and copyable templates |
-| `FLOW.md` `harness-flow.html` `RELEASING.md` | Pipeline diagrams, and the manual checklist before this repo is published |
+| `README.md` `FLOW.md` `harness-flow.html` `RELEASING.md` `LICENSE` `.gitignore` `.gitattributes` | This front page, the pipeline diagrams, the publication checklist, the license, and Git metadata |
 
 ## Development
 

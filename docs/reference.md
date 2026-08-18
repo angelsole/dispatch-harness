@@ -11,8 +11,37 @@ behind the odder ones is in [the design notes](design-notes.md).
 
 `HARNESS_*` is the pipeline. Set them on the `run-task.sh` invocation (or export
 them before `schedule.sh`, which snapshots the whole set into the job it arms).
-`QM_*` belongs to the overnight quartermaster and lives with it, in
-[The Quartermaster](operations.md#the-quartermaster).
+`QM_*` belongs to the overnight quartermaster. Its operational narrative and
+primary table live with [The Quartermaster](operations.md#the-quartermaster);
+the complete set is repeated here so this page remains the lookup for every
+environment variable.
+
+### The Quartermaster
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `QM_SAFETY` | Fraction of the estimated headroom to spend | `0.5` |
+| `QM_MAX_PER_CREW` | Hard ceiling on runs per crew member per night | `3` |
+| `QM_FALLBACK_N` | Runs to allow when capacity is unknowable | `1` |
+| `QM_TIMES` | Fire times, handed out in queue order | `"23:30 02:00 04:30"` |
+| `QM_LABEL` | The consent label | `overnight` |
+| `QM_ACCOUNTS_DIR` | Where the crew's stations live | `~/accounts` |
+| `QM_HISTORY` | Runs sampled for the median cost | `20` |
+| `QM_DEFAULT_COST` | Median cost when there is no history yet | `40000` |
+| `QM_TOKEN_LIMIT` | Pin the block ceiling instead of inferring it | unset |
+| `QM_AT` | When `--install` fires | `19:00` |
+| `QM_PAGE` | Issues fetched per Linear request (all pages are followed) | `100` |
+| `QM_CCUSAGE_TIMEOUT` | Seconds allowed for each local ccusage read | `120` |
+| `QM_LINEAR_TIMEOUT` | Seconds allowed for each Linear request | `20` |
+| `QM_NTFY_TIMEOUT` | Seconds allowed for the ntfy report push | `10` |
+| `QM_EFFORT` | `IMPLEMENTER_EFFORT` for armed runs | `high` |
+| `QM_AUTOBRIEF` | `1` lets `--arm` write a missing brief; `0` requires one already approved | `1` |
+| `QM_AUTOBRIEF_TIMEOUT` | Seconds allowed for each self-briefing planner call | `1200` |
+| `QM_AUTOBRIEF_MODEL` | Model for self-briefing | the station's default |
+| `QM_AUTOBRIEF_MAX_BODY` | Ticket-description bytes handed to the planner | `60000` |
+| `QM_REPO_ROOTS` | Space-separated roots searched for repos named by briefs | `~/Projects` |
+| `QM_REPO_DEPTH` | Maximum discovery depth below each repo root | `3` |
+| `LINEAR_API_KEY_FILE` | The Linear key (mode 600, never echoed anywhere) | `$HARNESS_DIR/linear-api-key` |
 
 ### Capacity and deferral
 
