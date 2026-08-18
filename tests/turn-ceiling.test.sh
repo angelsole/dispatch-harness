@@ -115,8 +115,12 @@ n=\$(cat "$ATTEMPTS" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$ATTEM
 # result events carry a distinct num_turns and usage each, so the telemetry has
 # something to sum that only adds up if it read every segment.
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"segment-%s"}]}}\n' "\$n"
-usage() { printf '"num_turns":%s,"usage":{"input_tokens":%s,"output_tokens":%s,"service_tier":"tier-%s"}' \\
-  "\$((n * 10))" "\$((n * 100))" "\$((n * 1000))" "\$n"; }
+usage() {
+  first_only=""; [ "\$n" -ne 1 ] || first_only=',"first_segment_only":"gone"'
+  printf '"num_turns":%s,"usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"service_tier":"tier-%s","server_tool_use":{"segment":%s}%s}' \\
+    "\$((n * 10))" "\$((n * 100))" "\$((n * 1000))" "\$((n * 7))" \\
+    "\$n" "\$n" "\$first_only"
+}
 exhausted() { printf '{"type":"result","subtype":"error_max_turns","result":"segment %s ran out","session_id":"fork-%s",%s}\n' "\$n" "\$n" "\$(usage)"; }
 finished()  { printf '{"type":"result","subtype":"success","result":"segment %s finished","session_id":"fork-%s",%s}\n' "\$n" "\$n" "\$(usage)"; }
 # This binary's stdout IS the stream-json the harness parses, so the modes that
@@ -291,6 +295,8 @@ file_has "$RUN/timeline" "resuming: turn ceiling (1/2)" \
   "resume: the wall and the statusline get a stage line of their own"
 has "$(argv_of 2)" "--resume fork-1" \
   "resume: it continues the pinned session, forked id and all — what a human re-dispatch does"
+check "resume: the refreshed session id comes from the last segment" \
+  "$(cat "$RUN/opus-session")" "fork-2"
 has "$(argv_of 2)" "--max-turns 200" "resume: with the run's pinned ceiling, not a fresh default"
 has_not "$(argv_of 2)" "--session-id" "resume: never a second fresh session"
 has "$(cat "$CLAUDE_CALLS")" "You stopped because you ran out of turns" \
@@ -332,8 +338,14 @@ check "telemetry: and so is every numeric usage key" \
   "$(metric .metrics.implementer_usage.input_tokens)" "300"
 check "telemetry: including the one the quartermaster sizes dispatches with" \
   "$(metric .metrics.implementer_usage.output_tokens)" "3000"
+check "telemetry: cache token counters are numeric keys too" \
+  "$(metric .metrics.implementer_usage.cache_creation_input_tokens)" "21"
 check "telemetry: a non-numeric usage key comes from the last segment" \
   "$(metric .metrics.implementer_usage.service_tier)" "tier-2"
+check "telemetry: including nested non-numeric values" \
+  "$(metric .metrics.implementer_usage.server_tool_use.segment)" "2"
+check "telemetry: a non-numeric key omitted by the last segment is omitted" \
+  "$(metric .metrics.implementer_usage.first_segment_only)" ""
 check "telemetry: and the segment count says how many there were" \
   "$(metric .metrics.implementer_segments)" "2"
 check "telemetry: the pinned ceiling is still the per-segment one, not a sum" \
@@ -346,8 +358,8 @@ check "one segment: and its single result" "$(stream_results)" "success"
 check "one segment: num_turns is the CLI's own number, unchanged" \
   "$(metric .metrics.implementer_num_turns)" "10"
 check "one segment: usage is the CLI's own object, unchanged" \
-  "$(metric '.metrics.implementer_usage | [.input_tokens, .output_tokens, .service_tier] | join(",")')" \
-  "100,1000,tier-1"
+  "$(metric '.metrics.implementer_usage | [.input_tokens, .output_tokens, .cache_creation_input_tokens, .service_tier, .server_tool_use.segment, .first_segment_only] | join(",")')" \
+  "100,1000,7,tier-1,1,gone"
 check "one segment: counted as one" "$(metric .metrics.implementer_segments)" "1"
 check "one segment: no resume was spent" "$(metric .metrics.turn_resumes)" "0"
 

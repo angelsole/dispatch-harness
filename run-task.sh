@@ -333,11 +333,9 @@ EOF
   impl='{}'
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     impl=$(jq -s '
-      def merge_usage($u):
-        reduce ($u | keys_unsorted[]) as $k (.;
-          if ($u[$k] | type) == "number"
-          then .[$k] = (((.[$k] | numbers) // 0) + $u[$k])
-          else .[$k] = $u[$k] end);
+      def sum_numeric_usage:
+        reduce (.[] | to_entries[] | select(.value | type == "number")) as $item
+          ({}; .[$item.key] = ((.[$item.key] // 0) + $item.value));
       map(select(.type == "result")) as $r
       | if ($r | length) == 0 then {} else
           {
@@ -346,7 +344,11 @@ EOF
                            | if length == 0 then null else add end),
             usage: ($r | map(.usage | objects)
                        | if length == 0 then null
-                         else reduce .[] as $u ({}; merge_usage($u)) end)
+                         else . as $usage
+                           | ($usage | sum_numeric_usage)
+                             + (($usage | last)
+                                | with_entries(select(.value | type != "number")))
+                         end)
           }
         end' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null || echo '{}')
     [ -n "$impl" ] || impl='{}'

@@ -121,11 +121,10 @@ Three labels earn their length:
 is the CLI's own `num_turns`, summed over every
 [turn-ceiling segment](operations.md#turn-ceiling-a-run-that-resumes-itself) of
 the invocation; `metrics.implementer_max_turns` is the `--max-turns` a single
-spawn was given, and a resumed one is given it again. A run can honestly report
-206 against a pinned 200 — the ceiling bounds the worker's turns within one
-spawn, while `num_turns` is the CLI's count over the conversation, which a
-resumed session carries forward. The report reconciles them in one line
-(`turns vs cap`) instead of leaving a phantom violation on the table;
+spawn was given, and a resumed one is given it again. A segment can honestly
+report 206 against a pinned 200 — they are the CLI's counters for different
+things, not two readings of the same budget. The report reconciles them in one
+line (`turns vs cap`) instead of leaving a phantom violation on the table;
 `metrics.implementer_segments` is what says how many spawns the sum covers.
 
 ### Which gate step failed

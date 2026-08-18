@@ -173,10 +173,10 @@ now **summed over every segment** of the invocation, with
 `metrics.implementer_segments` saying how many there were (`1` for a run that
 never resumed) — without which a resumed run, the expensive kind, was recorded
 as cheaper than one that finished in a single go, and the
-[Quartermaster](#the-quartermaster) sized the next dispatch off that number. What the failure classifiers want is narrower — the
-segment that just ended — and they get it by reading the stream's **last**
-result event, so a ceiling hit followed by a clean segment is not another
-ceiling hit.
+[Quartermaster](#the-quartermaster) sized the next dispatch off that number.
+What the failure classifiers want is narrower — the segment that just ended —
+and they get it by reading the stream's **last** result event, so a ceiling hit
+followed by a clean segment is not another ceiling hit.
 
 Two things outrank the turn budget. A **session limit** is classified first, so
 a run whose window emptied mid-flight takes the

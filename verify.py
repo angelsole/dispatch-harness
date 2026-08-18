@@ -243,7 +243,9 @@ def stream_steps(path):
                 if final:
                     text += "\nIts last words before the resume:\n" + final
                 steps.append(("impl:resume", text))
-            elif final:
+            else:
+                if not final:
+                    final = "(no closing message was recorded)"
                 steps.append(("impl:result",
                               "The agent's closing message:\n" + final))
     return steps, segments

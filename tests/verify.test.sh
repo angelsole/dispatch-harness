@@ -624,6 +624,21 @@ check "one segment: counted as one" "$(printf '%s' "$ONESEG" | jq -r '.segments'
 has_not "$ONESEG" "turn budget ran out here" \
   "one segment: with no resume marker invented for it"
 
+# Result text is optional in stream-json, but the event is still the segment
+# boundary the verifier promises to show. It gets an explicit empty-message
+# marker instead of silently disappearing from the trajectory.
+printf '%s\n' '{"type":"result","subtype":"success","session_id":"fork-3"}' \
+  > "$SEGRUN/opus-stream.jsonl"
+NO_MESSAGE="$(adapter python3 "$ADAPTER" "$SEGRUN" "$SEGWT" origin/main --dry-run)"
+check "empty result: still emits the promised boundary step" \
+  "$(printf '%s' "$NO_MESSAGE" | jq -r '.labels | join(",")')" "impl:result"
+check "empty result: says why there is no closing text" \
+  "$(printf '%s' "$NO_MESSAGE" | jq -r '.last')" \
+  "The agent's closing message:
+(no closing message was recorded)"
+check "empty result: is still counted as one segment" \
+  "$(printf '%s' "$NO_MESSAGE" | jq -r '.segments')" "1"
+
 # A run whose implementer left nothing behind has no trajectory, and a skip is
 # the honest answer — never a fabricated step and never a score.
 EMPTY="$AROOT/empty-run"
