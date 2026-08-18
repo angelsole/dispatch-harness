@@ -336,8 +336,6 @@ const R = require(path.join(root, "wall", "room.js"));
 const { decode, opaque, bounds } = require(process.argv[3]);
 
 const png = (rel) => decode(fs.readFileSync(path.join(root, "wall", rel)));
-const near = (a, b, tol) => Math.abs(a - b) <= tol;
-
 // The figure the room draws: base above the split, frame at and below it. Built
 // the same way worker() builds it — the band is CLEARED and then taken from the
 // frame, so a base pixel cannot show through a frame's transparent one.
@@ -418,7 +416,9 @@ function measure(set, base, whole, cycle, frame, split) {
   // (a) the seam, in both directions and on each side.
   const above = bounds(base, split - 1, split);
   const at = bounds(img, split, split + 1);
-  if (above && at) {
+  if (!above || !at) {
+    bad.push(set + "/" + frame + ": no silhouette on both sides of row " + split);
+  } else {
     const left = at[0] - above[0];
     const right = (above[0] + above[2]) - (at[0] + at[2]);
     const pinch = Math.max(left, right);
@@ -472,11 +472,11 @@ function walk(set, label, run, flat, share) {
         // travel, so its `reach` box moves 4 px in total while the hand inside it
         // crosses ten. What is bounded is the EXCESS over that allowance, which is
         // zero or the frame is a teleport.
-        const room = Math.max(4, Math.round(travel[k] * share));
-        worstShare = Math.max(worstShare, d - room);
-        if (d > room) {
+        const allowance = Math.max(4, travel[k] * share);
+        worstShare = Math.max(worstShare, d - allowance);
+        if (d > allowance) {
           bad.push(set + "/" + label + ": one frame carries " + d + " px of a "
-            + travel[k] + " px travel at frame " + i + ", over " + room);
+            + travel[k] + " px travel at frame " + i + ", over " + allowance);
         }
       }
     }
