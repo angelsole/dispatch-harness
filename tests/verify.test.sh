@@ -143,7 +143,16 @@ JSON
     ;;
   garbage)  printf 'not json {{{\n' > "\$run/verify.json" ;;
   boom)     echo "boom" >&2; exit 7 ;;
+  score_boom)
+    printf '{"score":0.99}\n' > "\$run/verify.json"
+    echo "failed after publishing a score" >&2
+    exit 7
+    ;;
   hang)     sleep 6 ;;
+  score_hang)
+    printf '{"score":0.99}\n' > "\$run/verify.json"
+    sleep 6
+    ;;
   quiet)    echo "no trajectory: no implementer stream" >&2; exit 3 ;;
 esac
 EOF
@@ -303,6 +312,21 @@ file_has "$RUN/verify.log" "verifier: failed (exit 7)" "crash: naming the exit c
 check "crash: the PR body is byte-identical to a run with no verifier at all" \
   "$(sed 1d "$RUN/pr-body.md")" "$(sed 1d "$ROOT/body-without-verifier.md")"
 
+# A process can publish its atomic file and still fail afterwards. Exit status
+# owns the attempt: downstream readers must not mistake that abandoned artifact
+# for a successful score.
+printf 'score_boom\n' > "$VERIFY_MODE"
+dispatch V-SCORE-BOOM ""
+check "late crash: a score written before failure is discarded" \
+  "$(result .metrics.verifier)" ""
+check "late crash: no verifier section reaches the PR body" \
+  "$(sed 1d "$RUN/pr-body.md")" "$(sed 1d "$ROOT/body-without-verifier.md")"
+if [ ! -e "$RUN/verify.json" ]; then
+  ok "late crash: the failed attempt leaves no live score artifact"
+else
+  bad "late crash: the failed attempt leaves no live score artifact"
+fi
+
 printf 'garbage\n' > "$VERIFY_MODE"
 dispatch V-GARBAGE ""
 check "garbage: the run still ships" "$(result .status)" "$BASELINE_STATUS"
@@ -320,11 +344,23 @@ file_has "$RUN/verify.log" "verifier: skipped (no trajectory: no implementer str
 
 printf 'hang\n' > "$VERIFY_MODE"
 dispatch V-HANG "HARNESS_VERIFY_TIMEOUT=1"
-printf 'score\n' > "$VERIFY_MODE"
 check "timeout: the run still ships" "$(result .status)" "$BASELINE_STATUS"
 check "timeout: with the same PR" "$(result .pr_url)" "$BASELINE_PR"
 file_has "$RUN/verify.log" "verifier: failed (timed out after 1s)" \
   "timeout: and the cap is recorded as what it is"
+
+printf 'score_hang\n' > "$VERIFY_MODE"
+dispatch V-SCORE-HANG "HARNESS_VERIFY_TIMEOUT=1"
+printf 'score\n' > "$VERIFY_MODE"
+check "late timeout: a score written before the cap is discarded" \
+  "$(result .metrics.verifier)" ""
+check "late timeout: no verifier section reaches the PR body" \
+  "$(sed 1d "$RUN/pr-body.md")" "$(sed 1d "$ROOT/body-without-verifier.md")"
+if [ ! -e "$RUN/verify.json" ]; then
+  ok "late timeout: the killed attempt leaves no live score artifact"
+else
+  bad "late timeout: the killed attempt leaves no live score artifact"
+fi
 
 # ---------------------------------------------------------------------------
 echo "== the stage runs on every arm that reaches the review =="

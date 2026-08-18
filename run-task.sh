@@ -1683,6 +1683,11 @@ verify_stage() {  # uses RUN_DIR, WORKTREE, BASE_REF; always returns 0
   case "$secs" in *[1-9]*) ;; *) secs=$DEFAULT_VERIFY_TIMEOUT ;; esac
 
   stage "verify — trajectory score (verifier · third vendor)"
+  # The adapter writes atomically, but its process can still fail after the
+  # rename (or be killed while doing later work). Start without a live score and
+  # only keep the file after an exit-0 process left a numeric one; otherwise a
+  # failed verifier could leak into metrics and the PR body as if it succeeded.
+  rm -f "$RUN_DIR/verify.json"
   # env(1) sits between the timeout and the interpreter because with_timeout is
   # a shell function: env cannot exec one. Only the adapter's own knobs and the
   # PATH to the key travel — the key itself is read inside the process, so it is
@@ -1700,7 +1705,9 @@ verify_stage() {  # uses RUN_DIR, WORKTREE, BASE_REF; always returns 0
     "$py" "$adapter" "$RUN_DIR" "$WORKTREE" "$BASE_REF" >> "$log" 2>&1
   rc=$?
   reason=$(tail -1 "$log" 2>/dev/null || echo "")
-  score=$(jq -r '.score // empty' "$RUN_DIR/verify.json" 2>/dev/null || echo "")
+  score=$(jq -r 'if (.score | type) == "number" then .score else empty end' \
+    "$RUN_DIR/verify.json" 2>/dev/null || echo "")
+  if [ "$rc" -ne 0 ] || [ -z "$score" ]; then rm -f "$RUN_DIR/verify.json"; fi
   if [ "$rc" -eq 0 ] && [ -n "$score" ]; then
     printf 'verifier: %s\n' "$score" >> "$log"
   elif [ "$rc" -eq 0 ]; then
