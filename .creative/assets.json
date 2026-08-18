@@ -861,6 +861,21 @@
     "prompt": "one plain dark human silhouette standing upright with the feet together, seen from the side facing right, whole body from head to feet, no face, no detail, flat single colour, item on a plain empty background, nothing else in the picture, no signs, no sign board, no lettering, no text, no letters, no numbers"
   },
   {
+    "id": "city-build-scaffold",
+    "tool": "pixellab.image",
+    "palette": ".creative/palette.png",
+    "width": 32,
+    "height": 32,
+    "no_background": true,
+    "background_removal_task": "remove_simple_background",
+    "view": "side",
+    "outline": "single color black outline",
+    "shading": "flat shading",
+    "detail": "medium detail",
+    "seed": 19514,
+    "prompt": "one plain steel lattice pylon, a narrow open framework tower with four legs and diagonal cross braces, nothing attached to it, item on a plain empty background, nothing else in the picture, no signs, no sign board, no lettering, no text, no letters, no numbers"
+  },
+  {
     "id": "room-worker-lean",
     "tool": "pixellab.animate",
     "from": "room-worker",
