@@ -604,8 +604,8 @@
     // never be seen on a first attempt if the plate vanished as the data arrived.
     const moment = runs.filter(shipped);
     const active = runs.filter((r) => r.state === 'active');
-    const standing = runs.filter((r) => !shipped(r) && r.state !== "active" && skyline.has(r.id));
-    return moment.concat(active, standing);
+    if (moment.length || active.length) return moment.concat(active);
+    return runs.filter((r) => skyline.has(r.id));
   }
 
   function paintPlate(run, index, total) {

@@ -3594,6 +3594,7 @@ PLATE_PROBE="$ROOT/plate-probe.js"
   printf '%s\n' 'const now = () => NOW;'
   printf '%s\n' 'let runs = [];'
   printf '%s\n' 'let latest = { completionSeconds: 30 };'
+  printf '%s\n' 'let skyline = new Set();'
   # The two functions verbatim out of wall/wall.js, so what is checked is the page's
   # own arithmetic and not a second copy of it that agrees today.
   awk '/^  function shipped\(run\) \{/,/^  \}$/' "$SRC/wall/wall.js"
