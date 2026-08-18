@@ -91,10 +91,9 @@ const SYNTHETIC = new Set(['bot']);
 // without touching anybody's clock. It has to be a well-formed MM-DD to have
 // any effect at all: a pin nobody can read is not a date, and shipping it would
 // make the page's answer depend on a typo rather than fall back to the truth.
-const DAY = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 function todayOf(now) {
-  const pinned = String(process.env.WALL_TODAY || '').trim();
-  if (DAY.test(pinned)) return pinned;
+  const pinned = ROOM.calendarDayOf(process.env.WALL_TODAY || '');
+  if (pinned) return pinned;
   const d = now || new Date();
   return String(d.getMonth() + 1).padStart(2, '0') + '-'
     + String(d.getDate()).padStart(2, '0');
@@ -1021,7 +1020,8 @@ let lastBody = '';
 // run up by id. `runs` is the honest snapshot of the disk (live work plus a
 // compact tail of finished runs); `towers` is the skyline, which is live only.
 function payload() {
-  const at = Math.floor(Date.now() / 1000);
+  const now = new Date();
+  const at = Math.floor(now.getTime() / 1000);
   const scanned = scan();
   const runs = snapshot(scanned);
   const { week, city, ghost } = cityNow(scanned, at);
@@ -1032,7 +1032,7 @@ function payload() {
   // change worth pushing: `at` ticks every second and is deliberately outside
   // it, but a date rolls over once, and when it does the wall has a birthday to
   // put in somebody's room.
-  const today = todayOf();
+  const today = todayOf(now);
   for (const run of runs) run.today = today;
   return {
     at,

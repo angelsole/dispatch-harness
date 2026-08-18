@@ -568,15 +568,23 @@
   // the way there is for a desk: a stranger sitting in his chair borrows his
   // things because an empty desk is a room somebody moved out of, but a
   // birthday is a fact about a PERSON and belongs to nobody else.
-  const DAY = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+  const CALENDAR_DAY = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+  const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  function calendarDayOf(value) {
+    if (typeof value !== 'string') return '';
+    const day = value.trim();
+    const match = CALENDAR_DAY.exec(day);
+    if (!match) return '';
+    return Number(match[2]) <= MONTH_DAYS[Number(match[1]) - 1] ? day : '';
+  }
+
   function birthdayOf(crew, owner, today) {
-    const day = typeof today === 'string' ? today.trim() : '';
-    if (!DAY.test(day)) return false;
+    const day = calendarDayOf(today);
+    if (!day) return false;
     const table = crew && typeof crew === 'object' ? crew : {};
     const entry = table[String(owner || '').trim().toLowerCase()];
-    const born = entry && typeof entry === 'object' && typeof entry.birthday === 'string'
-      ? entry.birthday.trim() : '';
-    return DAY.test(born) && born === day;
+    const born = entry && typeof entry === 'object' ? calendarDayOf(entry.birthday) : '';
+    return born === day;
   }
 
   // Where each sprite's own drawing sits inside its file, measured once off the
@@ -2412,7 +2420,7 @@
   return {
     create, viewOf, tintOf, beatAt, snap, widthOf, fit, cells, setOf, labelOf,
     fileOf, splitOf, bandsOf, lineOf, keyOf, markOf, burstAt, revealed,
-    spoken, wrapped, cropAt, propsOf, slotsOf, birthdayOf,
+    spoken, wrapped, cropAt, propsOf, slotsOf, calendarDayOf, birthdayOf,
     cycleOf, moveAt, holdAt, holdsAMug, scrollAt,
     CARD, CARD_PAD, CARD_ROOM, CARD_CELLS, CARD_LINES,
     PLATE, BEZEL, WORKER, LAMP,

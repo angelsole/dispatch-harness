@@ -130,10 +130,10 @@ Three things about these files that the columns cannot say:
   full value and the renderer is what veils it, which is why the football keeps
   its white and the room sinks it instead.
 
-Nine props were generated and eight are here. `room-prop-headphones` was rolled
+Ten props were generated and nine are here. `room-prop-headphones` was rolled
 twice, at `18514` and `18524`, and came back both times as a spindle nobody would
 read as headphones at 4x; it was thrown away rather than retouched, and the pool
-is eight.
+is nine.
 
 `room-prop-balloons` made it nine, and it is the only one of them nobody owns: a
 line in `crew.json` cannot ask for it. It is granted by a DATE — the `birthday`

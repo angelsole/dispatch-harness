@@ -1025,11 +1025,12 @@ DAY_PROBE="$(node -e '
     return S.todayOf(new Date(2026, 7, 18));
   };
   process.stdout.write([
-    at(null), at("01-01"), at(" 12-25 "), at("8-18"), at("13-01"), at("2026-08-18"), at(""),
+    at(null), at("01-01"), at(" 12-25 "), at("02-29"), at("8-18"), at("13-01"),
+    at("02-30"), at("04-31"), at("2026-08-18"), at(""),
   ].join(" "));
 ' "$SRC/wall/server.js" 2>&1)"
 check "day: WALL_TODAY pins it, and only a real MM-DD does" \
-  "$DAY_PROBE" "08-18 01-01 12-25 08-18 08-18 08-18 08-18"
+  "$DAY_PROBE" "08-18 01-01 12-25 02-29 08-18 08-18 08-18 08-18 08-18 08-18"
 
 state_of() { printf '%s' "$API" | jq -r --arg id "$1" '.runs[] | select(.id==$id) | .'"$2"; }
 check "state: mid-implement run is active"  "$(state_of OLYX-1631 state)" "active"
@@ -3728,6 +3729,9 @@ console.log(JSON.stringify({
       view("8-18", "8-18"),          // written short, which is not
       view("18-08", "08-18"),        // written the other way round
       view("13-01", "13-01"),        // a month there is no thirteenth of
+      view("02-30", "02-30"),        // a day February never has
+      view("04-31", "04-31"),        // a thirty-day month's impossible date
+      view("02-29", "02-29"),        // a leap birthday is valid without a year
       view("08-18", "2026-08-18"),   // a day with a year on it
       view(818, "08-18"),            // a number
       view({ month: 8 }, "08-18"),   // an object
@@ -4296,7 +4300,7 @@ check "things: and the view carries them per run, so the plane rebakes on a swap
 # and nothing else can take them away.
 check "birthday: MM-DD on both sides or it is not a birthday" \
   "$(room_of birthdays)" \
-  '[true,false,false,false,true,false,false,false,false,false,false]'
+  '[true,false,false,false,true,false,false,false,false,false,true,false,false,false]'
 check "birthday: Reinier's own line, on his day and off it" \
   "$(room_of birthdayReinier)" "true,false,false"
 check "birthday: and it is one person's, not the office's" \
