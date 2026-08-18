@@ -46,6 +46,18 @@ VERIFY_MODE="$ROOT/verify-mode"
 VERIFY_ARGS="$ROOT/verify-args.log"
 KEY_FILE="$ROOT/verifier-api-key"
 
+# A configured station commonly exports one or more verifier knobs. Every case
+# below starts from the adapter's documented defaults, then opts into only the
+# overrides it is proving, so a developer's own backend/region cannot rewrite
+# the fixture underneath the assertions.
+CLEAN_VERIFY_ENV=(env
+  -u HARNESS_VERIFY -u HARNESS_VERIFY_TIMEOUT
+  -u HARNESS_VERIFY_PROVIDER -u HARNESS_VERIFY_BASE_URL
+  -u HARNESS_VERIFY_GCP_PROJECT -u HARNESS_VERIFY_GCP_LOCATION
+  -u HARNESS_VERIFY_MODEL -u HARNESS_VERIFY_EVALS
+  -u HARNESS_VERIFY_MAX_CRITERIA -u HARNESS_VERIFY_STEP_CHARS
+  -u HARNESS_VERIFY_MAX_CHARS -u HARNESS_VERIFY_EFFORT)
+
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
 printf 'score\n' > "$VERIFY_MODE"
 : > "$VERIFY_ARGS"
@@ -167,8 +179,8 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   mkdir -p "$RUN"
   cp "$ROOT/brief.md" "$RUN/brief.md"
   # shellcheck disable=SC2086
-  env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
-      -u HARNESS_VERIFY -u HARNESS_VERIFY_TIMEOUT \
+  "${CLEAN_VERIFY_ENV[@]}" \
+      -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       TEST_GATE_CMD="$TEST_GATE_CMD" \
@@ -464,7 +476,8 @@ printf 'raise RuntimeError("the dry run imported the library")\n' > "$AROOT/pois
 # call in the environment afterwards, which would silently re-knob every check
 # below it.
 adapter() {  # rest = further VAR=VAL assignments, then the command
-  env PYTHONPATH="$AROOT/poison" \
+  "${CLEAN_VERIFY_ENV[@]}" \
+      PYTHONPATH="$AROOT/poison" \
       HARNESS_VERIFY_KEY_FILE="$KEY_FILE" \
       "$@"
 }
@@ -631,7 +644,8 @@ EOF
 
 CALLS="$AROOT/stub-calls.jsonl"
 : > "$CALLS"
-env PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
+"${CLEAN_VERIFY_ENV[@]}" \
+    PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
     HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_EVALS=3 \
     python3 "$ADAPTER" "$ARUN" "$AWT" origin/main > "$ROOT/score.out" 2>"$ROOT/score.err"
 check "score: exits 0" "$?" "0"
@@ -683,7 +697,8 @@ mkdir -p "$DOTENV_CWD"
 printf 'OPENAI_BASE_URL=https://wrong.invalid/v1\nDEEPSEEK_API_KEY=wrong-key\n' \
   > "$DOTENV_CWD/.env"
 ( cd "$DOTENV_CWD" && \
-  env PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
+  "${CLEAN_VERIFY_ENV[@]}" \
+      PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
       HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_PROVIDER=vertex \
       HARNESS_VERIFY_MODEL=gemini-2.5-flash HARNESS_VERIFY_MAX_CRITERIA=0 \
       python3 "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>&1 )
@@ -758,7 +773,8 @@ GENAI_CALLS="$AROOT/genai-calls.jsonl"
 # makes the run identical on a laptop and on CI.
 vertex_run() {  # rest = extra VAR=VAL assignments for this run
   : > "$CALLS"; : > "$GENAI_CALLS"
-  env PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" \
+  "${CLEAN_VERIFY_ENV[@]}" \
+      PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" \
       VERIFY_GENAI_CALLS="$GENAI_CALLS" \
       HARNESS_VERIFY_KEY_FILE="$SA_KEY" HARNESS_VERIFY_MAX_CRITERIA=0 \
       "$@" python3 -S "$ADAPTER" "$ARUN" "$AWT" origin/main
@@ -810,7 +826,8 @@ check "vertex: and a run without a service account carries no location" \
 
 # The other direction: a one-line key with no provider is still DeepSeek.
 : > "$CALLS"
-env PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" VERIFY_GENAI_CALLS="$GENAI_CALLS" \
+"${CLEAN_VERIFY_ENV[@]}" \
+    PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" VERIFY_GENAI_CALLS="$GENAI_CALLS" \
     HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_MAX_CRITERIA=0 \
     python3 -S "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>&1
 check "inference: a one-line key with no provider set is deepseek, as before" \
@@ -829,14 +846,16 @@ file_has "$ROOT/vertex-boom.err" "vertex refused this principal" \
   "vertex: including what the backend actually said"
 
 # No key is a skip, not a failure and not a zero.
-env PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
+"${CLEAN_VERIFY_ENV[@]}" \
+    PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
     HARNESS_VERIFY_KEY_FILE="$AROOT/no-key" \
     python3 "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>"$ROOT/nokey.err"
 check "no key: the adapter skips with exit 3" "$?" "3"
 has "$(cat "$ROOT/nokey.err")" "no key" "no key: and one line saying so"
 
 # A machine with no library at all is the same kind of skip.
-env HARNESS_VERIFY_KEY_FILE="$KEY_FILE" PYTHONPATH="$AROOT/nowhere" \
+"${CLEAN_VERIFY_ENV[@]}" \
+    HARNESS_VERIFY_KEY_FILE="$KEY_FILE" PYTHONPATH="$AROOT/nowhere" \
     python3 "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>"$ROOT/nolib.err"
 NOLIB_RC=$?
 if python3 -c 'import llm_verifier' 2>/dev/null; then
