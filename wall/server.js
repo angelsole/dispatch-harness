@@ -82,6 +82,24 @@ const CREW = (process.env.WALL_CREW || '').split(',')
 // wall says so rather than quietly listing them as crew.
 const SYNTHETIC = new Set(['bot']);
 
+// WHAT DAY IT IS, on the one machine that can answer it: the wall is a panel in
+// an office and the office has one date, not one per browser. `MM-DD` and no
+// year, because that is what a roster line carries — nobody puts the year they
+// were born on the wall.
+//
+// WALL_TODAY pins it, which is how the suite asks for a day that is not today
+// without touching anybody's clock. It has to be a well-formed MM-DD to have
+// any effect at all: a pin nobody can read is not a date, and shipping it would
+// make the page's answer depend on a typo rather than fall back to the truth.
+const DAY = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+function todayOf(now) {
+  const pinned = String(process.env.WALL_TODAY || '').trim();
+  if (DAY.test(pinned)) return pinned;
+  const d = now || new Date();
+  return String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0');
+}
+
 // --- disk reads (never throw) -------------------------------------------------
 
 function readChunk(file, bytes, fromEnd) {
@@ -1007,8 +1025,18 @@ function payload() {
   const scanned = scan();
   const runs = snapshot(scanned);
   const { week, city, ghost } = cityNow(scanned, at);
+  // The date rides on every run as well as on the frame. The page hands the
+  // room a RUN and a ladder — that is the whole of what wall/room.js is given —
+  // so a top-level field alone would never reach the one thing that draws it.
+  // It also puts the date inside fingerprint(), which is what makes midnight a
+  // change worth pushing: `at` ticks every second and is deliberately outside
+  // it, but a date rolls over once, and when it does the wall has a birthday to
+  // put in somebody's room.
+  const today = todayOf();
+  for (const run of runs) run.today = today;
   return {
     at,
+    today,
     runsDir: RUNS,
     crew: CREW,
     floors: FLOORS,
@@ -1137,5 +1165,5 @@ if (require.main === module) {
 module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
   shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
-  assetOf, ASSETS, roster,
+  assetOf, ASSETS, roster, todayOf,
 };
