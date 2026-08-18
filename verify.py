@@ -14,6 +14,13 @@ homework being graded is the second reason. `llm_verifier.create_client()` picks
 the backend from OPENAI_BASE_URL, DEEPSEEK_API_KEY or VERTEX_API_KEY, in that
 order, so this process sets exactly one of them and clears the rest.
 
+Vertex is the exception, and the corporate-safe backend: outside express mode it
+refuses API keys outright (`401 UNAUTHENTICATED: API keys are not supported by
+this API. Expected OAuth2 access token or other authentication credentials that
+assert a principal`), so a service-account JSON in the key file is authenticated
+as a principal instead — GOOGLE_APPLICATION_CREDENTIALS gets the PATH, and the
+`google.genai` client this file builds is handed straight to `track()`.
+
 The score is ADVISORY. Nothing in run-task.sh branches on it: a run that scores
 0.1 ships exactly like one that scores 0.9, and the only thing the number is for
 is sorting a corpus by "how well did this actually satisfy its brief".
@@ -26,10 +33,16 @@ Usage: verify.py <run-dir> <worktree> <base-ref> [--dry-run]
              drives on a machine that has neither.
 
 Env (all optional except the key file, which run-task.sh always passes):
-  HARNESS_VERIFY_KEY_FILE     file holding the API key; read in-process, never
-                              in argv (same discipline as linear-api-key)
-  HARNESS_VERIFY_PROVIDER     deepseek (default) | vertex | openai
+  HARNESS_VERIFY_KEY_FILE     the credential: either a one-line API key or a
+                              Google service-account JSON. Read in-process,
+                              never in argv (same discipline as linear-api-key)
+  HARNESS_VERIFY_PROVIDER     deepseek | vertex | openai. Unset infers it from
+                              the key file: service-account JSON -> vertex,
+                              anything else -> deepseek
   HARNESS_VERIFY_BASE_URL     OPENAI_BASE_URL for the openai provider
+  HARNESS_VERIFY_GCP_PROJECT  vertex project; the JSON's project_id when unset
+  HARNESS_VERIFY_GCP_LOCATION vertex region (default global; pin an EU region
+                              for data residency)
   HARNESS_VERIFY_MODEL        model id; the library's default when unset
   HARNESS_VERIFY_EVALS        K repeats per checkpoint (default 3)
   HARNESS_VERIFY_MAX_CRITERIA cap on scored acceptance criteria (default 8;
@@ -460,15 +473,91 @@ def criterion_problem(title, problem, criterion, limit):
     return "\n\n".join(parts)
 
 
+# --- the credential ----------------------------------------------------------
+
+def read_credential(path):
+    """What the key file actually holds, parsed once and never exported.
+
+    Two shapes are supported, because Vertex needs the second one: a one-line
+    API key (DeepSeek, an OpenAI-compatible server, or Vertex express mode), or
+    a Google service-account JSON. Returns
+    {path, kind: "api_key"|"service_account"|"", text, data}.
+    """
+    text = read_text(path).strip() if path else ""
+    cred = {"path": path, "kind": "", "text": text, "data": {}}
+    if not text:
+        return cred
+    cred["kind"] = "api_key"
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return cred  # the ordinary case: a key is not JSON
+    if isinstance(data, dict) and data.get("type") == "service_account":
+        cred["kind"] = "service_account"
+        cred["data"] = data
+    return cred
+
+
+def secret_strings(cred):
+    """Every literal that must never reach a log, longest first.
+
+    The file's own text covers an API key. A service account needs more: a
+    library that prints the PARSED credential shows a private key whose real
+    newlines look nothing like the \\n escapes in the file, so the parsed
+    material is redacted in its own right.
+    """
+    out = [cred.get("text") or ""]
+    data = cred.get("data") or {}
+    for name in ("private_key", "private_key_id"):
+        out.append(str(data.get(name) or "").strip())
+    # Eight characters is well below any real credential and well above the
+    # substrings ("", "-") that would redact the whole traceback.
+    return sorted({s for s in out if len(s) >= 8}, key=len, reverse=True)
+
+
+def redact(text, cred):
+    for secret in secret_strings(cred):
+        text = text.replace(secret, "<redacted>")
+    return text
+
+
 # --- scoring -----------------------------------------------------------------
 
-def make_client(provider, key, base_url):
+def vertex_client(cred):
+    """A Vertex client authenticated as a service-account principal.
+
+    Verified against the real service: an API key created for aiplatform is
+    refused outside express mode, while a service-account JSON with
+    roles/aiplatform.user returns logprobs. Only the PATH goes into the
+    environment — GOOGLE_APPLICATION_CREDENTIALS is a filename by contract, and
+    the private key never leaves this process.
+
+    Returns (client, location); the location is recorded because where the
+    scoring ran is the whole point of pinning an EU region.
+    """
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred["path"]
+    project = env_text("HARNESS_VERIFY_GCP_PROJECT") \
+        or str(cred["data"].get("project_id") or "").strip()
+    if not project:
+        raise SystemExit(
+            "verify.py: vertex needs a project — the service-account JSON has no "
+            "project_id, so set HARNESS_VERIFY_GCP_PROJECT")
+    location = env_text("HARNESS_VERIFY_GCP_LOCATION", "global")
+    from google import genai  # noqa: E402  (lazy, like llm_verifier below)
+    return genai.Client(vertexai=True, project=project, location=location), location
+
+
+def make_client(provider, cred, base_url):
     """Import the library and build its client for exactly one backend.
 
     create_client() reads OPENAI_BASE_URL, then DEEPSEEK_API_KEY, then
     VERTEX_API_KEY, so an ambient variable from the operator's shell could
     otherwise pick a backend the run never asked for: clear all three first.
+
+    Returns (llm_verifier, client, location) — location is empty for every
+    backend that is not Vertex.
     """
+    key = cred["text"]
     # Keep the unused selectors present-but-empty instead of removing them.
     # llm_verifier calls load_dotenv() while building the client; its
     # setdefault() would otherwise resurrect a backend from the caller's .env
@@ -479,10 +568,14 @@ def make_client(provider, key, base_url):
     for name in ("OPENAI_BASE_URL", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
                  "VERTEX_API_KEY"):
         os.environ[name] = ""
+    location = ""
     if provider == "deepseek":
         os.environ["DEEPSEEK_API_KEY"] = key
     elif provider == "vertex":
-        os.environ["VERTEX_API_KEY"] = key
+        # Express-mode keys keep the library's documented path; a service
+        # account cannot use it at all, so that client is built here instead.
+        if cred["kind"] != "service_account":
+            os.environ["VERTEX_API_KEY"] = key
     elif provider == "openai":
         if not base_url:
             raise SystemExit(
@@ -497,7 +590,11 @@ def make_client(provider, key, base_url):
     # silently supplying an unrelated local override.
     os.environ["DEEPSEEK_EFFORT"] = env_text("HARNESS_VERIFY_EFFORT", "high")
     import llm_verifier  # noqa: E402  (lazy on purpose — --dry-run needs none of it)
-    return llm_verifier, llm_verifier.create_client()
+    if provider == "vertex" and cred["kind"] == "service_account":
+        client, location = vertex_client(cred)
+    else:
+        client = llm_verifier.create_client()
+    return llm_verifier, client, location
 
 
 def score_of(result):
@@ -578,15 +675,19 @@ def main(argv):
         return EXIT_OK
 
     key_file = env_text("HARNESS_VERIFY_KEY_FILE")
-    provider = env_text("HARNESS_VERIFY_PROVIDER", "deepseek")
+    cred = read_credential(key_file)
+    # An explicit provider always wins; an absent one is read off the credential
+    # itself, so a station goes corporate-safe by dropping a service-account
+    # JSON in place — no shell export, no config file.
+    provider = env_text("HARNESS_VERIFY_PROVIDER") or (
+        "vertex" if cred["kind"] == "service_account" else "deepseek")
     base_url = env_text("HARNESS_VERIFY_BASE_URL")
-    key = read_text(key_file).strip() if key_file else ""
-    if not key and provider != "openai":
+    if not cred["text"] and provider != "openai":
         sys.stderr.write("no key: %s is unreadable or empty\n"
                          % (key_file or "HARNESS_VERIFY_KEY_FILE"))
         return EXIT_SKIP
     try:
-        lv, client = make_client(provider, key, base_url)
+        lv, client, location = make_client(provider, cred, base_url)
     except ImportError as exc:
         sys.stderr.write("library missing: %s\n" % exc)
         return EXIT_SKIP
@@ -642,6 +743,10 @@ def main(argv):
         "usage": usage_counts,
         "seconds": round(time.time() - started, 3),
     }
+    # Vertex only, and only when a region was actually chosen: where the scoring
+    # ran is the whole point of pinning one.
+    if location:
+        document["location"] = location
     write_json(os.path.join(run_dir, "verify.json"), document)
     sys.stdout.write("verify: score %s (%d steps, %d criteria)\n"
                      % (document["score"], len(steps), len(scored)))
@@ -671,12 +776,12 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except BaseException:
-        # The key is in this process's environment, so scrub it out of anything
+        # The credential is loaded in this process, so scrub it out of anything
         # that reaches a log: verify.log is world-readable, the key file is 600.
+        # A service account is redacted in both of its shapes — the file's text
+        # and the parsed private key — because a frame that shows the parsed
+        # dict shows real newlines where the file has \n escapes.
         import traceback
-        text = traceback.format_exc()
-        secret = read_text(env_text("HARNESS_VERIFY_KEY_FILE")).strip()
-        if secret:
-            text = text.replace(secret, "<redacted>")
-        sys.stderr.write(text)
+        sys.stderr.write(redact(traceback.format_exc(),
+                                read_credential(env_text("HARNESS_VERIFY_KEY_FILE"))))
         sys.exit(EXIT_FAIL)

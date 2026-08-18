@@ -204,12 +204,13 @@ the advisory trajectory score after the review):
   `~/.claude/harness/verifier-venv` and installs
   [`llm-verifier`](https://github.com/llm-as-a-verifier/llm-as-a-verifier) into
   it. Nothing else in the pipeline needs Python.
-- **A third-vendor API key that returns logprobs** — DeepSeek
-  (`deepseek-v4-flash`, the documented default), Gemini *via Vertex*
-  (`gemini-2.5-flash`; the plain Gemini API exposes no logprobs), or any
-  OpenAI-compatible server that returns them. Never Claude and never the two
-  subscriptions the pipeline runs on: neither exposes logprobs, and no model
-  should grade its own homework.
+- **A third-vendor credential for a backend that returns logprobs** — a DeepSeek
+  API key (`deepseek-v4-flash`, the documented default), a Google
+  **service-account JSON** for Gemini *via Vertex* (`gemini-2.5-flash`; the
+  plain Gemini API exposes no logprobs, and Vertex refuses API keys outside
+  express mode), or a key for any OpenAI-compatible server that returns them.
+  Never Claude and never the two subscriptions the pipeline runs on: neither
+  exposes logprobs, and no model should grade its own homework.
 
 Without both, the stage records one line in `verify.log` and the run is exactly
 what it was.
@@ -1248,9 +1249,9 @@ absolute mode; pairwise `compare()`/`select()` is a different question).
 
 **Why a third vendor.** The score needs logprobs, which neither Claude nor the
 ChatGPT subscription exposes — so the verifier runs on DeepSeek, on Gemini via
-Vertex, or on any OpenAI-compatible server that returns them. That constraint
-happens to enforce the rule the review stage already follows: no model grades
-its own homework.
+Vertex (as a service-account principal — see below), or on any
+OpenAI-compatible server that returns them. That constraint happens to enforce
+the rule the review stage already follows: no model grades its own homework.
 
 **It is advisory, and it never gates.** No status, no gate verdict, no PR
 decision, no ready-promotion and no notification priority depends on the number.
@@ -1271,17 +1272,46 @@ trajectory bounded at 400 000 characters. `HARNESS_VERIFY_MAX_CRITERIA=0`
 
 Like `linear-api-key`, that one file is **not seeded by the installer, because
 it is a credential** — you create it by hand, mode 600. Only its *path* is
-exported to the adapter (as `HARNESS_VERIFY_KEY_FILE`), which reads the key
-in-process: the key itself never appears in `ps`, in `verify.log`, in
-`verify.json` or in `result.json`.
+exported to the adapter (as `HARNESS_VERIFY_KEY_FILE`), which reads the
+credential in-process: it never appears in `ps`, in `verify.log`, in
+`verify.json` or in `result.json`, and a traceback has both a bare key and a
+service account's private-key material scrubbed out of it.
+
+**Vertex, for a corporate account.** Under Google Cloud terms Vertex does not
+train on inputs and can be pinned to an EU region, which makes it the
+corporate-safe backend where DeepSeek is fine for personal repos. It will not
+take an API key: one created with
+`gcloud services api-keys create --api-target=service=aiplatform.googleapis.com`
+comes back `401 UNAUTHENTICATED: API keys are not supported by this API.
+Expected OAuth2 access token or other authentication credentials that assert a
+principal`. So the key file holds a **service-account JSON** instead, and the
+adapter authenticates as that principal:
+
+```bash
+gcloud iam service-accounts create harness-verifier --project "$PROJECT"
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member "serviceAccount:harness-verifier@$PROJECT.iam.gserviceaccount.com" \
+  --role roles/aiplatform.user
+gcloud iam service-accounts keys create ~/.claude/harness/verifier-api-key \
+  --iam-account "harness-verifier@$PROJECT.iam.gserviceaccount.com"
+chmod 600 ~/.claude/harness/verifier-api-key
+export HARNESS_VERIFY_GCP_LOCATION=europe-west4   # EU residency; default is global
+```
+
+Nothing else changes: the file's *shape* selects the backend, so a station goes
+corporate-safe by dropping that JSON in place of the DeepSeek key — no export,
+no config file. Only the path reaches the environment (as
+`GOOGLE_APPLICATION_CREDENTIALS`); the JSON's contents never do.
 
 | Env var | Effect | Default |
 | --- | --- | --- |
 | `HARNESS_VERIFY` | `0` disables the stage entirely. | `1` |
 | `HARNESS_VERIFY_PYTHON` | Interpreter that runs the adapter. Must be executable, or the stage skips. | `$HARNESS_DIR/verifier-venv/bin/python` |
-| `VERIFIER_API_KEY_FILE` | The key file. Must be readable, or the stage skips. | `$HARNESS_DIR/verifier-api-key` |
-| `HARNESS_VERIFY_PROVIDER` | `deepseek` \| `vertex` \| `openai`. Exactly one backend env var is set from the key file; the other two are cleared, so an ambient variable can never pick a backend the run did not ask for. | `deepseek` |
+| `VERIFIER_API_KEY_FILE` | The credential file — a one-line API key, or a service-account JSON. Must be readable, or the stage skips. | `$HARNESS_DIR/verifier-api-key` |
+| `HARNESS_VERIFY_PROVIDER` | `deepseek` \| `vertex` \| `openai`. **Unset infers it from the credential**: a service-account JSON means `vertex`, anything else `deepseek`. Exactly one backend env var is set from the key file; the others are cleared, so an ambient variable (or a stray `.env`) can never pick a backend the run did not ask for. | inferred |
 | `HARNESS_VERIFY_BASE_URL` | `OPENAI_BASE_URL` for the `openai` provider (any server that returns logprobs). | unset |
+| `HARNESS_VERIFY_GCP_PROJECT` | Vertex project. | the JSON's `project_id` |
+| `HARNESS_VERIFY_GCP_LOCATION` | Vertex region — pin an EU one for data residency. Recorded in `verify.json` as `location`. | `global` |
 | `HARNESS_VERIFY_MODEL` | Model id; the library's own default for the chosen client when unset (`deepseek-v4-flash`, `gemini-2.5-flash`). | unset |
 | `HARNESS_VERIFY_EVALS` | K — how many times each checkpoint is scored before averaging. | `3` |
 | `HARNESS_VERIFY_MAX_CRITERIA` | Cap on acceptance criteria scored individually. `0` = the overall score only. | `8` |
@@ -1291,9 +1321,10 @@ in-process: the key itself never appears in `ps`, in `verify.log`, in
 | `HARNESS_VERIFY_EFFORT` | Passed through as `DEEPSEEK_EFFORT` (`off` \| `low` \| `high` \| `max`). | the library's |
 
 Two files per run: **`verify.json`** (the score, the per-criterion table, the
-model, K, the trajectory size, token usage and how long it took — copied
-verbatim into `result.json` as `metrics.verifier`) and **`verify.log`** (one
-line per attempt: the score, or `skipped (<reason>)`, or `failed (<reason>)`).
+model, the provider, K, the trajectory size, token usage, how long it took, and
+`location` on Vertex — copied verbatim into `result.json` as `metrics.verifier`)
+and **`verify.log`** (one line per attempt: the score, or `skipped (<reason>)`,
+or `failed (<reason>)`).
 Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
 
 ### `metrics.sh` — tabulate runs

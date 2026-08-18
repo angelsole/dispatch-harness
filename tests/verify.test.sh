@@ -599,17 +599,27 @@ def create_client():
     return client
 
 
+def _describe(client):
+    # create_client() hands back the dict above; a Vertex service account is a
+    # client the ADAPTER built and passed in, which is the whole contract there.
+    if isinstance(client, dict):
+        return {"backend": client.get("backend"), "key_seen": client.get("key"),
+                "client_kwargs": None}
+    return {"backend": "client:" + type(client).__name__, "key_seen": None,
+            "client_kwargs": getattr(client, "kwargs", None)}
+
+
 def track(problem, steps, checkpoint_steps=None, n_evaluations=1, model=None, client=None):
+    record = {
+        "problem": problem,
+        "steps": len(steps),
+        "checkpoint_steps": checkpoint_steps,
+        "n_evaluations": n_evaluations,
+        "model": model,
+    }
+    record.update(_describe(client))
     with open(CALLS, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({
-            "problem": problem,
-            "steps": len(steps),
-            "checkpoint_steps": checkpoint_steps,
-            "n_evaluations": n_evaluations,
-            "model": model,
-            "backend": (client or {}).get("backend"),
-            "key_seen": (client or {}).get("key"),
-        }) + "\n")
+        fh.write(json.dumps(record) + "\n")
     return _Progress([0.5, 0.75][: len(checkpoint_steps or [1])])
 
 
@@ -687,6 +697,136 @@ check "provider: and is what verify.json records" "$(jq -r .model "$V")" "gemini
 check "provider: MAX_CRITERIA=0 makes exactly one call" "$(grep -c '' < "$CALLS" | tr -d ' ')" "1"
 check "provider: overall-only still gives that one call the full acceptance list" \
   "$(jq -s '[.[] | select(.problem | test("It returns CSV"))] | length' "$CALLS")" "1"
+
+# ---------------------------------------------------------------------------
+echo "== verify.py: Vertex authenticates as a principal, not with an API key =="
+# ---------------------------------------------------------------------------
+# Vertex refuses API keys outside express mode — a key created for aiplatform
+# comes back 401 "Expected OAuth2 access token or other authentication
+# credentials that assert a principal" — so the corporate path is a
+# service-account JSON. A stand-in google.genai records what the adapter built.
+GENAI="$AROOT/genai-stub"
+mkdir -p "$GENAI/google/genai"
+: > "$GENAI/google/__init__.py"
+cat > "$GENAI/google/genai/__init__.py" <<'EOF'
+"""Stand-in for google-genai: records the client the adapter builds."""
+import json
+import os
+
+CALLS = os.environ["VERIFY_GENAI_CALLS"]
+
+
+class Client:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        with open(CALLS, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "kwargs": kwargs,
+                "credentials": os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+                "vertex_api_key": os.environ.get("VERTEX_API_KEY"),
+            }) + "\n")
+        if os.environ.get("VERIFY_GENAI_BOOM"):
+            # Fail the way a real backend would, quoting the PARSED private key:
+            # its real newlines look nothing like the \n escapes in the file, so
+            # this is the shape a file-text-only scrub would leak.
+            with open(os.environ["GOOGLE_APPLICATION_CREDENTIALS"], encoding="utf-8") as fh:
+                material = json.load(fh)["private_key"]
+            raise RuntimeError("vertex refused this principal: " + material)
+EOF
+
+# A service-account key file, shaped like the one `gcloud iam service-accounts
+# keys create` writes. The private key carries a marker no other fixture uses.
+SA_KEY="$AROOT/service-account.json"
+cat > "$SA_KEY" <<'EOF'
+{
+  "type": "service_account",
+  "project_id": "olyx-verifier",
+  "private_key_id": "abc123def456abc123def456abc123def456abcd",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nFAKEKEYMATERIALmustneverbeloggedanywhere0123456789\n-----END PRIVATE KEY-----\n",
+  "client_email": "verifier@olyx-verifier.iam.gserviceaccount.com",
+  "client_id": "102030405060708090100"
+}
+EOF
+chmod 600 "$SA_KEY"
+
+GENAI_CALLS="$AROOT/genai-calls.jsonl"
+# `python3 -S`: `google` is a namespace package on any machine that has
+# protobuf or a google-cloud library, and site processing binds it before
+# PYTHONPATH gets a look in — so a stand-in google.genai can only be reached
+# with site processing off. Everything these runs touch is either stdlib or one
+# of the two stubs on PYTHONPATH, so dropping site-packages costs nothing and
+# makes the run identical on a laptop and on CI.
+vertex_run() {  # rest = extra VAR=VAL assignments for this run
+  : > "$CALLS"; : > "$GENAI_CALLS"
+  env PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" \
+      VERIFY_GENAI_CALLS="$GENAI_CALLS" \
+      HARNESS_VERIFY_KEY_FILE="$SA_KEY" HARNESS_VERIFY_MAX_CRITERIA=0 \
+      "$@" python3 -S "$ADAPTER" "$ARUN" "$AWT" origin/main
+}
+
+vertex_run >/dev/null 2>"$ROOT/vertex.err"
+check "vertex: a service-account key file scores without a provider being set" "$?" "0"
+check "vertex: which is inferred as the vertex provider" "$(jq -r .provider "$V")" "vertex"
+check "vertex: the client is built here and handed to track()" \
+  "$(jq -s '[.[] | .backend] | unique | join(",")' "$CALLS")" '"client:Client"'
+check "vertex: as a Vertex client" \
+  "$(jq -r '.kwargs.vertexai' "$GENAI_CALLS")" "true"
+check "vertex: on the project the JSON names" \
+  "$(jq -r '.kwargs.project' "$GENAI_CALLS")" "olyx-verifier"
+check "vertex: in the default location" \
+  "$(jq -r '.kwargs.location' "$GENAI_CALLS")" "global"
+check "vertex: which verify.json records, because where it ran is the point" \
+  "$(jq -r .location "$V")" "global"
+check "vertex: authenticated by the key file's PATH, never its contents" \
+  "$(jq -r '.credentials' "$GENAI_CALLS")" "$SA_KEY"
+check "vertex: and the express-mode key variable is left empty" \
+  "$(jq -r '.vertex_api_key' "$GENAI_CALLS")" ""
+check "vertex: the model is the library default when none was pinned" \
+  "$(jq -r .model "$V")" "stub-default-model"
+file_has_not "$V" "FAKEKEYMATERIAL" "vertex: no private key material reaches verify.json"
+file_has_not "$V" "BEGIN PRIVATE KEY" "vertex: not in any shape"
+check "vertex: nor stderr, which is what verify.log collects" \
+  "$(cat "$ROOT/vertex.err")" ""
+
+vertex_run HARNESS_VERIFY_GCP_PROJECT=other-project HARNESS_VERIFY_GCP_LOCATION=europe-west4 \
+  >/dev/null 2>&1
+check "vertex: HARNESS_VERIFY_GCP_PROJECT overrides the JSON" \
+  "$(jq -r '.kwargs.project' "$GENAI_CALLS")" "other-project"
+check "vertex: and HARNESS_VERIFY_GCP_LOCATION pins the region" \
+  "$(jq -r '.kwargs.location' "$GENAI_CALLS")" "europe-west4"
+check "vertex: recorded beside the score" "$(jq -r .location "$V")" "europe-west4"
+
+vertex_run HARNESS_VERIFY_MODEL=gemini-2.5-pro >/dev/null 2>&1
+check "vertex: a pinned model still wins" "$(jq -r .model "$V")" "gemini-2.5-pro"
+
+# An explicit provider always wins over the inference.
+vertex_run HARNESS_VERIFY_PROVIDER=deepseek >/dev/null 2>&1
+check "vertex: an explicit provider outranks the key file's shape" \
+  "$(jq -r .provider "$V")" "deepseek"
+check "vertex: so no genai client is built at all" \
+  "$(grep -c '' < "$GENAI_CALLS" | tr -d ' ')" "0"
+check "vertex: and a run without a service account carries no location" \
+  "$(jq -r '.location // "absent"' "$V")" "absent"
+
+# The other direction: a one-line key with no provider is still DeepSeek.
+: > "$CALLS"
+env PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" VERIFY_GENAI_CALLS="$GENAI_CALLS" \
+    HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_MAX_CRITERIA=0 \
+    python3 -S "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>&1
+check "inference: a one-line key with no provider set is deepseek, as before" \
+  "$(jq -r .provider "$V")" "deepseek"
+
+# And when the backend rejects the principal, the credential must not travel out
+# with the traceback — in either of its two shapes.
+vertex_run VERIFY_GENAI_BOOM=1 >/dev/null 2>"$ROOT/vertex-boom.err"
+check "vertex: a refused principal is a plain failure, exit 1" "$?" "1"
+file_has_not "$ROOT/vertex-boom.err" "FAKEKEYMATERIAL" \
+  "vertex: the parsed private key is scrubbed out of the traceback"
+file_has_not "$ROOT/vertex-boom.err" "abc123def456" \
+  "vertex: and so is the private key id"
+file_has "$ROOT/vertex-boom.err" "<redacted>" "vertex: leaving the failure readable"
+file_has "$ROOT/vertex-boom.err" "vertex refused this principal" \
+  "vertex: including what the backend actually said"
 
 # No key is a skip, not a failure and not a zero.
 env PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
