@@ -2,5 +2,5 @@
   "angel": { "set": "crew/angel", "label": "ANGEL", "props": ["mug", "cactus", "poster"] },
   "emre": { "set": "crew/emre", "label": "EMRE", "props": ["ball", "pennant"] },
   "ran": { "set": "crew/ran", "label": "RAN", "props": ["photo", "mug"] },
-  "reinier": { "set": "room", "label": "REINIER", "props": ["figurine", "books"] }
+  "reinier": { "set": "room", "label": "REINIER", "props": ["figurine", "books"], "birthday": "08-18" }
 }

@@ -999,6 +999,39 @@ for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1667 OLYX-1673 
   grep_ok "$API" "\"$id\"" "api: lists $id"
 done
 
+# WHAT DAY IT IS. One machine answers it — the wall is a panel in an office and
+# an office has one date — so it is in the frame, and on every run in it, because
+# the page hands wall/room.js a run and a ladder and nothing else.
+check "day: the snapshot says what day it is, as MM-DD" \
+  "$(printf '%s' "$API" | jq -r '.today | test("^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")')" \
+  "true"
+check "day: which is this machine's own date" \
+  "$(printf '%s' "$API" | jq -r '.today')" "$(date +%m-%d)"
+check "day: and it rides every run, which is how it reaches the room" \
+  "$(printf '%s' "$API" | jq -r '[.runs[].today] | unique | join(",")')" "$(date +%m-%d)"
+# It is inside the SSE fingerprint through the runs, and `at` deliberately is
+# not: a second ticking must never repaint an idle wall, but midnight rolling
+# over is a real change — it is the moment somebody's room gets balloons.
+FINGERPRINT="$(awk '/^function fingerprint\(frame\) \{/, /^\}$/' "$SRC/wall/server.js")"
+grep_ok "$FINGERPRINT" 'frame.runs' "day: a date rolling over is a frame worth pushing"
+grep_not "$FINGERPRINT" 'frame.at' "day: a second ticking still is not"
+# And the pin the suite uses, read off the server's own function rather than off
+# a second copy of the rule: a well-formed MM-DD wins, and anything else is not
+# a date at all and leaves the machine's own answer standing.
+DAY_PROBE="$(node -e '
+  const S = require(process.argv[1]);
+  const at = (pin) => {
+    if (pin === null) delete process.env.WALL_TODAY; else process.env.WALL_TODAY = pin;
+    return S.todayOf(new Date(2026, 7, 18));
+  };
+  process.stdout.write([
+    at(null), at("01-01"), at(" 12-25 "), at("02-29"), at("8-18"), at("13-01"),
+    at("02-30"), at("04-31"), at("2026-08-18"), at(""),
+  ].join(" "));
+' "$SRC/wall/server.js" 2>&1)"
+check "day: WALL_TODAY pins it, and only a real MM-DD does" \
+  "$DAY_PROBE" "08-18 01-01 12-25 02-29 08-18 08-18 08-18 08-18 08-18 08-18"
+
 state_of() { printf '%s' "$API" | jq -r --arg id "$1" '.runs[] | select(.id==$id) | .'"$2"; }
 check "state: mid-implement run is active"  "$(state_of OLYX-1631 state)" "active"
 check "state: waiting run raises the alarm" "$(state_of OLYX-1642 state)" "alarm"
@@ -3587,7 +3620,7 @@ console.log(JSON.stringify({
     .every((c, i, all) => i === 0 || (c.x >= all[i - 1].x && c.y >= all[i - 1].y)),
   // --- their things --------------------------------------------------------
   // A room is a room; a desk is somebody's. The pool is closed and lives in
-  // room.js, the roster picks from it, and the three places are the same in every
+  // room.js, the roster picks from it, and the four places are the same in every
   // room — so what is checked is that a hand-edited line cannot break the room
   // and that the four people are four people.
   slots: R.SLOTS.map((s) => s.key + "=" + s.plane).join(" "),
@@ -3674,6 +3707,248 @@ console.log(JSON.stringify({
   viewThings: api.runs.map((run) =>
     run.id + "=" + R.viewOf({ ...run, crew: "#e8cfa6" }, FLOORS, CREW).props.join("/"))
     .sort().join(" "),
+
+  // --- and the one day ------------------------------------------------------
+  // Balloons mean it is this person's birthday and they exist on no other day,
+  // which makes the DATE the whole mechanism: one line on the roster, one field
+  // in the snapshot, and a thing in the pool that no hand-written line can ask
+  // for. Everything below is that claim, from the roster and from the pixels.
+  //
+  // A roster nobody in this repo wrote, so the malformed cases are real rather
+  // than hypothetical: crew.json is hand-edited and this is what "hand-edited"
+  // looks like on a bad day.
+  birthdays: (() => {
+    const view = (born, today) => R.viewOf({ id: "x", owner: "zoe" }, FLOORS,
+      { zoe: { set: "room", label: "ZOE", props: ["mug"], birthday: born } }, today);
+    return JSON.stringify([
+      view("08-18", "08-18"),        // it is their day
+      view("08-18", "01-01"),        // and every other day it is not
+      view("08-18", undefined),      // a snapshot with no day in it
+      view(undefined, "08-18"),      // a roster line with no date on it
+      view(" 08-18 ", "08-18"),      // written with a space, which is a date
+      view("8-18", "8-18"),          // written short, which is not
+      view("18-08", "08-18"),        // written the other way round
+      view("13-01", "13-01"),        // a month there is no thirteenth of
+      view("02-30", "02-30"),        // a day February never has
+      view("04-31", "04-31"),        // a thirty-day month's impossible date
+      view("02-29", "02-29"),        // a leap birthday is valid without a year
+      view("08-18", "2026-08-18"),   // a day with a year on it
+      view(818, "08-18"),            // a number
+      view({ month: 8 }, "08-18"),   // an object
+    ].map((v) => v.birthday));
+  })(),
+  // Reinier's own line, against his own day and against a day that is not.
+  birthdayReinier: ["08-18", "01-01", ""].map((day) => String(
+    R.viewOf({ ...by("OLYX-1642"), crew: "#e8cfa6" }, FLOORS, CREW, day).birthday)).join(","),
+  // And nobody else's. Each person adds their own line; today only one has one,
+  // and a day is not something the room hands round the office.
+  birthdayIsOnePerson: Object.keys(CREW)
+    .filter((who) => R.viewOf({ id: "x", owner: who }, FLOORS, CREW, "08-18").birthday)
+    .join(","),
+  // A stranger borrows Reinier's DESK — an empty desk is a room somebody moved
+  // out of — but never his birthday, which is not a fact about the furniture.
+  birthdayNotBorrowed: R.viewOf({ id: "x", owner: "nobody" }, FLOORS, CREW, "08-18").birthday,
+  // What the day puts in the room, and what it takes back out the next morning.
+  balloonsOn: R.viewOf({ ...by("OLYX-1642"), crew: "#e8cfa6" }, FLOORS, CREW, "08-18")
+    .props.join("/"),
+  balloonsOff: R.viewOf({ ...by("OLYX-1642"), crew: "#e8cfa6" }, FLOORS, CREW, "01-01")
+    .props.join("/"),
+  // And the whole point of the grant: you cannot give yourself a birthday. A
+  // props line that says `balloons` is a name nobody drew — it holds its place
+  // and draws nothing — on the birthday as well as off it.
+  balloonsNotByHand: JSON.stringify([
+    R.slotsOf(["balloons"]),
+    R.slotsOf(["balloons", "mug"]),
+    R.viewOf({ id: "x", owner: "zoe" }, FLOORS,
+      { zoe: { set: "room", props: ["balloons", "mug"] } }, "08-18").props,
+    R.viewOf({ id: "x", owner: "zoe" }, FLOORS,
+      { zoe: { set: "room", props: ["balloons", "mug"], birthday: "08-18" } }, "08-18").props,
+  ]),
+  // The air is the only plane a line cannot reach, and everything the room can
+  // grant is in the closed pool like everything else.
+  grantOnlyPlane: Object.entries(R.PROP_ART)
+    .filter(([, art]) => !R.HAND[art.plane]).map(([name]) => name).join(","),
+  grantsAreInThePool: Object.values(R.GRANTS)
+    .every((list) => list.every((name) => !!R.PROP_ART[name])),
+  // The balloons hang where the poster hangs, so on a birthday the wall stands
+  // empty: two objects in one place is neither of them read.
+  balloonsTakeTheWall: JSON.stringify([
+    R.slotsOf(["mug", "cactus", "poster"], ["balloons"]),
+    R.slotsOf(["mug", "cactus", "poster"]),
+    R.slotsOf(["ball", "pennant"], ["balloons"]),
+  ]),
+  airCrossesTheWall: (() => {
+    const box = (s) => ({ x: s.x, y: s.y - s.tall, w: s.wide, h: s.tall });
+    const a = box(R.SLOTS.find((s) => s.key === "air"));
+    const b = box(R.SLOTS.find((s) => s.key === "wall"));
+    return R.SLOTS.find((s) => s.key === "air").over === "wall"
+      && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  })(),
+  // WHERE they hang, in PIXELS rather than in bounding boxes, because the room
+  // is a flat elevation and the lamp is an angled one: its box reaches five
+  // pixels further left than any row of the thing it draws, so a box test here
+  // would be answering a question about padding. Every opaque pixel of the
+  // balloons, at both ends of the drift, against every opaque pixel of the
+  // window frame, the lamp, the person and the desk, and against the two
+  // rectangles the room draws by hand. The bare wall is the one thing they are
+  // allowed to cross, and it is not in this list.
+  airClearOf: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const asset = (rel) => decode(fs.readFileSync(
+      path.join(process.argv[4], "wall", rel)));
+    const drawn = (img, ox, oy, into) => {
+      for (let y = 0; y < img.h; y++) {
+        for (let x = 0; x < img.w; x++) {
+          const at = (y * img.w + x) * img.bpp;
+          if (img.bpp === 4 && img.px[at + 3] === 0) continue;
+          into.add((ox + x) + "," + (oy + y));
+        }
+      }
+      return into;
+    };
+    const rect = (b, into) => {
+      for (let y = b.y; y < b.y + b.h; y++) {
+        for (let x = b.x; x < b.x + b.w; x++) into.add(x + "," + y);
+      }
+      return into;
+    };
+    const art = asset("assets/room/" + R.PROP_ART.balloons.file);
+    const mine = drawn(art, air.x, air.y - art.h,
+      drawn(art, air.x, air.y - art.h - 1, new Set()));
+    const others = {
+      window: drawn(asset("assets/room/window.png"), R.WINDOW.x, R.WINDOW.y, new Set()),
+      lamp: drawn(asset("assets/room/lamp.png"), R.LAMP.x, R.LAMP.y, new Set()),
+      person: drawn(asset(R.fileOf(R.FALLBACK, "base")), R.WORKER.x, R.WORKER.y, new Set()),
+      desk: drawn(asset("assets/room/desk.png"), 29, R.DESK_Y - R.BOX.desk.y, new Set()),
+      screen: rect(R.BEZEL, new Set()),
+      plate: rect(R.PLATE, new Set()),
+    };
+    return Object.keys(others)
+      .filter((key) => [...mine].some((px) => others[key].has(px))).join(",");
+  })(),
+  // And they stay in frame at the deepest the lens ever pushes, which is the one
+  // moment the room's left edge moves in on them.
+  airInFrameAtFullPush: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const at = R.cropAt(1);
+    return air.x >= at.x && air.x + air.wide <= at.x + at.w
+      && air.y <= at.y + at.h && air.y - air.tall - 1 >= at.y;
+  })(),
+  // In frame is not enough, and this is the one that was wrong: the lens pushes
+  // for twelve seconds and the crop origin walks out to x 39, so a bunch that
+  // merely started inside the frame spent the back half of every hold cut off
+  // on the left edge. What is measured is the sprite's own leftmost OPAQUE
+  // pixel, at the slot, against cropAt(1) — and it has to be comfortably
+  // inboard rather than merely inside.
+  airCropMargin: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const img = decode(fs.readFileSync(path.join(process.argv[4], "wall", "assets", "room",
+      R.PROP_ART.balloons.file)));
+    let leftmost = img.w;
+    for (let y = 0; y < img.h; y++) {
+      for (let x = 0; x < leftmost; x++) {
+        const at = (y * img.w + x) * img.bpp;
+        if (!(img.bpp === 4 && img.px[at + 3] === 0)) { leftmost = x; break; }
+      }
+    }
+    // The drift is vertical, so the leftmost column is the same at both ends of
+    // it — but the crop's own left edge is taken at the deepest push, which is
+    // where it is furthest right.
+    return (air.x + leftmost) - R.cropAt(1).x;
+  })(),
+  // The crop only ever travels one way, so the deepest push really is the worst
+  // case rather than one sample of it.
+  cropLeftAtFullPush: R.cropAt(1).x,
+  cropLeftEdgeNeverPassesFullPush: Array.from({ length: 201 },
+    (_, i) => R.cropAt(i / 200).x).every((x) => x <= R.cropAt(1).x),
+  // WHAT IT IS TIED TO. A bunch of balloons nobody tied to anything is a bunch
+  // that has got away, and a trimmed sprite's strings stop where its drawing
+  // does — so the slot carries an anchor and the room runs them down to it.
+  // Measured: the anchor is the desk's own top surface, it is below where the
+  // sprite ends so there is a gap for the tether to close, and the strings'
+  // own columns land ON the desk rather than in the air beside it.
+  airTether: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const asset = (rel) => decode(fs.readFileSync(path.join(process.argv[4], "wall", rel)));
+    const img = asset("assets/room/" + R.PROP_ART.balloons.file);
+    const cols = [];
+    for (let x = 0; x < img.w; x++) {
+      const at = ((img.h - 1) * img.w + x) * img.bpp;
+      if (!(img.bpp === 4 && img.px[at + 3] === 0)) cols.push(x);
+    }
+    const desk = asset("assets/room/desk.png");
+    const deskAt = R.DESK_Y - R.BOX.desk.y;
+    const onDesk = (x) => {
+      const dx = x - 29;
+      const dy = R.DESK_Y - deskAt;
+      if (dx < 0 || dx >= desk.w || dy < 0 || dy >= desk.h) return false;
+      const at = (dy * desk.w + dx) * desk.bpp;
+      return !(desk.bpp === 4 && desk.px[at + 3] === 0);
+    };
+    return JSON.stringify({
+      anchor: air.anchor === R.DESK_Y,
+      // The tether has rows to cover at both ends of the drift.
+      gap: air.anchor - (air.y - 1) >= 2 && air.anchor > air.y,
+      strings: cols.length,
+      knotOnTheDesk: cols.every((c) => onDesk(air.x + c)),
+    });
+  })(),
+  // The top of the gap is under the window frame and never over the glass, and
+  // the bottom of it is past the floor line without reaching into the desk: a
+  // string that ends in the air above a desk is a string holding something up.
+  airUnderTheFrameNotTheGlass: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const top = air.y - air.tall - 1;   // the highest row the drift can reach
+    const frame = R.WINDOW.y + R.BOX.windowFrame.y + R.BOX.windowFrame.h;
+    const glass = R.WINDOW.y + R.BOX.windowFrame.hole.y + R.BOX.windowFrame.hole.h;
+    return top >= glass && top >= frame - 1 && air.y > R.FLOOR_Y && air.y <= R.DESK_Y;
+  })(),
+  // The pad a thing is veiled on is measured off the places there are, not set
+  // to a round number: at 32 it would have clipped fourteen rows of string off
+  // the bottom of the one prop that is taller than it is wide, silently.
+  padFitsEveryPlace: R.PROP_PAD
+    >= R.SLOTS.reduce((most, s) => Math.max(most, s.wide, s.tall), 0),
+  padFitsEveryProp: Object.values(R.PROP_ART).every((art) => {
+    const img = decode(fs.readFileSync(path.join(process.argv[4], "wall", "assets", "room",
+      art.file)));
+    return img.w <= R.PROP_PAD && img.h <= R.PROP_PAD;
+  }),
+  // The balloons are the one asset in this room allowed to be LOUD, because they
+  // are the one that has to carry from three metres. Measured off the committed
+  // pixels: most of the sprite is the palette's lively end, at least three of
+  // those colours hold a real share of it — three balloons, three colours — and
+  // none of it is the alarm's red, which means something else on this wall.
+  balloonsAreLively: (() => {
+    const LIVELY = ["#e0a23c", "#ffc27d", "#ffc680", "#ff9a5e", "#7ad6ec", "#4c9dff"];
+    const img = decode(fs.readFileSync(path.join(process.argv[4], "wall", "assets", "room",
+      R.PROP_ART.balloons.file)));
+    const seen = new Map();
+    let opaque = 0;
+    for (let i = 0; i < img.w * img.h; i++) {
+      const at = i * img.bpp;
+      if (img.bpp === 4 && img.px[at + 3] === 0) continue;
+      opaque++;
+      const c = "#" + [0, 1, 2].map((k) => img.px[at + k].toString(16).padStart(2, "0")).join("");
+      seen.set(c, (seen.get(c) || 0) + 1);
+    }
+    const share = (c) => (seen.get(c) || 0) / opaque;
+    return JSON.stringify({
+      lively: LIVELY.reduce((sum, c) => sum + share(c), 0) >= 0.66,
+      three: LIVELY.filter((c) => share(c) >= 0.08).length >= 3,
+      alarm: !seen.has("#ff2f45"),
+      size: img.w + "x" + img.h,
+    });
+  })(),
+  // The drift itself: one pixel, on the shot clock, and a still room is a
+  // photograph of it rather than a slower version of it.
+  sway: [0, 0.75, 1.5, 2.25, 3, 3.75].map((t) => R.beatAt(t, false).sway).join(","),
+  swayStill: [0, 1.4, 2.8, 9.9, 60].every((t) => R.beatAt(t, true).sway === 0),
+  swayIsOnePixel: Array.from({ length: 200 }, (_, i) => R.beatAt(i * 0.17, false).sway)
+    .every((v) => v === 0 || v === 1),
+  swayDeterministic: Array.from({ length: 40 }, (_, i) => R.beatAt(i * 0.35, false).sway)
+    .join(",") === Array.from({ length: 40 }, (_, i) => R.beatAt(i * 0.35, false).sway).join(","),
+  swayMs: R.SWAY_MS,
+
   // ...and no stage in the ladder is too wide for the tube it is drawn on.
   fits: FLOORS.every((name) => R.widthOf(R.BIG, name) <= 64),
   // Reduced motion is ONE frame at every second of the clock, and a lit one:
@@ -4075,11 +4350,11 @@ grep_ok "$(cat "$SRC/wall/room.js")" '      jobDetails(v);' \
 
 # Their things. Four rooms with four faces in them were still four copies of one
 # room. The pool is closed and lives in room.js, wall/crew.json says who owns
-# what, and there are three places — so what is checked is that a hand-edited
+# what, and there are four places — so what is checked is that a hand-edited
 # line cannot break the room, that every prop fits the gap it stands in, and that
 # the four people read as four people.
-check "things: three places, the same three in every room" \
-  "$(room_of slots)" "deskWarm=desk deskCold=desk wall=wall"
+check "things: four places, the same four in every room" \
+  "$(room_of slots)" "deskWarm=desk deskCold=desk wall=wall air=air"
 check "things: every one in the pool is a file this repo committed" \
   "$(room_of propFiles)" "true"
 check "things: and one the asset route will actually serve" \
@@ -4097,20 +4372,20 @@ check "things: two or three each, never more places than there are" \
 check "things: and every name any of them wrote is in the pool" \
   "$(room_of thingsKnown)" "true"
 check "things: a name the pool does not have holds its own place empty" \
-  "$(room_of unknownThing)" '["","mug",""]'
+  "$(room_of unknownThing)" '["","mug","",""]'
 check "things: and nothing slides up into it from further down the line" \
-  "$(room_of unknownMidLine)" '["mug","",""]'
+  "$(room_of unknownMidLine)" '["mug","","",""]'
 check "things: a line of nothing but typos is an empty desk" \
-  "$(room_of unknownOnly)" '["","",""]'
+  "$(room_of unknownOnly)" '["","","",""]'
 check "things: an owner with no things has an empty desk, not a crash" \
-  "$(room_of noThings)" '["","",""]'
+  "$(room_of noThings)" '["","","",""]'
 check "things: a poster does not stand on a desk" \
-  "$(room_of wallThingStaysOnTheWall)" '["mug","","poster"]'
+  "$(room_of wallThingStaysOnTheWall)" '["mug","","poster",""]'
 check "things: more things than places puts the extras nowhere" \
-  "$(room_of tooManyThings)" '["mug","books","poster"]'
+  "$(room_of tooManyThings)" '["mug","books","poster",""]'
 check "things: nothing a hand-edited roster can say reaches the asset route" \
   "$(room_of hostileThings)" \
-  '[["","",""],["","",""],[],[],[],["figurine","books"]]'
+  '[["","","",""],["","","",""],[],[],[],["figurine","books"]]'
 check "things: an owner nobody drew borrows Reinier's desk" \
   "$(room_of strangerThings)" "figurine+books"
 check "things: by name, not by whoever is first on the fallback set" \
@@ -4121,7 +4396,114 @@ check "things: and so does a run with no owner at all" \
   "$(room_of unownedThings)" "figurine+books"
 check "things: and the view carries them per run, so the plane rebakes on a swap" \
   "$(room_of viewThings)" \
-  "BOT-2287=figurine/books/ BOT-2291=figurine/books/ LEGACY-0042=figurine/books/ OLYX-1598=ball//pennant OLYX-1631=mug/cactus/poster OLYX-1642=figurine/books/ OLYX-1648=figurine/books/ OLYX-1655=mug/cactus/poster OLYX-1660=mug/cactus/poster OLYX-1667=photo/mug/ OLYX-1673=ball//pennant adhoc-kpi-sparklines=mug/cactus/poster"
+  "BOT-2287=figurine/books// BOT-2291=figurine/books// LEGACY-0042=figurine/books// OLYX-1598=ball//pennant/ OLYX-1631=mug/cactus/poster/ OLYX-1642=figurine/books// OLYX-1648=figurine/books// OLYX-1655=mug/cactus/poster/ OLYX-1660=mug/cactus/poster/ OLYX-1667=photo/mug// OLYX-1673=ball//pennant/ adhoc-kpi-sparklines=mug/cactus/poster/"
+
+# The one day. An office does one thing on somebody's birthday and this wall now
+# knows how: a `birthday` line on the roster, the server's own date in the
+# snapshot, and a bunch of balloons in the air of that person's room for that day
+# and no other. The date is the WHOLE mechanism — nothing else can put them there
+# and nothing else can take them away.
+check "birthday: MM-DD on both sides or it is not a birthday" \
+  "$(room_of birthdays)" \
+  '[true,false,false,false,true,false,false,false,false,false,true,false,false,false]'
+check "birthday: Reinier's own line, on his day and off it" \
+  "$(room_of birthdayReinier)" "true,false,false"
+check "birthday: and it is one person's, not the office's" \
+  "$(room_of birthdayIsOnePerson)" "reinier"
+check "birthday: a stranger borrows his desk and never his day" \
+  "$(room_of birthdayNotBorrowed)" "false"
+check "birthday: the day puts balloons in the air" \
+  "$(room_of balloonsOn)" "figurine/books//balloons"
+check "birthday: and every other day the air is empty" \
+  "$(room_of balloonsOff)" "figurine/books//"
+check "birthday: nobody can give themselves one from crew.json" \
+  "$(room_of balloonsNotByHand)" \
+  '[["","","",""],["","mug","",""],["","mug","",""],["","mug","","balloons"]]'
+check "birthday: the air is the one plane a hand-written line cannot reach" \
+  "$(room_of grantOnlyPlane)" "balloons"
+check "birthday: and what the room grants is in the same closed pool" \
+  "$(room_of grantsAreInThePool)" "true"
+check "birthday: the balloons hang where a poster hangs, so the wall yields" \
+  "$(room_of balloonsTakeTheWall)" \
+  '[["mug","cactus","","balloons"],["mug","cactus","poster",""],["ball","","","balloons"]]'
+check "birthday: which is a real crossing, not a rule with nothing under it" \
+  "$(room_of airCrossesTheWall)" "true"
+check "birthday: and they are clear of everything that has to stay readable" \
+  "$(room_of airClearOf)" ""
+check "birthday: including at the deepest the lens pushes" \
+  "$(room_of airInFrameAtFullPush)" "true"
+# The defect round 3 was called for: the crop origin ends at x 39 after the
+# twelve-second push, and a bunch whose leftmost pixel sat at 41 was sliced on
+# the frame edge for the back half of every hold. Four pixels is the floor the
+# owner set; five is what the slot has.
+AIR_MARGIN="$(room_of airCropMargin)"
+if [ "$AIR_MARGIN" -ge 4 ] 2>/dev/null; then
+  ok "birthday: airClearsTheCropAtFullPush — ${AIR_MARGIN} px inboard of x $(room_of cropLeftAtFullPush)"
+else
+  bad "birthday: airClearsTheCropAtFullPush (only ${AIR_MARGIN} px inboard, floor is 4)"
+fi
+check "birthday: and that deepest push is the crop's own furthest right" \
+  "$(room_of cropLeftEdgeNeverPassesFullPush)" "true"
+check "birthday: the bunch is tied to the desk, not left floating" \
+  "$(room_of airTether)" \
+  '{"anchor":true,"gap":true,"strings":2,"knotOnTheDesk":true}'
+check "birthday: they hang under the window frame and never over the glass" \
+  "$(room_of airUnderTheFrameNotTheGlass)" "true"
+check "birthday: and they are loud enough to carry, on the lock and off the alarm" \
+  "$(room_of balloonsAreLively)" \
+  '{"lively":true,"three":true,"alarm":true,"size":"26x45"}'
+# The pad every prop is veiled and edge-lit on is measured off the places there
+# are. A round 32 clipped fourteen rows of string off the bottom of the balloons
+# and said nothing about it.
+check "things: the prop pad is measured off the biggest place, not chosen" \
+  "$(room_of padFitsEveryPlace)" "true"
+check "things: and every prop in the pool fits on it" \
+  "$(room_of padFitsEveryProp)" "true"
+check "birthday: they drift one pixel on the shot clock" \
+  "$(room_of sway)" "0,0,1,1,0,0"
+check "birthday: one pixel and never two" "$(room_of swayIsOnePixel)" "true"
+check "birthday: the same drift every time the same second is asked" \
+  "$(room_of swayDeterministic)" "true"
+check "birthday: and a still room is a photograph of them" \
+  "$(room_of swayStill)" "true"
+# A bunch of balloons in still air drifts; it does not bob. Slower than the
+# waiting body's breath (1.76 s) so the room does not read as having two hearts.
+if [ "$(room_of swayMs)" -ge 1200 ] && [ "$(room_of swayMs)" -le 1600 ]; then
+  ok "birthday: at the pace of still air ($(room_of swayMs) ms a step)"
+else
+  bad "birthday: at the pace of still air (got $(room_of swayMs) ms a step)"
+fi
+
+# End to end, on the one day. A wall started on Reinier's birthday ships that
+# date on every run, and the real renderer's arithmetic over that real frame puts
+# balloons in his room and in nobody else's. Nothing here restates a rule: it is
+# room.js's own viewOf over the server's own payload, which is the only path the
+# picture on the TV actually takes.
+export WALL_TODAY=08-18
+serve "$RUNS" "$ROOT/birthday.log"; DAY_PORT="$PORT_OUT"
+unset WALL_TODAY
+if [ -z "$DAY_PORT" ]; then
+  bad "birthday: a wall started on the day serves a frame"
+else
+  ok "birthday: a wall started on the day serves a frame"
+  get "$DAY_PORT" /api/runs > "$ROOT/api-birthday.json"
+  check "birthday: and every run in it carries that date" \
+    "$(jq -r '[.today] + [.runs[].today] | unique | join(",")' "$ROOT/api-birthday.json")" \
+    "08-18"
+  DAY_E2E="$(node -e '
+    const fs = require("fs"), path = require("path");
+    const R = require(process.argv[1]);
+    const api = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+    const crew = JSON.parse(fs.readFileSync(
+      path.join(process.argv[3], "wall", "crew.json"), "utf8"));
+    const shown = (run) => R.viewOf({ ...run, crew: "#e8cfa6" }, api.floors, crew, run.today);
+    const withBalloons = new Set(api.runs.filter((run) => shown(run).props.includes("balloons"))
+      .map((run) => run.owner || "(nobody)"));
+    process.stdout.write([...withBalloons].sort().join(","));
+  ' "$SRC/wall/room.js" "$ROOT/api-birthday.json" "$SRC" 2>&1)"
+  check "birthday: and the room draws them in that one person's room" \
+    "$DAY_E2E" "reinier"
+fi
 
 # Nothing on the desk may cross the forearms or the keyboard, and the way that is
 # guaranteed is an ORDER rather than a measurement: their things are the last
@@ -4141,6 +4523,43 @@ grep_ok "$THING_CODE" 'edge(slot.cold, CYAN, 0.16);' \
 grep_not "$THING_CODE" 'v.crew' \
   "things: never in the crew tint, which the wide city gives to the lamp"
 grep_not "$THING_CODE" 'ALARM' "things: and never in the alarm's red"
+# The air is the one place that is NOT baked, because the one thing in it moves.
+# It is drawn immediately over the plane the rest of their things are baked into
+# and under the two lights, so a balloon takes the same wash as the mug below it
+# — and it is a place the draw call skips when it is baking, so nothing is drawn
+# twice.
+grep_ok "$ROOM_ALL" '      theirAir(view, beat);' \
+  "birthday: the air is drawn live, over the plane the desk is baked into"
+# WHERE in the stack, as an order rather than as a line: the balloons go down
+# after the plane their owner's other things are baked into and before the near
+# plane is composited over everything, which is the same band the desk props are
+# in. They carry their own value; the veil down the left edge does not reach
+# them and does not reach the mug either.
+PAINT_ORDER="$(awk '/^    function paint\(at\) \{/, /^    \}$/' "$SRC/wall/room.js" \
+  | grep -v '^ *//' \
+  | awk '
+      /ctx\.drawImage\(plate/ { sub(/.*ctx\.drawImage\(/, ""); sub(/,.*/, ""); print }
+      /^ *theirAir\(/ { print "theirAir" }
+      /^ *lamp\(/     { print "lamp" }
+      /^ *worker\(/   { print "worker" }
+    ' | tr '\n' ' ' | sed 's/ *$//')"
+check "birthday: and it lands between the baked desk and the near plane" \
+  "$PAINT_ORDER" "plateBack plateMid theirAir lamp worker plateFront"
+grep_ok "$ROOM_ALL" '        if (SLOTS[i].floats) continue;' \
+  "birthday: and the bake leaves it alone, so nothing is drawn twice"
+AIR_FN="$(awk '/^    function theirAir\(v, beat\) \{/, /^    \}$/' "$SRC/wall/room.js")"
+grep_ok "$AIR_FN" 'const at = { ...SLOTS[i], y: SLOTS[i].y - beat.sway };' \
+  "birthday: the drift moves the place, never the sprite"
+# The tether is measured from the ANCHOR, so the drift lengthens the string
+# rather than sliding the knot: a balloon breathing on a tether, not a balloon
+# riding up and down a pole.
+TETHER_FN="$(awk '/^    function tether\(slot, cols, from\) \{/, /^    \}$/' "$SRC/wall/room.js")"
+grep_ok "$TETHER_FN" 'box(slot.x + x, from, 1, slot.anchor - from, GREY, 0.4);' \
+  "birthday: and the tether is measured from the knot, so only its length moves"
+grep_ok "$AIR_FN" 'if (cols.length) tether(SLOTS[i], cols, at.y - 1);' \
+  "birthday: from the sprite's own last drawn row, so the line joins the strings"
+grep_ok "$THING_CODE" 'if (!slot.floats) box(slot.x - 1, slot.y, w + 2, 1, NIGHT, 0.55);' \
+  "birthday: and nothing hanging in the air gets a contact shadow"
 check "room: reduced motion is one frame at every second of the clock" \
   "$(room_of frozen)" "true"
 check "room: and the same room without it genuinely moves" "$(room_of moves)" "true"
@@ -4431,6 +4850,7 @@ check "crew: and keeps the run dir's own when there is no entry" \
 ROOM_SRC="$(cat "$SRC/wall/room.js")"
 ROOM_CODE="$(grep -v '^ *//' "$SRC/wall/room.js")"
 grep_not "$ROOM_CODE" 'Date.now' "room: nothing in here reads the wall clock"
+grep_not "$ROOM_CODE" 'new Date' "room: nor the calendar, which is the server's to know"
 grep_not "$ROOM_CODE" 'skew'     "room: nor the server skew that moves under it"
 grep_ok "$ROOM_SRC" 'paint(ts / 1000);' \
   "room: the loop draws at the timestamp rAF hands it"
@@ -4488,6 +4908,11 @@ check "assets: the room's sprites are served" \
   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" "200"
 check "assets: and so is every crew set the roster names" \
   "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/crew/ran/type-0.png")" "200"
+# The room loads its whole pool up front, the balloons with it: a room that went
+# to the network the moment somebody's birthday started would have the one object
+# that says so arrive late.
+check "birthday: and the balloons come down the same route as everything else" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/assets/room/prop-balloons.png")" "200"
 # The roster is its own route, not an asset: the room fetches it before it
 # decides which sprites to ask for at all.
 check "crew: the roster is served as json" \
@@ -4496,6 +4921,12 @@ check "crew: the roster is served as json" \
 check "crew: and it is the roster this repo committed" \
   "$(curl -s "http://127.0.0.1:$PORT/crew.json" | jq -r '[.angel.set, .reinier.set] | join(",")')" \
   "crew/angel,room"
+# The date on a roster line survives the server's filter, which rebuilds each
+# entry rather than passing it through: an entry that lost its birthday on the
+# way over the wire would be a birthday nobody's room ever hears about.
+check "birthday: and the date on it reaches the page" \
+  "$(curl -s "http://127.0.0.1:$PORT/crew.json" | jq -r '.reinier.birthday')" \
+  "08-18"
 check "assets: as image/png" \
   "$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$PORT/assets/room/worker-type-0.png")" \
   "image/png"

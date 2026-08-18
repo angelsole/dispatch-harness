@@ -87,8 +87,9 @@ frame the room can show.
 
 The furniture above is the ROOM. These are the DESK, and a desk belongs to
 somebody: `wall/crew.json` names two or three of them per owner, `wall/room.js`
-holds the closed pool a line may pick from, and there are three places to put
-them — beside the lamp, beside the monitor, and on the wall over the desk.
+holds the closed pool a line may pick from, and there are four places to put
+them — beside the lamp, beside the monitor, on the wall over the desk, and in
+the air in front of that wall, which is the one place no line may name.
 
 The first assignment puts a DIFFERENT object in the place the eye lands on first,
 on all four desks: Angel's mug, Emre's football, Ran's photograph, Reinier's
@@ -105,6 +106,7 @@ is. The line in `crew.json` is the point — each owner edits their own.
 | `room/prop-ball.png` | a football, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-ball` | `18526` | 2026-08-17 | generated for this repo | `e092f7d9f941d6a3c6fefb581eb9acab93562f616675c997bf27d6cc8d1f73d7` |
 | `room/prop-poster.png` | a framed night landscape, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-poster` | `18527` | 2026-08-17 | generated for this repo | `4e9f9ec53a15337fc88a1164621961c9307d8c5ace1d9e6e78389ecea5d148e6` |
 | `room/prop-pennant.png` | a felt pennant, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-pennant` | `18528` | 2026-08-17 | generated for this repo | `7539387a6ba16ab38c48226b3ae8de072c892ecf0d05e038acece3de34baa89b` |
+| `room/prop-balloons.png` | a bunch of three party balloons — gold, ember and sky, one light catch each — for the air | pixellab.image + trim | `/create-image-pixflux` | `room-prop-balloons` | `18542` | 2026-08-18 | generated for this repo | `37733216f5b82967351e0c4ff8381f2b6e559a783c4ec8cdbcedb6fff20c0c0d` |
 
 Three things about these files that the columns cannot say:
 
@@ -126,11 +128,32 @@ Three things about these files that the columns cannot say:
   back in emerald. Nothing was recoloured for being too bright — an asset is
   authored at full value and the renderer is what veils it, which is why the
   football keeps its white and the room sinks it instead.
+- **One asset is allowed to be loud**, and it is the only one that has to carry
+  from three metres rather than reward a look: `prop-balloons` is gold `#e0a23c`
+  / `#ffc680`, ember `#ff9a5e` and sky `#7ad6ec` / `#4c9dff`, straight off the
+  lock, with a white catch on each. Not the alarm's `#ff2f45` and not the shipped
+  ramp — a balloon that wore either would be saying something about the run.
 
-Nine props were generated and eight are here. `room-prop-headphones` was rolled
+Ten props were generated and nine are here. `room-prop-headphones` was rolled
 twice, at `18514` and `18524`, and came back both times as a spindle nobody would
 read as headphones at 4x; it was thrown away rather than retouched, and the pool
-is eight.
+is nine.
+
+`room-prop-balloons` made it nine, and it is the only one of them nobody owns: a
+line in `crew.json` cannot ask for it. It is granted by a DATE — the `birthday`
+on somebody's roster entry, against the day the server says it is — and it hangs
+in the air on the lamp's side of the room for that day only.
+
+Seven rolls, in two rounds. The first four — `18530`, `18531`, `18532`, `18534` —
+were earth-toned and 19x28: `18530` put the three balloons on one thick bouquet
+stem, `18531` read "side by side" literally and returned three balloons with no
+strings, `18534` came back as flowers, and `18532` shipped. Then the owner looked
+at it on the wall and could not see it from the sofa, so three more went at
+double the canvas and with the palette's lively colours named in the prompt:
+`18540` was still too narrow, `18541` filled the width and dropped the strings
+altogether, and `18542` is this one — 26x45, three balloons in three different
+colours with a catch on each and three separate strings knotted at the bottom.
+No recolour was needed on it; the prompt asked for no red and got none.
 
 ## Eight frames, and a head that holds
 
