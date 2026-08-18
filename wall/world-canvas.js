@@ -69,8 +69,72 @@
   // punched in a building rather than a window with somebody behind it.
   const ROOM_EYE = { x: 202, y: 94 };
   // Which lit floor is worth going into, when the plate has not said: one
-  // asking for a human beats one working. Nothing else is a dive.
+  // asking for a human beats one working. Nothing else is a dive — a run that
+  // has shipped is not somewhere the idle camera goes looking, because the only
+  // reason to go into a shipped room is the ship itself, and that has its own
+  // film below.
   const DIVE_RANK = { alarm: 3, active: 2 };
+
+  // --- THE SHIP MOMENT ----------------------------------------------------------
+  // The wall's second film, played once for a run that has just shipped. Six
+  // beats, in milliseconds, and this table IS the film: the owner tunes the
+  // pacing here and nowhere else.
+  //
+  //   wide   the ease-home out of whatever the idle reel was looking at
+  //   in     the dive's own math, into THIS run's window
+  //   room   the toast, which the room plays by itself (room.js, done8)
+  //   over   ONE move: the lens out to the plot's, the centre pane -> block
+  //   plot   parked on the plot while the building is born
+  //   out    home to the wide
+  //
+  // The `wide` beat has no length of its own: it is `cadence.cut`, the same cut
+  // the DOM director takes when somebody walks in, because a film that
+  // interrupted a push mid-move would be the one cut this whole wall avoids.
+  const SHIP = { in: 2500, room: 3500, over: 3000, plot: 8000, out: 2500 };
+  // How old a ship may be and still be worth a film. A moment is a moment: past
+  // this the building simply stands, which is what the district is for.
+  const SHIP_FRESH = 60;
+  // How far PAST its birth ?shot=ship parks a building: a still of one being born
+  // is a still of scaffolding, and what that shot is about is the building that
+  // got built. Long enough that the beacon is out and short enough that the day's
+  // ship is still lit and named.
+  const SHIP_PARK = 20;
+  // The plot lens, as a multiple of the wide's. Landed on a whole number of
+  // device pixels in measure() for the same reason ROOM_PIX is whole.
+  const PLOT_ZOOM = 2.5;
+  // Where the top of the board — and the storey of sky over it — sits in the
+  // plot frame. The camera hangs off the ROOFLINE rather than the middle of the
+  // mass: a building centred in the frame puts half the picture in tarmac.
+  const PLOT_SKY = 0.1;
+  // ONE HERO. The skyline is drawn in FRONT of the band the week's ships stand
+  // in — a tower is live work and live work is nearer than a record — so at the
+  // plot lens the tower behind the plot is the only thing in the frame, and if
+  // that tower is the alarm it is a red wall with a building somewhere inside it.
+  // So while the camera is out on a plot the city steps back to this, exactly as
+  // it steps back around a spotlit tower. It is a lens and not a change of
+  // subject: the HUD goes on saying what needs a human the whole time.
+  const PLOT_SKYLINE = 0.22;
+
+  // THE BIRTH, in seconds from the moment the builders arrive. Every one of these
+  // is a position in a span, so a browser that opens four seconds into a birth
+  // joins it four seconds in and one that opens later finds a building standing.
+  //
+  // `lead` is why the plot beat above is eight seconds long and this is eight
+  // seconds of work: the builders do not arrive the instant the ledger writes a
+  // row, they arrive when the camera does. The film spends its first nine seconds
+  // in the room, and a building that had already gone up by the time the camera
+  // got out to the plot would be a film about nothing. Summed off SHIP so the two
+  // can never drift — and it is still the block's OWN age that drives all of it,
+  // so a wall nobody is filming shows the same building go up at the same second.
+  const BUILD = {
+    scaffold: 2,   // the frame goes up over the plot, a module over the roofline
+    reveal: 6,     // the façade arrives behind it, bottom-up, from `scaffold`
+    strike: 7,     // and the frame comes down again, top-down, from `reveal`
+    sign: 6,       // the cascade sweeps, the name board strikes, the beacon lights
+    cascade: 7.5,  // and the sweep is gone by here
+    total: 8,
+    lead: (SHIP.in + SHIP.room + SHIP.over) / 1000,
+  };
   // A stage change is a STEP up one storey: the light is on the new floor at
   // once and comes up over this, so the eye reads a move rather than a slide
   // and nothing on the façade is ever caught between two courses.
@@ -108,6 +172,11 @@
   // overlay (room.js measure()): a room shown at 4.37x is a room with a soft
   // edge on every pixel of it, which is the one thing 320x180 art cannot take.
   let ROOM_PIX = 4;
+  // And the same idea for the plot the ship film parks over: PLOT_ZOOM times
+  // the wide shot, rounded to a whole number of device pixels per world pixel.
+  // At the gate's 1280x720 that is 3x — 426x240 world pixels in frame, which
+  // holds a fourteen-storey block, its board and a storey of sky over it.
+  let PLOT_PIX = 3;
 
   function measure(cssWidth, cssHeight, ratio) {
     DPR = Math.min(Math.max(Number(ratio) || 1, 1), 2);
@@ -127,6 +196,7 @@
     SKY_X = (GW - 1600 * SKY) / 2;
     SKY_Y = (GH - 900 * SKY) / 2;
     ROOM_PIX = Math.max(1, Math.floor(Math.min(cssWidth / ROOM_W, cssHeight / ROOM_H))) * DPR;
+    PLOT_PIX = Math.max(1, Math.round(PLOT_ZOOM * PIX));
   }
 
   // --- the palette --------------------------------------------------------------
@@ -160,6 +230,13 @@
   // own bitmap face, and a hair of dark board either side of the word.
   const SIGN_PIX = 2;
   const SIGN_PAD = 3;
+  // One board is one CELL tall, whichever alphabet is on it — the shops' and the
+  // crew's alike. Up here rather than on the scene, because the ship film has to
+  // work out where a board will hang before there is a scene to ask.
+  const CELL = 13;
+  // How much of a name is left once its tube has gone out: an unlit board is
+  // still a name on a building, read at the plot zoom and quiet at the wide.
+  const BOARD_DIM = 0.34;
   const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace';
   const CJK = '"PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif';
 
@@ -181,6 +258,17 @@
   // frame in wall/assets/city/atlas.json, which is a row in
   // wall/assets/MANIFEST.md, which is an entry in .creative/assets.json.
   const ATLAS = 'city';
+  // The second, small atlas: what a building wears while it is BEING one. Kept
+  // apart from the city's set on purpose — the set is the city standing, this is
+  // eight seconds of it going up, and repacking twenty-three settled frames to
+  // add a scaffold would rewrite every byte of a texture nothing else changed.
+  const BUILD_ATLAS = 'build';
+  const SCAFFOLD = 'city-build-scaffold';
+  // The generated frame is a whole pylon — a head, a braced shaft and a foot. A
+  // scaffold is the SHAFT, repeated, so what tiles up a plot is the uniform lift
+  // out of the middle of it: the same slice the street's bollard takes out of the
+  // lamp post (paintStreet), and the reason cut() exists.
+  const LIFT = { x: 12, y: 10, w: 8, h: 16 };
   const SKIN = {
     concrete: 'city-facade-concrete-lit',
     glass: 'city-facade-glass-lit',
@@ -285,7 +373,12 @@
   // a veil that reads as mass rather than as a lit wall. The shops keep their
   // own light — the signs and what they lay on the pavement are the whole point
   // of the band — so only the stone moves.
-  const BAND_LIT = { base: 0.12, depth: 0.05 };
+  // ...and how many of them are on. `base + depth * depth` is the SETTLED share
+  // — a building the week has already absorbed — and `ship` is what today's own
+  // ships carry on top of it until their sign cools. That is the whole answer to
+  // "the city doesn't feel alive": a district where the buildings that went up
+  // today are the lit ones, and the eye can count them from the sofa.
+  const BAND_LIT = { base: 0.12, depth: 0.05, ship: 0.38 };
   const BAND_PANE = 0.55;
   const KINDS = {
     residential: { wide: 0.72, tall: 1.16 }, industrial: { wide: 1.55, tall: 0.74 },
@@ -444,6 +537,44 @@
       (form ? form.floor : 7) * BAND.floor * VH * band.deep)));
     const x = Math.round(block.x * GW - w / 2);
     return { x, y: Math.round(GROUND_Y) - h, w, h, veil: band.veil, depth: block.depth };
+  }
+
+  // ON THE ROOFLINE, and not on the façade. The district's own buildings are two
+  // to four storeys over a 32 px shopfront, so the wall between the shop's sign
+  // and the parapet is thirteen pixels of stone on a good day: a name hung there
+  // lands ON the shopfront's own board, and the street reads ANGELCAFE. A name
+  // goes on the roof instead — the highest thing on the building, the way a
+  // building's own name has always been signed — with its bottom two rows lapping
+  // the parapet so it reads as bolted to the mass rather than floating over it.
+  const boardY = (box) => box.y - CELL + 2;
+  // A word wider than the block paying for it centres and projects over the
+  // street, which is what a sign does — the same rule the wide shop boards
+  // already follow — and it is clamped into the world so a plot at the edge of
+  // the street cannot hang half a name off the picture.
+  function boardBox(box, wide) {
+    const w = Math.max(TILE, Math.round(wide));
+    return {
+      x: clamp(box.x + Math.round((box.w - w) / 2), 0, Math.max(0, GW - w)),
+      y: boardY(box), w, h: CELL,
+    };
+  }
+
+  // WHERE THE CAMERA PARKS OVER A PLOT. The lens is fixed (PLOT_PIX) and the
+  // frame hangs off the roofline: the name board and a storey of sky over it
+  // belong in the upper third and what fills the rest is the building and the
+  // street it stands in. Clamped inside the world exactly as the room box is, so
+  // a plot near an edge is still a full frame of city rather than half of one.
+  function plotBoxAt(box) {
+    const zoom = PLOT_PIX;
+    const viewW = W / zoom;
+    const viewH = H / zoom;
+    // The board, and one 32 px course of night over it.
+    const head = boardY(box) - PANEL;
+    let x = box.x + box.w / 2;
+    let y = head + viewH * (0.5 - PLOT_SKY);
+    x = viewW >= GW ? GW / 2 : clamp(x, viewW / 2, GW - viewW / 2);
+    y = viewH >= GH ? GH / 2 : clamp(y, viewH / 2, GH - viewH / 2);
+    return { x, y, zoom, w: viewW, h: viewH };
   }
 
   // --- the wall clock -----------------------------------------------------------
@@ -791,20 +922,115 @@
   // is the right film for a wall with nothing running on it.
   const reelWith = (step, window) => (window ? step : { phase: 'wide', u: 0 });
 
-  // The camera, as one number. The zoom is GEOMETRIC — every second multiplies
-  // the magnification rather than adding to it, which is what a lens does —
-  // with the house cubic in-out on top of it, so the move leaves the skyline
-  // slowly and the last second is the pane opening rather than an arrival.
-  // The centre travels straight from the middle of the city to the middle of
-  // the room; because the zoom curve is concave against that straight line,
-  // every frame between the two is still full of city.
-  function poseAt(u, room) {
+  // THE LENS. One move, between two poses. The zoom is GEOMETRIC — every second
+  // multiplies the magnification rather than adding to it, which is what a lens
+  // does — with the house cubic in-out on top of it, so a move leaves its
+  // subject slowly and its last second is an arrival rather than a stop. The
+  // centre travels straight; because the zoom curve is concave against that
+  // straight line, every frame between the two is still full of city.
+  //
+  // Two films share it: the idle reel's dive (the wide to a room, below) and the
+  // ship moment's move out of that room and down to a plot. Stating it once is
+  // what makes them the same camera rather than two cameras that agree today.
+  function lensAt(u, from, to) {
     const k = ease(u);
     return {
       k,
-      zoom: PIX * Math.pow(ROOM_PIX / PIX, k),
-      x: GW / 2 + (room.x + room.w / 2 - GW / 2) * k,
-      y: GH / 2 + (room.y + room.h / 2 - GH / 2) * k,
+      zoom: from.zoom * Math.pow(to.zoom / from.zoom, k),
+      x: from.x + (to.x - from.x) * k,
+      y: from.y + (to.y - from.y) * k,
+    };
+  }
+
+  // The three poses this wall has. The wide is the whole city, a room is 320x180
+  // of it at a whole multiple, and a plot is one building at the plot lens.
+  const widePose = () => ({ zoom: PIX, x: GW / 2, y: GH / 2 });
+  const roomPose = (room) => ({
+    zoom: ROOM_PIX, x: room.x + room.w / 2, y: room.y + room.h / 2,
+  });
+
+  // The dive, which is the wide going to a room and nothing else.
+  function poseAt(u, room) {
+    return lensAt(u, widePose(), roomPose(room));
+  }
+
+  // --- the second film ----------------------------------------------------------
+  // One cycle of the SHIP moment, in milliseconds. The plan is the table plus one
+  // fact about the city: whether the run's own window is still on the skyline. If
+  // it is not — a ship that queued behind another film until its tower came down
+  // — the room beat and the move out of it are simply not in the plan. The film
+  // is `wide, in, plot, out` then, on the same in and out: a shorter film about
+  // the same building, never a faked room.
+  function shipPlan(cadence, hasRoom) {
+    const wide = Math.max(0, (cadence && cadence.cut) || 0);
+    const room = hasRoom ? SHIP.room : 0;
+    const over = hasRoom ? SHIP.over : 0;
+    return {
+      wide, in: SHIP.in, room, over, plot: SHIP.plot, out: SHIP.out,
+      total: wide + SHIP.in + room + over + SHIP.plot + SHIP.out,
+    };
+  }
+
+  // Where that film is at one millisecond of it. `u` is the position inside the
+  // beat's own move, in the same idiom reelAt() uses: 0 at the beat's start for a
+  // move that goes in, counting back down to 0 for the one that comes home, and
+  // pinned at 1 for a beat that holds.
+  function shipAt(ms, plan) {
+    const t = clamp(ms, 0, plan.total);
+    let from = plan.wide;
+    if (t < from) return { phase: 'wide', u: 0 };
+    if (t < from + plan.in) return { phase: 'in', u: (t - from) / plan.in };
+    from += plan.in;
+    if (plan.room > 0) {
+      if (t < from + plan.room) return { phase: 'room', u: 1 };
+      from += plan.room;
+      if (t < from + plan.over) return { phase: 'over', u: (t - from) / plan.over };
+      from += plan.over;
+    }
+    if (t < from + plan.plot) return { phase: 'plot', u: 1 };
+    from += plan.plot;
+    return { phase: 'out', u: 1 - (t - from) / plan.out };
+  }
+
+  // What the page is told the wall is showing, in its own vocabulary plus the one
+  // word this film needed: the plot beat is a close shot on a building, so it is
+  // its own shot and the move that arrives at it belongs to it.
+  const shipShotOf = (phase) => (phase === 'in' || phase === 'room' ? 'room'
+    : phase === 'over' || phase === 'plot' ? 'plot' : 'establishing');
+  // And where the dive has got to, which is the room's half of the film only: the
+  // overlay takes the frame on `inside` and gives it back the moment the camera
+  // starts leaving. Nothing is behind the glass on the plot.
+  const shipDiveOf = (phase) => (phase === 'in' ? 'push'
+    : phase === 'room' ? 'inside' : phase === 'over' ? 'back' : '');
+
+  // THE BIRTH, at one second of a building's life. Pure, and every field a
+  // position in BUILD's own spans, so the whole of what a new building does is
+  // one object a test can walk second by second — and a frozen phase is the
+  // building STANDING, which is what reduced motion means here.
+  //
+  //   up      how much of the scaffold is standing, 0..1 of the plot's height
+  //   wall    how much of the façade has arrived, bottom-up
+  //   sweep   the cascade climbing the mass, 0..1, else -1 for "not running"
+  //   beacon  the green roof light's own position over CEREMONY, else -1
+  //   sign    whether the name board's tube has struck
+  //   done    whether all of it is over
+  function birthAt(age, still) {
+    if (still) return { up: 0, wall: 1, sweep: -1, beacon: -1, sign: 1, done: true };
+    // Before the builders get there the plot is a plot. Nothing has been poured,
+    // so there is nothing to draw and nothing to light — the district is a record
+    // of what happened, and this has not happened yet.
+    if (!(age >= 0)) return { up: 0, wall: 0, sweep: -1, beacon: -1, sign: 0, done: false };
+    const span = (from, to) => clamp01((age - from) / Math.max(0.001, to - from));
+    return {
+      up: age < BUILD.reveal ? ease(span(0, BUILD.scaffold))
+        : 1 - ease(span(BUILD.reveal, BUILD.strike)),
+      wall: ease(span(BUILD.scaffold, BUILD.reveal)),
+      sweep: age >= BUILD.sign && age < BUILD.cascade
+        ? span(BUILD.sign, BUILD.cascade) : -1,
+      beacon: age >= BUILD.sign && age < BUILD.sign + CEREMONY
+        ? span(BUILD.sign, BUILD.sign + CEREMONY) : -1,
+      sign: clamp01((age - BUILD.sign) / 0.4),
+      done: age >= BUILD.total,
     };
   }
 
@@ -956,6 +1182,14 @@
     // that change it — the same four inputs, the same `c`, the same ninety
     // seconds of quiet. WHERE the camera goes is the scene's business, below.
     const film = { signals: null, on: false, idle: false, manual: null, timer: 0, gen: 0 };
+    // And the ship moment's own state, beside it and OUTSIDE the scene: a resized
+    // wall restarts the scene, and a wall that showed the room the same ship twice
+    // because somebody dragged a window edge would be a wall that cried wolf.
+    // `filmed` is every run this page has taken notice of — once is once, whether
+    // or not its turn ever came; `queue` is whose turn is next; `clock` is the one
+    // age override the two dev switches need, ?ship= putting a building back at
+    // its first second and ?shot=ship parking it past its last.
+    const ships = { filmed: new Set(), queue: [], clock: null };
     let directing = false;
 
     function syncFilm() {
@@ -992,8 +1226,11 @@
       directing = true;
       signals.cinema(false);
       // ?shot=room is the parked still: no timers, no listeners and no film —
-      // the camera is simply born inside the room and stays there.
-      if (signals.forcedRoom) return true;
+      // the camera is simply born inside the room and stays there. ?shot=ship is
+      // the other one, and it is parked the same way: the plot beat, held, with
+      // the building's birth clamped past its last second. Both are frames a gate
+      // can measure and a human can stare at, which is the whole of what they are.
+      if (signals.forcedRoom || signals.forcedPlot) return true;
       for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart']) {
         window.addEventListener(ev, stirred, { passive: true });
       }
@@ -1017,6 +1254,9 @@
         // one atlas of art generated for this repo, hashed in
         // wall/assets/MANIFEST.md and quantised to .creative/palette.png.
         this.load.atlas(ATLAS, 'assets/city/atlas.png', 'assets/city/atlas.json');
+        // And the small one beside it: what a building wears for the eight
+        // seconds it is going up.
+        this.load.atlas(BUILD_ATLAS, 'assets/city/build.png', 'assets/city/build.json');
       }
 
       create() {
@@ -1043,6 +1283,11 @@
         this.cycleFrom = 0;
         this.reelGen = -1;
         this.exit = null;
+        // The ship film on screen now: whose it is, when it started, the window it
+        // is leaving from and its own plan. Null between ships, which is nearly
+        // always — a wall that ships four times a day is a wall filming for eighty
+        // seconds of eighty-six thousand.
+        this.filming = null;
         this.said = { shot: undefined, dive: undefined, room: undefined };
         // A restart takes the display list with it, so the dive's own two
         // objects are gone; the room's texture is the game's and survives.
@@ -1086,7 +1331,7 @@
         this.diveC = this.add.container(0, 0);
 
         this.glyphScale = 1 / TXT;
-        this.glyphCell = 13;
+        this.glyphCell = CELL;
         this.makeGlow();
         this.paintSky();
         this.paintDawn();
@@ -1145,8 +1390,8 @@
       // panel across a 47 px building has to stop at 47, and a stamp cannot be
       // cropped — so the partial column and the partial top row get a frame of
       // their own in the same texture. Nothing is scaled and nothing bleeds.
-      cut(name, offX, offY, w, h) {
-        const tex = this.textures.get(ATLAS);
+      cut(name, offX, offY, w, h, atlas) {
+        const tex = this.textures.get(atlas || ATLAS);
         if (w >= PANEL * 4 || h >= PANEL * 4) return name;
         const id = name + '#' + offX + ',' + offY + ',' + w + ',' + h;
         if (!tex.has(id)) {
@@ -1179,8 +1424,14 @@
       // anywhere near it. Four words, four textures, however many shops the
       // week puts up; a word the face cannot set is left off the board rather
       // than approximated.
+      //
+      // From this pass the same primitive sets the crew's names on the district's
+      // own buildings, so a board is cached by its word AND its ink: the shops'
+      // four words each have one tube colour, but a name is a PERSON's colour and
+      // two people could otherwise end up sharing whoever's board was made first.
       wordBoard(word, colour) {
-        if (this.words.has(word)) return this.words.get(word);
+        const key = word + ':' + colour;
+        if (this.words.has(key)) return this.words.get(key);
         const face = Type ? Type.SMALL : null;
         const cell = this.glyphCell;
         const ink = face ? face.pitch * SIGN_PIX : 0;
@@ -1210,7 +1461,7 @@
         }
         dt.render();
         board.key = dt.key;
-        this.words.set(word, board);
+        this.words.set(key, board);
         return board;
       }
 
@@ -1743,6 +1994,37 @@
         }
       }
 
+      // THE FRAME THAT GOES UP BEFORE THE WALL DOES. One texture per plot, in the
+      // same coordinates as the building's own — masses from the bottom up, a lift
+      // every 16 px across each of them and one lift standing over the roofline
+      // the way a real one overshoots the floor it is pouring. The gaps between
+      // the lifts are the point: a solid cover would hide the façade arriving
+      // behind it, and what the room has to read is the building, not the frame.
+      //
+      // Stamped when the building is and never again; going up and coming down
+      // are a crop on this one image, which is why a scaffold on this wall costs
+      // the frame loop one number.
+      scaffold(box, masses) {
+        const frame = this.cut(SCAFFOLD, LIFT.x, LIFT.y, LIFT.w, LIFT.h, BUILD_ATLAS);
+        const bottom = box.h + PANEL;
+        const dt = this.blank(box.w, bottom);
+        for (const mass of masses) {
+          const mx = Math.round(mass.x * box.w);
+          const mw = Math.max(PANEL / 2, Math.round(mass.w * box.w));
+          const my = Math.round(mass.top * box.h) + PANEL;
+          if (mx >= box.w) continue;
+          const w = Math.min(mw, box.w - mx);
+          const head = Math.max(0, my - LIFT.h);
+          for (let x = mx; x + LIFT.w <= mx + w; x += TILE) {
+            for (let y = bottom - LIFT.h; y >= head; y -= LIFT.h) {
+              dt.stamp(BUILD_ATLAS, frame, x, y, STAMP0);
+            }
+          }
+        }
+        dt.render();
+        return dt;
+      }
+
       // --- the week's district --------------------------------------------------
 
       makeBlock(block) {
@@ -1757,17 +2039,67 @@
         // the same draw the DOM world lights its bays from. Shut is the same
         // strip with its light off, which is a tint.
         const open = !shop || shop.neon || shop.bay % 3 !== 0;
+        const masses = massesOf(block);
+        const roofProps = ROOF[form] || ['city-prop-ac'];
+        const settled = BAND_LIT.base + box.depth * BAND_LIT.depth;
         const dt = this.blank(box.w, box.h + PANEL);
-        this.stamp(dt, box, massesOf(block), skin, open, rnd,
-                   BAND_LIT.base + box.depth * BAND_LIT.depth,
-                   ROOF[form] || ['city-prop-ac']);
+        this.stamp(dt, box, masses, skin, open, rnd, settled, roofProps);
         dt.render();
+        const veil = VEIL_TINT[box.depth] || VEIL_TINT[1];
         const body = this.add.image(box.x, box.y - PANEL, dt.key).setOrigin(0, 0);
         // The veil is the renderer's, never a hazier PNG: one multiply tint per
         // depth band, so the same wall is a near building in front and a far
         // mass behind.
-        body.setTint(VEIL_TINT[box.depth] || VEIL_TINT[1]);
+        body.setTint(veil);
         root.add(body);
+        const parts = { root, box, block, body, textures: [dt.key] };
+
+        // TODAY'S SHIPS ARE THE LIT ONES. The same building with more of its
+        // windows on, crossfaded over the settled one and cooling to nothing on
+        // the same clock the shoulder tube has always cooled on. It is a SECOND
+        // STAMP rather than a re-stamp because the extra windows have to be the
+        // settled ones PLUS more: same seed, same panel order, a larger share, so
+        // every panel that is lit when the week has absorbed the building is
+        // already lit tonight and only the extra ones fade. Two identical pixels
+        // blended are the same pixel, so when the overlay reaches zero the wall
+        // underneath is byte for byte the one the district has always drawn.
+        if (block.label) {
+          const warm = this.blank(box.w, box.h + PANEL);
+          this.stamp(warm, box, masses, skin, open,
+                     Model ? Model.seededRandom(Model.seedOf(block.id + '·skin'))
+                       : (() => 0.5),
+                     Math.min(0.92, settled + BAND_LIT.ship), roofProps);
+          warm.render();
+          parts.hot = this.add.image(box.x, box.y - PANEL, warm.key).setOrigin(0, 0);
+          parts.hot.setTint(veil);
+          parts.hot.setAlpha(0);
+          parts.textures.push(warm.key);
+          root.add(parts.hot);
+        }
+
+        // And the frame it went up inside, standing in its own plane: the band's
+        // veil, because a scaffold is on the building and not in front of the
+        // district. Hidden until the birth asks for it, which for every building
+        // the page opens onto is never.
+        const lift = this.scaffold(box, masses);
+        parts.textures.push(lift.key);
+        // Steel at night is dark. Under the veil the lattice came out as four
+        // black stripes over a black plot — a scaffold that does not read as one
+        // is noise, so its own bright pixels are added back over itself, cold, the
+        // way a tower's lit windows are (T.bloom). The solid stays in its plane
+        // and the LIGHT is what makes it a scaffold, which is this world's rule.
+        parts.lift = [];
+        for (const lit of [false, true]) {
+          const img = this.add.image(box.x, box.y - PANEL, lift.key).setOrigin(0, 0);
+          img.setTint(lit ? EDGE : veil);
+          if (lit) {
+            img.setBlendMode(Phaser.BlendModes.ADD);
+            img.setAlpha(0.6);
+          }
+          img.setVisible(false);
+          root.add(img);
+          parts.lift.push(img);
+        }
 
         // A SIGN IS NOT PART OF THE WALL IT HANGS ON. Every frontage in a depth
         // band shares one layer that sits over the bodies of that band, because
@@ -1777,10 +2109,22 @@
         // list rather than a container per block so the district's object count
         // does not grow: what a block's settle moves, it moves here too.
         const signs = [];
-        const parts = { root, box, block, body, signs, shop: {} };
+        parts.signs = signs;
+        parts.shop = {};
         const bracket = (object) => {
           this.signC[box.depth].add(object);
           signs.push({ g: object, y: object.y });
+        };
+        // Everything on this plot that is neither the wall nor the frame: the
+        // shop's light, its awning, its glass. None of it exists until the wall
+        // it belongs to does, so the birth brings the whole list up together —
+        // held as its own list because each of these has a resting value of its
+        // own and the birth is a factor on it, not a replacement for it.
+        const fittings = [];
+        parts.fittings = fittings;
+        const fitting = (object, alpha) => {
+          fittings.push({ g: object, a: alpha });
+          return object;
         };
 
         // The ground floor after dark: the shop's own light on the pavement in
@@ -1789,17 +2133,19 @@
         if (open) {
           const cx = box.x + box.w / 2;
           const foot = box.y + box.h;
-          root.add(this.light(cx, foot + 3, box.w * 1.5, 26, tint,
-                              box.depth >= 1 ? 0.34 : 0.2));
-          root.add(this.light(cx, foot - GROUND_H * 0.5, box.w * 1.1, GROUND_H,
-                              WIN_A, box.depth >= 1 ? 0.26 : 0.16));
+          root.add(fitting(this.light(cx, foot + 3, box.w * 1.5, 26, tint,
+                                      box.depth >= 1 ? 0.34 : 0.2),
+                           box.depth >= 1 ? 0.34 : 0.2));
+          root.add(fitting(this.light(cx, foot - GROUND_H * 0.5, box.w * 1.1, GROUND_H,
+                                      WIN_A, box.depth >= 1 ? 0.26 : 0.16),
+                           box.depth >= 1 ? 0.26 : 0.16));
         }
         if (open && box.w >= 40) {
           const awning = this.add.image(box.x + Math.round(box.w / 2), box.y + box.h - 18,
                                         ATLAS, 'city-prop-awning');
           awning.setOrigin(0.5, 0.5);
           awning.setTint(0xd9c6a8);
-          root.add(awning);
+          root.add(fitting(awning, 1));
         }
 
         // Occupancy: a fixed handful of windows keeping their own hours, each on
@@ -1873,6 +2219,48 @@
           }
         }
 
+        // WHOSE BUILDING THIS IS, IN LETTERS. The same primitive the shops' names
+        // are set in — the wall's own bitmap face, drawn a pixel at a time, no
+        // generated lettering anywhere near it — on a plate hung just under this
+        // building's roofline, in its owner's own colour. It hangs in the band's
+        // sign layer with the shopfronts, so it sorts with the depth it belongs
+        // to; and it is PERMANENT, because who built a thing does not expire.
+        // Only the tube in it does.
+        if (block.label) {
+          const ink = rgb(block.crew);
+          const word = this.wordBoard(block.label, ink);
+          const at = boardBox(box, word.w);
+          const plate = this.add.image(at.x, at.y, '__WHITE').setOrigin(0, 0);
+          plate.setDisplaySize(at.w, at.h);
+          plate.setTint(0x02060a);
+          bracket(plate);
+          const lamp = this.light(at.x + at.w / 2, at.y + at.h / 2,
+                                  at.w * 1.15 + CELL, at.h * 2.1, ink, 0);
+          bracket(lamp);
+          const glyph = this.add.image(at.x, at.y, word.key).setOrigin(0, 0);
+          bracket(glyph);
+          parts.board = {
+            plate, lamp, glyph, at,
+            // Its own stutter, off the same seeded slice the shopfronts stagger
+            // on: a street where every tube blinks together is a wallpaper sample.
+            hang: block.shop ? block.shop.hang : 0,
+          };
+        }
+
+        // The ship's own two lights, and the only green in the district: the sweep
+        // that climbs the mass as the building lights up, and the beacon that says
+        // what happened, over one CEREMONY, once, on the roof. Both are LIGHT —
+        // drawn, additive, tinted — so nothing about a finished building's texture
+        // knows this beat exists.
+        parts.cascade = this.add.graphics();
+        parts.cascade.setBlendMode(Phaser.BlendModes.ADD);
+        parts.cascade.setVisible(false);
+        root.add(parts.cascade);
+        parts.beacon = this.light(box.x + box.w / 2, box.y, 2.2 * REM, 2.2 * REM, DONE, 0);
+        parts.beaconBase = parts.beacon.scaleX;
+        parts.beacon.setVisible(false);
+        root.add(parts.beacon);
+
         // Attribution, and the whole of it: one small tube on the shoulder in
         // the dispatcher's own crew tint, cooling to neutral within --sign-life.
         parts.sign = this.add.image(box.x + box.w - 3, box.y + Math.round(box.h * 0.16),
@@ -1916,10 +2304,14 @@
           // Only the week rolling over takes a building down, and then it takes
           // the whole district with it.
           if (!standing.has(id)) {
-            const texture = parts.body.texture.key;
-            for (const object of parts.signs) object.destroy();
+            for (const object of parts.signs) object.g.destroy();
             parts.root.destroy();
-            if (this.textures.exists(texture)) this.textures.remove(texture);
+            // A building owns more than one texture now — the settled wall, the
+            // lit one over it and the frame it went up in — so the whole list
+            // goes rather than the body's alone.
+            for (const key of parts.textures) {
+              if (this.textures.exists(key)) this.textures.remove(key);
+            }
             this.blocks.delete(id);
           }
         }
@@ -1961,7 +2353,7 @@
         root.add(parts.shafts);
         for (const key of ['column', 'sweep', 'ceiling', 'wash', 'cascade', 'halo',
                            'beacon', 'basePlate']) root.add(parts[key]);
-        for (const key of ['spot', 'sweep', 'wash']) {
+        for (const key of ['spot', 'sweep', 'wash', 'cascade']) {
           parts[key].setBlendMode(Phaser.BlendModes.ADD);
         }
         // Neon signage: the project's name hung off its tower's shoulder,
@@ -2277,6 +2669,9 @@
         this.model = model;
         this.paintGhost(model.ghosts);
         this.renderDistrict(model);
+        // Asked here rather than per frame, because "a run has just shipped" is a
+        // fact about a snapshot and this is the only place one arrives.
+        this.watchShips(model);
         const standing = new Set(model.towers.map((t) => t.project));
         for (const [project, T] of this.towers) {
           if (!standing.has(project)) {
@@ -2497,6 +2892,166 @@
         return { run: '', pane, room: roomBoxAt(pane) };
       }
 
+      // --- the ship moment ----------------------------------------------------------
+      // A second film, played once for a run that has just shipped, and the only
+      // thing on this wall that goes out of a room and into the district. What
+      // follows is: who is worth filming, where their window and their building
+      // are, and one frame of it.
+
+      // ONE RUN'S OWN WINDOW, wherever that run is standing. pickWindow() asks
+      // "where should the idle camera go", and answers by rank; this asks "where is
+      // THIS run", which is the only question the ship film has — its subject comes
+      // from the ledger, not from a ranking. That is also why DIVE_RANK still has
+      // no `ready` in it: the idle reel never goes looking inside a shipped room,
+      // because the only reason to be in one is the ship, and the ship has a film.
+      windowFor(runId) {
+        for (const T of this.towers.values()) {
+          const S = T.shaftEls.get(runId);
+          if (S && S.pane) return { run: runId, pane: S.pane, room: roomBoxAt(S.pane) };
+        }
+        return null;
+      }
+
+      // And where the plot beat parks: this run's own building, at the plot lens.
+      plotFor(runId) {
+        const parts = this.blocks.get(runId);
+        return parts ? plotBoxAt(parts.box) : null;
+      }
+
+      // A RUN THAT HAS JUST SHIPPED, ONCE. The ledger writes a building on the same
+      // poll the run turns `ready`, so the plot to fly to and the pane to leave
+      // from arrive together — and a ship with no building is not a ship this film
+      // has anything to say about. Noticing is what makes it once: a run goes into
+      // `filmed` the moment the wall sees it, whether or not its turn ever comes.
+      watchShips(model) {
+        if (!model || still.matches) return;
+        for (const tower of model.towers) {
+          const id = tower.shipped;
+          if (!id || ships.filmed.has(id)) continue;
+          if (tower.shippedAge > SHIP_FRESH || !this.blocks.has(id)) continue;
+          ships.filmed.add(id);
+          ships.queue.push({ run: id, at: model.at - tower.shippedAge });
+        }
+      }
+
+      // ?ship=<id> rehearses the whole film for one run, now, from its building's
+      // first second — the switch a human uses to look at what they just changed.
+      // It says out loud that it is a rehearsal: a run whose window left the
+      // skyline hours ago gets the same substitute the parked room shot has always
+      // used, so a fixture city can show the film it is describing. The trigger
+      // above never does that — it drops the room beat rather than fake a pane.
+      rehearse(at, s) {
+        if (!s.ship || ships.filmed.has(s.ship) || !this.blocks.has(s.ship)) return;
+        ships.filmed.add(s.ship);
+        ships.clock = { id: s.ship, from: at, born: true };
+        ships.queue.push({ run: s.ship, at, rehearsal: true });
+      }
+
+      // ?shot=ship is a still of a building that GOT built, not of one being built:
+      // the birth is clamped past its last second, so the frame is the same frame
+      // however many seconds the wall happened to be up when it was taken.
+      park(at, s) {
+        if (!s.forcedPlot || ships.clock) return;
+        const id = this.shipTarget(s);
+        if (id) ships.clock = { id, from: at - BUILD.lead - SHIP_PARK, born: false };
+      }
+
+      // What that still is looking at: the run the query named, else the newest
+      // building on the plain that carries somebody's name — which is the newest
+      // ship the ledger has, and the only kind of building this shot is about.
+      shipTarget(s) {
+        if (s.run && this.blocks.has(s.run)) return s.run;
+        let best = null;
+        for (const [id, parts] of this.blocks) {
+          if (!parts.block.label) continue;
+          const born = parts.block.at || 0;
+          if (!best || born > best.at || (born === best.at && id > best.id)) {
+            best = { id, at: born };
+          }
+        }
+        return best ? best.id : '';
+      }
+
+      startShip(next, at) {
+        // No building, no film. The plot IS the subject of this one, and a week
+        // that rolled over between a ship and its turn took the subject with it.
+        if (!this.plotFor(next.run)) return;
+        const dive = this.windowFor(next.run)
+          || (next.rehearsal ? { ...this.middleWindow(), run: next.run } : null);
+        this.filming = {
+          run: next.run, from: at, dive,
+          plan: shipPlan(this.signals.cadence, !!dive),
+        };
+        // The idle reel gives way rather than being cut: the camera eases out of
+        // whatever it was looking at over the same cut the DOM director takes when
+        // somebody walks in, and this film's own `wide` beat IS that ease.
+        this.exit = { at, u: this.u };
+      }
+
+      // One frame of the ship moment, or null when there is not one. A film runs to
+      // its end before the next one starts, and a ship that went cold while it
+      // waited is dropped rather than shown late: its building simply stands, which
+      // is what the district has always been for.
+      shipRoll(at, s) {
+        if (still.matches || s.forcedRoom || s.forcedPlot) {
+          this.filming = null;
+          return null;
+        }
+        while (!this.filming && ships.queue.length) {
+          const next = ships.queue.shift();
+          if (next.rehearsal || at - next.at <= SHIP_FRESH) this.startShip(next, at);
+        }
+        if (!this.filming) return null;
+        const ms = (at - this.filming.from) * 1000;
+        if (ms < this.filming.plan.total && this.plotFor(this.filming.run)) {
+          return shipAt(ms, this.filming.plan);
+        }
+        this.filming = null;
+        // And the reel comes back on a FRESH cycle rather than halfway through the
+        // one it was on when the ship interrupted it. A cycle starts on the wide,
+        // which is exactly where this film has just left the camera.
+        this.plan = null;
+        this.exit = null;
+        this.dived = null;
+        return null;
+      }
+
+      // The ship film's camera, beat by beat. Two poses and one lens: in to the
+      // window (or straight to the plot, when there is no window left to leave
+      // from), the room, ONE continuous move out of it and down to the building —
+      // the lens going out the whole way, the centre travelling pane to block —
+      // the plot, and home to the wide.
+      shipPose(step, dived, plot) {
+        const wide = widePose();
+        if (!plot) return wide;
+        const near = dived ? roomPose(dived.room) : plot;
+        if (step.phase === 'in') return lensAt(step.u, wide, near);
+        if (step.phase === 'room') return near;
+        if (step.phase === 'over') return lensAt(step.u, near, plot);
+        if (step.phase === 'plot') return plot;
+        return lensAt(step.u, wide, plot);
+      }
+
+      // How much of the skyline is left while the camera is out on the plot. It goes
+      // back over the same move that takes the camera out of the room and comes up
+      // again over the one that brings it home, so nothing steps.
+      shipSkyline(step) {
+        if (step.phase === 'over' || step.phase === 'out') {
+          return 1 - (1 - PLOT_SKYLINE) * ease(step.u);
+        }
+        return step.phase === 'plot' ? PLOT_SKYLINE : 1;
+      }
+
+      // And what the PANE is told while that happens. The dive's own beats say it
+      // themselves; the `over` beat closes the window again as the camera leaves
+      // it, which is the same aperture running backwards, and out on the plot there
+      // is nothing behind any glass to show.
+      apertureStep(step, filming) {
+        if (!filming || step.phase === 'in' || step.phase === 'room') return step;
+        if (step.phase === 'over') return { phase: 'in', u: 1 - ease(clamp01(step.u * 2)) };
+        return { phase: 'wide', u: 0 };
+      }
+
       // --- one frame of the film ----------------------------------------------------
       // The whole reel: wide, in, hold, out, wide, and the only place the
       // camera is ever moved. Every number here is a pure function of the
@@ -2514,10 +3069,25 @@
           this.exit = film.on ? null : { at, u: this.u };
         }
         const rolling = film.on && !still.matches && !s.forcedRoom;
+        // THE SHIP MOMENT OUTRANKS THE IDLE REEL, and is outranked by the parked
+        // room, which outranks everything. A ship is an EVENT rather than
+        // ambience: it plays whether or not the wall happened to be filming, and
+        // it takes the camera over on the same ease-home the reel already uses.
+        this.rehearse(at, s);
+        this.park(at, s);
+        const ship = this.shipRoll(at, s);
+        // Its `wide` beat is that ease-home and nothing else, so it falls through
+        // to the branch below rather than restating it.
+        const filming = ship && ship.phase !== 'wide' ? this.filming : null;
         let step;
         if (s.forcedRoom) {
           step = { phase: 'room', u: 1 };
-        } else if (rolling) {
+        } else if (s.forcedPlot) {
+          // ?shot=ship: the plot beat, parked, with no move into it at all.
+          step = { phase: 'plot', u: 1 };
+        } else if (filming) {
+          step = ship;
+        } else if (rolling && !ship) {
           if (!this.plan) { this.plan = reelPlan(s.draw, s.cadence); this.cycleFrom = at; }
           while (at - this.cycleFrom >= this.plan.total / 1000) {
             this.cycleFrom += this.plan.total / 1000;
@@ -2533,14 +3103,27 @@
         // starts, and held for as long as the shot is on screen: the plate
         // hands over every seven seconds and the stage under a run can climb a
         // floor mid-hold, and neither may move a camera that is already moving.
-        if (rolling) {
+        // The ship film chose its own when it started — its subject is one named
+        // run, so there is nothing to pick and nothing that may hand over.
+        if (filming) {
+          this.dived = filming.dive || 'none';
+        } else if (s.forcedPlot) {
+          this.dived = 'none';
+        } else if (rolling && !ship) {
           if (step.phase === 'wide') this.dived = null;
           else if (!this.dived) this.dived = this.pickWindow() || 'none';
         } else if (s.forcedRoom && (!this.dived || this.dived === 'none')) {
           this.dived = this.pickWindow() || this.middleWindow();
         }
         const dived = this.dived && this.dived !== 'none' ? this.dived : null;
-        step = reelWith(step, dived);
+        // A dive needs a lit floor: no window, no dive, and the wide shot holds.
+        // The ship film's subject is a BUILDING, which stands on the plain whether
+        // or not anybody's window is still lit, so it never collapses that way —
+        // what it needs is the plot, and it does not start without one.
+        const plot = filming ? this.plotFor(filming.run)
+          : s.forcedPlot ? this.plotFor(this.shipTarget(s)) : null;
+        const onPlot = !!(filming || s.forcedPlot) && !!plot;
+        if (!onPlot) step = reelWith(step, dived);
         this.u = step.u;
 
         // What the page is told, and only when it changes — said BEFORE the
@@ -2550,11 +3133,16 @@
         // `dive` is the one thing its camera never had to say, because the
         // room's overlay is a layer above this canvas and may only take the
         // frame once the push has landed on the picture it is already showing.
-        const stage = !dived || step.u <= 0 ? ''
-          : step.phase === 'room' ? 'inside'
-            : step.phase === 'in' ? 'push' : 'back';
+        // The plot beat added the one word the district needed: it is a close
+        // shot on a building, so it is its own shot and no dive at all.
+        const stage = onPlot ? (dived ? shipDiveOf(step.phase) : '')
+          : !dived || step.u <= 0 ? ''
+            : step.phase === 'room' ? 'inside'
+              : step.phase === 'in' ? 'push' : 'back';
         let shot = null;
         if (s.forcedRoom) shot = 'room';
+        else if (s.forcedPlot) shot = 'plot';
+        else if (filming) shot = shipShotOf(step.phase);
         else if (film.on) shot = shotOf(stage === 'back' ? 'out' : step.phase);
         const held = stage ? (dived.run || '') : null;
         if (this.said.room !== held) {
@@ -2567,12 +3155,15 @@
         // With nowhere to dive to there is nothing to interpolate toward, and
         // the wide shot is what poseAt() returns at u = 0 anyway — so the hold
         // costs this loop one assignment rather than a box a frame.
-        const pose = dived ? poseAt(step.u, dived.room)
-          : { k: 0, zoom: PIX, x: GW / 2, y: GH / 2 };
+        const pose = onPlot ? this.shipPose(step, dived, plot)
+          : dived ? poseAt(step.u, dived.room)
+            : { k: 0, zoom: PIX, x: GW / 2, y: GH / 2 };
         const cam = this.cameras.main;
         cam.setZoom(pose.zoom);
         cam.centerOn(pose.x, pose.y);
-        this.paintDive(dived, dived && dived.room, step);
+        this.cityC.setAlpha(onPlot ? this.shipSkyline(step) : 1);
+        this.paintDive(dived, dived && dived.room,
+                       this.apertureStep(step, onPlot && filming));
       }
 
       // The room, in the window. It stands in the city at one world pixel per
@@ -2605,28 +3196,103 @@
       stepBlock(parts, phase, at, model) {
         const block = parts.block;
         const shop = parts.shop;
+        const box = parts.box;
+        // How old this building is — and whether this page was there when it
+        // landed. The birth's whole shape is the age, so a browser that opens
+        // four seconds into one joins it four seconds in; but a district that was
+        // ALREADY STANDING when the page opened is furniture, however fresh the
+        // ledger's newest row happens to be. Without that second half the wall
+        // would replay a building's first eight seconds every time somebody
+        // reloaded the TV, which is a wall that cries wolf.
+        const clock = ships.clock && ships.clock.id === block.id ? ships.clock : null;
+        const age = clock ? Math.max(0, at - clock.from)
+          : Math.max(0, at - (block.at || at));
+        const seen = clock ? clock.born : (block.at || 0) > this.origin;
+        const birth = birthAt(age - BUILD.lead, phase.still || !seen);
         // A building lands with one settle and is furniture after that — and
         // the age it is fast-forwarded by is the same one --age carries in the
         // DOM world, so a browser opening this afternoon finds this morning's
         // buildings standing rather than the whole week landing at once. Its
         // sign rides that settle from the layer it hangs in, which is a band
-        // above the wall it is bolted to rather than inside it.
-        const age = Math.max(0, at - (block.at || at));
-        const landed = phase.still ? 1 : Math.min(1, age / 0.9);
-        const drop = phase.still ? 0 : Math.round(Math.max(0, 1 - age / 0.9) * 14);
+        // above the wall it is bolted to rather than inside it. A building the
+        // page WATCHED go up does not need it: the scaffold is its arrival.
+        const settling = birth.done && !phase.still;
+        const landed = settling ? Math.min(1, age / 0.9) : 1;
+        const drop = settling ? Math.round(Math.max(0, 1 - age / 0.9) * 14) : 0;
         parts.root.setAlpha(landed);
         parts.root.setY(drop);
         for (const sign of parts.signs) sign.g.setY(sign.y + drop);
-        if (shop.lamp) shop.lamp.setAlpha(shop.lampBase * landed);
-        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23) * landed);
+
+        // THE REVEAL. The building's own stamped image, arriving bottom-up in
+        // whole 32 px courses — a crop, not a second stamp, and quantised to the
+        // façade's own course because a wall that slid up between two storeys
+        // would be a wipe over a picture rather than a building going up.
+        const tall = box.h + PANEL;
+        const shown = Math.min(tall,
+          Math.round(birth.wall * Math.ceil(tall / PANEL)) * PANEL);
+        if (parts.shown !== shown) {
+          parts.shown = shown;
+          for (const wall of [parts.body, parts.hot]) {
+            if (!wall) continue;
+            if (shown >= tall) wall.setCrop();
+            else wall.setCrop(0, tall - shown, box.w, shown);
+          }
+        }
+        // And the frame, as one number: up over the first two seconds, struck
+        // over the seventh. Both directions are "how much of it is standing",
+        // measured from the pavement, so it comes down from the top.
+        const up = Math.min(tall,
+          Math.round(birth.up * Math.ceil(tall / LIFT.h)) * LIFT.h);
+        if (parts.up !== up) {
+          parts.up = up;
+          for (const frame of parts.lift) {
+            frame.setVisible(up > 0);
+            if (up > 0) frame.setCrop(0, tall - up, box.w, up);
+          }
+        }
+        // The sweep up the finished mass, and the one green light in this
+        // district: what shipped, said once, on the roof, for one CEREMONY.
+        if (birth.sweep >= 0) this.paintSweep(parts.cascade, box, birth.sweep);
+        else parts.cascade.setVisible(false);
+        parts.beacon.setVisible(birth.beacon >= 0);
+        if (birth.beacon >= 0) {
+          parts.beacon.setAlpha(ramp(BEACON_ALPHA, birth.beacon));
+          parts.beacon.setScale(parts.beaconBase * ramp(BEACON_SCALE, birth.beacon));
+        }
+
+        // The shop, its light and its glass belong to a finished building: a
+        // frontage is not open for business while the wall over it is still
+        // arriving, so all of it comes up with the top of the reveal.
+        const fit = clamp01((birth.wall - 0.7) / 0.3);
+        for (const item of parts.fittings) item.g.setAlpha(item.a * fit);
+        if (shop.lamp) shop.lamp.setAlpha(shop.lampBase * landed * fit);
+        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23) * landed * fit);
         if (shop.glyph) {
           const lit = tubeAt(phase, shop.glyphPhase, 23);
-          shop.glyph.setAlpha(lit * landed);
-          if (shop.plate) shop.plate.setAlpha((0.5 + lit * 0.4) * landed);
+          shop.glyph.setAlpha(lit * landed * fit);
+          if (shop.plate) shop.plate.setAlpha((0.5 + lit * 0.4) * landed * fit);
         }
         parts.panes.forEach((pane, i) =>
-          pane.g.setAlpha(paneAt(phase, i, pane.phase * 13) * BAND_PANE));
-        if (model) parts.sign.setAlpha(signAt(phase, age, model.signSeconds));
+          pane.g.setAlpha(paneAt(phase, i, pane.phase * 13) * BAND_PANE * fit));
+        if (!model) return;
+        // Attribution, on the same clock it has always cooled on.
+        const cool = signAt(phase, age, model.signSeconds) / 0.85;
+        parts.sign.setAlpha(cool * 0.85 * fit);
+        // TODAY'S SHIP IS THE LIT ONE. The second stamp, crossfading down to the
+        // settled wall underneath over the same six hours the shoulder tube takes.
+        if (parts.hot) parts.hot.setAlpha(cool);
+        // And the name board: its tube strikes when the building lights up, hums
+        // and cools with everything else on this plot, and what is left after that
+        // is the name at its unlit value — still a name, still readable close up,
+        // quiet from the sofa. A board never goes out, because who built a thing
+        // does not expire.
+        if (parts.board) {
+          const on = birth.sign * landed;
+          const hum = tubeAt(phase, parts.board.hang, 16);
+          parts.board.glyph.setAlpha((BOARD_DIM + (1 - BOARD_DIM) * cool * hum) * on);
+          parts.board.plate.setAlpha((0.55 + 0.25 * cool * hum) * on);
+          parts.board.lamp.setAlpha(0.34 * cool * hum * on);
+        }
       }
 
       stepTower(T, phase, at, model) {
@@ -2710,18 +3376,24 @@
       // a shipping tower.
       paintCascade(T, u, phase) {
         if (phase.still || u >= 1 || !T.mass) { T.cascade.setVisible(false); return; }
-        const mass = T.mass;
-        T.cascade.setVisible(true);
-        T.cascade.setBlendMode(Phaser.BlendModes.ADD);
-        T.cascade.clear();
-        T.cascade.setAlpha(ramp(CASCADE_ALPHA, u));
+        this.paintSweep(T.cascade, T.mass, u);
+      }
+
+      // And the sweep itself, on ANY mass. A tower's ceremony and a building's
+      // first light are the same gesture at two scales, so it is one function and
+      // not two that happen to agree: four-pixel bars of cold white climbing the
+      // wall, additive, gone by the end of the beat.
+      paintSweep(g, mass, u) {
+        g.setVisible(true);
+        g.clear();
+        g.setAlpha(ramp(CASCADE_ALPHA, u));
         const head = mass.y + mass.h - u * mass.h * 2.05;
         for (let y = mass.y; y < mass.y + mass.h; y += 8) {
           const near = (y - head) / mass.h;
           if (near > 0.02 || near < -0.6) continue;
           const k = Math.max(0, 1 + near / 0.6);
-          T.cascade.fillStyle(0xe8fff4, k * 0.7);
-          T.cascade.fillRect(mass.x, Math.round(y), mass.w, 4);
+          g.fillStyle(0xe8fff4, k * 0.7);
+          g.fillRect(mass.x, Math.round(y), mass.w, 4);
         }
       }
     }
@@ -2812,15 +3484,17 @@
     w: W, h: H, dpr: DPR, pix: PIX, gw: GW, gh: GH, vw: VW, vh: VH, rem: REM,
     panel: PANEL, tile: TILE, bay: BAY, sky: SKY, skyX: SKY_X, skyY: SKY_Y,
     ground: GROUND, groundY: GROUND_Y, cityH: CITY_H, districtH: DISTRICT_H,
-    roomPix: ROOM_PIX, roomW: ROOM_W, roomH: ROOM_H,
+    roomPix: ROOM_PIX, roomW: ROOM_W, roomH: ROOM_H, plotPix: PLOT_PIX,
   });
 
   return {
     create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
     walkerAt, vehicleAt, ramp, towerLayout, heroOf, heroBand, skyKeep,
-    blockBox, massesOf,
+    blockBox, massesOf, boardBox, plotBoxAt,
     storeyAt, spanAt, baysOf, windowAt, ease, reelPlan, reelAt, shotOf, reelWith,
-    poseAt, roomBoxAt, apertureAt,
-    TOWER_MASSES, FORM_MASSES, KIND_MASSES, PLANES, BAND, BAND_WAS, HERO_AIR,
+    poseAt, roomBoxAt, apertureAt, lensAt, widePose, roomPose,
+    shipPlan, shipAt, shipShotOf, shipDiveOf, birthAt,
+    TOWER_MASSES, FORM_MASSES, KIND_MASSES, PLANES, BAND, BAND_WAS, BAND_LIT,
+    HERO_AIR, SHIP, SHIP_FRESH, SHIP_PARK, BUILD, CELL, LIFT, CEREMONY,
   };
 }));

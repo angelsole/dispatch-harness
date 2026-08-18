@@ -998,6 +998,14 @@
   const roomParams = new URLSearchParams(window.location.search);
   const forcedRoom = roomParams.get('shot') === 'room';
   const wantedRun = roomParams.get('run') || '';
+  // The ship moment's two switches, read here because this is where the wall
+  // reads its query string and nowhere else. Both belong to the world that
+  // draws its own city — the DOM world has no plot to fly to — so they are
+  // passed straight out through reelSignals() and this file does nothing else
+  // with them. ?shot=ship is the parked still the visual gate shoots; ?ship=<id>
+  // rehearses the whole film for one run from its first frame.
+  const forcedPlot = roomParams.get('shot') === 'ship';
+  const wantedShip = roomParams.get('ship') || '';
 
   let room = null;      // the renderer, built the first time the wall asks for it
   let roomOn = false;   // whether the room is what this wall is showing now
@@ -1555,6 +1563,8 @@
       still,
       forced,                                   // ?cinema=1 / ?cinema=0
       forcedRoom,                               // ?shot=room, the parked still
+      forcedPlot,                               // ?shot=ship, the parked plot
+      ship: wantedShip,                         // ?ship=, the film to rehearse
       run: wantedRun,                           // ?run=, whose room to show
       canvas: roomCanvas,                       // what wall/room.js paints on
       wantsCinema,                              // the whole truth table, verbatim

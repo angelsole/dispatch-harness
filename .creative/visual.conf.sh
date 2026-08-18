@@ -31,12 +31,16 @@ VISUAL_URL='http://127.0.0.1:{port}'
 # One shot, six frames: a 3x2 contact sheet of 640x360 tiles is the cheap end
 # of the vision-token sweet spot, and six consecutive frames are what make the
 # continuity axis answerable at all.
-# Two shots now: the city, and the room the camera dives into. ?shot=room is the
-# still of that dive — the room at full frame with the camera parked — so the
-# gate measures the destination without having to wait out a reel. Same frames,
-# same thresholds: a room may be darker than the skyline but it may not be
+# Three shots now: the city, the room the camera dives into, and the plot it comes
+# back out to. ?shot=room is the still of that dive — the room at full frame with
+# the camera parked — so the gate measures the destination without having to wait
+# out a reel. ?shot=ship is the same idea for the ship moment's last beat: the
+# camera parked over the newest named building at the plot lens, with its birth
+# clamped past its last second, so what the gate measures is the building that got
+# built rather than whichever second of a scaffold it happened to arrive at. Same
+# frames, same thresholds: a room may be darker than the skyline but it may not be
 # blacker, and its type and its worker have to survive the same downscale.
-VISUAL_SHOTS=("wide|/?world=$VISUAL_WORLD|750" "room|/?world=$VISUAL_WORLD&shot=room|750")
+VISUAL_SHOTS=("wide|/?world=$VISUAL_WORLD|750" "room|/?world=$VISUAL_WORLD&shot=room|750" "ship|/?world=$VISUAL_WORLD&shot=ship|750")
 VISUAL_FRAMES=6
 VISUAL_WAIT_MS=750
 VISUAL_SETTLE_MS=3000
