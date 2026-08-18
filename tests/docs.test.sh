@@ -306,6 +306,17 @@ n=$(scripts_named_in "$README" | grep -c '' | tr -d ' ')
 if [ "$n" -ge 15 ]; then ok "claim: README alone names $n scripts"
 else bad "claim: README names only $n scripts — the layout table has thinned out"; fi
 
+# Scripts are not the only top-level files that go stale in this table. Require
+# every tracked top-level file explicitly; directories are represented by their
+# own rows and are covered by the distinctive docs-page claims above.
+LAYOUT_SECTION="$(awk '/^## Repository layout$/{f=1;next} /^## /{f=0} f' "$README")"
+missing=''
+for f in $(printf '%s\n' "$TRACKED" | awk 'index($0,"/")==0'); do
+  printf '%s' "$LAYOUT_SECTION" | grep -qF -- "\`$f\`" || missing="$missing $f"
+done
+list_ok "$missing" "claim: Repository layout names every tracked top-level file" \
+                   "claim: top-level files absent from Repository layout"
+
 # ---------------------------------------------------------------------------
 # Env knobs <-> the docs
 # ---------------------------------------------------------------------------
@@ -328,20 +339,24 @@ done
 list_ok "$undocumented" "knobs: every knob run-task.sh honors is documented" \
                         "knobs: knobs documented nowhere a user would look"
 
-# The quartermaster's own knobs never had a sweep. They do now — the split gave
-# them a single home, so there is finally a file to assert against. Only the
-# ones actually read from the environment count: `${QM_X:-default}` is a knob,
-# a plain assignment (QM_DIR) is an internal path.
+# The quartermaster's own knobs never had a sweep. They do now. The contract
+# keeps the table with the operational narrative and also makes reference.md the
+# lookup for every environment variable, so both pages must carry the complete
+# set. Only names actually read from the environment count: `${QM_X:-default}`
+# is a knob; a plain assignment (QM_DIR) is an internal path.
 QM_KNOBS="$(grep -ohE 'QM_[A-Z_]+:-' "$SRC/quartermaster.sh" | sed 's/:-$//' | sort -u)"
 n=$(printf '%s\n' "$QM_KNOBS" | grep -c '' | tr -d ' ')
 if [ "$n" -ge 10 ]; then ok "knobs: quartermaster.sh reads $n QM_* knobs"; else bad "knobs: only $n QM_* knobs found — extraction broken?"; fi
 
-undocumented=''
+missing_ops=''; missing_ref=''
 for k in $QM_KNOBS; do
-  grep -qF -- "$k" "$DOCSBLOB" || undocumented="$undocumented $k"
+  grep -qF -- "$k" "$OPS" || missing_ops="$missing_ops $k"
+  grep -qF -- "$k" "$REF" || missing_ref="$missing_ref $k"
 done
-list_ok "$undocumented" "knobs: every QM_* knob is documented" \
-                        "knobs: quartermaster knobs documented nowhere"
+list_ok "$missing_ops" "knobs: operations carries every QM_* knob" \
+                       "knobs: QM_* knobs missing from operations"
+list_ok "$missing_ref" "knobs: reference carries every QM_* knob" \
+                       "knobs: QM_* knobs missing from reference"
 
 # ---------------------------------------------------------------------------
 # Run outcomes <-> the planner's triage list
