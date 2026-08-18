@@ -50,12 +50,16 @@ CODEX_CALLS="$ROOT/codex-calls.log"
 CURL_LOG="$ROOT/curl.log"
 CLAUDE_MODE="$ROOT/claude-mode"
 CODEX_MODE="$ROOT/codex-mode"
+# Implementer spawns within the current dispatch, reset by dispatch() below, so
+# a mode can exhaust its turns on the first spawn and finish on the resume.
+SPAWNS="$ROOT/spawns"
 # Every argument list either model stand-in was handed, truncated per dispatch by
 # dispatch() below: the only way to assert what a prompt actually said.
 PROMPTS="$ROOT/prompts.log"
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
 : > "$CLAUDE_CALLS"; : > "$CODEX_CALLS"; : > "$CURL_LOG"; : > "$PROMPTS"
+echo 0 > "$SPAWNS"
 printf 'commit\n' > "$CLAUDE_MODE"
 printf 'notes\n' > "$CODEX_MODE"
 
@@ -99,12 +103,26 @@ printf '%s\n' "\$*" >> "$PROMPTS"
 prompt=""; prev=""
 for a in "\$@"; do [ "\$prev" = "-p" ] && prompt="\$a"; prev="\$a"; done
 case "\$prompt" in *"reviewer stage"*) exit 0 ;; esac
+n=\$(cat "$SPAWNS" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$SPAWNS"
 case "\$(cat "$CLAUDE_MODE")" in
   commit) seq 1 30 >> impl.txt ;;
   tiny)   printf 'one\ntwo\n' >> impl.txt ;;
+  # One turn-ceiling resume inside a single dispatch: the first spawn commits
+  # nothing and dies on the ceiling, the second finishes. Both write a stream
+  # event naming their segment, so the rotation can be asserted on content.
+  ceiling-once)
+    printf '{"type":"assistant","message":{"content":[{"type":"text","text":"segment-%s"}]}}\n' "\$n"
+    if [ "\$n" -lt 2 ]; then
+      printf '{"type":"result","subtype":"error_max_turns","session_id":"fork-%s"}\n' "\$n"
+      exit 1
+    fi
+    seq 1 30 >> impl.txt
+    printf '{"type":"result","subtype":"success","session_id":"fork-%s"}\n' "\$n"
+    ;;
 esac
-git add -A
-git commit -q -m "feat: fixture change"
+# git(1) writes to stdout, and stdout is the stream-json the harness parses.
+git add -A >/dev/null
+git commit -q -m "feat: fixture change" >/dev/null
 EOF
 
 # Reviewer stand-in: every mode is one of the shapes the integrity check has to
@@ -191,7 +209,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   RUN="$RUNS/$ticket"
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
-  : > "$PROMPTS"
+  : > "$PROMPTS"; echo 0 > "$SPAWNS"
   # shellcheck disable=SC2086
   env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
@@ -577,6 +595,29 @@ check "attempts: and its own clock" \
   "$(result '[.metrics.attempts[] | select(.started > 0 and .ended >= .started)] | length')" "3"
 check "attempts: the pinned turn ceiling is recorded beside the CLI's count" \
   "$(result .metrics.implementer_max_turns)" "200"
+
+# An attempt is one invocation, and a turn-ceiling resume is a segment INSIDE
+# one — the implementer's stream is appended to within a dispatch and rotated
+# whole between dispatches. Both halves are asserted here, because rotating half
+# an attempt's stream would lose exactly what the append was added to keep.
+printf 'ceiling-once\n' > "$CLAUDE_MODE"
+dispatch CEILING-ROTATE ""
+check "multi-segment: one dispatch, two segments in the live stream" \
+  "$(jq -s -r '[.[] | select(.type == "assistant") | .message.content[]?.text] | join(",")' \
+     "$RUN/opus-stream.jsonl")" "segment-1,segment-2"
+check "multi-segment: recorded as two" "$(result .metrics.implementer_segments)" "2"
+check "multi-segment: on one resume of the turn ceiling" \
+  "$(result .metrics.turn_resumes)" "1"
+SEG_BEFORE=$(cat "$RUN/opus-stream.jsonl")
+dispatch CEILING-ROTATE ""
+printf 'commit\n' > "$CLAUDE_MODE"
+check "multi-segment: the re-dispatch rotates the WHOLE attempt aside" \
+  "$(cat "$RUN/attempts/1/opus-stream.jsonl")" "$SEG_BEFORE"
+check "multi-segment: and the live stream is the new attempt's alone" \
+  "$(jq -s -r '[.[] | select(.type == "assistant") | .message.content[]?.text] | join(",")' \
+     "$RUN/opus-stream.jsonl")" "segment-1,segment-2"
+check "multi-segment: which the rotated one did not leak into" \
+  "$(result .metrics.implementer_segments)" "2"
 
 # Preservation is the contract, so a filesystem collision must stop before the
 # next worker truncates the live files. Silently continuing here would destroy

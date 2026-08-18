@@ -110,16 +110,31 @@ for a in "\$@"; do
   prev="\$a"
 done
 n=\$(cat "$ATTEMPTS" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$ATTEMPTS"
-exhausted() { printf '{"type":"result","subtype":"error_max_turns","session_id":"fork-%s"}\n' "\$n"; }
-finished()  { printf '{"type":"result","subtype":"success","session_id":"fork-%s"}\n' "\$n"; }
+# Every spawn narrates which segment it is before its result event, so a stream
+# that was appended to can be told apart from one that was overwritten. The
+# result events carry a distinct num_turns and usage each, so the telemetry has
+# something to sum that only adds up if it read every segment.
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"segment-%s"}]}}\n' "\$n"
+usage() { printf '"num_turns":%s,"usage":{"input_tokens":%s,"output_tokens":%s,"service_tier":"tier-%s"}' \\
+  "\$((n * 10))" "\$((n * 100))" "\$((n * 1000))" "\$n"; }
+exhausted() { printf '{"type":"result","subtype":"error_max_turns","result":"segment %s ran out","session_id":"fork-%s",%s}\n' "\$n" "\$n" "\$(usage)"; }
+finished()  { printf '{"type":"result","subtype":"success","result":"segment %s finished","session_id":"fork-%s",%s}\n' "\$n" "\$n" "\$(usage)"; }
+# This binary's stdout IS the stream-json the harness parses, so the modes that
+# are dispatched more than once against the same worktree APPEND to their fixture
+# file and send git's stdout to /dev/null: an unchanged file makes git(1) print
+# "nothing to commit" onto the stream, which no jq downstream can read.
 case "\$(cat "$CLAUDE_MODE")" in
   commit)
-    date > fixture.txt; git add fixture.txt; git commit -q -m "feat: fixture change"
+    date >> fixture.txt
+    git add fixture.txt >/dev/null
+    git commit -q -m "feat: fixture change" >/dev/null
     finished
     ;;
   turns-once)
     if [ "\$n" -ge 2 ]; then
-      date > fixture.txt; git add fixture.txt; git commit -q -m "feat: fixture change"
+      date >> fixture.txt
+      git add fixture.txt >/dev/null
+      git commit -q -m "feat: fixture change" >/dev/null
       finished
     else
       exhausted; exit 1
@@ -224,6 +239,13 @@ dispatch() {  # $1 = run id, $2 = mode, $3 = space-separated VAR=VAL overrides
 }
 stage_now()     { cut -d' ' -f2- < "$RUN/status" 2>/dev/null; }
 result_status() { jq -r '.status // ""' "$RUN/result.json" 2>/dev/null; }
+metric()        { jq -r "$1 // \"\"" "$RUN/result.json" 2>/dev/null; }
+# What the raw stream kept, in the order it kept it.
+stream_texts()  { jq -s -r '[.[] | select(.type == "assistant")
+                             | .message.content[]? | select(.type == "text")
+                             | .text] | join(",")' "$RUN/opus-stream.jsonl" 2>/dev/null; }
+stream_results(){ jq -s -r '[.[] | select(.type == "result") | .subtype] | join(",")' \
+                    "$RUN/opus-stream.jsonl" 2>/dev/null; }
 spawns()        { grep -c '^---$' "$CLAUDE_CALLS" 2>/dev/null | tr -d ' '; }
 argv_of()       { grep '^argv:' "$CLAUDE_CALLS" | sed -n "$1p"; }
 arm_calls()     { grep -c '^argv:' "$SCHED_CALLS" 2>/dev/null | tr -d ' '; }
@@ -277,6 +299,67 @@ has "$(cat "$CLAUDE_CALLS")" "Never mention AI, Claude, or agents in commits" \
   "resume: and restates the binding commit rules"
 has "$(cat "$CLAUDE_CALLS")" "Never git add or commit anything under .harness/" \
   "resume: including the .harness/ rule"
+
+# ---------------------------------------------------------------------------
+echo "== a resume appends to the stream instead of replacing it =="
+# ---------------------------------------------------------------------------
+# The second spawn used to truncate opus-stream.jsonl, so every event of the
+# segment that had run out of turns was destroyed — the verifier scored a
+# trajectory missing most of the implementer's work, and the telemetry recorded
+# the resumed run (the expensive kind) as cheaper than one that finished in a
+# single go. TURN-RESUME above is exactly that shape: one exhausted segment,
+# then a clean one.
+check "stream: both segments survive, oldest first" "$(stream_texts)" "segment-1,segment-2"
+check "stream: with one result event each, in order" \
+  "$(stream_results)" "error_max_turns,success"
+
+# The classifiers want something narrower than the file: the segment that just
+# ended. They read the LAST result event, so a ceiling hit followed by a clean
+# segment is not max_turns_hit — otherwise the loop above would have spawned a
+# third time and the run would have died as implementer_failed.
+check "stream: opus.log is the last segment's message alone" \
+  "$(cat "$RUN/opus.log")" "segment 2 finished"
+has_not "$(cat "$RUN/opus.log")" "segment 1 ran out" \
+  "stream: not every segment's closing message concatenated"
+check "stream: so the classifiers judged the segment that just ended" "$(spawns)" "2"
+
+# Telemetry is the whole invocation's: each fake segment reports 10*n turns,
+# 100*n input tokens and 1000*n output tokens, so only a reader that saw both
+# result events gets 30 / 300 / 3000.
+check "telemetry: num_turns is summed over the segments" \
+  "$(metric .metrics.implementer_num_turns)" "30"
+check "telemetry: and so is every numeric usage key" \
+  "$(metric .metrics.implementer_usage.input_tokens)" "300"
+check "telemetry: including the one the quartermaster sizes dispatches with" \
+  "$(metric .metrics.implementer_usage.output_tokens)" "3000"
+check "telemetry: a non-numeric usage key comes from the last segment" \
+  "$(metric .metrics.implementer_usage.service_tier)" "tier-2"
+check "telemetry: and the segment count says how many there were" \
+  "$(metric .metrics.implementer_segments)" "2"
+check "telemetry: the pinned ceiling is still the per-segment one, not a sum" \
+  "$(metric .metrics.implementer_max_turns)" "200"
+
+# An unresumed run records exactly what it always did, with one segment.
+dispatch TURN-ONESEG commit ""
+check "one segment: the stream holds the single spawn" "$(stream_texts)" "segment-1"
+check "one segment: and its single result" "$(stream_results)" "success"
+check "one segment: num_turns is the CLI's own number, unchanged" \
+  "$(metric .metrics.implementer_num_turns)" "10"
+check "one segment: usage is the CLI's own object, unchanged" \
+  "$(metric '.metrics.implementer_usage | [.input_tokens, .output_tokens, .service_tier] | join(",")')" \
+  "100,1000,tier-1"
+check "one segment: counted as one" "$(metric .metrics.implementer_segments)" "1"
+check "one segment: no resume was spent" "$(metric .metrics.turn_resumes)" "0"
+
+# A fresh invocation always starts the live stream empty: it is appended to
+# within an invocation, never across two.
+dispatch TURN-ONESEG commit ""
+check "fresh invocation: the live stream is this attempt's alone" \
+  "$(stream_texts)" "segment-1"
+check "fresh invocation: which the previous attempt's stream did not join" \
+  "$(metric .metrics.implementer_segments)" "1"
+file_has "$RUN/attempts/1/opus-stream.jsonl" "segment-1" \
+  "fresh invocation: the previous one was rotated, not appended to"
 
 # The budget is spent, then the run fails honestly.
 dispatch TURN-BUDGET turns-always ""

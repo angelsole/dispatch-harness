@@ -316,11 +316,39 @@ $(printf '%s\n' "$numstat" | awk 'NF{f++; if($1!="-")i+=$1; if($2!="-")d+=$2} EN
 EOF
   fi
 
-  # Implementer turns + token usage from the last result event of the latest
-  # implementer run (fields may be absent on older CLIs — tolerate).
+  # Implementer turns + token usage for the WHOLE invocation. The stream is
+  # append-only within an invocation (opus_attempt below), so a turn-ceiling
+  # resume leaves one `result` event per segment behind — and the cost of the
+  # attempt is all of them, not just the last. Taking the last was how a resumed
+  # run, the expensive kind, got recorded as cheaper than one that finished in
+  # a single go: quartermaster.sh sizes the next dispatch off
+  # implementer_usage.output_tokens, and metrics.sh tabulates both.
+  #
+  # Numeric usage keys are summed; a non-numeric one (service_tier, and the
+  # nested counters newer CLIs report) is taken from the last segment, which is
+  # the only reading of "sum" that means anything for it. A one-segment stream —
+  # every unresumed run, and every run recorded before this — therefore yields
+  # exactly the numbers it always did. Fields may be absent on older CLIs, so
+  # every one of them survives being missing.
   impl='{}'
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
-    impl=$(jq -s 'map(select(.type=="result")) | last // {}' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null || echo '{}')
+    impl=$(jq -s '
+      def merge_usage($u):
+        reduce ($u | keys_unsorted[]) as $k (.;
+          if ($u[$k] | type) == "number"
+          then .[$k] = (((.[$k] | numbers) // 0) + $u[$k])
+          else .[$k] = $u[$k] end);
+      map(select(.type == "result")) as $r
+      | if ($r | length) == 0 then {} else
+          {
+            segments: ($r | length),
+            num_turns: ($r | map(.num_turns | numbers)
+                           | if length == 0 then null else add end),
+            usage: ($r | map(.usage | objects)
+                       | if length == 0 then null
+                         else reduce .[] as $u ({}; merge_usage($u)) end)
+          }
+        end' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null || echo '{}')
     [ -n "$impl" ] || impl='{}'
   fi
 
@@ -359,6 +387,7 @@ EOF
       implementer_num_turns: ($impl.num_turns // null),
       implementer_max_turns: $max_turns,
       implementer_usage: ($impl.usage // null),
+      implementer_segments: ($impl.segments // 0),
       diff: {files_changed: $files, insertions: $ins, deletions: $del},
       verifier: $verifier
     }'
@@ -569,7 +598,11 @@ capacity_preflight() {
 
 # Belt to the braces for the window emptying *during* a run. The brief names the
 # live feed and stderr as evidence; opus.log adds the CLI's final result message,
-# which the feed deliberately reduces to a generic result marker.
+# which the feed deliberately reduces to a generic result marker. All three are
+# the segment that just ended: opus-stderr.log is rewritten per segment, opus.log
+# is the last segment's result text alone, and the feed is read from this
+# segment's first line — so an older segment's limit message cannot classify a
+# later, unrelated failure as capacity.
 session_limit_hit() {
   local pattern='(session|usage|[0-9]+-hour) limit reached|hit your (session|usage) limit'
   grep -qiE "$pattern" "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null \
@@ -622,8 +655,10 @@ session_limit_reset() {  # prints the epoch the limit message names, or fails
 # The other way an implementer stops with work still on the bench: it ran out of
 # turns. Structured evidence rather than prose — the CLI's final result event
 # carries subtype "error_max_turns" — with the stderr text as a fallback for a
-# process that never got to write one. opus-stream.jsonl is rewritten by every
-# attempt, so this only ever answers for the attempt that just ended.
+# process that never got to write one. opus-stream.jsonl now spans every segment
+# of this invocation, so the question is asked of the LAST result event: that is
+# the segment that just ended, and a first segment that hit the ceiling must not
+# keep re-arming the loop after a resume finished the work cleanly.
 max_turns_hit() {
   jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
     "$RUN_DIR/opus-stream.jsonl" >/dev/null 2>&1 && return 0
@@ -673,6 +708,14 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
     fi
   done
 fi
+# The implementer's stream is append-only *within* an invocation, because a
+# turn-ceiling resume is another segment of the same attempt rather than a new
+# one (opus_attempt below). The invocation therefore owns exactly one
+# truncation, and here is the only place it can be: the rotation above has just
+# moved the previous attempt's file aside, so nothing can be appended to a
+# stale stream. A first invocation has none, a rotated one has just lost it —
+# either way the invariant costs nothing and is now explicit.
+: > "$RUN_DIR/opus-stream.jsonl"
 ATTEMPT=$((PREV_ATTEMPT + 1))
 # Only mark the new attempt after every previous live file is safe. A failed
 # rotation therefore leaves the last result, clock and invocation count intact,
@@ -814,11 +857,21 @@ OPUS_SESSION_FILE="$RUN_DIR/opus-session"
 CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns "$MAX_TURNS")
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
 
-# One implementer attempt: leaves OPUS_EXIT, the worker's final message and the
+# One implementer segment: leaves OPUS_EXIT, the worker's final message and the
 # refreshed session id behind. Stream events go to the statusline and feed.log
 # so a run shows live what the worker is doing (tool by tool); the raw stream is
-# kept for debugging — and, being rewritten per attempt, is also what the
-# failure classifiers read to judge the attempt that has just ended.
+# kept for debugging, for the verifier's trajectory and for the telemetry.
+#
+# The stream is APPENDED to, never truncated here. The turn-ceiling loop below
+# calls this function again on the same session, and a truncating `tee` threw
+# away every event of the segment that had run out of turns — leaving the
+# verifier scoring a trajectory with most of the implementer's work missing and
+# the telemetry recording a resumed run as cheaper than an unresumed one. So
+# `opus-stream.jsonl` is the whole implementer trajectory of this invocation,
+# resumes included; the invocation's single truncation happens once, up with the
+# attempt rotation. What the failure classifiers want is narrower — the segment
+# that has just ended — and they get it by reading the LAST result event, which
+# is exactly this call's.
 opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   local prompt="$1" new_session; shift
   # Remember where this attempt starts in the append-only live feed so an older
@@ -830,7 +883,7 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   (cd "$WORKTREE" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
       "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
       --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
-    | tee "$RUN_DIR/opus-stream.jsonl" \
+    | tee -a "$RUN_DIR/opus-stream.jsonl" \
     | jq --unbuffered -r '
         if .type == "assistant" then
           (.message.content[]? |
@@ -848,8 +901,13 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
         printf '%s\n' "$line" > "$RUN_DIR/activity"
       done
   OPUS_EXIT=${PIPESTATUS[0]}
-  # Extract the worker's final message and the (possibly forked) session id.
-  jq -r 'select(.type == "result") | .result // empty' "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
+  # Extract the worker's final message and the (possibly forked) session id —
+  # both from the LAST result event, i.e. the segment that just ended. Selecting
+  # every result event would concatenate one closing message per segment into
+  # opus.log, and hand session_limit_hit an exhausted segment's prose as
+  # evidence about this one.
+  jq -r -s 'map(select(.type == "result")) | (last // {}) | .result // empty' \
+    "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
   new_session=$(jq -r 'select(.type == "result") | .session_id // empty' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null | tail -1)
   if [ -n "$new_session" ]; then
     OPUS_SESSION="$new_session"
