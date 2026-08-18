@@ -845,5 +845,244 @@
     "detail": "medium detail",
     "seed": 19472,
     "prompt": "one plain dark human silhouette standing upright with the feet together, seen from the side facing right, whole body from head to feet, no face, no detail, flat single colour, item on a plain empty background, nothing else in the picture, no signs, no sign board, no lettering, no text, no letters, no numbers"
+  },
+  {
+    "id": "room-worker-lean",
+    "tool": "pixellab.animate",
+    "from": "room-worker",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21101,
+    "prompt": "both forearms come up off the keyboard and fold across the chest, one wrist crossed over the other, and the body settles back into the chair; nothing else in the picture moves at all: the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "room-worker-reach",
+    "tool": "pixellab.animate",
+    "from": "room-worker",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21133,
+    "prompt": "the right elbow swings up and wide out to the right and the right hand rises off the keys and settles palm-down onto a computer mouse beside the keyboard; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "room-worker-toast",
+    "tool": "pixellab.animate",
+    "from": "room-worker",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21155,
+    "to": {
+      "id": "room-worker-toast",
+      "seed": 21145,
+      "frame": 4
+    },
+    "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "room-worker-watch8",
+    "tool": "pixellab.animate",
+    "from": "room-worker-lean#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21102,
+    "prompt": "sitting still with the arms folded across the chest, breathing slowly in and out, and nothing else in the picture moves at all: the folded arms stay folded and stay exactly where they are, and the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "room-worker-read8",
+    "tool": "pixellab.animate",
+    "from": "room-worker-reach#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21104,
+    "prompt": "the hand resting on the mouse rolls the wheel with small quick flicks of the wrist, and nothing else in the picture moves at all: the other hand, the arms, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "room-worker-done8",
+    "tool": "pixellab.animate",
+    "from": "room-worker-toast#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21106,
+    "prompt": "the raised mug is held still, out to the side, and the chest rises and falls with one slow breath; nothing else in the picture moves at all: the raised arm and the mug stay exactly where they are, and the other hand, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-angel-lean",
+    "tool": "pixellab.animate",
+    "from": "crew-angel",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21201,
+    "prompt": "both forearms come up off the keyboard and fold across the chest, one wrist crossed over the other, and the body settles back into the chair; nothing else in the picture moves at all: the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-angel-reach",
+    "tool": "pixellab.animate",
+    "from": "crew-angel",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21243,
+    "prompt": "the right elbow swings up and wide out to the right and the right hand rises off the keys and settles palm-down onto a computer mouse beside the keyboard; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "crew-angel-toast",
+    "tool": "pixellab.animate",
+    "from": "crew-angel",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21265,
+    "to": {
+      "id": "crew-angel-toast",
+      "seed": 21245,
+      "frame": 10,
+      "frame_count": 16
+    },
+    "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "crew-angel-watch8",
+    "tool": "pixellab.animate",
+    "from": "crew-angel-lean#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21202,
+    "prompt": "sitting still with the arms folded across the chest, breathing slowly in and out, and nothing else in the picture moves at all: the folded arms stay folded and stay exactly where they are, and the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-angel-read8",
+    "tool": "pixellab.animate",
+    "from": "crew-angel-reach#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21204,
+    "prompt": "the hand resting on the mouse rolls the wheel with small quick flicks of the wrist, and nothing else in the picture moves at all: the other hand, the arms, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-angel-done8",
+    "tool": "pixellab.animate",
+    "from": "crew-angel-toast#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21206,
+    "prompt": "the raised mug is held still, out to the side, and the chest rises and falls with one slow breath; nothing else in the picture moves at all: the raised arm and the mug stay exactly where they are, and the other hand, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-emre-lean",
+    "tool": "pixellab.animate",
+    "from": "crew-emre",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21301,
+    "prompt": "both forearms come up off the keyboard and fold across the chest, one wrist crossed over the other, and the body settles back into the chair; nothing else in the picture moves at all: the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-emre-reach",
+    "tool": "pixellab.animate",
+    "from": "crew-emre",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21343,
+    "prompt": "the right elbow swings up and wide out to the right and the right hand rises off the keys and settles palm-down onto a computer mouse beside the keyboard; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "crew-emre-toast",
+    "tool": "pixellab.animate",
+    "from": "crew-emre",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21355,
+    "to": {
+      "id": "crew-emre-toast",
+      "seed": 21345,
+      "frame": 10,
+      "frame_count": 16
+    },
+    "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "crew-emre-watch8",
+    "tool": "pixellab.animate",
+    "from": "crew-emre-lean#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21302,
+    "prompt": "sitting still with the arms folded across the chest, breathing slowly in and out, and nothing else in the picture moves at all: the folded arms stay folded and stay exactly where they are, and the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-emre-read8",
+    "tool": "pixellab.animate",
+    "from": "crew-emre-reach#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21304,
+    "prompt": "the hand resting on the mouse rolls the wheel with small quick flicks of the wrist, and nothing else in the picture moves at all: the other hand, the arms, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-emre-done8",
+    "tool": "pixellab.animate",
+    "from": "crew-emre-toast#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21306,
+    "prompt": "the raised mug is held still, out to the side, and the chest rises and falls with one slow breath; nothing else in the picture moves at all: the raised arm and the mug stay exactly where they are, and the other hand, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-ran-lean",
+    "tool": "pixellab.animate",
+    "from": "crew-ran",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21401,
+    "prompt": "both forearms come up off the keyboard and fold across the chest, one wrist crossed over the other, and the body settles back into the chair; nothing else in the picture moves at all: the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-ran-reach",
+    "tool": "pixellab.animate",
+    "from": "crew-ran",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21433,
+    "prompt": "the right elbow swings up and wide out to the right and the right hand rises off the keys and settles palm-down onto a computer mouse beside the keyboard; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "crew-ran-toast",
+    "tool": "pixellab.animate",
+    "from": "crew-ran",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21455,
+    "to": {
+      "id": "crew-ran-toast",
+      "seed": 21445,
+      "frame": 16,
+      "frame_count": 16
+    },
+    "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
+  },
+  {
+    "id": "crew-ran-watch8",
+    "tool": "pixellab.animate",
+    "from": "crew-ran-lean#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21402,
+    "prompt": "sitting still with the arms folded across the chest, breathing slowly in and out, and nothing else in the picture moves at all: the folded arms stay folded and stay exactly where they are, and the head, the shoulders and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-ran-read8",
+    "tool": "pixellab.animate",
+    "from": "crew-ran-reach#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21404,
+    "prompt": "the hand resting on the mouse rolls the wheel with small quick flicks of the wrist, and nothing else in the picture moves at all: the other hand, the arms, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
+  },
+  {
+    "id": "crew-ran-done8",
+    "tool": "pixellab.animate",
+    "from": "crew-ran-toast#7",
+    "frame_count": 8,
+    "no_background": true,
+    "seed": 21406,
+    "prompt": "the raised mug is held still, out to the side, and the chest rises and falls with one slow breath; nothing else in the picture moves at all: the raised arm and the mug stay exactly where they are, and the other hand, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
   }
 ]

@@ -363,6 +363,343 @@ makes those rows still readable.
 | `crew/ran/wait8-6.png` | waiting, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-wait8` | `17902` | 2026-08-17 | generated for this repo | `fd0845dd465fad4f133e0265e32284db7d8c5ee6ffff6a3e85ddfa888ffe8a33` |
 | `crew/ran/wait8-7.png` | waiting, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-wait8` | `17902` | 2026-08-17 | generated for this repo | `768d4f96a058b5db0fb6926fd3905f65f21402bc0f8c1a1e701b8a638e0e85dd` |
 
+## A pose per stage
+
+The room had one person doing one of two things: typing, or — in an alarm —
+breathing with their hands off the keys. Every other stage of the pipeline was
+drawn as typing. The test gate was running and nobody was typing anything; the
+reviewer was reading a diff and the hands were hammering the keys; the PR was out
+and the hands were still on the keyboard. The plate said GATE, REVIEW, PUSH and the
+body said IMPLEMENT.
+
+So each of the four sets gained **three holds and three moves**, and
+`wall/room.js` gained the table that picks them:
+
+| pose | stage | what the body says |
+|---|---|---|
+| `watch8` | GATE | sat back, arms folded across the chest, hands off the keys |
+| `read8` | REVIEW | one hand off the keys and out on the mouse, the other still typing-side |
+| `done8` | DEMO, PUSH, a shipped run | a mug up and out to the side |
+
+and a MOVE for each — `lean`, `reach`, `toast` — eight frames that carry the person
+from the base into the pose. The room plays a move forward once when a run enters a
+pose and reversed when it leaves, so gate → review uncrosses the arms all the way
+back to the base and then reaches for the mouse: 1.92 s, sixteen frames, and not one
+cut. `type8` and `wait8` need no move, because both are AT the keyboard, which is
+where the base is.
+
+### Where they came from
+
+Every one of the 192 frames is `pixellab.animate` at `frame_count: 8`,
+`no_background`, then the palette lock, and every one traces back to a committed
+base:
+
+- **A move was animated from the set's own committed base**, handed over as the
+  `first_frame` — the actual bytes, not a regenerated stand-in. What the endpoint
+  returns as its frame 0 is the frame it was handed, unchanged: that was verified
+  byte for byte against the file in this repo before any of the twelve moves was
+  generated, and frame 0 is not committed for any of them.
+- **A hold was animated from its own move's last frame**, so `watch8` starts one
+  animation step past `lean-7`, `read8` past `reach-7`, `done8` past `toast-7`. That
+  is the whole reason the moves exist: the frame that ends a strip is the frame its
+  hold was drawn from, so the join between them is a step of the animation rather
+  than a change of picture.
+- **The four `toast` strips pin their ending.** Asked to lift a mug, the animator
+  brings it up to the mouth: three rolls of the room's own worker put the mug beside
+  the face at rows 8-22, which is above any cut that keeps the head — a mug cut off
+  at the collar is a pale slab growing out of a shoulder. So each `toast` is an
+  INTERPOLATION between the committed base and a frame of that set's own open-ended
+  toast where the mug is still at chest height. Both ends are generator output from
+  the same base; nothing was drawn by hand.
+
+Balance: **37 generations** for the run (a cap of 40), 225 used before and 262
+after. Twenty-four of them are what shipped; the other thirteen are the rolls the
+notes list — four wordings of the reach, four heights of the toast, and re-rolls of
+Angel's and Emre's reach.
+
+### The rows they are cut at
+
+The pin from PR #47 is still the mechanism — every drawn worker is the base above a
+split row and the cycle's own frame below it — but the split is now per
+**(set, cycle)**:
+
+| set | `type8`/`wait8` | `watch8`/`lean` | `read8`/`reach` | `done8`/`toast` |
+|---|---|---|---|---|
+| `room` | 41 | 32 | 32 | 30 |
+| `crew/angel` | 41 | 31 | 31 | 31 |
+| `crew/emre` | 43 | 31 | 31 | 28 |
+| `crew/ran` | 40 | 34 | 34 | 34 |
+
+`type8` and `wait8` keep their hands on the keyboard, so a row at the bottom of the
+ribcage leaves everything that moves below the cut: those four numbers are PR #47's
+and none of them changed. The three new poses put the ARMS somewhere else in the
+chair, and their moving rows start at the collar — so their cut is at the collar
+too. A move is always cut where its own hold is cut, because the frame that ends one
+is the frame the other was animated from.
+
+No two columns are the same, and the reason is anatomy: Ran's bob reaches row 29, so
+nothing of hers may be cut above 30; Emre's mug rides a row higher than everybody
+else's, so his `done8` takes the lowest cut in the table at 28, still four rows clear
+of his hair.
+
+### And what the measurements say
+
+`tests/wall.test.sh` re-measures all of it from these PNGs, over all 256 frames of
+all four sets, on **what is DRAWN** — the base's rows above the split plus the
+frame's rows at and below it — and never on raw generator output, because the
+animator grows the head upward systematically and the room throws those rows away.
+Four claims, and the worst number each of them measured:
+
+- **The outline never pinches at the seam: 2 px, ceiling 2.** The frame's row at the
+  cut being NARROWER than the base's row above it is the defect — the base's
+  shoulder overhanging nothing. The frame's row being WIDER is a mug, or a hand past
+  the end of the keyboard, whose top edge is below the cut: the pose rather than a
+  step. That FLARE reaches 11 px and is reported rather than bounded. Cutting
+  `done8` at the row that would make both directions small means cutting below the
+  raised hand, which is a 13 px pinch and is what the probe refuses.
+- **A held pose breathes rather than shifting: 1 px, ceiling 3**, on the animated
+  band's x, width and bottom between neighbouring frames — and **1 px, ceiling 3**
+  where a move meets the base and where it meets its hold.
+- **A move travels: its largest single frame carries 10 px.** Bounded against that
+  move's own travel (60 %, floor 4) rather than against a flat number, because a
+  strip that spent its whole journey in one frame and eight standing still is the
+  defect, not a strip that moves.
+- **Same person, same chair: bottom edge 3 px, width 4 px wider than the base at
+  worst.** A composite may be NARROWER — folding two arms across a chest takes 10 px
+  off Angel's silhouette and 19 off Ran's, whose own forearms are the widest thing in
+  her base — and that is the pose. A rescaled person is caught from the other side:
+  the eight frames of a hold agree on their own width to 3 px and a move starts at
+  the base's width. The bottom edge is pinned to 1 px for the two cycles that keep
+  their hands on the keyboard and to 3 for the three that take a hand off it, because
+  the room seats this sprite so its last row lands on the desk: a hand that leaves
+  the keys and rests lower is a hand ON the desk.
+
+Between consecutive drawn frames of a hold, 2-286 band pixels change. Nothing here
+was retouched by hand. Two pixels in two frames landed on colours that are WORDS in
+this palette — one klaxon `#ff2f45` in `crew/ran/lean-2`, one shipped `#4ff08f` in a
+roll that was not kept — and the post-pass moves such a pixel to the nearest lock
+colour that means nothing, which is the same call `room/plant.png` and
+`room/prop-books.png` got. It is a recolour for meaning, never for value, and never a
+change of shape.
+
+The typing and waiting frames and the four bases are **not** regenerated and not
+rewritten: their rows below are byte for byte what PR #49 committed, and the rows
+they are cut at are pinned by the suite as well.
+
+### The frames
+
+#### `room`
+
+| path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
+|---|---|---|---|---|---|---|---|---|
+| `room/worker-done8-0.png` | it shipped, the mug up, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `14d45f3f40dd4d5c9c0011e738dc963c6f7834ae8b58d6557e315bfbf64f5eb9` |
+| `room/worker-done8-1.png` | it shipped, the mug up, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `4447f36eb75afee7f9c57491711d44e96ca10d4104daed762865eebfff5c9c28` |
+| `room/worker-done8-2.png` | it shipped, the mug up, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `69d32161ffb0ce4be342e6df0226006b2828401b6e42416bbe271e3ec9f380de` |
+| `room/worker-done8-3.png` | it shipped, the mug up, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `65a8c680eddd414592419595c508dfa583cf63af0fe1cd77b26595cbdd2ec164` |
+| `room/worker-done8-4.png` | it shipped, the mug up, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `db2cd263b299fa7475fca970395a1b407e88ed14dedb1bf43dd5c348c783790e` |
+| `room/worker-done8-5.png` | it shipped, the mug up, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `81de16565c5e6c4feba1af0a77d10683503bf86f031557f096fccbaf36d5ea6c` |
+| `room/worker-done8-6.png` | it shipped, the mug up, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `390d618f5b36f8fd5fb4b1645ca03d8aad474d660c55e9eb44e014cd753caf99` |
+| `room/worker-done8-7.png` | it shipped, the mug up, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-done8` | `21106` | 2026-08-18 | generated for this repo | `317d4411373c47fe99965cb3abd59e2619abd305beedb9cb5e8982032a6ae43b` |
+| `room/worker-lean-0.png` | the move into the gate pose, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `ce8f15efd0017acab395d0fe426c909cc71e8ef3c1e79c8b5d358bd41c16e590` |
+| `room/worker-lean-1.png` | the move into the gate pose, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `b8f9b9e59c264145142cccd67bc1cedc490deab4fb8a85e8ae6b896282eec607` |
+| `room/worker-lean-2.png` | the move into the gate pose, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `f35d52302215c381f333115f287e9515c0dccb79ca42c793e187c67c7559a48b` |
+| `room/worker-lean-3.png` | the move into the gate pose, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `1f656d45819254c3f92ca59f84dfda947b03f1c766da9f0d80055f60713c3a4e` |
+| `room/worker-lean-4.png` | the move into the gate pose, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `de73fd4a48ee0cd609fa05d5d51b8e82fbcbe05d11819d24e229209c74cdcb2c` |
+| `room/worker-lean-5.png` | the move into the gate pose, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `39f0377e10e2f642c6a16b43b46ef9ea8052155b167761793f5617c0976765bd` |
+| `room/worker-lean-6.png` | the move into the gate pose, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `46578380dd9365655ff14d3aaf8f3e9305c542d1f3ad4cc35abf28762d93876c` |
+| `room/worker-lean-7.png` | the move into the gate pose, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-lean` | `21101` | 2026-08-18 | generated for this repo | `28c2d1ebf15e6ebe593bf8527cefe88b36af19015ebaedb5e1367971793dc61a` |
+| `room/worker-reach-0.png` | the move onto the mouse, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `f60796f8f8c796430495fa75f140978ea27e58cf171c3f5542ac5b8068a4edb6` |
+| `room/worker-reach-1.png` | the move onto the mouse, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `31a672ee9049e2772fd9d98daa85bea3463ca1d14d1fd9bd97543623a7609e8a` |
+| `room/worker-reach-2.png` | the move onto the mouse, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `3495c638fd991242f7cd3360e96f01eccde562d9d95782874ed7ff440b8500cf` |
+| `room/worker-reach-3.png` | the move onto the mouse, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `ca1cc3a3f8bf7ef9438dbe7cd9cdbcb9bdeb93be575cf2e586b8fb7fbf3c5061` |
+| `room/worker-reach-4.png` | the move onto the mouse, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `b68dab71e2c91135be5608256f5a407387b94b63bbf41793ba2797dd34207171` |
+| `room/worker-reach-5.png` | the move onto the mouse, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `5638af1990119d7ac235864f6e9064b2b717352c800240cdd63dc4239d53bd28` |
+| `room/worker-reach-6.png` | the move onto the mouse, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `677f6b8c2ed753eb854ba3bbf888ca3630cfe20d24fe9dc04f36a84c6dc4d49b` |
+| `room/worker-reach-7.png` | the move onto the mouse, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-reach` | `21133` | 2026-08-18 | generated for this repo | `1b925416b76652b18a14a6b6663ac0a3ec4d7d5483f09ce11dcf3361a6752b3f` |
+| `room/worker-read8-0.png` | reading the diff, scroll 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `321d135d752815ab5048ec27a95e83a21c102276b82c0a7e5f972dadbe097d5c` |
+| `room/worker-read8-1.png` | reading the diff, scroll 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `acd1280aa46bbfe95a21517feff384cf74d62e106b9c91e7a233fddbaac454c2` |
+| `room/worker-read8-2.png` | reading the diff, scroll 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `511ef3fa4851bd596044c1f991882d5e87202efd69400a088ee4d3839202d1a4` |
+| `room/worker-read8-3.png` | reading the diff, scroll 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `98cb1f539b3f79c65d766d7c18999ce18554ab11219b3fb3410c8ff7d33dbf68` |
+| `room/worker-read8-4.png` | reading the diff, scroll 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `b17753b3f2ba27afc335d3ec4d0585248a91ffa0388ecb2c7d6734544258d8a1` |
+| `room/worker-read8-5.png` | reading the diff, scroll 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `32507844b9861d5e6a3c299f59b3c2fd3f17b9806db05cf4880c413d99db1a85` |
+| `room/worker-read8-6.png` | reading the diff, scroll 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `a353ce40c4f505c1eb8a8d5da34986e1fd9658e03e7cbcda9e2b5eaae3c16c8b` |
+| `room/worker-read8-7.png` | reading the diff, scroll 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-read8` | `21104` | 2026-08-18 | generated for this repo | `972769be00e30c8fdb260908be1dc7d7da8597729609d300560b97fa3fafffab` |
+| `room/worker-toast-0.png` | the move that lifts the mug, frame 1 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `cb39b7290fa5d6994aca5a5aa2ca3152014ef783c722324f8c4e4644500e00d8` |
+| `room/worker-toast-1.png` | the move that lifts the mug, frame 2 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `82f4293252b7fc42ca17e12620b115383ccfb1b4807cec54780c31ec48de6520` |
+| `room/worker-toast-2.png` | the move that lifts the mug, frame 3 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `48989a302a28d445f6a490108894d7a15c64097277a2efc759c86f4202478574` |
+| `room/worker-toast-3.png` | the move that lifts the mug, frame 4 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `4d4f93acb7ee8fdddf3851628b327ed821347842393c6408b459759e36998713` |
+| `room/worker-toast-4.png` | the move that lifts the mug, frame 5 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `1734bb6bce6be7c20e59a82e37cfa8601f92b584d599d234d6108d9d98a6c502` |
+| `room/worker-toast-5.png` | the move that lifts the mug, frame 6 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `cb001b777802a41ab6af5bb0da05f5373187e7125bdf99343777e2dba979a9bf` |
+| `room/worker-toast-6.png` | the move that lifts the mug, frame 7 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `06c298e8fdc89d0f86ff79088d5da799429bd901b58aa03fd6179074f8e6a8b5` |
+| `room/worker-toast-7.png` | the move that lifts the mug, frame 8 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `room-worker-toast` | `21155` | 2026-08-18 | generated for this repo | `4ea97cf5cb62763e15ff404438e1363436045757b5a73351cc8fdfbae93b3955` |
+| `room/worker-watch8-0.png` | watching the tests run, arms folded, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `3d70f212d7502ac75acc3f702ae930e4071e7a8dd5771d0806c0950a780127ad` |
+| `room/worker-watch8-1.png` | watching the tests run, arms folded, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `f7dfb74776d10a0b483c038c55772a3f0ca0dec660da3a944829063074f603a0` |
+| `room/worker-watch8-2.png` | watching the tests run, arms folded, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `1e464a9ca043362a036d41e04e8c5401b118e6301d3800206c943065b52db0da` |
+| `room/worker-watch8-3.png` | watching the tests run, arms folded, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `466001d468cb9e0ae399003e342607af9bb56aae2d2725a7e938a919afd0b3a3` |
+| `room/worker-watch8-4.png` | watching the tests run, arms folded, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `e75bd7db65cecf899776affab605434728d900dde392352e6f689897a4ca3bc1` |
+| `room/worker-watch8-5.png` | watching the tests run, arms folded, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `c234f93dc69fa64e23485cad6baad2675bb5da0fe2fca34254bebddeb4e3218c` |
+| `room/worker-watch8-6.png` | watching the tests run, arms folded, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `bfff5daf60b2a4eea71c57321350377cba75aca1a86ff1790778f38a0122f515` |
+| `room/worker-watch8-7.png` | watching the tests run, arms folded, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `room-worker-watch8` | `21102` | 2026-08-18 | generated for this repo | `394c08f69fe083904a42f20042acb6a12f156f84bf53450cc969bb6ba9b54e6a` |
+
+#### `crew/angel`
+
+| path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
+|---|---|---|---|---|---|---|---|---|
+| `crew/angel/done8-0.png` | it shipped, the mug up, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `d5b63895f9fe2e5258e078971f0e738dc87893619440bd262bd6047d3a8651ba` |
+| `crew/angel/done8-1.png` | it shipped, the mug up, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `b3640c9e270fc785689db18a2e6ca2d68cc8197644dbe13b3dcb2c59d4205279` |
+| `crew/angel/done8-2.png` | it shipped, the mug up, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `60934e082602f2c214b18bb42425bdc7418063bd654807b53c8095088e324eb1` |
+| `crew/angel/done8-3.png` | it shipped, the mug up, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `1dc9228fbabac3741e0708862c0dfe13d198893eedb6382a2019edd643afdda0` |
+| `crew/angel/done8-4.png` | it shipped, the mug up, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `149279fd2a87f187c207b0f87a6f7f5ee75b4b9e380e3ae488a004d4e8f6a0e7` |
+| `crew/angel/done8-5.png` | it shipped, the mug up, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `d1fb26041bd794b63974ca4076747ab1a5267532d92cb18ba9aa5c70ab16650e` |
+| `crew/angel/done8-6.png` | it shipped, the mug up, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `7ed01fba05884ef0d23f2da8a913990efa801c3b01b1dc30ecf423c2a5405a11` |
+| `crew/angel/done8-7.png` | it shipped, the mug up, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-done8` | `21206` | 2026-08-18 | generated for this repo | `89c3d7205a1a7a36a9707dd5b051e0c5abfef247823abf775f7a95ac22562cc4` |
+| `crew/angel/lean-0.png` | the move into the gate pose, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `0c5aea16cf4ce1b40cfb2380f682db5cf09cc8e4cd6236a3c2fb95a4518237cc` |
+| `crew/angel/lean-1.png` | the move into the gate pose, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `89ec2c62f75345691233bd8e52264de8f3a84ad4d40f100c2ac72cba86e16926` |
+| `crew/angel/lean-2.png` | the move into the gate pose, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `6885384884413892ed44832f95b5fe838afc444dce388609572cd400703893e0` |
+| `crew/angel/lean-3.png` | the move into the gate pose, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `bf75bdb268eb39bbeed4ea12ae6d48d8f9c1d92000a8dfebffbf07b4e97e3d7e` |
+| `crew/angel/lean-4.png` | the move into the gate pose, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `330927426144f5f311ccfab751fb393f97ada99879d026cbcfdab840c65d533e` |
+| `crew/angel/lean-5.png` | the move into the gate pose, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `21afb6575aac6308d918f8a0a83dbe47c6973ac3fca30b2a0320a8c7b6f016c7` |
+| `crew/angel/lean-6.png` | the move into the gate pose, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `c2bfe2bd062b284ea8b9d30026fbd66efe90365d8c00024a65eb9ab1c492863d` |
+| `crew/angel/lean-7.png` | the move into the gate pose, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-lean` | `21201` | 2026-08-18 | generated for this repo | `b034a4137c8dba1d3bfaccf8324a0113cb8d4316f03f9bcba0eb292fcee84ae9` |
+| `crew/angel/reach-0.png` | the move onto the mouse, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `aa9e76f3990dfc8e3e3403d8025db4cdc8d89a10c6faef54f9aba05465c14f67` |
+| `crew/angel/reach-1.png` | the move onto the mouse, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `dc64faa174b0a4b175057d9cb0f2698996eb427b36df76aa53274c654d8e2c31` |
+| `crew/angel/reach-2.png` | the move onto the mouse, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `e443f41fd10aa446898b50023c2a19f4e0b140208032d88dc46a8db7febf0cd2` |
+| `crew/angel/reach-3.png` | the move onto the mouse, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `818eccb4f3bcedbc1e2674742438f108be13c56b5f7f8805c24511faf482bdf7` |
+| `crew/angel/reach-4.png` | the move onto the mouse, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `effa55572f419200fa06f6ce893e2d81db9f369764039766918f732c7b0762d1` |
+| `crew/angel/reach-5.png` | the move onto the mouse, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `9fc4f59648682558985793e151a8ebe20463163d4fd491d7093b4acc347916a2` |
+| `crew/angel/reach-6.png` | the move onto the mouse, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `7707d909861477397157c82108b5b0bcb27684b51d4d009276cd2c47548b8a27` |
+| `crew/angel/reach-7.png` | the move onto the mouse, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-reach` | `21243` | 2026-08-18 | generated for this repo | `8e89e6aa938efb4679acc148651bfe02052645285d5d5cf5fd2f53d057c9c65c` |
+| `crew/angel/read8-0.png` | reading the diff, scroll 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `d88f02b2dd5cb401fe5c466790cccb5a5608d288bfab0822a9ddad1793fca023` |
+| `crew/angel/read8-1.png` | reading the diff, scroll 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `6c13de7ccad33954567b05124096a57c9c4728b20cbe135ee92ac3e2985ec8f7` |
+| `crew/angel/read8-2.png` | reading the diff, scroll 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `f69c424a51b446242d91b2d18d01c3a412427d273707623e5c9d24f7016de447` |
+| `crew/angel/read8-3.png` | reading the diff, scroll 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `0b892e95ea371f0ca2e5581d352907c8f18fd1d43ecff9f99536542ebaffd17a` |
+| `crew/angel/read8-4.png` | reading the diff, scroll 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `5f43af3aa2b1c679681aa79d16aea617bd249b91f0f81829fbd4437e1f74db9d` |
+| `crew/angel/read8-5.png` | reading the diff, scroll 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `141ec1e9d2cb89fd5698494cb02cd92842af5ff81474ec76d910b70efd6678df` |
+| `crew/angel/read8-6.png` | reading the diff, scroll 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `ad4d61e868d1aa6f0fa0c9e570e4840eaadc6fa8929643527b22f29ed2c6446d` |
+| `crew/angel/read8-7.png` | reading the diff, scroll 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-read8` | `21204` | 2026-08-18 | generated for this repo | `8e59ad4048d1bee5d17a0a489237265bef82ad5ef768d98afc0c257b80261dbd` |
+| `crew/angel/toast-0.png` | the move that lifts the mug, frame 1 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `17e2670d312ddcf04abb1e5f8363b10b72d9027a8d3f70e0174ce661477f6ae6` |
+| `crew/angel/toast-1.png` | the move that lifts the mug, frame 2 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `8a669c215a5bb6f690192faeff9bc30374a403c73ba56f1becc71f8f4a8cdcc7` |
+| `crew/angel/toast-2.png` | the move that lifts the mug, frame 3 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `743c1134756aeb4e920aae4f461b1f22fb894fb5b46631c1886343b02093ba6a` |
+| `crew/angel/toast-3.png` | the move that lifts the mug, frame 4 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `c885fddf7b23446d9cf404cbf2b978b31eb021469d074a9de9b24d24e85cfd47` |
+| `crew/angel/toast-4.png` | the move that lifts the mug, frame 5 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `c98e5edc291e03909d13cf09d95bd2bda82d375a29e1bb72b3c9bd63f39b7a1e` |
+| `crew/angel/toast-5.png` | the move that lifts the mug, frame 6 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `e8208f2a4631c94396455565a4096c447734e80005ec1c4b0a1164bea64cbbf4` |
+| `crew/angel/toast-6.png` | the move that lifts the mug, frame 7 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `7a51d8f02ab7acbb784b71e548ba0459ad910ef87ce923d69c502bbfd760a89d` |
+| `crew/angel/toast-7.png` | the move that lifts the mug, frame 8 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-angel-toast` | `21265` | 2026-08-18 | generated for this repo | `078b5851f7b4557dee3883c193d97c538347c0d566829d529959a5c7d014336a` |
+| `crew/angel/watch8-0.png` | watching the tests run, arms folded, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `2d0263e40fbb6561b28a0c8b1b1e27916c74d2a7e78fc5941f1486654067fa8a` |
+| `crew/angel/watch8-1.png` | watching the tests run, arms folded, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `b554a9529621d249a43b77e34b49a4c3259c767664301bea4ed4e4ca4cdd7e32` |
+| `crew/angel/watch8-2.png` | watching the tests run, arms folded, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `b1e8562166ac91e9bd0275227ebb96d12b2981f9ec0d19bf99732234f8ee1dcc` |
+| `crew/angel/watch8-3.png` | watching the tests run, arms folded, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `cf02482e8593b45fb89edffc317de2a97695f36d4a1e68d7d4115efeb76ecf94` |
+| `crew/angel/watch8-4.png` | watching the tests run, arms folded, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `ee6c620b5a4b66848a67d52a3c985e6e02e3654d4b8630d568b2a2ad6b888bd9` |
+| `crew/angel/watch8-5.png` | watching the tests run, arms folded, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `ac7dd2b28ab8262fe2ffd7859b658a01a91ebd2de17f0016f73f30d4ecfbf6fe` |
+| `crew/angel/watch8-6.png` | watching the tests run, arms folded, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `0dc9112373c1b2cad1fdfad2aa5cea84fab5ee4e4f44645a627e1090823ba916` |
+| `crew/angel/watch8-7.png` | watching the tests run, arms folded, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-angel-watch8` | `21202` | 2026-08-18 | generated for this repo | `6130580038aadc21da1af03d905858ad89d69e7f972bfca0b4e9733eefd1413a` |
+
+#### `crew/emre`
+
+| path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
+|---|---|---|---|---|---|---|---|---|
+| `crew/emre/done8-0.png` | it shipped, the mug up, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `c9d7800e22eefed9002cec2e6b5037f6135dd6d1f6a7e474cd9b3b2f710638c6` |
+| `crew/emre/done8-1.png` | it shipped, the mug up, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `ff7498c801cb6276d846cd02b08ecd7ddac6bf098dfe07e91824c783d4865d8c` |
+| `crew/emre/done8-2.png` | it shipped, the mug up, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `c887af359293d49e858b2603016b4a4789a98e376d5ac21a0293cd0d213f484d` |
+| `crew/emre/done8-3.png` | it shipped, the mug up, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `59810705b4a3ac3456a6c343116d841b17f30ac83ef782b2ddd48a42f942207c` |
+| `crew/emre/done8-4.png` | it shipped, the mug up, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `aac430c0dcc2e6990769f58a3b57288227b2c756ce9e887917e14fb21f9d83c0` |
+| `crew/emre/done8-5.png` | it shipped, the mug up, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `249b1183866bcfdbc4813a3b862ab4cdc7ebdf893923a102298a1de28bb079a5` |
+| `crew/emre/done8-6.png` | it shipped, the mug up, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `9c917a46e001a22c3e52d0b19dc129f8122914577824d3cd92c8a521e54624e4` |
+| `crew/emre/done8-7.png` | it shipped, the mug up, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-done8` | `21306` | 2026-08-18 | generated for this repo | `d6d94182563f76e89e5d9b52cab5bdd18e714cacd5310a4d57e666899ec2b683` |
+| `crew/emre/lean-0.png` | the move into the gate pose, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `96ffe6125ce1aa6a354eaacf858e9370cfb746aed62d1d4d011d942162e008e6` |
+| `crew/emre/lean-1.png` | the move into the gate pose, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `60b4e4cff4893d307034b3fe2ccf43f6b4e2eafb4a89935483049676f6a18084` |
+| `crew/emre/lean-2.png` | the move into the gate pose, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `b1b01c0c9c333487491d3e84215e64dc3fbd0ef5c4f494189eba2a3c12c901f5` |
+| `crew/emre/lean-3.png` | the move into the gate pose, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `e76bad0230921a0e34e97992f34bb8c3e0ff88abf59a5ab82c06c3ea1d0c5724` |
+| `crew/emre/lean-4.png` | the move into the gate pose, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `0be7c52f1a5b6e049ed721be3896d0a21019559f26f6735544b8c26658e49674` |
+| `crew/emre/lean-5.png` | the move into the gate pose, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `3b6d9d439844e86dc87f451662d1dc618ad79d98b7111a3f424dd1da1f300c55` |
+| `crew/emre/lean-6.png` | the move into the gate pose, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `51e6f8059b81be6a3032047d1b2d306829b0efe4601752b2274d65e9c4a3d709` |
+| `crew/emre/lean-7.png` | the move into the gate pose, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-lean` | `21301` | 2026-08-18 | generated for this repo | `f841e7f41b03a36a4233f3086a2375a25acbcce30a938760e9b3ec7e3485f6b5` |
+| `crew/emre/reach-0.png` | the move onto the mouse, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `2c598505f331b4ebc2698b065059b8a80d9c76b27c4feef1067ba0b47ff1a840` |
+| `crew/emre/reach-1.png` | the move onto the mouse, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `435c97ef3e490d7874e2c254037acf80ac7010838c1eb4d1d486d875d7675267` |
+| `crew/emre/reach-2.png` | the move onto the mouse, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `0ad79bc10db9dbfcd067942bee16a85afd8414b44694f58e3838996013a406f9` |
+| `crew/emre/reach-3.png` | the move onto the mouse, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `325badf4446ad458afe2892f68d16e1e04be04dc88a7fbb2c47225c68ed1850f` |
+| `crew/emre/reach-4.png` | the move onto the mouse, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `4b03c1689409db190cf23494cb68c8e44e60a531639d3acda04c3fb9bd56c3de` |
+| `crew/emre/reach-5.png` | the move onto the mouse, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `69579fc88830961492a54d28f3388ddcf5f59caf5f08b61d25d35bf6c4f4cd99` |
+| `crew/emre/reach-6.png` | the move onto the mouse, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `fc4e9faf98889f000c889f80422dc5d53d12fa0328e4379b42da7b6672166fcd` |
+| `crew/emre/reach-7.png` | the move onto the mouse, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-reach` | `21343` | 2026-08-18 | generated for this repo | `cbba810869c5a9188ac01665bf1a48cc769f9eb3a028bdf53123581765d8d679` |
+| `crew/emre/read8-0.png` | reading the diff, scroll 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `d39384185060aba5a9756e5ecbd30a0364a8f95d23a59c1c3ef0006609eba51d` |
+| `crew/emre/read8-1.png` | reading the diff, scroll 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `2b8e7b5e1ce1bdf8d8babaf00b9fdf52b3efda098882dd02777a2e615540cfe2` |
+| `crew/emre/read8-2.png` | reading the diff, scroll 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `551009514ac7b54abb2a4cdc8018a4f00bf64172d215c1991e6e25106adb9daf` |
+| `crew/emre/read8-3.png` | reading the diff, scroll 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `1b109f69cafd754e6f307e37a050b0ec466023321d7a6aa6b554bb2d3ddeb2f0` |
+| `crew/emre/read8-4.png` | reading the diff, scroll 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `95f7b5366c1fa544b40937b909d968734dbac40ccd93725914fc49cf1d9cde74` |
+| `crew/emre/read8-5.png` | reading the diff, scroll 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `6e326bee9428a615828ef228233a195a53bfbc0e5bfdbbd351e9eb3bd3348cfe` |
+| `crew/emre/read8-6.png` | reading the diff, scroll 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `d576bcf649d45b0fb314c014d4000bfe29af21ffbbbbb0526f54b8afa6eabd19` |
+| `crew/emre/read8-7.png` | reading the diff, scroll 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-read8` | `21304` | 2026-08-18 | generated for this repo | `bcc8921487380037bd5b6830d4db356495b7bd677384bb94d279c16aa2def584` |
+| `crew/emre/toast-0.png` | the move that lifts the mug, frame 1 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `d4965574ac48fc2867d4ef42af351af99de07af68da34562a4cbecede87e0e3c` |
+| `crew/emre/toast-1.png` | the move that lifts the mug, frame 2 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `f57b754068194df8da2b255f30949690cc8b12146e7edc27b897cc763b9bfca9` |
+| `crew/emre/toast-2.png` | the move that lifts the mug, frame 3 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `9b824a1b10e9b34939900d450976acbb6b485f63d3e4c91a9a4e77002cc88d8c` |
+| `crew/emre/toast-3.png` | the move that lifts the mug, frame 4 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `2b3069b479bf1258d4f6c27b90c430c783f8881e83e788c8bfb2e334db1d826e` |
+| `crew/emre/toast-4.png` | the move that lifts the mug, frame 5 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `c25d8b05abaa3420f57d2b85b836e52218a82e0b552973ee5fcffef538ade15e` |
+| `crew/emre/toast-5.png` | the move that lifts the mug, frame 6 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `0a77aaf21ffe8301aa2da65c057dbfefced1fcccfd8c27c032f2889e6b2ae8b5` |
+| `crew/emre/toast-6.png` | the move that lifts the mug, frame 7 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `b52353c8a66754b8c947d1a2e473ec1e1a60b5baf29bee9b26d1ab21c7aa5f7f` |
+| `crew/emre/toast-7.png` | the move that lifts the mug, frame 8 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-emre-toast` | `21355` | 2026-08-18 | generated for this repo | `cdbf651375b3e02f9c4ccebcc2819ad41a730ff8079277adfadf45d6274742f8` |
+| `crew/emre/watch8-0.png` | watching the tests run, arms folded, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `3ce43342dba4b7cc0697dff96cef2620684a80fef878b0cc47742f707c495296` |
+| `crew/emre/watch8-1.png` | watching the tests run, arms folded, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `5893ce27cb252d980b7f0c42027ba6772e8b5be05c07ad4c7fd8d0fafbc6298a` |
+| `crew/emre/watch8-2.png` | watching the tests run, arms folded, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `2f44e1685b1c0edc04ec37bd232e94419f32e2264ba7485c0bc5a583ce722097` |
+| `crew/emre/watch8-3.png` | watching the tests run, arms folded, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `62fdccfcc88b597798e5754d8ad2131e2ee3dba3f63a849a6331ec7afa6c11fc` |
+| `crew/emre/watch8-4.png` | watching the tests run, arms folded, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `96b62013c455b5170127f87eabddbf61543fccb1f1fda18307edcd8820ba63db` |
+| `crew/emre/watch8-5.png` | watching the tests run, arms folded, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `618537a8d493657be513b1ad4b7e2c87218a5c505e4c371f8b115e89628392d7` |
+| `crew/emre/watch8-6.png` | watching the tests run, arms folded, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `85590004967c541930e708a865f5d07eff563a86bb184f39d8eed72ad4c130c8` |
+| `crew/emre/watch8-7.png` | watching the tests run, arms folded, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-emre-watch8` | `21302` | 2026-08-18 | generated for this repo | `d2989014cfeefed917fb5d47b00e404a8468dd52a31154b788eec0888d2be23d` |
+
+#### `crew/ran`
+
+| path | what | tool | endpoint | prompt | seed | date | origin | sha256 |
+|---|---|---|---|---|---|---|---|---|
+| `crew/ran/done8-0.png` | it shipped, the mug up, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `b62a768e939be80cf760ef83e62498b124a9f1adf6e24de9ecb15c56e2ac3099` |
+| `crew/ran/done8-1.png` | it shipped, the mug up, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `84775076b021222bfe0eb68917d0c359499ae53402f933ff714814bbc104f026` |
+| `crew/ran/done8-2.png` | it shipped, the mug up, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `74952b77579a699904de35e9512fa94eb8d8f1da5dd397a9ab04d24677a8dab5` |
+| `crew/ran/done8-3.png` | it shipped, the mug up, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `5676981604cb0c782f91cd6e92ee19ee8a9031aaed1a096775bf9e3f952d7811` |
+| `crew/ran/done8-4.png` | it shipped, the mug up, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `78b5452e976011e15e729f2bba27db6cdc55fbe3a47657f05a739ec39dae4633` |
+| `crew/ran/done8-5.png` | it shipped, the mug up, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `4085af966af2372cf7881da11ad2481adf09b61dd70c924d93644f916581636a` |
+| `crew/ran/done8-6.png` | it shipped, the mug up, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `f8756fba0824504444157cc4aa67166f1811a5a338fdd5f27f1e6f3e90782ee8` |
+| `crew/ran/done8-7.png` | it shipped, the mug up, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-done8` | `21406` | 2026-08-18 | generated for this repo | `154b2ba88774f39e1d196e39b62d063eb3c0e9347464daf07acd364506323dd6` |
+| `crew/ran/lean-0.png` | the move into the gate pose, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `0d1c5baeefa90363837492b17f1bc0a3ede58f9cde00e0a3058f3ae5dded1ab3` |
+| `crew/ran/lean-1.png` | the move into the gate pose, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `18119cc514401f428e3e9284b031dd0763577421161a7dcd4f38bb1c95996423` |
+| `crew/ran/lean-2.png` | the move into the gate pose, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `4c211bde946489beb90287654aea2ae27cb2031656ada2bf226cd9a0dc70a852` |
+| `crew/ran/lean-3.png` | the move into the gate pose, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `7d27e56a7e89f88f5e73867b7ea3c0031097845ecd677d044f632d54205f9614` |
+| `crew/ran/lean-4.png` | the move into the gate pose, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `843fea5d8289a2970bae47d60d0dbbe7f6db680bc0ed50f096c48f4d6b331c00` |
+| `crew/ran/lean-5.png` | the move into the gate pose, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `037092d1cf8a14c9e2f621af0bd66df52a9fc1d6aefdda960891d0cfda2eeed4` |
+| `crew/ran/lean-6.png` | the move into the gate pose, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `7e03c97a63249a0540dba88931ca79c24d9b9ea43f856fec943de619618e8c5c` |
+| `crew/ran/lean-7.png` | the move into the gate pose, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-lean` | `21401` | 2026-08-18 | generated for this repo | `63bd3a1960d141999626e80ccd34abd541c908058981500979de41c355222c30` |
+| `crew/ran/reach-0.png` | the move onto the mouse, frame 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `e271242fc78226698b38504ddfa12380de4be10cdc39a51d4c924660429ce23a` |
+| `crew/ran/reach-1.png` | the move onto the mouse, frame 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `14c71a59c32f640ea111a73fc0f37bbda60b9cc87ef9827600a778e0deeaa1cd` |
+| `crew/ran/reach-2.png` | the move onto the mouse, frame 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `0e13db38030ab91ea03fc502eb9dd9126b455b57cf1208e087660186ba1870b0` |
+| `crew/ran/reach-3.png` | the move onto the mouse, frame 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `0123b0b2cc79fb3adc96771f58c93a4ec1b1c44808d9c0e29a44d87280b223e7` |
+| `crew/ran/reach-4.png` | the move onto the mouse, frame 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `ec869937e1c0309013d4d0bb03e9caf8bca12400f0a1887531b9884690f4f91e` |
+| `crew/ran/reach-5.png` | the move onto the mouse, frame 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `6e8164ca73302cb302789135cb2de5f20795b3f30ca85b141c4eb662f6413961` |
+| `crew/ran/reach-6.png` | the move onto the mouse, frame 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `b85d3d71c2755f494daeee0a6cfd23328bba33b678a35632b4ca8fe3594efea3` |
+| `crew/ran/reach-7.png` | the move onto the mouse, frame 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-reach` | `21433` | 2026-08-18 | generated for this repo | `9c3ba4ab45162ffdbdca9c7c3e0ce46020b8bbbfaa44c904f6e0d0571f73ecf4` |
+| `crew/ran/read8-0.png` | reading the diff, scroll 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `b7e715e5dd04ff76523f3901df361d7bf5e0a4f55cd415d955c8574334da191c` |
+| `crew/ran/read8-1.png` | reading the diff, scroll 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `1fd7a64dbed8aa6783f554f01269528fe3e87fe59743ec0a291b321eac396cd0` |
+| `crew/ran/read8-2.png` | reading the diff, scroll 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `2ea418aed635772ef0cf8d1496c3115482d07c46fd104d7a1c6356a822ab76e3` |
+| `crew/ran/read8-3.png` | reading the diff, scroll 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `7116b78eae5b5cc91220394308eaa2a822f484fc0a4c6b4e88f31f06b117a7ae` |
+| `crew/ran/read8-4.png` | reading the diff, scroll 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `ef638d86725784ae5284d9c877ad533887cb78294534e7016c40ba3b1c9c53cc` |
+| `crew/ran/read8-5.png` | reading the diff, scroll 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `1d30fc94ae4731f1c6121d520dc758af60cca6fc9dfa45ef740d3df10b41bda7` |
+| `crew/ran/read8-6.png` | reading the diff, scroll 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `8afde962447b8ddfd8f0214431a6c0ba3adbd031329130acf73bf5143a9d84b8` |
+| `crew/ran/read8-7.png` | reading the diff, scroll 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-read8` | `21404` | 2026-08-18 | generated for this repo | `c9c96aeebe49f562611ec244d3a6daedeb1a68fea5aafcdc5b2cd2c1c670c860` |
+| `crew/ran/toast-0.png` | the move that lifts the mug, frame 1 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `6b0b7bdaa56b0f8591823b89338d351bad08ba6d1449a550ae5513a53d711a49` |
+| `crew/ran/toast-1.png` | the move that lifts the mug, frame 2 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `3db8b574817f2126b3ad2acf138af394aec76babdb5a96e998614560f4ae3b24` |
+| `crew/ran/toast-2.png` | the move that lifts the mug, frame 3 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `683ba31618f05debe9c3e0dba86aaf4795c4e2797b46eb9c9a398eb63df03e6f` |
+| `crew/ran/toast-3.png` | the move that lifts the mug, frame 4 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `92193a8392ed76553d3ba4226bdcd3bda2f62d7677d80022157320de0d606471` |
+| `crew/ran/toast-4.png` | the move that lifts the mug, frame 5 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `b08b168d15df46b90eaa9a9f664bbfb1e4d2e05af1915fb1a7fb0d9c325a2bd3` |
+| `crew/ran/toast-5.png` | the move that lifts the mug, frame 6 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `9e0038584c498a5d6c9cc3949e4e066d42b4c05bdb49c4f48ceec338fe1aadfb` |
+| `crew/ran/toast-6.png` | the move that lifts the mug, frame 7 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `ccca56c4f24399b363c0e399adcd4f136b65093e3fe83cc55a18bdc41f952014` |
+| `crew/ran/toast-7.png` | the move that lifts the mug, frame 8 of 8 - only the band below the split is drawn | pixellab.animate (interpolated) | `/animate-with-text-v3` | `crew-ran-toast` | `21455` | 2026-08-18 | generated for this repo | `fbd46316689857422356bdd25e8173f4dadfc53ef50084d0b89b916264aa1f23` |
+| `crew/ran/watch8-0.png` | watching the tests run, arms folded, breath 1 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `df8c3f716f37ca28c23fe027f7f0594a1dde1d0c776c303f07d63ac3698e4f95` |
+| `crew/ran/watch8-1.png` | watching the tests run, arms folded, breath 2 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `4a335b40dc28b38e79af174c323eb885a17001f12603d9ec50dc57374cc114fe` |
+| `crew/ran/watch8-2.png` | watching the tests run, arms folded, breath 3 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `d1e192bfa5309dd10bd209cf530f2be4c67177707da4f5b805c7565206ff87a6` |
+| `crew/ran/watch8-3.png` | watching the tests run, arms folded, breath 4 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `a3958fc09f69d8fab954889c655bb40e1b7acba57f531acd62ccb54a76ee3861` |
+| `crew/ran/watch8-4.png` | watching the tests run, arms folded, breath 5 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `31e259e99a4aac6910033be105aaeaecc66f6e5c488b42543eab4c6f6c5c80aa` |
+| `crew/ran/watch8-5.png` | watching the tests run, arms folded, breath 6 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `ee871da45e33ff58d9f4217e0476015bd7d1b6ad4b5b8d5635dd684805f44a6b` |
+| `crew/ran/watch8-6.png` | watching the tests run, arms folded, breath 7 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `8b2ec501afad7c103825697f6bf0efeb27ac9db90be6875016650d7b3c6699e7` |
+| `crew/ran/watch8-7.png` | watching the tests run, arms folded, breath 8 of 8 - only the band below the split is drawn | pixellab.animate | `/animate-with-text-v3` | `crew-ran-watch8` | `21402` | 2026-08-18 | generated for this repo | `8b93b1d7db6ad970ad37c964e0decc13dd090484b35819c30888d8857d70a54e` |
+
 ## The city
 
 `?world=canvas`, and the whole of what the Phaser world is built out of. Two
