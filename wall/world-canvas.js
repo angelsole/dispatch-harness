@@ -125,21 +125,21 @@
   const MARKER_CORE = 3;      // the lamp itself, in world pixels
   const MARKER_ALPHA = 0.95;  // the core at its brightest
   const MARKER_HALO = 0.5;    // and its bloom
-  // ONE HERO, and this is how far everything else steps back to make one. The wall
-  // already knows the gesture: with a beam on one tower the other towers drop to
-  // 0.55 and that is what turns "brighter" into "that one" (spot(), below). Out on
-  // a plot two things have to give way. The SKYLINE, because it is drawn in front of
-  // the band the district stands in — a tower is live work and live work is nearer
-  // than a record — so the tower behind the plot would otherwise be the whole frame,
-  // and if it is the alarm tower it is a red wall with a building somewhere inside
-  // it. And the district's own NEIGHBOURS, because a block is 48 to 155 pixels tall
-  // out of a 720-pixel frame: at any honest lens the building that just shipped has
-  // buildings either side of it wearing the same shopfronts and the same signs, and
-  // six equal-weight buildings is six things to look at and no hero at all.
+  // THE RACK FOCUS. A camera with a real lens does not dim a city to say which
+  // building it is looking at — it FOCUSES one distance, and everything nearer and
+  // further goes soft. This world cannot blur (a blurred pixel is not a pixel any
+  // more), so it does the same thing in value, on the three planes the district
+  // already has: what stands IN FRONT of the subject goes nearly away, because the
+  // street row was the thing standing between the eye and the building that just
+  // shipped; what stands BEHIND it goes back a stop, so the city is still there to
+  // stand in; and the skyline, which is drawn in front of the whole band, goes with
+  // the front. The subject keeps its own value AND loses its band's veil for the
+  // beat — it comes to the front of the eye without moving one pixel in the layout.
   //
-  // One number, because it is one idea. It is a lens and not a change of subject:
-  // the HUD goes on saying what needs a human for the whole film.
-  const PLOT_BACK = 0.22;
+  // One table, eased in over `over`, held through `plot`, eased out over `out`. Every
+  // number in it is 1 at u = 0, which is what makes "after the film the city is byte
+  // for byte what it was" arithmetic rather than a promise.
+  const FOCUS = { front: 0.18, back: 0.5, skyline: 0.22 };
 
   // THE BIRTH, in seconds from the moment the builders arrive. Every one of these
   // is a position in a span, so a browser that opens four seconds into a birth
@@ -1068,6 +1068,45 @@
     };
   }
 
+  // HOW FAR INTO THE FOCUS the beat is, as the share of itself each plane keeps.
+  // Pure, and every field is 1 at k = 0 — the settled city, which is the city main
+  // draws — so a probe can assert that the film gives back exactly what it borrowed.
+  function focusAt(k) {
+    const share = clamp01(k);
+    const to = (rest) => 1 - (1 - rest) * share;
+    return {
+      k: share,
+      front: to(FOCUS.front),
+      back: to(FOCUS.back),
+      skyline: to(FOCUS.skyline),
+      // How much of the subject's own band veil has come off. A block's veil is a
+      // multiply tint, so lifting it is the one way to make a building brighter
+      // without touching the sprite it is drawn from.
+      lift: share,
+    };
+  }
+
+  // Which beat pulls the focus, and how far. In with the move that takes the camera
+  // out of the room, held while it is parked on the plot, let go with the move that
+  // brings it home — `out` counts its own u back down to zero, which is why both
+  // moves read the same expression. Every other beat is zero: the room and the push
+  // into it are the wall's ordinary dive and nothing about them is focused.
+  function shipFocusAt(step) {
+    if (step.phase === 'over' || step.phase === 'out') return ease(step.u);
+    return step.phase === 'plot' ? 1 : 0;
+  }
+
+  // And where ONE block stands in that focus. The subject keeps its value and loses
+  // its veil; anything in a nearer band goes to the front's share; anything in its
+  // own band or further back goes to the back's — a neighbour at the same distance
+  // is not in front of the subject, so it does not have to get out of the way, it
+  // only has to stop competing.
+  function focusOn(focus, depth, hero, heroDepth) {
+    if (focus.k <= 0) return { alpha: 1, veil: 0 };
+    if (hero) return { alpha: 1, veil: focus.lift };
+    return { alpha: depth > heroDepth ? focus.front : focus.back, veil: 0 };
+  }
+
   // Where the room stands in the world: 320x180 of it, one world pixel per
   // authored pixel, hung off the window the camera is going through so that
   // what is behind the glass at the start of the push is the monitor. Pushed
@@ -1325,7 +1364,15 @@
         // Which plot the camera is out on, and how far back everything that is not
         // that plot has stepped. Read by stepBlock, written by roll: one number, and
         // a frame of lag on a three-second ease is not a thing anybody can see.
-        this.plot = { hero: '', dim: 1 };
+        // Which plot the camera is out on, how deep in the district it stands, and
+        // how far into the rack focus the beat is. Read by stepBlock, written by
+        // roll: a frame of lag on a three-second ease is not a thing anybody can see.
+        this.plot = { hero: '', depth: 0, focus: focusAt(0) };
+        // What the street and the ghost are drawn at when nothing is focusing. The
+        // focus MULTIPLIES these rather than replacing them, so letting go of it puts
+        // the city back at exactly the value the scene last chose for it.
+        this.streetBase = 1;
+        this.ghostBase = 0.14;
         this.said = { shot: undefined, dive: undefined, room: undefined };
         // A restart takes the display list with it, so the dive's own two
         // objects are gone; the room's texture is the game's and survives.
@@ -1931,7 +1978,7 @@
                                Math.round(skyY(819 - ghost.height)),
                                Math.round(40 * SKY), Math.round(ghost.height * SKY));
         }
-        this.ghostG.setAlpha(0.14);
+        this.ghostG.setAlpha(this.ghostBase * this.plot.focus.back);
       }
 
       // --- baking ----------------------------------------------------------------
@@ -2096,7 +2143,9 @@
         // mass behind.
         body.setTint(veil);
         root.add(body);
-        const parts = { root, box, block, body, textures: [dt.key] };
+        // `tint` is the band's own veil, kept because the plot beat lifts it and has
+        // to be able to put it back byte for byte.
+        const parts = { root, box, block, body, tint: veil, veil: 0, textures: [dt.key] };
 
         // TODAY'S SHIPS ARE THE LIT ONES. The same building with more of its
         // windows on, crossfaded over the settled one and cooling to nothing on
@@ -2733,7 +2782,8 @@
         // Nightlife never competes with work: the instant anything is climbing,
         // the whole ground floor drops a stop and the skyline keeps the eye.
         this.streetC.setVisible(model.blocks.length > 0);
-        this.streetC.setAlpha(model.quiet ? 1 : 0.62);
+        this.streetBase = model.quiet ? 1 : 0.62;
+        this.streetC.setAlpha(this.streetBase * this.plot.focus.front);
         this.districtC.setAlpha(model.quiet ? 1 : 0.88);
         const plan = model.street;
         while (this.walkers.length > plan.walkers) this.walkers.pop().g.destroy();
@@ -3086,16 +3136,6 @@
         return lensAt(step.u, wide, plot);
       }
 
-      // How much of everything that is not the hero is left while the camera is out
-      // on a plot. It goes back over the same move that takes the camera out of the
-      // room and comes up again over the one that brings it home, so nothing steps.
-      shipDim(step) {
-        if (step.phase === 'over' || step.phase === 'out') {
-          return 1 - (1 - PLOT_BACK) * ease(step.u);
-        }
-        return step.phase === 'plot' ? PLOT_BACK : 1;
-      }
-
       // And what the PANE is told while that happens. The dive's own beats say it
       // themselves; the `over` beat closes the window again as the camera leaves
       // it, which is the same aperture running backwards, and out on the plot there
@@ -3215,15 +3255,25 @@
         const cam = this.cameras.main;
         cam.setZoom(pose.zoom);
         cam.centerOn(pose.x, pose.y);
-        // ONE HERO: the skyline and the district's other buildings both step back to
-        // PLOT_BACK while the camera is out on a plot, and come back with it.
-        const back = onPlot ? this.shipDim(step) : 1;
-        this.cityC.setAlpha(back);
-        this.plot = {
-          hero: onPlot ? (filming ? filming.run : this.shipTarget(s)) : '',
-          dim: back,
-        };
-        if (this.landmark) this.landmark.root.setAlpha(back);
+        // THE FOCUS. Everything in front of the plot gets out of the way, everything
+        // behind it goes back a stop, and the block itself keeps its value and loses
+        // its veil — a rack focus, in the only currency a pixel-art wall has. Nothing
+        // that is STILL ever focuses: a city under reduced motion is a settled city,
+        // and a settled city is the one main draws.
+        const hero = onPlot ? (filming ? filming.run : this.shipTarget(s)) : '';
+        const target = this.blocks.get(hero);
+        const focus = focusAt(onPlot && !still.matches ? shipFocusAt(step) : 0);
+        this.plot = { hero, depth: target ? target.box.depth : 0, focus };
+        // The skyline is drawn in front of the whole band the district stands in, so
+        // it goes with the front; so do the street's own furniture and the near lane.
+        this.cityC.setAlpha(focus.skyline);
+        this.streetC.setAlpha(this.streetBase * focus.front);
+        this.nearC.setAlpha(focus.front);
+        // Last week is the furthest thing back there is.
+        this.ghostG.setAlpha(this.ghostBase * focus.back);
+        if (this.landmark) {
+          this.landmark.root.setAlpha(focusOn(focus, 0, false, this.plot.depth).alpha);
+        }
         this.paintDive(dived, dived && dived.room,
                        this.apertureStep(step, onPlot && filming));
       }
@@ -3279,10 +3329,23 @@
         const settling = birth.done && !phase.still;
         const landed = settling ? Math.min(1, age / 0.9) : 1;
         const drop = settling ? Math.round(Math.max(0, 1 - age / 0.9) * 14) : 0;
-        // And how present this building is at all: full, unless the camera is out on
-        // somebody else's plot, in which case it is the street the hero stands in.
-        const here = this.plot.hero === block.id ? 1 : this.plot.dim;
+        // And where this building stands in the rack focus: the subject keeps its
+        // value and loses its band's veil, what is nearer than it gets out of the way,
+        // what is further back goes back a stop. Off the film, all of it is 1 and 0.
+        const focus = focusOn(this.plot.focus, box.depth,
+                              this.plot.hero === block.id, this.plot.depth);
+        const here = focus.alpha;
         parts.root.setAlpha(landed * here);
+        // A veil is a multiply tint, so lifting it toward white is the one way to
+        // bring a building forward without touching the sprite it is stamped from —
+        // and at lift 0 the mix returns the band's own veil, exactly.
+        if (parts.veil !== focus.veil) {
+          parts.veil = focus.veil;
+          const lifted = mix(parts.tint, 0xffffff, focus.veil);
+          parts.body.setTint(lifted);
+          if (parts.hot) parts.hot.setTint(lifted);
+          parts.lift[0].setTint(lifted);
+        }
         parts.root.setY(drop);
         for (const sign of parts.signs) sign.g.setY(sign.y + drop);
 
@@ -3553,6 +3616,7 @@
     shipPlan, shipAt, shipShotOf, shipDiveOf, birthAt, birthFrame,
     TOWER_MASSES, FORM_MASSES, KIND_MASSES, PLANES, BAND, BAND_WAS, BAND_LIT,
     HERO_AIR, SHIP, SHIP_FRESH, SHIP_PARK, BUILD, CELL, LIFT, CEREMONY,
-    PLOT_ZOOM, PLOT_FILL, PLOT_WIDE, PLOT_SKY, PLOT_BACK, MARKER, MARKER_CORE,
+    PLOT_ZOOM, PLOT_FILL, PLOT_WIDE, PLOT_SKY, MARKER, MARKER_CORE,
+    FOCUS, focusAt, focusOn, shipFocusAt,
   };
 }));
