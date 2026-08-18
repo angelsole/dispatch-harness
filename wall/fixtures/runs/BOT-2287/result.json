@@ -25,6 +25,27 @@
       "files_changed": 5,
       "insertions": 131,
       "deletions": 47
+    },
+    "verifier": {
+      "score": 0.24,
+      "at_implementer": 0.31,
+      "criteria": [
+        {
+          "name": "The money helpers are deduplicated",
+          "score": 0.18
+        }
+      ],
+      "model": "deepseek-v4-flash",
+      "provider": "deepseek",
+      "evaluations": 3,
+      "steps": 44,
+      "elided_steps": 0,
+      "usage": {
+        "calls": 6,
+        "input_tokens": 120000,
+        "output_tokens": 600
+      },
+      "seconds": 48.2
     }
   }
 }

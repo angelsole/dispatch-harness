@@ -57,6 +57,9 @@ harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
     # Codex's name on a failure Codex may never have been part of.
     'review failed silently'*) HARNESS_ACTOR='unreviewed';  HARNESS_ACTOR_COLOR="$C_RED" ;;
     review*|fix*)              HARNESS_ACTOR='Codex';       HARNESS_ACTOR_COLOR="$C_GREEN" ;;
+    # The third-vendor trajectory score. It is not one of the pipeline's models
+    # and it decides nothing, so it gets a name and no neon of its own.
+    verify*)                   HARNESS_ACTOR='verifier';    HARNESS_ACTOR_COLOR="$C_DIM" ;;
     'test gate'*' skipped'*)   HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
     'test gate'*)              HARNESS_ACTOR='gate';        HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
     'ticket sync'*)            HARNESS_ACTOR='ticket';      HARNESS_ACTOR_COLOR="$C_MAGENTA" ;;

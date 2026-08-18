@@ -44,6 +44,7 @@ sequenceDiagram
         C->>S: fix commits + review-notes.md<br/>(gate re-runs, max 2 rounds)
     end
 
+    S->>S: verify — third-vendor trajectory score (best-effort)
     S->>S: push + draft PR (notes in body)
     S->>F: result.json — ready
     F->>U: verdict · preview.sh if frontend

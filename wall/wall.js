@@ -89,6 +89,7 @@
     actor: document.getElementById('briefActor'),
     stage: document.getElementById('briefStage'),
     timer: document.getElementById('briefTimer'),
+    score: document.getElementById('briefScore'),
     note: document.getElementById('briefNote'),
     dots: document.getElementById('briefDots'),
   };
@@ -579,7 +580,14 @@
 
   function plateQueue() {
     const alarms = runs.filter((r) => r.state === 'alarm');
-    return alarms.length ? alarms : runs.filter((r) => r.state === 'active');
+    if (alarms.length) return alarms;
+    const active = runs.filter((r) => r.state === 'active');
+    if (active.length) return active;
+    // result.json first carries the verifier score when a run finishes. Keep
+    // that run on the plate for the completion moment the server already gives
+    // its skyline; otherwise the score chip can never be visible on a first
+    // attempt, because the plate would disappear exactly when the data arrives.
+    return runs.filter((r) => skyline.has(r.id));
   }
 
   function paintPlate(run, index, total) {
@@ -602,8 +610,15 @@
       ? run.stage + '  ·  ' + run.activity
       : run.stage || '(no stage yet)';
     plate.timer.textContent = run.since ? '⧗ ' + dur(now() - run.since) : '';
-    // Only live runs reach the plate, so the note is the blocking question or
-    // nothing at all.
+    // How well a third vendor thinks this run satisfies its brief. Advisory —
+    // it decides nothing here either, so it is the quietest thing on the plate,
+    // and a run nobody scored simply does not carry it.
+    const score = run.verifier && typeof run.verifier.score === 'number'
+      ? '◎ ' + run.verifier.score.toFixed(2)
+      : '';
+    plate.score.textContent = score;
+    plate.score.hidden = score === '';
+    // Only an alarm carries a note; active and completing runs carry none.
     const note = run.state === 'alarm'
       ? '⚠ ' + (run.blocked || 'needs your input — see QUESTIONS.md')
       : '';

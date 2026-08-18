@@ -181,6 +181,13 @@ claim SKILL.md    "$SKILL"     'HARNESS_REDISPATCH=1'
 # A brief that fails validation is moved, not armed and not deleted. An
 # operator who finds their brief gone has to be able to look up where it went.
 claim README      "$README"    'brief.rejected.md'
+# The verifier costs a third-vendor API key, so how to turn it on has to be
+# findable — and the one thing an operator must never get wrong about it is that
+# nothing in the pipeline depends on the number it produces.
+claim README      "$README"    'install.sh --verifier'
+claim README      "$README"    'verifier-api-key'
+claim README      "$README"    'It is advisory, and it never gates.'
+claim README      "$README"    'metrics.verifier'
 
 # Every backtick-quoted *.sh name in the docs must resolve to a shipped file.
 # A gitignored local config resolves through its *.example template; code spans

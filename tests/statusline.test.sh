@@ -172,12 +172,18 @@ check "actor: a review no tier completed is nobody's work in progress" \
 # for its own one-shot to fire.
 check "actor: a capacity deferral -> deferred" \
   "$(actor_of 'deferred: capacity, armed for 13:35')" "deferred"
+# The third-vendor trajectory score is neither of the pipeline's models and
+# decides nothing, so it gets a name of its own rather than borrowing Codex's.
+check "actor: the verifier stage -> verifier" \
+  "$(actor_of 'verify — trajectory score (verifier · third vendor)')" "verifier"
 
 # --- status.sh: one-shot modes unchanged --------------------------------------
 echo "== status.sh: one-shot modes =="
-HDR="$(printf '%-26s %-46s %-12s %s' RUN STAGE 'IN STAGE' TOTAL)"
+# The verifier's advisory score is the fifth column; every run here predates it,
+# so the column is present and empty — which is the case a legacy run renders.
+HDR="$(printf '%-26s %-46s %-12s %-9s %s' RUN STAGE 'IN STAGE' TOTAL SCORE)"
 OUT="$(HARNESS_DIR="$H1" bash "$ST")"
-check   "table: header unchanged" "$(printf '%s' "$OUT" | sed -n 1p)" "$HDR"
+check   "table: header pinned" "$(printf '%s' "$OUT" | sed -n 1p)" "$HDR"
 grep_ok "$OUT" "PROJ-1"                           "table: lists the run"
 grep_ok "$OUT" "implementing — Opus (Claude sub)" "table: lists its stage"
 

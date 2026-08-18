@@ -2756,6 +2756,9 @@ body[data-quiet="0"] .block { --work: 0.78; }
 }
 .brief__stageText { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brief__timer { margin-left: auto; color: var(--phosphor); white-space: nowrap; }
+/* The verifier chip: same readout family as the timer beside it, one step
+   quieter, because it is advisory and gates nothing. No colour of its own. */
+.brief__score { flex: none; color: var(--phosphor-dim); white-space: nowrap; }
 .brief__note {
   margin-top: 0.35rem;
   font-size: 0.8rem;

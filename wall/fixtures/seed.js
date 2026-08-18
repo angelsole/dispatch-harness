@@ -170,6 +170,20 @@ result('OLYX-1598', {
     gate_rounds: [{ round: '1', result: 'fail' }, { round: '2', result: 'pass' }],
     opus_commits: 3, codex_commits: 2,
     diff: { files_changed: 7, insertions: 214, deletions: 63 },
+    // A run the third-vendor verifier scored: the plate chip and the SCORE
+    // columns have something to render. LEGACY-0042 deliberately has none — it
+    // predates result.json entirely and is the field-absent case.
+    verifier: {
+      score: 0.83, at_implementer: 0.71,
+      criteria: [
+        { name: 'The KPI query is cached', score: 0.91 },
+        { name: 'The TTL is configurable', score: 0.74 },
+      ],
+      model: 'deepseek-v4-flash', provider: 'deepseek', evaluations: 3,
+      steps: 61, elided_steps: 0,
+      usage: { calls: 9, input_tokens: 184000, output_tokens: 900 },
+      seconds: 71.4,
+    },
   },
 });
 
@@ -229,6 +243,16 @@ result('BOT-2287', {
     wall_seconds: 2800, gate_rounds: [{ round: '1', result: 'pass' }],
     opus_commits: 2, codex_commits: 0,
     diff: { files_changed: 5, insertions: 131, deletions: 47 },
+    // A green gate and a rejection: exactly the run whose score is worth having,
+    // and the reason the verifier scores the rejected arm too.
+    verifier: {
+      score: 0.24, at_implementer: 0.31,
+      criteria: [{ name: 'The money helpers are deduplicated', score: 0.18 }],
+      model: 'deepseek-v4-flash', provider: 'deepseek', evaluations: 3,
+      steps: 44, elided_steps: 0,
+      usage: { calls: 6, input_tokens: 120000, output_tokens: 600 },
+      seconds: 48.2,
+    },
   },
 });
 
