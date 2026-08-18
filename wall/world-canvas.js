@@ -99,21 +99,47 @@
   // got built. Long enough that the beacon is out and short enough that the day's
   // ship is still lit and named.
   const SHIP_PARK = 20;
-  // The plot lens, as a multiple of the wide's. Landed on a whole number of
-  // device pixels in measure() for the same reason ROOM_PIX is whole.
-  const PLOT_ZOOM = 2.5;
-  // Where the top of the board — and the storey of sky over it — sits in the
-  // plot frame. The camera hangs off the ROOFLINE rather than the middle of the
-  // mass: a building centred in the frame puts half the picture in tarmac.
-  const PLOT_SKY = 0.1;
-  // ONE HERO. The skyline is drawn in FRONT of the band the week's ships stand
-  // in — a tower is live work and live work is nearer than a record — so at the
-  // plot lens the tower behind the plot is the only thing in the frame, and if
-  // that tower is the alarm it is a red wall with a building somewhere inside it.
-  // So while the camera is out on a plot the city steps back to this, exactly as
-  // it steps back around a spotlit tower. It is a lens and not a change of
-  // subject: the HUD goes on saying what needs a human the whole time.
-  const PLOT_SKYLINE = 0.22;
+  // THE PLOT LENS IS ADAPTIVE, and picked per building. A fixed magnification over
+  // a district whose blocks run from 48 to 155 pixels tall framed the tall ones and
+  // lost the short ones in their neighbours: what the plot beat is about is ONE
+  // building owning the centre. So the lens is the tightest whole number of device
+  // pixels per world pixel that still holds the whole block — its silhouette is the
+  // half of it the room reads — aiming for the block to fill this much of the
+  // frame's height. Whole numbers only, for the reason ROOM_PIX is whole: a wall
+  // shown at 2.5x is a wall with a soft edge on every pixel of it.
+  const PLOT_ZOOM = { min: 2.5, max: 6 };
+  const PLOT_FILL = { lo: 0.5, hi: 0.65 };
+  // And the most of the frame's width a block may take. Under this it is a building
+  // standing in a street; over it, it is a wall.
+  const PLOT_WIDE = 0.95;
+  // The top third of the plot frame is empty night. Sky is what tells the eye how
+  // tall the thing under it is, and the critic's one_fix asked for it by name.
+  const PLOT_SKY = 1 / 3;
+  // The owner's lamp on a roof: a hard little core with a bloom around it, which is
+  // how every readable light on this wall is built — the crew tube on a shoulder is
+  // a solid tinted rect added over the wall, and the tower's beacon is the same glow
+  // this halo is. A soft halo on its own at this size is haze; the core is what
+  // makes it ONE DOT from the sofa. The halo is about 0.6 of the tower beacon's
+  // 2.6 rem, because a district roof is a fraction of a tower's.
+  const MARKER = 1.6;         // the halo, in rem
+  const MARKER_CORE = 3;      // the lamp itself, in world pixels
+  const MARKER_ALPHA = 0.95;  // the core at its brightest
+  const MARKER_HALO = 0.5;    // and its bloom
+  // ONE HERO, and this is how far everything else steps back to make one. The wall
+  // already knows the gesture: with a beam on one tower the other towers drop to
+  // 0.55 and that is what turns "brighter" into "that one" (spot(), below). Out on
+  // a plot two things have to give way. The SKYLINE, because it is drawn in front of
+  // the band the district stands in — a tower is live work and live work is nearer
+  // than a record — so the tower behind the plot would otherwise be the whole frame,
+  // and if it is the alarm tower it is a red wall with a building somewhere inside
+  // it. And the district's own NEIGHBOURS, because a block is 48 to 155 pixels tall
+  // out of a 720-pixel frame: at any honest lens the building that just shipped has
+  // buildings either side of it wearing the same shopfronts and the same signs, and
+  // six equal-weight buildings is six things to look at and no hero at all.
+  //
+  // One number, because it is one idea. It is a lens and not a change of subject:
+  // the HUD goes on saying what needs a human for the whole film.
+  const PLOT_BACK = 0.22;
 
   // THE BIRTH, in seconds from the moment the builders arrive. Every one of these
   // is a position in a span, so a browser that opens four seconds into a birth
@@ -172,11 +198,6 @@
   // overlay (room.js measure()): a room shown at 4.37x is a room with a soft
   // edge on every pixel of it, which is the one thing 320x180 art cannot take.
   let ROOM_PIX = 4;
-  // And the same idea for the plot the ship film parks over: PLOT_ZOOM times
-  // the wide shot, rounded to a whole number of device pixels per world pixel.
-  // At the gate's 1280x720 that is 3x — 426x240 world pixels in frame, which
-  // holds a fourteen-storey block, its board and a storey of sky over it.
-  let PLOT_PIX = 3;
 
   function measure(cssWidth, cssHeight, ratio) {
     DPR = Math.min(Math.max(Number(ratio) || 1, 1), 2);
@@ -196,7 +217,6 @@
     SKY_X = (GW - 1600 * SKY) / 2;
     SKY_Y = (GH - 900 * SKY) / 2;
     ROOM_PIX = Math.max(1, Math.floor(Math.min(cssWidth / ROOM_W, cssHeight / ROOM_H))) * DPR;
-    PLOT_PIX = Math.max(1, Math.round(PLOT_ZOOM * PIX));
   }
 
   // --- the palette --------------------------------------------------------------
@@ -234,9 +254,6 @@
   // crew's alike. Up here rather than on the scene, because the ship film has to
   // work out where a board will hang before there is a scene to ask.
   const CELL = 13;
-  // How much of a name is left once its tube has gone out: an unlit board is
-  // still a name on a building, read at the plot zoom and quiet at the wide.
-  const BOARD_DIM = 0.34;
   const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace';
   const CJK = '"PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif';
 
@@ -539,39 +556,35 @@
     return { x, y: Math.round(GROUND_Y) - h, w, h, veil: band.veil, depth: block.depth };
   }
 
-  // ON THE ROOFLINE, and not on the façade. The district's own buildings are two
-  // to four storeys over a 32 px shopfront, so the wall between the shop's sign
-  // and the parapet is thirteen pixels of stone on a good day: a name hung there
-  // lands ON the shopfront's own board, and the street reads ANGELCAFE. A name
-  // goes on the roof instead — the highest thing on the building, the way a
-  // building's own name has always been signed — with its bottom two rows lapping
-  // the parapet so it reads as bolted to the mass rather than floating over it.
-  const boardY = (box) => box.y - CELL + 2;
-  // A word wider than the block paying for it centres and projects over the
-  // street, which is what a sign does — the same rule the wide shop boards
-  // already follow — and it is clamped into the world so a plot at the edge of
-  // the street cannot hang half a name off the picture.
-  function boardBox(box, wide) {
-    const w = Math.max(TILE, Math.round(wide));
-    return {
-      x: clamp(box.x + Math.round((box.w - w) / 2), 0, Math.max(0, GW - w)),
-      y: boardY(box), w, h: CELL,
-    };
+  // WHICH LENS ONE BUILDING WANTS. The tightest whole number of device pixels per
+  // world pixel that holds the whole block — never cropping its own width, never
+  // filling more than PLOT_FILL.hi of the frame's height. A district block runs
+  // from 48 px to 155 px tall, so a fixed magnification either frames the towers
+  // and loses the shophouses or fills the frame with one warehouse; this lands
+  // almost every shape inside PLOT_FILL and, where it cannot, keeps the silhouette
+  // whole and comes in short rather than cutting the hero down its own sides.
+  function plotLens(box) {
+    const first = Math.max(1, Math.ceil(PLOT_ZOOM.min * PIX));
+    let pick = first;
+    for (let zoom = first; zoom <= PLOT_ZOOM.max * PIX; zoom++) {
+      if (box.w * zoom > PLOT_WIDE * W) break;
+      if (box.h * zoom > PLOT_FILL.hi * H) break;
+      pick = zoom;
+    }
+    return pick;
   }
 
-  // WHERE THE CAMERA PARKS OVER A PLOT. The lens is fixed (PLOT_PIX) and the
-  // frame hangs off the roofline: the name board and a storey of sky over it
-  // belong in the upper third and what fills the rest is the building and the
-  // street it stands in. Clamped inside the world exactly as the room box is, so
-  // a plot near an edge is still a full frame of city rather than half of one.
+  // WHERE THE CAMERA PARKS OVER A PLOT. One building, centred across the frame,
+  // with the top PLOT_SKY of the picture empty night above its roofline and the
+  // street it stands in under it. Clamped inside the world exactly as the room box
+  // is, so a plot near an edge is a full frame of city rather than half of one.
   function plotBoxAt(box) {
-    const zoom = PLOT_PIX;
+    const zoom = plotLens(box);
     const viewW = W / zoom;
     const viewH = H / zoom;
-    // The board, and one 32 px course of night over it.
-    const head = boardY(box) - PANEL;
     let x = box.x + box.w / 2;
-    let y = head + viewH * (0.5 - PLOT_SKY);
+    // The roofline lands PLOT_SKY down the frame, so what is over it is sky.
+    let y = box.y + viewH * (0.5 - PLOT_SKY);
     x = viewW >= GW ? GW / 2 : clamp(x, viewW / 2, GW - viewW / 2);
     y = viewH >= GH ? GH / 2 : clamp(y, viewH / 2, GH - viewH / 2);
     return { x, y, zoom, w: viewW, h: viewH };
@@ -1034,6 +1047,27 @@
     };
   }
 
+  // AND THE BIRTH AS THE NUMBERS A BUILDING IS SET TO, which is a different claim
+  // from the beats above and the one that can actually be wrong. `shown` is how much
+  // of the block's own stamped image is uncropped, from the pavement up, quantised to
+  // the façade's own 32 px course — a wall that slid between two storeys would be a
+  // wipe over a picture rather than a building going up. `up` is the same for the
+  // scaffold on its own 16 px lift. `fit` is how present everything that is not the
+  // wall is: a frontage is not open for business while the wall over it is still
+  // arriving. Pure, and taking the block's own box, so a test walks the integration
+  // second by second rather than the beats in isolation.
+  function birthFrame(age, box, still) {
+    const birth = birthAt(age - BUILD.lead, still);
+    const tall = box.h + PANEL;
+    return {
+      ...birth,
+      tall,
+      shown: Math.min(tall, Math.round(birth.wall * Math.ceil(tall / PANEL)) * PANEL),
+      up: Math.min(tall, Math.round(birth.up * Math.ceil(tall / LIFT.h)) * LIFT.h),
+      fit: clamp01((birth.wall - 0.7) / 0.3),
+    };
+  }
+
   // Where the room stands in the world: 320x180 of it, one world pixel per
   // authored pixel, hung off the window the camera is going through so that
   // what is behind the glass at the start of the push is the monitor. Pushed
@@ -1288,6 +1322,10 @@
         // always — a wall that ships four times a day is a wall filming for eighty
         // seconds of eighty-six thousand.
         this.filming = null;
+        // Which plot the camera is out on, and how far back everything that is not
+        // that plot has stepped. Read by stepBlock, written by roll: one number, and
+        // a frame of lag on a three-second ease is not a thing anybody can see.
+        this.plot = { hero: '', dim: 1 };
         this.said = { shot: undefined, dive: undefined, room: undefined };
         // A restart takes the display list with it, so the dive's own two
         // objects are gone; the room's texture is the game's and survives.
@@ -1946,7 +1984,11 @@
       // A building, stamped out of the set: masses from the bottom up, the
       // ground floor the street actually reads, a lit edge along every roofline
       // and whatever that typology stands on its roof.
-      stamp(dt, box, masses, skin, open, rnd, litShare, roofProps) {
+      // `roofs`, when given, collects where each roof prop landed, in the texture's
+      // own coordinates. A block's owner marker stands on its roof furniture, and
+      // where that furniture is is a seeded draw made HERE — reproducing it outside
+      // would be a second opinion about the same rnd() stream.
+      stamp(dt, box, masses, skin, open, rnd, litShare, roofProps, roofs) {
         // The texture carries one panel of headroom over the roofline, because
         // what stands on a roof is what the room reads the building by from the
         // sofa and a mast clipped at the parapet is a flat top.
@@ -1988,8 +2030,9 @@
           if (roofProps && roofProps.length && w >= 24) {
             const prop = roofProps[Math.floor(rnd() * roofProps.length)];
             const at = mx + Math.round((w - PANEL) * (0.2 + 0.6 * rnd()));
-            dt.stamp(ATLAS, prop, Math.max(mx, Math.min(at, mx + w - PANEL)),
-                     my - PANEL, STAMP0);
+            const px = Math.max(mx, Math.min(at, mx + w - PANEL));
+            dt.stamp(ATLAS, prop, px, my - PANEL, STAMP0);
+            if (roofs) roofs.push({ x: px + PANEL / 2, y: my - PANEL });
           }
         }
       }
@@ -2042,8 +2085,9 @@
         const masses = massesOf(block);
         const roofProps = ROOF[form] || ['city-prop-ac'];
         const settled = BAND_LIT.base + box.depth * BAND_LIT.depth;
+        const roofs = [];
         const dt = this.blank(box.w, box.h + PANEL);
-        this.stamp(dt, box, masses, skin, open, rnd, settled, roofProps);
+        this.stamp(dt, box, masses, skin, open, rnd, settled, roofProps, roofs);
         dt.render();
         const veil = VEIL_TINT[box.depth] || VEIL_TINT[1];
         const body = this.add.image(box.x, box.y - PANEL, dt.key).setOrigin(0, 0);
@@ -2219,32 +2263,37 @@
           }
         }
 
-        // WHOSE BUILDING THIS IS, IN LETTERS. The same primitive the shops' names
-        // are set in — the wall's own bitmap face, drawn a pixel at a time, no
-        // generated lettering anywhere near it — on a plate hung just under this
-        // building's roofline, in its owner's own colour. It hangs in the band's
-        // sign layer with the shopfronts, so it sorts with the depth it belongs
-        // to; and it is PERMANENT, because who built a thing does not expire.
-        // Only the tube in it does.
+        // WHOSE BUILDING THIS IS — IN COLOUR, NOT IN WORDS. A word on a roofline in
+        // this city means a business: HOTEL, CAFE, 麵. So a name up there read as a
+        // bar called Emre, and it competed with the shopfronts it was standing over.
+        // The district says who instead the way it has always said who is running a
+        // job: with a light. One small lamp in the owner's own tint, standing on the
+        // block's own roof furniture, cooling on the same clock the shoulder tube
+        // cools on and out when that clock runs out — so what a night's roofline
+        // carries is a scatter of cyan, amber, cream and ember, one dot per person
+        // who shipped today, and nothing that has to be read.
+        //
+        // Words belong to the HUD, which can set type at a size the room can read
+        // (wall.js, plateQueue: a ship holds the brief plate for its own moment).
         if (block.label) {
+          // On the parapet, over the roof furniture the seeded draw put there — a
+          // lamp bolted to the thing already standing up there, not one hovering
+          // over it. Half of its bloom spills into the sky and half down the roof,
+          // which is how every other light on this wall sits.
           const ink = rgb(block.crew);
-          const word = this.wordBoard(block.label, ink);
-          const at = boardBox(box, word.w);
-          const plate = this.add.image(at.x, at.y, '__WHITE').setOrigin(0, 0);
-          plate.setDisplaySize(at.w, at.h);
-          plate.setTint(0x02060a);
-          bracket(plate);
-          const lamp = this.light(at.x + at.w / 2, at.y + at.h / 2,
-                                  at.w * 1.15 + CELL, at.h * 2.1, ink, 0);
-          bracket(lamp);
-          const glyph = this.add.image(at.x, at.y, word.key).setOrigin(0, 0);
-          bracket(glyph);
-          parts.board = {
-            plate, lamp, glyph, at,
-            // Its own stutter, off the same seeded slice the shopfronts stagger
-            // on: a street where every tube blinks together is a wallpaper sample.
-            hang: block.shop ? block.shop.hang : 0,
-          };
+          const roof = box.x + (roofs.length ? roofs[0].x : box.w / 2);
+          const halo = this.light(roof, box.y - TILE / 2,
+                                  MARKER * REM, MARKER * REM, ink, 0);
+          root.add(halo);
+          const core = this.add.image(roof - MARKER_CORE / 2,
+                                      box.y - TILE / 2 - MARKER_CORE / 2,
+                                      '__WHITE').setOrigin(0, 0);
+          core.setDisplaySize(MARKER_CORE, MARKER_CORE);
+          core.setTint(ink);
+          core.setBlendMode(Phaser.BlendModes.ADD);
+          core.setAlpha(0);
+          root.add(core);
+          parts.marker = { core, halo, base: halo.scaleX };
         }
 
         // The ship's own two lights, and the only green in the district: the sweep
@@ -2956,11 +3005,16 @@
         if (id) ships.clock = { id, from: at - BUILD.lead - SHIP_PARK, born: false };
       }
 
-      // What that still is looking at: the run the query named, else the newest
-      // building on the plain that carries somebody's name — which is the newest
-      // ship the ledger has, and the only kind of building this shot is about.
+      // What that still is looking at: the run the query named, else THE LAST RUN
+      // THIS WALL SHIPPED — a fact about the snapshot (`model.shipped`), not about
+      // the skyline, so it is still the right answer hours after that run's
+      // completion moment took its tower down. A ledger with no `ready` run behind
+      // it falls back to the newest building somebody's name is on, because a shot
+      // about a ship still needs a ship.
       shipTarget(s) {
         if (s.run && this.blocks.has(s.run)) return s.run;
+        const model = this.model;
+        if (model && model.shipped && this.blocks.has(model.shipped)) return model.shipped;
         let best = null;
         for (const [id, parts] of this.blocks) {
           if (!parts.block.label) continue;
@@ -3032,14 +3086,14 @@
         return lensAt(step.u, wide, plot);
       }
 
-      // How much of the skyline is left while the camera is out on the plot. It goes
-      // back over the same move that takes the camera out of the room and comes up
-      // again over the one that brings it home, so nothing steps.
-      shipSkyline(step) {
+      // How much of everything that is not the hero is left while the camera is out
+      // on a plot. It goes back over the same move that takes the camera out of the
+      // room and comes up again over the one that brings it home, so nothing steps.
+      shipDim(step) {
         if (step.phase === 'over' || step.phase === 'out') {
-          return 1 - (1 - PLOT_SKYLINE) * ease(step.u);
+          return 1 - (1 - PLOT_BACK) * ease(step.u);
         }
-        return step.phase === 'plot' ? PLOT_SKYLINE : 1;
+        return step.phase === 'plot' ? PLOT_BACK : 1;
       }
 
       // And what the PANE is told while that happens. The dive's own beats say it
@@ -3161,7 +3215,15 @@
         const cam = this.cameras.main;
         cam.setZoom(pose.zoom);
         cam.centerOn(pose.x, pose.y);
-        this.cityC.setAlpha(onPlot ? this.shipSkyline(step) : 1);
+        // ONE HERO: the skyline and the district's other buildings both step back to
+        // PLOT_BACK while the camera is out on a plot, and come back with it.
+        const back = onPlot ? this.shipDim(step) : 1;
+        this.cityC.setAlpha(back);
+        this.plot = {
+          hero: onPlot ? (filming ? filming.run : this.shipTarget(s)) : '',
+          dim: back,
+        };
+        if (this.landmark) this.landmark.root.setAlpha(back);
         this.paintDive(dived, dived && dived.room,
                        this.apertureStep(step, onPlot && filming));
       }
@@ -3197,18 +3259,16 @@
         const block = parts.block;
         const shop = parts.shop;
         const box = parts.box;
-        // How old this building is — and whether this page was there when it
-        // landed. The birth's whole shape is the age, so a browser that opens
-        // four seconds into one joins it four seconds in; but a district that was
-        // ALREADY STANDING when the page opened is furniture, however fresh the
-        // ledger's newest row happens to be. Without that second half the wall
-        // would replay a building's first eight seconds every time somebody
-        // reloaded the TV, which is a wall that cries wolf.
+        // How old this building is, and that is the whole of it. The birth is a
+        // position in the block's own age: a browser that opens four seconds into
+        // one joins it four seconds in, a wall that reboots mid-birth shows the rest
+        // of that birth, and one opened after `lead + BUILD` finds a building
+        // standing. No second rule about what this page happened to witness — the
+        // district is a record, and a record reads the same to everybody looking.
         const clock = ships.clock && ships.clock.id === block.id ? ships.clock : null;
         const age = clock ? Math.max(0, at - clock.from)
           : Math.max(0, at - (block.at || at));
-        const seen = clock ? clock.born : (block.at || 0) > this.origin;
-        const birth = birthAt(age - BUILD.lead, phase.still || !seen);
+        const birth = birthFrame(age, box, phase.still);
         // A building lands with one settle and is furniture after that — and
         // the age it is fast-forwarded by is the same one --age carries in the
         // DOM world, so a browser opening this afternoon finds this morning's
@@ -3219,35 +3279,29 @@
         const settling = birth.done && !phase.still;
         const landed = settling ? Math.min(1, age / 0.9) : 1;
         const drop = settling ? Math.round(Math.max(0, 1 - age / 0.9) * 14) : 0;
-        parts.root.setAlpha(landed);
+        // And how present this building is at all: full, unless the camera is out on
+        // somebody else's plot, in which case it is the street the hero stands in.
+        const here = this.plot.hero === block.id ? 1 : this.plot.dim;
+        parts.root.setAlpha(landed * here);
         parts.root.setY(drop);
         for (const sign of parts.signs) sign.g.setY(sign.y + drop);
 
-        // THE REVEAL. The building's own stamped image, arriving bottom-up in
-        // whole 32 px courses — a crop, not a second stamp, and quantised to the
-        // façade's own course because a wall that slid up between two storeys
-        // would be a wipe over a picture rather than a building going up.
-        const tall = box.h + PANEL;
-        const shown = Math.min(tall,
-          Math.round(birth.wall * Math.ceil(tall / PANEL)) * PANEL);
-        if (parts.shown !== shown) {
-          parts.shown = shown;
+        // THE REVEAL, and the frame that went up before it — both of them a CROP on
+        // one image, which is why a building going up on this wall costs the frame
+        // loop two numbers and not a single re-stamped texture.
+        if (parts.shown !== birth.shown) {
+          parts.shown = birth.shown;
           for (const wall of [parts.body, parts.hot]) {
             if (!wall) continue;
-            if (shown >= tall) wall.setCrop();
-            else wall.setCrop(0, tall - shown, box.w, shown);
+            if (birth.shown >= birth.tall) wall.setCrop();
+            else wall.setCrop(0, birth.tall - birth.shown, box.w, birth.shown);
           }
         }
-        // And the frame, as one number: up over the first two seconds, struck
-        // over the seventh. Both directions are "how much of it is standing",
-        // measured from the pavement, so it comes down from the top.
-        const up = Math.min(tall,
-          Math.round(birth.up * Math.ceil(tall / LIFT.h)) * LIFT.h);
-        if (parts.up !== up) {
-          parts.up = up;
+        if (parts.up !== birth.up) {
+          parts.up = birth.up;
           for (const frame of parts.lift) {
-            frame.setVisible(up > 0);
-            if (up > 0) frame.setCrop(0, tall - up, box.w, up);
+            frame.setVisible(birth.up > 0);
+            if (birth.up > 0) frame.setCrop(0, birth.tall - birth.up, box.w, birth.up);
           }
         }
         // The sweep up the finished mass, and the one green light in this
@@ -3263,14 +3317,17 @@
         // The shop, its light and its glass belong to a finished building: a
         // frontage is not open for business while the wall over it is still
         // arriving, so all of it comes up with the top of the reveal.
-        const fit = clamp01((birth.wall - 0.7) / 0.3);
+        const fit = birth.fit;
         for (const item of parts.fittings) item.g.setAlpha(item.a * fit);
-        if (shop.lamp) shop.lamp.setAlpha(shop.lampBase * landed * fit);
-        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23) * landed * fit);
+        // The shopfront's own sign hangs in the band's shared sign layer rather than
+        // inside this block, so it takes the step-back by hand.
+        const on = landed * fit * here;
+        if (shop.lamp) shop.lamp.setAlpha(shop.lampBase * on);
+        if (shop.neon) shop.neon.setAlpha(tubeAt(phase, shop.neonPhase, 23) * on);
         if (shop.glyph) {
           const lit = tubeAt(phase, shop.glyphPhase, 23);
-          shop.glyph.setAlpha(lit * landed * fit);
-          if (shop.plate) shop.plate.setAlpha((0.5 + lit * 0.4) * landed * fit);
+          shop.glyph.setAlpha(lit * on);
+          if (shop.plate) shop.plate.setAlpha((0.5 + lit * 0.4) * on);
         }
         parts.panes.forEach((pane, i) =>
           pane.g.setAlpha(paneAt(phase, i, pane.phase * 13) * BAND_PANE * fit));
@@ -3281,17 +3338,17 @@
         // TODAY'S SHIP IS THE LIT ONE. The second stamp, crossfading down to the
         // settled wall underneath over the same six hours the shoulder tube takes.
         if (parts.hot) parts.hot.setAlpha(cool);
-        // And the name board: its tube strikes when the building lights up, hums
-        // and cools with everything else on this plot, and what is left after that
-        // is the name at its unlit value — still a name, still readable close up,
-        // quiet from the sofa. A board never goes out, because who built a thing
-        // does not expire.
-        if (parts.board) {
-          const on = birth.sign * landed;
-          const hum = tubeAt(phase, parts.board.hang, 16);
-          parts.board.glyph.setAlpha((BOARD_DIM + (1 - BOARD_DIM) * cool * hum) * on);
-          parts.board.plate.setAlpha((0.55 + 0.25 * cool * hum) * on);
-          parts.board.lamp.setAlpha(0.34 * cool * hum * on);
+        // And the owner's dot on the roof. It strikes at the beat the cascade sweeps
+        // — the second the building's own lights come on — and cools with everything
+        // else on this plot, out when the shoulder tube is out. Its own slow hum, off
+        // the same seeded stagger the shopfronts blink on, so a roofline of them is a
+        // scatter of colour rather than a row of pilot lights on one beat.
+        if (parts.marker) {
+          const hum = 0.72 + 0.28 * tubeAt(phase, block.shop ? block.shop.hang : 0, 16);
+          const on = cool * hum * birth.sign * landed;
+          parts.marker.core.setAlpha(MARKER_ALPHA * on);
+          parts.marker.halo.setAlpha(MARKER_HALO * on);
+          parts.marker.halo.setScale(parts.marker.base * (0.9 + 0.1 * hum));
         }
       }
 
@@ -3484,17 +3541,18 @@
     w: W, h: H, dpr: DPR, pix: PIX, gw: GW, gh: GH, vw: VW, vh: VH, rem: REM,
     panel: PANEL, tile: TILE, bay: BAY, sky: SKY, skyX: SKY_X, skyY: SKY_Y,
     ground: GROUND, groundY: GROUND_Y, cityH: CITY_H, districtH: DISTRICT_H,
-    roomPix: ROOM_PIX, roomW: ROOM_W, roomH: ROOM_H, plotPix: PLOT_PIX,
+    roomPix: ROOM_PIX, roomW: ROOM_W, roomH: ROOM_H,
   });
 
   return {
     create, measure, grid, phaseAt, tubeAt, paneAt, facadeAt, signAt, shaftAt,
     walkerAt, vehicleAt, ramp, towerLayout, heroOf, heroBand, skyKeep,
-    blockBox, massesOf, boardBox, plotBoxAt,
+    blockBox, massesOf, plotBoxAt, plotLens,
     storeyAt, spanAt, baysOf, windowAt, ease, reelPlan, reelAt, shotOf, reelWith,
     poseAt, roomBoxAt, apertureAt, lensAt, widePose, roomPose,
-    shipPlan, shipAt, shipShotOf, shipDiveOf, birthAt,
+    shipPlan, shipAt, shipShotOf, shipDiveOf, birthAt, birthFrame,
     TOWER_MASSES, FORM_MASSES, KIND_MASSES, PLANES, BAND, BAND_WAS, BAND_LIT,
     HERO_AIR, SHIP, SHIP_FRESH, SHIP_PARK, BUILD, CELL, LIFT, CEREMONY,
+    PLOT_ZOOM, PLOT_FILL, PLOT_WIDE, PLOT_SKY, PLOT_BACK, MARKER, MARKER_CORE,
   };
 }));
