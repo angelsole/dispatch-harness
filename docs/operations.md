@@ -161,6 +161,23 @@ resuming: turn ceiling (1/2)
 `runs/<TICKET>/turn-resumes`. Only once that budget is spent does the run
 surface `implementer_failed`.
 
+**A resume appends to the stream; it does not replace it.** Each segment of a
+resumed attempt writes into the same `opus-stream.jsonl`, exhausted one first,
+and the file is truncated exactly once per *invocation* — up with the
+[attempt rotation](#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch), never
+per spawn. It used to be truncated per spawn, which threw away every event of
+the segment that ran out of turns: the verifier scored a trajectory with most of
+the implementer's work missing, and the telemetry described only the last
+segment. So `metrics.implementer_num_turns` and `metrics.implementer_usage` are
+now **summed over every segment** of the invocation, with
+`metrics.implementer_segments` saying how many there were (`1` for a run that
+never resumed) — without which a resumed run, the expensive kind, was recorded
+as cheaper than one that finished in a single go, and the
+[Quartermaster](#the-quartermaster) sized the next dispatch off that number. What the failure classifiers want is narrower — the
+segment that just ended — and they get it by reading the stream's **last**
+result event, so a ceiling hit followed by a clean segment is not another
+ceiling hit.
+
 Two things outrank the turn budget. A **session limit** is classified first, so
 a run whose window emptied mid-flight takes the
 [capacity deferral](#capacity-preflight-a-run-that-defers-itself) instead of
