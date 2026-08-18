@@ -7,7 +7,7 @@
 #
 # Columns: run, arm, implementer model/effort, reviewer model/effort, status,
 #          gate rounds (e.g. fail,pass), implementer/reviewer commit counts,
-#          +/- lines vs base, wall minutes.
+#          +/- lines vs base, wall minutes, verifier score.
 #
 # Runs predating a field — the metrics instrumentation (result.json without a
 # `metrics` object) or the model/effort knobs — render with blanks, never
@@ -68,7 +68,11 @@ REPORT_FILTER='
         else (((.metrics.attempts // []) | length) as $l | if $l > 0 then $l else 1 end)
         end) | tostring),
     ((.metrics.self_resumes // 0) | tostring),
-    ((.metrics.implementer_max_turns // "") | tostring)
+    ((.metrics.implementer_max_turns // "") | tostring),
+    # The advisory trajectory score from the verifier stage. Empty on every run
+    # it did not score, which keeps those runs out of the statistic rather than
+    # sinking it with zeros they never earned.
+    ((.metrics.verifier.score // "") | tostring)
   ] | @tsv'
 
 # One line per attempt of every run: the status it died on, and the idle gap
@@ -120,9 +124,12 @@ report() {
       if (idx > n) idx = n
       return a[idx]
     }
+    # `dec` is how many decimals the value deserves: 0 for counts, 1 for
+    # minutes, 2 for a score that lives entirely between 0 and 1 and would lose
+    # most of what it says at one.
     function statline(label, a, n, dec) {
       if (n == 0) { printf "%-16s %10s %9s %6d\n", label, "-", "-", 0; return }
-      if (dec) printf "%-16s %10.1f %9.1f %6d\n", label, pctl(a, n, 50), pctl(a, n, 90), n
+      if (dec) printf "%-16s %10.*f %9.*f %6d\n", label, dec, pctl(a, n, 50), dec, pctl(a, n, 90), n
       else     printf "%-16s %10d %9d %6d\n", label, pctl(a, n, 50), pctl(a, n, 90), n
     }
     # Keys of an associative array, by descending count then name.
@@ -191,6 +198,7 @@ report() {
         nceil++
         if ($6 + 0 > $15 + 0) overceil++
       }
+      if ($16 != "") vscore[++nvs] = $16 + 0
     }
     END {
       printf "pipeline vitals · %d runs · %s\n%s\n", total, stamp, runs
@@ -264,6 +272,10 @@ report() {
       statline("wall minutes", wall, nwall, 1)
       statline("output tokens", tok, ntok, 0)
       statline("gate seconds", gsec, ngsec, 0)
+      # How well the runs satisfied their briefs, as a third vendor read them.
+      # N is how many runs the verifier scored at all — the rest are absent from
+      # this line rather than counted as zero.
+      statline("verify score", vscore, nvs, 2)
       # The CLI and the ceiling do not count the same thing, and pretending they
       # do turned two honest runs into a phantom "206 turns against a 200 cap".
       if (nceil + 0 > 0)
@@ -322,7 +334,7 @@ if [ "$REPORT" = 1 ]; then
   exit 0
 fi
 
-# Emit the twelve data fields one per line (blank when absent). Splitting on
+# Emit the thirteen data fields one per line (blank when absent). Splitting on
 # newlines keeps empty fields intact and needs no delimiter char; every element
 # is coerced to a string so `-r` prints it raw. Missing `metrics` (old runs)
 # falls through jq's // to empty, so those rows render blank instead of erroring.
@@ -338,18 +350,19 @@ ROW_FILTER='
   (.metrics.codex_commits // "" | tostring),
   (.metrics.diff.insertions // "" | tostring),
   (.metrics.diff.deletions // "" | tostring),
-  (.metrics.wall_seconds // "" | tostring)'
+  (.metrics.wall_seconds // "" | tostring),
+  (.metrics.verifier.score // "" | tostring)'
 
 # Model/effort columns are sized for the explicit model IDs an ablation
 # actually sweeps (claude-sonnet-5 = 15, gpt-5.6-sol = 11) and the longest
 # effort value (medium = 6). Longer values just push the row right, as before.
-TABLE_FMT='%-26s %-9s %-15s %-6s %-11s %-6s %-13s %-11s %5s %5s %6s %6s %8s\n'
+TABLE_FMT='%-26s %-9s %-15s %-6s %-11s %-6s %-13s %-11s %5s %5s %6s %6s %8s %5s\n'
 
 if [ "$CSV" = 1 ]; then
-  echo "run,arm,model,implementer_effort,reviewer_model,reviewer_effort,status,gate_rounds,opus_commits,codex_commits,insertions,deletions,wall_minutes"
+  echo "run,arm,model,implementer_effort,reviewer_model,reviewer_effort,status,gate_rounds,opus_commits,codex_commits,insertions,deletions,wall_minutes,score"
 else
   # shellcheck disable=SC2059
-  printf "$TABLE_FMT" RUN ARM MODEL EFFORT R-MODEL R-EFF STATUS GATE OPUS CODEX +LN -LN WALL_MIN
+  printf "$TABLE_FMT" RUN ARM MODEL EFFORT R-MODEL R-EFF STATUS GATE OPUS CODEX +LN -LN WALL_MIN SCORE
 fi
 
 found=0
@@ -360,21 +373,22 @@ for f in "$RUNS"/*/result.json; do
   rowdata=$(jq -r "$ROW_FILTER" "$f" 2>/dev/null) || rowdata=""
   { read -r arm; read -r model; read -r ieff; read -r rmodel; read -r reff
     read -r status; read -r gates
-    read -r oc; read -r cc; read -r ins; read -r del; read -r wall
+    read -r oc; read -r cc; read -r ins; read -r del; read -r wall; read -r score
   } <<EOF
 $rowdata
 EOF
   wall_min=$(awk -v s="$wall" 'BEGIN{ if (s == "") print ""; else printf "%.1f", s/60 }')
   if [ "$CSV" = 1 ]; then
     # gate_rounds is the only field that can contain a comma — quote it.
-    printf '%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,%s\n' \
       "$run" "$arm" "$model" "$ieff" "$rmodel" "$reff" "$status" \
-      "$gates" "$oc" "$cc" "$ins" "$del" "$wall_min"
+      "$gates" "$oc" "$cc" "$ins" "$del" "$wall_min" "$score"
   else
     # shellcheck disable=SC2059
     printf "$TABLE_FMT" "$run" "${arm:--}" "${model:--}" "${ieff:--}" \
       "${rmodel:--}" "${reff:--}" "${status:--}" \
-      "${gates:--}" "${oc:--}" "${cc:--}" "${ins:--}" "${del:--}" "${wall_min:--}"
+      "${gates:--}" "${oc:--}" "${cc:--}" "${ins:--}" "${del:--}" "${wall_min:--}" \
+      "${score:--}"
   fi
 done
 
