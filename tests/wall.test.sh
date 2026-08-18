@@ -3834,6 +3834,65 @@ console.log(JSON.stringify({
     return air.x >= at.x && air.x + air.wide <= at.x + at.w
       && air.y <= at.y + at.h && air.y - air.tall - 1 >= at.y;
   })(),
+  // In frame is not enough, and this is the one that was wrong: the lens pushes
+  // for twelve seconds and the crop origin walks out to x 39, so a bunch that
+  // merely started inside the frame spent the back half of every hold cut off
+  // on the left edge. What is measured is the sprite's own leftmost OPAQUE
+  // pixel, at the slot, against cropAt(1) — and it has to be comfortably
+  // inboard rather than merely inside.
+  airCropMargin: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const img = decode(fs.readFileSync(path.join(process.argv[4], "wall", "assets", "room",
+      R.PROP_ART.balloons.file)));
+    let leftmost = img.w;
+    for (let y = 0; y < img.h; y++) {
+      for (let x = 0; x < leftmost; x++) {
+        const at = (y * img.w + x) * img.bpp;
+        if (!(img.bpp === 4 && img.px[at + 3] === 0)) { leftmost = x; break; }
+      }
+    }
+    // The drift is vertical, so the leftmost column is the same at both ends of
+    // it — but the crop's own left edge is taken at the deepest push, which is
+    // where it is furthest right.
+    return (air.x + leftmost) - R.cropAt(1).x;
+  })(),
+  // The crop only ever travels one way, so the deepest push really is the worst
+  // case rather than one sample of it.
+  cropLeftAtFullPush: R.cropAt(1).x,
+  cropLeftEdgeNeverPassesFullPush: Array.from({ length: 201 },
+    (_, i) => R.cropAt(i / 200).x).every((x) => x <= R.cropAt(1).x),
+  // WHAT IT IS TIED TO. A bunch of balloons nobody tied to anything is a bunch
+  // that has got away, and a trimmed sprite's strings stop where its drawing
+  // does — so the slot carries an anchor and the room runs them down to it.
+  // Measured: the anchor is the desk's own top surface, it is below where the
+  // sprite ends so there is a gap for the tether to close, and the strings'
+  // own columns land ON the desk rather than in the air beside it.
+  airTether: (() => {
+    const air = R.SLOTS.find((s) => s.key === "air");
+    const asset = (rel) => decode(fs.readFileSync(path.join(process.argv[4], "wall", rel)));
+    const img = asset("assets/room/" + R.PROP_ART.balloons.file);
+    const cols = [];
+    for (let x = 0; x < img.w; x++) {
+      const at = ((img.h - 1) * img.w + x) * img.bpp;
+      if (!(img.bpp === 4 && img.px[at + 3] === 0)) cols.push(x);
+    }
+    const desk = asset("assets/room/desk.png");
+    const deskAt = R.DESK_Y - R.BOX.desk.y;
+    const onDesk = (x) => {
+      const dx = x - 29;
+      const dy = R.DESK_Y - deskAt;
+      if (dx < 0 || dx >= desk.w || dy < 0 || dy >= desk.h) return false;
+      const at = (dy * desk.w + dx) * desk.bpp;
+      return !(desk.bpp === 4 && desk.px[at + 3] === 0);
+    };
+    return JSON.stringify({
+      anchor: air.anchor === R.DESK_Y,
+      // The tether has rows to cover at both ends of the drift.
+      gap: air.anchor - (air.y - 1) >= 2 && air.anchor > air.y,
+      strings: cols.length,
+      knotOnTheDesk: cols.every((c) => onDesk(air.x + c)),
+    });
+  })(),
   // The top of the gap is under the window frame and never over the glass, and
   // the bottom of it is past the floor line without reaching into the desk: a
   // string that ends in the air above a desk is a string holding something up.
@@ -4373,6 +4432,21 @@ check "birthday: and they are clear of everything that has to stay readable" \
   "$(room_of airClearOf)" ""
 check "birthday: including at the deepest the lens pushes" \
   "$(room_of airInFrameAtFullPush)" "true"
+# The defect round 3 was called for: the crop origin ends at x 39 after the
+# twelve-second push, and a bunch whose leftmost pixel sat at 41 was sliced on
+# the frame edge for the back half of every hold. Four pixels is the floor the
+# owner set; five is what the slot has.
+AIR_MARGIN="$(room_of airCropMargin)"
+if [ "$AIR_MARGIN" -ge 4 ] 2>/dev/null; then
+  ok "birthday: airClearsTheCropAtFullPush — ${AIR_MARGIN} px inboard of x $(room_of cropLeftAtFullPush)"
+else
+  bad "birthday: airClearsTheCropAtFullPush (only ${AIR_MARGIN} px inboard, floor is 4)"
+fi
+check "birthday: and that deepest push is the crop's own furthest right" \
+  "$(room_of cropLeftEdgeNeverPassesFullPush)" "true"
+check "birthday: the bunch is tied to the desk, not left floating" \
+  "$(room_of airTether)" \
+  '{"anchor":true,"gap":true,"strings":2,"knotOnTheDesk":true}'
 check "birthday: they hang under the window frame and never over the glass" \
   "$(room_of airUnderTheFrameNotTheGlass)" "true"
 check "birthday: and they are loud enough to carry, on the lock and off the alarm" \
@@ -4474,8 +4548,16 @@ check "birthday: and it lands between the baked desk and the near plane" \
 grep_ok "$ROOM_ALL" '        if (SLOTS[i].floats) continue;' \
   "birthday: and the bake leaves it alone, so nothing is drawn twice"
 AIR_FN="$(awk '/^    function theirAir\(v, beat\) \{/, /^    \}$/' "$SRC/wall/room.js")"
-grep_ok "$AIR_FN" 'thing({ ...SLOTS[i], y: SLOTS[i].y - beat.sway }, put[i]);' \
+grep_ok "$AIR_FN" 'const at = { ...SLOTS[i], y: SLOTS[i].y - beat.sway };' \
   "birthday: the drift moves the place, never the sprite"
+# The tether is measured from the ANCHOR, so the drift lengthens the string
+# rather than sliding the knot: a balloon breathing on a tether, not a balloon
+# riding up and down a pole.
+TETHER_FN="$(awk '/^    function tether\(slot, cols, from\) \{/, /^    \}$/' "$SRC/wall/room.js")"
+grep_ok "$TETHER_FN" 'box(slot.x + x, from, 1, slot.anchor - from, GREY, 0.4);' \
+  "birthday: and the tether is measured from the knot, so only its length moves"
+grep_ok "$AIR_FN" 'if (cols.length) tether(SLOTS[i], cols, at.y - 1);' \
+  "birthday: from the sprite's own last drawn row, so the line joins the strings"
 grep_ok "$THING_CODE" 'if (!slot.floats) box(slot.x - 1, slot.y, w + 2, 1, NIGHT, 0.55);' \
   "birthday: and nothing hanging in the air gets a contact shadow"
 check "room: reduced motion is one frame at every second of the clock" \

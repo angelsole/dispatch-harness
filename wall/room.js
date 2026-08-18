@@ -651,18 +651,28 @@
   //             has to read from three metres rather than from the sofa arm.
   //             The window frame's last drawn row is 81, so the top of the gap
   //             is 82 — under the frame, never over the glass. The bottom is
-  //             129, which is eleven rows past FLOOR_Y and three short of the
-  //             desk: a string that ends in the air above the desk is a string
-  //             holding something up. Its 26 px is the narrowest row of the
-  //             gap, which is row 107, where the lamp's leftmost pixel is 67.
-  //             It is the one place that CROSSES another (`over`), and the one
-  //             thing in this room that is somebody's and still moves.
+  //             129, three rows short of the desk, and what closes those three
+  //             rows is `anchor` rather than more sprite. It is the one place
+  //             that CROSSES another (`over`), the one that is TIED to
+  //             something, and the one thing in this room that is somebody's
+  //             and still moves.
+  //
+  //             Its left edge is the one number in this table that is not about
+  //             the room at all: the lens pushes for twelve seconds and the crop
+  //             origin ends at x 39 (cropAt(1)), so a bunch at 41 was cut on the
+  //             frame edge for the whole back half of a hold. 45 keeps six
+  //             pixels of it inboard at the deepest the lens goes, and puts both
+  //             of the sprite's string columns over the desk's own top row,
+  //             which starts at 57 — the knot has to land on something. And its
+  //             26 is a CAP, not a gap: the wall behind it is empty all the way
+  //             to the person at x 100, but three balloons that read is the
+  //             object and a fourth would be a party shop.
   //
   // `x` is the left edge and `y` is the row the thing STANDS ON — or, for a
-  // place that floats, the row its strings end at — so a prop is placed by one
-  // corner and the committed file's own height does the rest. That is why every
-  // prop sprite is trimmed to its own drawing: there is no table of paddings to
-  // keep in step with the art.
+  // place that floats, the row its strings hang to before the tether takes
+  // over — so a prop is placed by one corner and the committed file's own
+  // height does the rest. That is why every prop sprite is trimmed to its own
+  // drawing: there is no table of paddings to keep in step with the art.
   const SLOTS = [
     {
       key: 'deskWarm', plane: 'desk', x: 88, y: DESK_Y, wide: 14, tall: 26,
@@ -677,12 +687,16 @@
       warm: 'bottom', cold: 'top',
     },
     {
-      key: 'air', plane: 'air', x: 41, y: 129, wide: 26, tall: 46,
+      key: 'air', plane: 'air', x: 45, y: 129, wide: 26, tall: 46,
       // The lamp is below and to the right of this gap and the window above it,
       // so the warm rim is the one on the lamp's side — which is also the side
       // that reads, because it lands on the balloons themselves rather than on
       // two rows of string.
       warm: 'right', cold: 'top', floats: true, over: 'wall',
+      // And the row it is TIED to. The desk's own top surface, which is what is
+      // under it: the sprite's strings stop in the air at `y`, and the room runs
+      // them the last three rows down to here and knots them.
+      anchor: DESK_Y,
     },
   ];
 
@@ -1854,9 +1868,49 @@
       }
     }
 
-    // And the air, drawn live. The only per-frame cost is one sprite, and only
-    // on the one day of the year the slot has anything in it: `v.props` is empty
-    // here on every other day, so this loop does nothing at all.
+    // What a floating thing is TIED to, drawn before it so the sprite's own
+    // strings land on top of the line rather than beside it.
+    //
+    // A bunch of balloons nobody tied to anything is a bunch that has got away,
+    // and the art's strings stop in mid-air because a trimmed sprite stops where
+    // its drawing does. So the room runs them the rest of the way to the slot's
+    // anchor — the desk's own top surface — in one column of the palette's grey,
+    // with two pixels of knot where they land. The column is the sprite's own
+    // centre, which is where a bunch of strings gathers.
+    //
+    // Drawn from the slot rather than baked into the art, and measured from the
+    // ANCHOR rather than from the sprite, so the drift lengthens the string
+    // instead of moving the knot. That is the difference between a balloon
+    // breathing on a tether and a balloon sliding up and down a pole.
+    function tether(slot, cols, from) {
+      for (const x of cols) box(slot.x + x, from, 1, slot.anchor - from, GREY, 0.4);
+      const left = slot.x + cols[0];
+      const wide = cols[cols.length - 1] - cols[0] + 1;
+      box(left, slot.anchor, wide, 1, GREY, 0.55);
+    }
+
+    // WHICH columns those are: the opaque ones of the sprite's own last drawn
+    // row, read once off the committed PNG and kept. The tether is therefore
+    // the art's strings carrying on rather than a second line drawn near them,
+    // and it follows the art if the art is ever re-rolled. A trimmed sprite
+    // always has at least one opaque pixel on its last row, which is what makes
+    // this safe to index.
+    const strings = {};
+    function stringsOf(name, img) {
+      if (strings[name]) return strings[name];
+      const w = img.naturalWidth;
+      propCtx.clearRect(0, 0, PROP_PAD, PROP_PAD);
+      propCtx.drawImage(img, 0, 0);
+      const row = propCtx.getImageData(0, img.naturalHeight - 1, w, 1).data;
+      const cols = [];
+      for (let x = 0; x < w; x++) if (row[x * 4 + 3] >= 128) cols.push(x);
+      strings[name] = cols;
+      return cols;
+    }
+
+    // And the air, drawn live. The only per-frame cost is one sprite and one
+    // line, and only on the one day of the year the slot has anything in it:
+    // `v.props` is empty here on every other day, so this loop does nothing.
     //
     // The drift is a whole pixel off the slot's own row — the place moves, the
     // sprite is untouched — so the balloons keep the same hard edges and the
@@ -1865,7 +1919,15 @@
       const put = Array.isArray(v.props) ? v.props : [];
       for (let i = 0; i < SLOTS.length; i++) {
         if (!SLOTS[i].floats || !put[i]) continue;
-        thing({ ...SLOTS[i], y: SLOTS[i].y - beat.sway }, put[i]);
+        const at = { ...SLOTS[i], y: SLOTS[i].y - beat.sway };
+        const img = things[put[i]];
+        if (SLOTS[i].anchor && img && img.complete && img.naturalWidth) {
+          // Started at the sprite's own last drawn row rather than a pixel under
+          // it, so the line joins the strings instead of hanging off them.
+          const cols = stringsOf(put[i], img);
+          if (cols.length) tether(SLOTS[i], cols, at.y - 1);
+        }
+        thing(at, put[i]);
       }
     }
 
