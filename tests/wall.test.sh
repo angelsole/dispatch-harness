@@ -3623,6 +3623,18 @@ PINNED_DAY="$(sed -n 's/.*WALL_TODAY=\([0-9][0-9]-[0-9][0-9]\).*/\1/p' \
   "$SRC/.creative/visual.conf.sh" | head -1)"
 check "gate: the visual contract pins the day the fixture render happens on" \
   "$(test -n "$PINNED_DAY" && echo pinned)" "pinned"
+# ...and it pins it with `env`, not with a bare VAR=value prefix. A prefix is SHELL
+# SYNTAX: a runner that hands the command to a shell honours it and one that splits
+# it and execs directly tries to run a program called `WALL_TODAY=06-15`, dies with
+# ENOENT, and reports whatever comes next — a page that never came up. `env` is a
+# real program and both spawns get the same server.
+SERVER_CMD="$(sed -n "s/^VISUAL_SERVER_CMD='\(.*\)'$/\1/p" \
+  "$SRC/.creative/visual.conf.sh" | head -1)"
+case "$SERVER_CMD" in
+  [A-Z_][A-Z_0-9]*=*) bad "gate: the server command survives being spawned without a shell" ;;
+  '') bad "gate: the server command is readable out of the contract" ;;
+  *) ok "gate: the server command survives being spawned without a shell" ;;
+esac
 BIRTHDAYS="$(node -e '
   const fs = require("fs"), path = require("path");
   const crew = JSON.parse(fs.readFileSync(

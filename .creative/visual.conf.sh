@@ -33,7 +33,13 @@ VISUAL_WORLD="${VISUAL_WORLD:-dom}"
 # Monday and a different room on Tuesday is the calendar leaking into a fixture.
 # 06-15 is nobody's birthday in the roster (tests/wall.test.sh pins that), so the
 # gate measures the room the champion frame was taken of, every day of the year.
-VISUAL_SERVER_CMD='WALL_TODAY=06-15 bash wall.sh --host 127.0.0.1 --port 0 --runs wall/fixtures/runs --city "$VISUAL_TMP/city.jsonl"'
+#
+# Spelled with `env` rather than as a bare VAR=value prefix on purpose. A prefix is
+# shell syntax: a runner that hands this string to a shell honours it, and one that
+# splits it and execs directly tries to run a program called `WALL_TODAY=06-15` and
+# dies with ENOENT before the wall ever starts. `env` is a real program, so both
+# spawn the same server — and this file should not care which one the harness is.
+VISUAL_SERVER_CMD='env WALL_TODAY=06-15 bash wall.sh --host 127.0.0.1 --port 0 --runs wall/fixtures/runs --city "$VISUAL_TMP/city.jsonl"'
 VISUAL_URL='http://127.0.0.1:{port}'
 
 # One shot, six frames: a 3x2 contact sheet of 640x360 tiles is the cheap end
