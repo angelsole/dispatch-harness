@@ -16,6 +16,7 @@
 #   ./install.sh --copy           install detached copies instead
 #   ./install.sh --statusline     wire without prompting when run in a terminal
 #   ./install.sh --no-statusline  never touch settings.json, just print how
+#   ./install.sh --verifier       also build the opt-in verifier venv (needs python3)
 #
 # Env overrides:
 #   HARNESS_DIR           install target         (default: ~/.claude/harness)
@@ -23,16 +24,18 @@
 #   CLAUDE_SETTINGS_FILE  settings.json to wire  (default: ~/.claude/settings.json)
 set -eu
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
 
 MODE=symlink
 STATUSLINE=ask
+VERIFIER=0
 for arg in "$@"; do
   case "$arg" in
     --copy)          MODE=copy ;;
     --symlink)       MODE=symlink ;;
     --statusline)    STATUSLINE=yes ;;
     --no-statusline) STATUSLINE=no ;;
+    --verifier)      VERIFIER=1 ;;
     -h|--help)       usage; exit 0 ;;
     *)               echo "unknown option: $arg" >&2; echo >&2; usage >&2; exit 2 ;;
   esac
@@ -50,7 +53,7 @@ STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 FILES=(
   mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
   metrics.sh attach.sh cleanup.sh preview.sh station.sh wall.sh wall demo-auth.sh
-  auth-capture.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
+  auth-capture.py verify.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
   planner-settings.json brief-template.md
 )
 
@@ -134,6 +137,27 @@ wire_statusline() {
   echo "      backup: $backup"
 }
 
+# The verifier stage is opt-in and stays that way: the score is advisory, it
+# needs a third-vendor API key nobody has by default, and a plain install must
+# never reach for Python. Idempotent — an existing venv is reused and the
+# library upgraded in place.
+install_verifier() {
+  local venv="$HARNESS_DIR/verifier-venv" py
+  py="$venv/bin/python"
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "verifier: python3 (>= 3.9) is required and was not found — nothing installed" >&2
+    return 1
+  fi
+  [ -x "$py" ] || python3 -m venv "$venv"
+  "$py" -m pip install --upgrade --quiet llm-verifier
+  echo
+  echo "verifier: llm-verifier installed into $venv"
+  echo "  One more file is not seeded, because it is a credential — create it by hand:"
+  echo "    (umask 077; printf '%s' '<your-deepseek-api-key>' > $HARNESS_DIR/verifier-api-key)"
+  echo "  Every run then scores its own trajectory (advisory — it gates nothing)."
+  echo "  HARNESS_VERIFY=0 turns the stage off; see README, 'The verifier'."
+}
+
 mkdir -p "$HARNESS_DIR"
 
 for f in "${FILES[@]}"; do
@@ -170,3 +194,6 @@ wire_statusline
 echo
 echo "Installed into $HARNESS_DIR (mode: $MODE)."
 echo "Next: pin your repos in $HARNESS_DIR/repos.local.sh — see README.md."
+
+# An `[ … ] && …` tail would make a plain install exit 1 under `set -e`.
+if [ "$VERIFIER" = 1 ]; then install_verifier; fi
