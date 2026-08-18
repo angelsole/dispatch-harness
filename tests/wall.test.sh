@@ -3296,6 +3296,58 @@ console.log(JSON.stringify({
   // What the page is told: the plot beat is its own shot, and no dive at all.
   shots: ['wide', 'in', 'room', 'over', 'plot', 'out'].map(C.shipShotOf).join(','),
   dives: ['wide', 'in', 'room', 'over', 'plot', 'out'].map(C.shipDiveOf).join(','),
+  // THE RACK FOCUS. A camera with a lens focuses one distance and everything nearer
+  // and further goes soft; this world cannot blur, so it does it in value on the
+  // three planes the district already has. Every number is 1 at k = 0, which is the
+  // settled city — the one main draws — so the film gives back what it borrowed.
+  focusSettled: (() => {
+    const f = C.focusAt(0);
+    return f.front === 1 && f.back === 1 && f.skyline === 1 && f.lift === 0
+      && JSON.stringify(C.focusOn(f, 0, false, 2)) === '{"alpha":1,"veil":0}'
+      && JSON.stringify(C.focusOn(f, 2, false, 0)) === '{"alpha":1,"veil":0}'
+      && JSON.stringify(C.focusOn(f, 1, true, 1)) === '{"alpha":1,"veil":0}';
+  })(),
+  // At the far end, each plane is at its own share of itself and no other.
+  focusHeld: (() => {
+    const f = C.focusAt(1);
+    const near = Math.abs(f.front - C.FOCUS.front) < 1e-9
+      && Math.abs(f.back - C.FOCUS.back) < 1e-9
+      && Math.abs(f.skyline - C.FOCUS.skyline) < 1e-9 && f.lift === 1;
+    // In front of the subject gets out of the way; its own band and behind it go
+    // back a stop; the subject keeps its value and loses its band's veil.
+    return near
+      && Math.abs(C.focusOn(f, 2, false, 1).alpha - C.FOCUS.front) < 1e-9
+      && Math.abs(C.focusOn(f, 1, false, 1).alpha - C.FOCUS.back) < 1e-9
+      && Math.abs(C.focusOn(f, 0, false, 1).alpha - C.FOCUS.back) < 1e-9
+      && C.focusOn(f, 1, true, 1).alpha === 1
+      && C.focusOn(f, 1, true, 1).veil === 1
+      && C.FOCUS.front < C.FOCUS.back && C.FOCUS.skyline < C.FOCUS.back;
+  })(),
+  // ...and it eases the whole way there, one direction, no step.
+  focusEases: (() => {
+    const walk = Array.from({ length: 101 }, (_, i) => C.focusAt(i / 100));
+    return walk.every((f, i) => i === 0
+        || (f.front <= walk[i - 1].front && f.back <= walk[i - 1].back
+          && f.skyline <= walk[i - 1].skyline && f.lift >= walk[i - 1].lift))
+      // Out of range is clamped rather than extrapolated: no negative alpha, ever.
+      && C.focusAt(-1).front === 1 && C.focusAt(2).front === C.focusAt(1).front;
+  })(),
+  // The beat it is pulled over: in with the move out of the room, held on the plot,
+  // let go with the move home — and zero on every beat that is not one of those. The
+  // world's own function, not a copy of it that agrees today.
+  focusBeats: (() => {
+    const at = (phase, u) => C.shipFocusAt({ phase, u });
+    return at('wide', 0) === 0 && at('in', 0.5) === 0 && at('room', 1) === 0
+      && at('over', 0) === 0 && at('over', 1) === 1 && at('plot', 1) === 1
+      // `out` counts its own u back down to zero, so the same expression releases it.
+      && at('out', 1) === 1 && at('out', 0) === 0
+      // ...and it eases rather than ramping, like every other move on this wall.
+      && at('over', 0.5) === C.ease(0.5);
+  })(),
+  // And the veil the subject loses is a MULTIPLY tint, so lifting it toward white by
+  // zero has to return the band's own veil unchanged — that is the whole of "byte
+  // for byte what it was".
+  focusVeil: C.FOCUS.front > 0 && C.FOCUS.back > C.FOCUS.front,
 }));
 JS
 SHIP="$(node "$SHIP_PROBE" "$SRC/wall/world-canvas.js" "$SRC/wall/scene.js" 2>&1)"
@@ -3327,6 +3379,16 @@ check "ship: the wall says which shot it is showing, plot included" \
   "$(ship_of shots)" "establishing,room,room,plot,plot,establishing"
 check "ship: and the dive is the room's half of the film only" \
   "$(ship_of dives)" ",push,inside,back,,"
+check "focus: the settled city is every plane at its own value and no veil lifted" \
+  "$(ship_of focusSettled)" "true"
+check "focus: held, the front is out of the way and the subject has lost its veil" \
+  "$(ship_of focusHeld)" "true"
+check "focus: and it eases the whole way there, clamped at both ends" \
+  "$(ship_of focusEases)" "true"
+check "focus: pulled with the move out of the room, held, let go with the move home" \
+  "$(ship_of focusBeats)" "true"
+check "focus: the front goes further back than the band behind the subject does" \
+  "$(ship_of focusVeil)" "true"
 check "birth: the builders arrive when the film's camera can, off one derivation" \
   "$(ship_of lead)" "true"
 check "birth: until they do, a plot is a plot — nothing poured, nothing lit" \
@@ -3390,10 +3452,10 @@ grep_ok "$CANVAS_SRC" 'if (block.label) {' \
   "marker: on a building somebody's name is on, and no other kind"
 # ...and the wall's own two words for "which one am I looking at" are the SAME word:
 # the skyline and the district both step back to one number while the camera is out.
-grep_ok "$CANVAS_SRC" 'const back = onPlot ? this.shipDim(step) : 1;' \
-  "ship: out on a plot, everything that is not the hero steps back together"
-grep_ok "$CANVAS_SRC" 'const here = this.plot.hero === block.id ? 1 : this.plot.dim;' \
-  "ship: which is what turns brighter into that one, for a block as for a tower"
+grep_ok "$CANVAS_SRC" 'const focus = focusAt(onPlot && !still.matches ? shipFocusAt(step) : 0);' \
+  "focus: the camera focuses the plot, and nothing that is still ever focuses"
+grep_ok "$CANVAS_SRC" 'const focus = focusOn(this.plot.focus, box.depth,' \
+  "focus: and every building asks the same function where it stands in it"
 grep_ok "$PAGE_SRC" "const forcedPlot = roomParams.get('shot') === 'ship';" \
   "ship: ?shot=ship is read where the page reads its query string"
 grep_ok "$PAGE_SRC" "const wantedShip = roomParams.get('ship') || '';" \
