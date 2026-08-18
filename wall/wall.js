@@ -1559,6 +1559,14 @@
   // cadence, and four hooks back into the page; it decides where the camera
   // goes and nothing else.
   function reelSignals() {
+    // The parked room is already the requested shot, so let its own twelve-second
+    // lens start with the page instead of waiting for Phaser and the city atlas to
+    // finish booting. On a software-rendered wall that hand-off can land anywhere
+    // inside a 750 ms capture step; starting here gives the room one clock origin
+    // and leaves the canvas world to do only the outer, already-parked camera.
+    // roomPaint() is safe before the first snapshot: roomOn keeps the request and
+    // the arriving snapshot starts the renderer as soon as there is a run to show.
+    if (forcedRoom && !roomOn) roomDive(true, wantedRun);
     return {
       still,
       forced,                                   // ?cinema=1 / ?cinema=0
