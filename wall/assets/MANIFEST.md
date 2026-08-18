@@ -106,7 +106,7 @@ is. The line in `crew.json` is the point — each owner edits their own.
 | `room/prop-ball.png` | a football, for the desk | pixellab.image + halve + trim | `/create-image-pixflux` | `room-prop-ball` | `18526` | 2026-08-17 | generated for this repo | `e092f7d9f941d6a3c6fefb581eb9acab93562f616675c997bf27d6cc8d1f73d7` |
 | `room/prop-poster.png` | a framed night landscape, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-poster` | `18527` | 2026-08-17 | generated for this repo | `4e9f9ec53a15337fc88a1164621961c9307d8c5ace1d9e6e78389ecea5d148e6` |
 | `room/prop-pennant.png` | a felt pennant, for the wall | pixellab.image + trim | `/create-image-pixflux` | `room-prop-pennant` | `18528` | 2026-08-17 | generated for this repo | `7539387a6ba16ab38c48226b3ae8de072c892ecf0d05e038acece3de34baa89b` |
-| `room/prop-balloons.png` | a bunch of three party balloons, for the air; the klaxon-red rim recoloured onto the palette's deep red | pixellab.image + recolour + trim | `/create-image-pixflux` | `room-prop-balloons` | `18532` | 2026-08-18 | generated for this repo | `673ce10f331b4f469a3c64f12c1fc3884d840c27afbe5b307562a0f5a897b545` |
+| `room/prop-balloons.png` | a bunch of three party balloons — gold, ember and sky, one light catch each — for the air | pixellab.image + trim | `/create-image-pixflux` | `room-prop-balloons` | `18542` | 2026-08-18 | generated for this repo | `37733216f5b82967351e0c4ff8381f2b6e559a783c4ec8cdbcedb6fff20c0c0d` |
 
 Three things about these files that the columns cannot say:
 
@@ -122,13 +122,17 @@ Three things about these files that the columns cannot say:
   drawing, so the committed file IS its content box and `room.js` places a thing
   by one corner. The furniture above still carries a `BOX` entry each, because
   those files predate the idea.
-- **Two recolours, for meaning and never for value.** `prop-books` came back with
-  a bright `#ff2f45` cover and `prop-balloons` with a fourteen-pixel rim of the
-  same red, and in this palette that red is an alarm; both are on `#531820` now,
-  pixel for pixel, the same call `room/plant.png` got when it came back in
-  emerald. Nothing was recoloured for being too bright — an asset is authored at
-  full value and the renderer is what veils it, which is why the football keeps
-  its white and the room sinks it instead.
+- **One recolour, for meaning and never for value.** `prop-books` came back with
+  a bright `#ff2f45` cover, and in this palette that red is an alarm; it is on
+  `#531820` now, pixel for pixel, the same call `room/plant.png` got when it came
+  back in emerald. Nothing was recoloured for being too bright — an asset is
+  authored at full value and the renderer is what veils it, which is why the
+  football keeps its white and the room sinks it instead.
+- **One asset is allowed to be loud**, and it is the only one that has to carry
+  from three metres rather than reward a look: `prop-balloons` is gold `#e0a23c`
+  / `#ffc680`, ember `#ff9a5e` and sky `#7ad6ec` / `#4c9dff`, straight off the
+  lock, with a white catch on each. Not the alarm's `#ff2f45` and not the shipped
+  ramp — a balloon that wore either would be saying something about the run.
 
 Ten props were generated and nine are here. `room-prop-headphones` was rolled
 twice, at `18514` and `18524`, and came back both times as a spindle nobody would
@@ -138,12 +142,18 @@ is nine.
 `room-prop-balloons` made it nine, and it is the only one of them nobody owns: a
 line in `crew.json` cannot ask for it. It is granted by a DATE — the `birthday`
 on somebody's roster entry, against the day the server says it is — and it hangs
-in the air on the lamp's side of the room for that day only. Four rolls at
-`18530`, `18531`, `18532` and `18534`: the first put the three balloons on one
-thick bouquet stem, the second read the prompt's "side by side" literally and
-returned three separate balloons with no strings at all, and the fourth came back
-as flowers. `18532` is the one with three balloons clustered and something
-hanging, which at 19x28 against a dark wall is what a bunch of balloons is.
+in the air on the lamp's side of the room for that day only.
+
+Seven rolls, in two rounds. The first four — `18530`, `18531`, `18532`, `18534` —
+were earth-toned and 19x28: `18530` put the three balloons on one thick bouquet
+stem, `18531` read "side by side" literally and returned three balloons with no
+strings, `18534` came back as flowers, and `18532` shipped. Then the owner looked
+at it on the wall and could not see it from the sofa, so three more went at
+double the canvas and with the palette's lively colours named in the prompt:
+`18540` was still too narrow, `18541` filled the width and dropped the strings
+altogether, and `18542` is this one — 26x45, three balloons in three different
+colours with a catch on each and three separate strings knotted at the bottom.
+No recolour was needed on it; the prompt asked for no red and got none.
 
 ## Eight frames, and a head that holds
 

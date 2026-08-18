@@ -352,14 +352,14 @@
     "tool": "pixellab.image",
     "palette": ".creative/palette.png",
     "width": 32,
-    "height": 32,
+    "height": 48,
     "no_background": true,
     "outline": "single color black outline",
     "shading": "basic shading",
     "detail": "low detail",
-    "seed": 18532,
-    "prompt": "one single bunch of three party balloons tied together, the three round balloons clustered in a triangle filling the upper half of the image, three separate thin strings hanging straight down from them into the lower half and knotted together at the very bottom, tall and narrow, seen straight on, centred, nothing else in the image, one amber balloon, one warm orange balloon, one pale cream balloon, lit from the right, thin strings, no stick, no handle, no stem, no wrapping, no flowers, no green, no red, no blue, no text, no letters, no words, no writing",
-    "post": "recolour #ff2f45 -> #531820, trim"
+    "seed": 18542,
+    "prompt": "one single bunch of three big party balloons on long strings, the three round balloons overlapping and filling the entire width of the image across the TOP HALF only, and below them three thin dark grey strings hanging straight down the middle of the LOWER HALF and knotted together at the very bottom edge, seen straight on, centred, nothing else in the image, exactly three balloons, the left one golden yellow, the middle one bright orange, the right one sky blue, no red balloon, no crimson, no pink, no green, vivid saturated colours, one small white highlight catch on each balloon, lit from the right, no stick, no handle, no wrapping, no flowers, no text, no letters, no words, no writing",
+    "post": "trim"
   },
   {
     "id": "crew-angel",
