@@ -79,7 +79,9 @@ Re-run steps 1–3 on the squashed result before pushing.
 ## 5. Publish
 
 - Push the squashed branch to the public remote.
-- Confirm `LICENSE` (MIT) and `README.md` render correctly.
+- Confirm `LICENSE` (MIT), `README.md` and every page under `docs/`
+  (`operations.md`, `reference.md`, `wall.md`, `design-notes.md`) render
+  correctly, including the mermaid diagram and the cross-page links.
 - Flip the repository to **public** in the host's settings (manual).
 - Tag the release if you version it.
 

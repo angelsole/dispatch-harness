@@ -12,19 +12,19 @@ deterministic gate + script glue (free).
 sequenceDiagram
     autonumber
     actor U as You
-    participant F as Planner<br/>Fable 5 · your session
+    participant F as Planner<br/>API
     participant S as run-task.sh<br/>script · free
-    participant O as Opus<br/>implementer · Claude sub
-    participant C as Codex · optional<br/>reviewer · ChatGPT sub
+    participant O as Implementer<br/>Opus · Claude sub
+    participant C as Reviewer · optional<br/>Codex · ChatGPT sub
 
     U->>F: /dispatch PROJ-1234 or free-form idea
     F->>F: research repo (Explore subagents)
     F->>U: brief.md — criteria + verify commands
-    U->>F: approve (± create issue-tracker ticket)
+    U->>F: approve (± create a ticket)
     F->>S: launch run (background)
-    S->>S: worktree from origin/staging<br/>copy .env · install deps
+    S->>S: worktree from origin/<base><br/>copy .env · install deps
     S->>O: brief.md
-    O->>O: design + implement + commit<br/>(Sonnet subagents explore)
+    O->>O: design + implement + commit<br/>(cheaper subagents explore)
 
     alt brief doesn't resolve a fork
         O->>F: QUESTIONS.md — needs_input ⏸
@@ -50,8 +50,11 @@ sequenceDiagram
     F->>U: verdict · preview.sh if frontend
     U->>F: approve
     F->>S: gh pr ready + cleanup.sh
-    S->>U: PR ready for team · worktree cleaned
+    S->>U: PR ready for review · worktree cleaned
 ```
+
+The same block is inlined in [`README.md`](README.md); `tests/docs.test.sh`
+asserts the two stay byte-identical.
 
 ## Claude-only mode (no `codex` CLI)
 

@@ -162,8 +162,9 @@ install_verifier() {
   echo "verifier: llm-verifier installed into $venv"
   echo "  One more file is not seeded, because it is a credential — create it by hand:"
   echo "    (umask 077; printf '%s' '<your-deepseek-api-key>' > $HARNESS_DIR/verifier-api-key)"
+  echo "    Gemini via Vertex instead? Put the service-account JSON at that path."
   echo "  Every run then scores its own trajectory (advisory — it gates nothing)."
-  echo "  HARNESS_VERIFY=0 turns the stage off; see README, 'The verifier'."
+  echo "  HARNESS_VERIFY=0 turns the stage off; see docs/reference.md, 'The verifier'."
 }
 
 mkdir -p "$HARNESS_DIR"
