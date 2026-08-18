@@ -874,14 +874,16 @@
     "to": {
       "id": "room-worker-toast",
       "seed": 21145,
-      "frame": 4
+      "frame_count": 8,
+      "frame": "f04",
+      "note": "the last frame given to the animator, so the mug stops at chest height instead of arriving at the mouth; it is a frame of this set's own open-ended toast at the seed below, from the same committed base. factory.py does not drive last_frame yet - a harness follow-up, not this repo's."
     },
     "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
   },
   {
     "id": "room-worker-watch8",
     "tool": "pixellab.animate",
-    "from": "room-worker-lean#7",
+    "from": "room-worker-lean#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21102,
@@ -890,7 +892,7 @@
   {
     "id": "room-worker-read8",
     "tool": "pixellab.animate",
-    "from": "room-worker-reach#7",
+    "from": "room-worker-reach#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21104,
@@ -899,7 +901,7 @@
   {
     "id": "room-worker-done8",
     "tool": "pixellab.animate",
-    "from": "room-worker-toast#7",
+    "from": "room-worker-toast#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21106,
@@ -933,15 +935,16 @@
     "to": {
       "id": "crew-angel-toast",
       "seed": 21245,
-      "frame": 10,
-      "frame_count": 16
+      "frame_count": 16,
+      "frame": "f10",
+      "note": "the last frame given to the animator, so the mug stops at chest height instead of arriving at the mouth; it is a frame of this set's own open-ended toast at the seed below, from the same committed base. factory.py does not drive last_frame yet - a harness follow-up, not this repo's."
     },
     "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
   },
   {
     "id": "crew-angel-watch8",
     "tool": "pixellab.animate",
-    "from": "crew-angel-lean#7",
+    "from": "crew-angel-lean#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21202,
@@ -950,7 +953,7 @@
   {
     "id": "crew-angel-read8",
     "tool": "pixellab.animate",
-    "from": "crew-angel-reach#7",
+    "from": "crew-angel-reach#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21204,
@@ -959,7 +962,7 @@
   {
     "id": "crew-angel-done8",
     "tool": "pixellab.animate",
-    "from": "crew-angel-toast#7",
+    "from": "crew-angel-toast#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21206,
@@ -980,8 +983,8 @@
     "from": "crew-emre",
     "frame_count": 8,
     "no_background": true,
-    "seed": 21343,
-    "prompt": "the right elbow swings up and wide out to the right and the right hand rises off the keys and settles palm-down onto a computer mouse beside the keyboard; the left hand stays flat on the keys and the head does not move"
+    "seed": 21353,
+    "prompt": "the left hand slides down and to the left off the end of the keyboard and comes to rest palm-down on the small round mouse already sitting there, the fingers closing over it; the right forearm and right hand stay exactly where they are on the desk, and the head does not move"
   },
   {
     "id": "crew-emre-toast",
@@ -993,15 +996,16 @@
     "to": {
       "id": "crew-emre-toast",
       "seed": 21345,
-      "frame": 10,
-      "frame_count": 16
+      "frame_count": 16,
+      "frame": "f10",
+      "note": "the last frame given to the animator, so the mug stops at chest height instead of arriving at the mouth; it is a frame of this set's own open-ended toast at the seed below, from the same committed base. factory.py does not drive last_frame yet - a harness follow-up, not this repo's."
     },
     "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
   },
   {
     "id": "crew-emre-watch8",
     "tool": "pixellab.animate",
-    "from": "crew-emre-lean#7",
+    "from": "crew-emre-lean#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21302,
@@ -1010,16 +1014,16 @@
   {
     "id": "crew-emre-read8",
     "tool": "pixellab.animate",
-    "from": "crew-emre-reach#7",
+    "from": "crew-emre-reach#f08",
     "frame_count": 8,
     "no_background": true,
-    "seed": 21304,
+    "seed": 21354,
     "prompt": "the hand resting on the mouse rolls the wheel with small quick flicks of the wrist, and nothing else in the picture moves at all: the other hand, the arms, the shoulders, the head and the keyboard all stay exactly where they are and keep exactly the same width"
   },
   {
     "id": "crew-emre-done8",
     "tool": "pixellab.animate",
-    "from": "crew-emre-toast#7",
+    "from": "crew-emre-toast#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21306,
@@ -1053,15 +1057,16 @@
     "to": {
       "id": "crew-ran-toast",
       "seed": 21445,
-      "frame": 16,
-      "frame_count": 16
+      "frame_count": 16,
+      "frame": "f16",
+      "note": "the last frame given to the animator, so the mug stops at chest height instead of arriving at the mouth; it is a frame of this set's own open-ended toast at the seed below, from the same committed base. factory.py does not drive last_frame yet - a harness follow-up, not this repo's."
     },
     "prompt": "the right hand comes up off the keyboard holding a coffee mug and lifts it out to the right, in a toast; the left hand stays flat on the keys and the head does not move"
   },
   {
     "id": "crew-ran-watch8",
     "tool": "pixellab.animate",
-    "from": "crew-ran-lean#7",
+    "from": "crew-ran-lean#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21402,
@@ -1070,7 +1075,7 @@
   {
     "id": "crew-ran-read8",
     "tool": "pixellab.animate",
-    "from": "crew-ran-reach#7",
+    "from": "crew-ran-reach#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21404,
@@ -1079,7 +1084,7 @@
   {
     "id": "crew-ran-done8",
     "tool": "pixellab.animate",
-    "from": "crew-ran-toast#7",
+    "from": "crew-ran-toast#f08",
     "frame_count": 8,
     "no_background": true,
     "seed": 21406,
