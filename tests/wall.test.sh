@@ -3297,12 +3297,13 @@ console.log(JSON.stringify({
   shots: ['wide', 'in', 'room', 'over', 'plot', 'out'].map(C.shipShotOf).join(','),
   dives: ['wide', 'in', 'room', 'over', 'plot', 'out'].map(C.shipDiveOf).join(','),
   // THE RACK FOCUS. A camera with a lens focuses one distance and everything nearer
-  // and further goes soft; this world cannot blur, so it does it in value on the
-  // three planes the district already has. Every number is 1 at k = 0, which is the
-  // settled city — the one main draws — so the film gives back what it borrowed.
+  // and further goes soft; this world cannot blur, so it separates the existing
+  // planes in value. Every multiplier is 1 at k = 0, which is the settled city —
+  // the one main draws — so the film gives back what it borrowed.
   focusSettled: (() => {
     const f = C.focusAt(0);
-    return f.front === 1 && f.back === 1 && f.skyline === 1 && f.lift === 0
+    return f.front === 1 && f.back === 1 && f.skyline === 1
+      && f.signs === 1 && f.haze === 1
       && JSON.stringify(C.focusOn(f, 0, false, 2)) === '{"alpha":1,"veil":0}'
       && JSON.stringify(C.focusOn(f, 2, false, 0)) === '{"alpha":1,"veil":0}'
       && JSON.stringify(C.focusOn(f, 1, true, 1)) === '{"alpha":1,"veil":0}';
@@ -3312,23 +3313,27 @@ console.log(JSON.stringify({
     const f = C.focusAt(1);
     const near = Math.abs(f.front - C.FOCUS.front) < 1e-9
       && Math.abs(f.back - C.FOCUS.back) < 1e-9
-      && Math.abs(f.skyline - C.FOCUS.skyline) < 1e-9 && f.lift === 1;
+      && Math.abs(f.skyline - C.FOCUS.skyline) < 1e-9
+      && Math.abs(f.signs - C.FOCUS.signs) < 1e-9
+      && Math.abs(f.haze - C.FOCUS.haze) < 1e-9;
     // In front of the subject gets out of the way; its own band and behind it go
-    // back a stop; the subject keeps its value and loses its band's veil.
+    // back a stop; the subject keeps its value and its band's veil.
     return near
       && Math.abs(C.focusOn(f, 2, false, 1).alpha - C.FOCUS.front) < 1e-9
       && Math.abs(C.focusOn(f, 1, false, 1).alpha - C.FOCUS.back) < 1e-9
       && Math.abs(C.focusOn(f, 0, false, 1).alpha - C.FOCUS.back) < 1e-9
       && C.focusOn(f, 1, true, 1).alpha === 1
-      && C.focusOn(f, 1, true, 1).veil === 1
-      && C.FOCUS.front < C.FOCUS.back && C.FOCUS.skyline < C.FOCUS.back;
+      && C.focusOn(f, 1, true, 1).veil === 0
+      && C.FOCUS.front < C.FOCUS.back && C.FOCUS.skyline < C.FOCUS.back
+      && C.FOCUS.signs < 0.5 && C.FOCUS.haze === 0;
   })(),
   // ...and it eases the whole way there, one direction, no step.
   focusEases: (() => {
     const walk = Array.from({ length: 101 }, (_, i) => C.focusAt(i / 100));
     return walk.every((f, i) => i === 0
         || (f.front <= walk[i - 1].front && f.back <= walk[i - 1].back
-          && f.skyline <= walk[i - 1].skyline && f.lift >= walk[i - 1].lift))
+          && f.skyline <= walk[i - 1].skyline
+          && f.signs <= walk[i - 1].signs && f.haze <= walk[i - 1].haze))
       // Out of range is clamped rather than extrapolated: no negative alpha, ever.
       && C.focusAt(-1).front === 1 && C.focusAt(2).front === C.focusAt(1).front;
   })(),
@@ -3344,10 +3349,8 @@ console.log(JSON.stringify({
       // ...and it eases rather than ramping, like every other move on this wall.
       && at('over', 0.5) === C.ease(0.5);
   })(),
-  // And the veil the subject loses is a MULTIPLY tint, so lifting it toward white by
-  // zero has to return the band's own veil unchanged — that is the whole of "byte
-  // for byte what it was".
-  focusVeil: C.FOCUS.front > 0 && C.FOCUS.back > C.FOCUS.front,
+  // The hero retains its multiply tint; focus is separation, not a white wash.
+  focusOrder: C.FOCUS.front > 0 && C.FOCUS.back > C.FOCUS.front,
 }));
 JS
 SHIP="$(node "$SHIP_PROBE" "$SRC/wall/world-canvas.js" "$SRC/wall/scene.js" 2>&1)"
@@ -3381,14 +3384,14 @@ check "ship: and the dive is the room's half of the film only" \
   "$(ship_of dives)" ",push,inside,back,,"
 check "focus: the settled city is every plane at its own value and no veil lifted" \
   "$(ship_of focusSettled)" "true"
-check "focus: held, the front is out of the way and the subject has lost its veil" \
+check "focus: held, the front is out of the way and the subject keeps its veil" \
   "$(ship_of focusHeld)" "true"
 check "focus: and it eases the whole way there, clamped at both ends" \
   "$(ship_of focusEases)" "true"
 check "focus: pulled with the move out of the room, held, let go with the move home" \
   "$(ship_of focusBeats)" "true"
 check "focus: the front goes further back than the band behind the subject does" \
-  "$(ship_of focusVeil)" "true"
+  "$(ship_of focusOrder)" "true"
 check "birth: the builders arrive when the film's camera can, off one derivation" \
   "$(ship_of lead)" "true"
 check "birth: until they do, a plot is a plot — nothing poured, nothing lit" \
