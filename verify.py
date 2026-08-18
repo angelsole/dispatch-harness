@@ -273,7 +273,9 @@ def review_steps(run_dir, worktree):
     between those two moments.
     """
     steps = []
-    for name, label in (("review-notes.md", "notes"), ("REJECTED.md", "rejection")):
+    # A rejection is the terminal review finding and wins when an earlier round
+    # also left review-notes.md behind.
+    for name, label in (("REJECTED.md", "rejection"), ("review-notes.md", "notes")):
         text = ""
         for base in (os.path.join(worktree, ".harness"), run_dir):
             text = read_text(os.path.join(base, name))
@@ -340,7 +342,9 @@ def elide(steps, max_chars):
     total = sum(len(text) for _, text in steps)
     if max_chars <= 0 or total <= max_chars:
         return steps, 0
-    marker_len = len("[9999 agent steps elided]")
+    # Reserve for the largest count this trajectory can produce, so a run with
+    # five-digit step counts cannot exceed max_chars by growing the marker.
+    marker_len = len("[%d agent steps elided]" % len(steps))
     budget = max(0, max_chars - marker_len)
     tail_budget, head_budget = budget // 2, budget - budget // 2
 
@@ -465,8 +469,16 @@ def make_client(provider, key, base_url):
     VERTEX_API_KEY, so an ambient variable from the operator's shell could
     otherwise pick a backend the run never asked for: clear all three first.
     """
-    for name in ("OPENAI_BASE_URL", "DEEPSEEK_API_KEY", "VERTEX_API_KEY"):
-        os.environ.pop(name, None)
+    # Keep the unused selectors present-but-empty instead of removing them.
+    # llm_verifier calls load_dotenv() while building the client; its
+    # setdefault() would otherwise resurrect a backend from the caller's .env
+    # after we had cleared it, letting (for example) OPENAI_BASE_URL outrank a
+    # requested Vertex client. OPENAI_API_KEY is credential material too: an
+    # OpenAI-compatible run must use the key file handed to this process, never
+    # an ambient key from the operator's shell or .env.
+    for name in ("OPENAI_BASE_URL", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
+                 "VERTEX_API_KEY"):
+        os.environ[name] = ""
     if provider == "deepseek":
         os.environ["DEEPSEEK_API_KEY"] = key
     elif provider == "vertex":
@@ -480,9 +492,10 @@ def make_client(provider, key, base_url):
             os.environ["OPENAI_API_KEY"] = key
     else:
         raise SystemExit("verify.py: unknown provider %r" % provider)
-    effort = env_text("HARNESS_VERIFY_EFFORT")
-    if effort:
-        os.environ["DEEPSEEK_EFFORT"] = effort
+    # An empty value is not a valid library setting. Pin its documented default
+    # when the harness knob is absent, which also prevents load_dotenv() from
+    # silently supplying an unrelated local override.
+    os.environ["DEEPSEEK_EFFORT"] = env_text("HARNESS_VERIFY_EFFORT", "high")
     import llm_verifier  # noqa: E402  (lazy on purpose — --dry-run needs none of it)
     return llm_verifier, llm_verifier.create_client()
 
@@ -534,8 +547,11 @@ def main(argv):
         sys.stderr.write("no trajectory: no implementer stream under %s\n" % run_dir)
         return EXIT_SKIP
 
-    title, problem, criteria = brief_sections(run_dir)
-    criteria = criteria[:max_criteria]
+    title, problem, all_criteria = brief_sections(run_dir)
+    # The cap controls the extra per-criterion calls only. The overall verifier
+    # always receives the full rubric; MAX_CRITERIA=0 means "overall only", not
+    # "discard the acceptance criteria from the overall question".
+    criteria = all_criteria[:max_criteria]
     texts = [text for _, text in steps]
     implementer_end = last_implementer_step(steps)
     checkpoints = [implementer_end, len(steps)]
@@ -588,7 +604,7 @@ def main(argv):
             kwargs["model"] = model
         return lv.track(problem_text, texts, **kwargs)
 
-    result = track(overall_problem(title, problem, criteria, step_chars), checkpoints)
+    result = track(overall_problem(title, problem, all_criteria, step_chars), checkpoints)
     final, curve = score_of(result)
     at_implementer = curve[0] if len(curve) > 1 else None
 
@@ -612,7 +628,13 @@ def main(argv):
         "score": rounded(final),
         "at_implementer": rounded(at_implementer),
         "criteria": scored,
-        "model": model or getattr(result, "model", "") or getattr(lv, "DEFAULT_MODEL", ""),
+        # DeepSeek and OpenAI-compatible clients resolve the package's global
+        # Gemini default to the model the client actually serves, and cache that
+        # answer on the client. Record that resolved model, not DEFAULT_MODEL,
+        # or a default DeepSeek run is mislabeled as Gemini in every surface.
+        "model": (model or getattr(client, "_llm_verifier_model", "")
+                  or getattr(result, "model", "")
+                  or getattr(lv, "DEFAULT_MODEL", "")),
         "provider": provider,
         "evaluations": evals,
         "steps": len(steps),

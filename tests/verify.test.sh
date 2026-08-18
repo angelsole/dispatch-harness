@@ -129,7 +129,7 @@ case "\$(cat "$VERIFY_MODE")" in
 {
   "score": 0.83,
   "at_implementer": 0.71,
-  "criteria": [{"name": "The endpoint exists", "score": 0.9}],
+  "criteria": [{"name": "The endpoint exists | safely", "score": 0.9}],
   "model": "deepseek-v4-flash",
   "provider": "deepseek",
   "evaluations": 3,
@@ -256,7 +256,8 @@ file_has "$RUN/pr-body.md" "## Verifier" "scored: the PR body gains the section"
 file_has "$RUN/pr-body.md" "Trajectory score **0.83** (implementer 0.71 → final 0.83) · deepseek-v4-flash · 3 evaluations" \
   "scored: whose headline reads as one sentence"
 file_has "$RUN/pr-body.md" "| Criterion | Score |" "scored: with the per-criterion table"
-file_has "$RUN/pr-body.md" "| The endpoint exists | 0.9 |" "scored: and a row per criterion"
+file_has "$RUN/pr-body.md" '| The endpoint exists \| safely | 0.9 |' \
+  "scored: and a pipe in a criterion cannot break the table"
 file_has "$RUN/pr-body.md" "Advisory only" "scored: and the sentence saying it gates nothing"
 has "$(cat "$VERIFY_ARGS")" "$RUNS/V-SCORE" "scored: the adapter was handed the run dir"
 has "$(cat "$VERIFY_ARGS")" "origin/main" "scored: and the base ref to diff against"
@@ -535,7 +536,20 @@ class _Progress:
         self.final = scores[-1]
 
 
+class _Client(dict):
+    pass
+
+
 def create_client():
+    # The real package loads .env with setdefault() immediately before choosing
+    # a provider. This catches an adapter that removes unused selector vars and
+    # thereby lets a local .env silently restore a higher-priority backend.
+    if os.path.exists(".env"):
+        with open(".env", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip() and not line.lstrip().startswith("#") and "=" in line:
+                    name, value = line.strip().split("=", 1)
+                    os.environ.setdefault(name, value)
     backend = None
     for name in ("OPENAI_BASE_URL", "DEEPSEEK_API_KEY", "VERTEX_API_KEY"):
         if os.environ.get(name):
@@ -543,7 +557,10 @@ def create_client():
             break
     if backend is None:
         raise RuntimeError("no backend env var was set")
-    return {"backend": backend, "key": os.environ.get(backend)}
+    client = _Client(backend=backend, key=os.environ.get(backend))
+    if backend == "DEEPSEEK_API_KEY":
+        client._llm_verifier_model = "deepseek-v4-flash"
+    return client
 
 
 def track(problem, steps, checkpoint_steps=None, n_evaluations=1, model=None, client=None):
@@ -581,8 +598,8 @@ check "score: and the first checkpoint is what the implementer alone was worth" 
 check "score: one entry per acceptance criterion" "$(jq -r '.criteria | length' "$V")" "3"
 check "score: each with a name and a number" \
   "$(jq -r '[.criteria[] | select(.name != "" and (.score | type) == "number")] | length' "$V")" "3"
-check "score: the model is the library default when none was pinned" \
-  "$(jq -r .model "$V")" "stub-default-model"
+check "score: the model is the client-resolved DeepSeek default, not Gemini's global default" \
+  "$(jq -r .model "$V")" "deepseek-v4-flash"
 check "score: the provider is recorded" "$(jq -r .provider "$V")" "deepseek"
 check "score: so is K" "$(jq -r .evaluations "$V")" "3"
 check "score: and the size of the trajectory it read" "$(jq -r .steps "$V")" "11"
@@ -615,16 +632,25 @@ check "call: read from the file rather than from an argument" \
   "$(jq -s '[.[] | .key_seen] | unique | join(",")' "$CALLS")" '"sk-not-a-real-key-0123456789"'
 
 : > "$CALLS"
-env PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
-    HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_PROVIDER=vertex \
-    HARNESS_VERIFY_MODEL=gemini-2.5-flash HARNESS_VERIFY_MAX_CRITERIA=0 \
-    python3 "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>&1
+DOTENV_CWD="$AROOT/dotenv-cwd"
+mkdir -p "$DOTENV_CWD"
+printf 'OPENAI_BASE_URL=https://wrong.invalid/v1\nDEEPSEEK_API_KEY=wrong-key\n' \
+  > "$DOTENV_CWD/.env"
+( cd "$DOTENV_CWD" && \
+  env PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
+      HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_PROVIDER=vertex \
+      HARNESS_VERIFY_MODEL=gemini-2.5-flash HARNESS_VERIFY_MAX_CRITERIA=0 \
+      python3 "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>&1 )
 check "provider: vertex selects the Vertex backend and nothing else" \
   "$(jq -s '[.[] | .backend] | unique | join(",")' "$CALLS")" '"VERTEX_API_KEY"'
+check "provider: a local .env cannot restore a higher-priority backend" \
+  "$(jq -s '[.[] | .key_seen] | unique | join(",")' "$CALLS")" '"sk-not-a-real-key-0123456789"'
 check "provider: a pinned model is passed through" \
   "$(jq -r '.model' "$CALLS")" "gemini-2.5-flash"
 check "provider: and is what verify.json records" "$(jq -r .model "$V")" "gemini-2.5-flash"
 check "provider: MAX_CRITERIA=0 makes exactly one call" "$(grep -c '' < "$CALLS" | tr -d ' ')" "1"
+check "provider: overall-only still gives that one call the full acceptance list" \
+  "$(jq -s '[.[] | select(.problem | test("It returns CSV"))] | length' "$CALLS")" "1"
 
 # No key is a skip, not a failure and not a zero.
 env PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \

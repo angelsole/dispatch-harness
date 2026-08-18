@@ -148,7 +148,15 @@ install_verifier() {
     echo "verifier: python3 (>= 3.9) is required and was not found — nothing installed" >&2
     return 1
   fi
+  if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 9))'; then
+    echo "verifier: python3 >= 3.9 is required — nothing installed" >&2
+    return 1
+  fi
   [ -x "$py" ] || python3 -m venv "$venv"
+  if ! "$py" -c 'import sys; raise SystemExit(sys.version_info < (3, 9))'; then
+    echo "verifier: the existing venv uses Python < 3.9 — remove $venv and retry" >&2
+    return 1
+  fi
   "$py" -m pip install --upgrade --quiet llm-verifier
   echo
   echo "verifier: llm-verifier installed into $venv"

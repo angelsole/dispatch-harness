@@ -1678,6 +1678,9 @@ verify_stage() {  # uses RUN_DIR, WORKTREE, BASE_REF; always returns 0
     || { echo "skipped: no verify.py beside run-task.sh" >> "$log"; return 0; }
   secs="${HARNESS_VERIFY_TIMEOUT:-$DEFAULT_VERIFY_TIMEOUT}"
   case "$secs" in ''|*[!0-9]*) secs=$DEFAULT_VERIFY_TIMEOUT ;; esac
+  # timeout(1) treats zero as "never time out", the opposite of this stage's
+  # contract. All-zero values therefore fall back just like malformed ones.
+  case "$secs" in *[1-9]*) ;; *) secs=$DEFAULT_VERIFY_TIMEOUT ;; esac
 
   stage "verify — trajectory score (verifier · third vendor)"
   # env(1) sits between the timeout and the interpreter because with_timeout is
@@ -1734,7 +1737,7 @@ verify_pr_section() {
        + (if .evaluations == null then "" else " · \(.evaluations) evaluations" end))]
     + (if ((.criteria // []) | length) > 0 then
          ["", "| Criterion | Score |", "| --- | --- |"]
-         + [.criteria[] | "| \(.name) | \(.score // "-") |"]
+         + [.criteria[] | "| \((.name | tostring | gsub("\\|"; "\\|"))) | \(.score // "-") |"]
        else [] end)
     + ["",
        "Advisory only: a third-vendor verifier read the trajectory of this run and scored how well it satisfies the brief. Nothing in the pipeline gates on it — no status, no gate verdict and no PR decision depends on this number."]

@@ -1259,10 +1259,10 @@ garbage leaves the run byte-for-byte what it would have been — same `status`,
 same `pr_url`, same PR body. It is data.
 
 **What it costs.** `(1 + criteria) × K` calls, each carrying the clipped
-trajectory — with the defaults, 9 calls per run over a trajectory bounded at
-400 000 characters. `HARNESS_VERIFY_MAX_CRITERIA=0` (overall only),
-`HARNESS_VERIFY_EVALS=1` and a smaller `HARNESS_VERIFY_MAX_CHARS` are the dials,
-in that order of effect.
+trajectory — with the default K, a three-criterion brief makes 12 calls over a
+trajectory bounded at 400 000 characters. `HARNESS_VERIFY_MAX_CRITERIA=0`
+(overall only), `HARNESS_VERIFY_EVALS=1` and a smaller
+`HARNESS_VERIFY_MAX_CHARS` are the dials, in that order of effect.
 
 ```bash
 ./install.sh --verifier                    # opt-in: builds the venv, installs the library
