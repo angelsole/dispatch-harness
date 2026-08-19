@@ -466,7 +466,8 @@ fields are `null`/empty):
 | `metrics.opus_commits` | Commit count `base..opus_head` (the implementer's). |
 | `metrics.codex_commits` | Commit count `opus_head..HEAD` (the reviewer's). |
 | `metrics.diff` | `{files_changed, insertions, deletions}` vs. base. |
-| `metrics.implementer_num_turns` | `num_turns` from the implementer's stream-json result event. |
-| `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Recorded beside `num_turns` because the two count different things — see [the turns caveat](design-notes.md#reading-the-pipelines-own-vitals). |
-| `metrics.implementer_usage` | Token `usage` from the same event. |
-| `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], model, provider, evaluations, steps, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier). |
+| `metrics.implementer_num_turns` | `num_turns` summed over every result event of this invocation's stream-json — one per [turn-ceiling segment](operations.md#turn-ceiling-a-run-that-resumes-itself). Identical to the CLI's own number on a run that never resumed. |
+| `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Per *segment*, not per attempt: a resumed attempt gets the whole ceiling again. Recorded beside `num_turns` because the two count different things — see [the turns caveat](design-notes.md#reading-the-pipelines-own-vitals). |
+| `metrics.implementer_usage` | Token `usage` summed field-wise over the same result events. Numeric keys (`input_tokens`, `output_tokens`, the cache counters) are added up; a non-numeric one (`service_tier`, the nested counters newer CLIs report) is taken from the last segment. |
+| `metrics.implementer_segments` | How many result events those two were summed over: `1` for an attempt that ran straight through, `2`+ for one that hit the turn ceiling and resumed. `0` when the implementer never got as far as a result event. |
+| `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], model, provider, evaluations, steps, segments, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier). |

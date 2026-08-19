@@ -488,9 +488,13 @@ check "dry run: and says nothing on stderr" "$(cat "$ROOT/dry.err")" ""
 check "dry run: emits valid JSON" "$(printf '%s' "$DRY" | jq -r 'type')" "object"
 check "dry run: the whole trajectory, in pipeline order" \
   "$(printf '%s' "$DRY" | jq -r '.labels | join(",")')" \
-  "impl:narration,impl:result,impl:narration,impl:action,impl:result,gate:round,gate:round,review:notes,review:commits,final:diff,final:gate"
+  "impl:narration,impl:resume,impl:narration,impl:action,impl:result,gate:round,gate:round,review:notes,review:commits,final:diff,final:gate"
 check "dry run: the step count agrees with the list" \
   "$(printf '%s' "$DRY" | jq -r '.steps')" "11"
+# The rotated attempt ran out of turns, so its result is a resume marker rather
+# than a closing message: the work did not stop there, it was picked up again.
+check "dry run: and the segments it spans are counted" \
+  "$(printf '%s' "$DRY" | jq -r '.segments')" "2"
 check "dry run: the first step is the oldest attempt's first words" \
   "$(printf '%s' "$DRY" | jq -r '.first')" \
   "The agent says:
@@ -550,6 +554,90 @@ check "elide: which accounts for exactly what it dropped" \
   "$(printf '%s' "$DRY" | jq -r '.steps')"
 check "elide: and the whole trajectory is inside the budget" \
   "$(printf '%s' "$ELIDED" | jq -r '.chars <= 400')" "true"
+
+# ---------------------------------------------------------------------------
+# A turn-ceiling resume: two segments inside ONE stream file
+# ---------------------------------------------------------------------------
+# The live stream is append-only within an invocation, so a run that ran out of
+# turns and resumed itself leaves both segments in the same file, exhausted one
+# first. Every step of both has to reach the verifier, in order — the trajectory
+# it scored used to jump straight to the tail.
+#
+# The worktree here is a bare directory on purpose: with no git tree, no review
+# notes and no gate log, the trajectory is the implementer's alone, so `first`
+# and `last` are its own first and last words rather than the run's end state.
+SEGRUN="$AROOT/two-segment-run"; SEGWT="$AROOT/two-segment-wt"
+mkdir -p "$SEGRUN" "$SEGWT"
+cp "$ARUN/brief.md" "$SEGRUN/brief.md"
+seg1() {  # the exhausted segment, ending on the ceiling
+  cat <<'EOF'
+{"type":"system","subtype":"init","session_id":"s1"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Wiring the first half"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"src/one.ts"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"one.ts written"}]}}
+{"type":"result","subtype":"error_max_turns","result":"still had the tests to write","num_turns":200,"session_id":"fork-1"}
+EOF
+}
+seg2() {  # what the resume appended to the very same file
+  cat <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"src/two.ts"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"two.ts written"}]}}
+{"type":"result","subtype":"success","result":"both halves done","num_turns":37,"session_id":"fork-2"}
+EOF
+}
+{ seg1; seg2; } > "$SEGRUN/opus-stream.jsonl"
+SEG="$(adapter python3 "$ADAPTER" "$SEGRUN" "$SEGWT" origin/main --dry-run)"
+check "two segments: every step of both, in the order they happened" \
+  "$(printf '%s' "$SEG" | jq -r '.labels | join(",")')" \
+  "impl:narration,impl:action,impl:resume,impl:action,impl:result"
+check "two segments: counted as two" "$(printf '%s' "$SEG" | jq -r '.segments')" "2"
+check "two segments: the exhausted segment's work opens the trajectory" \
+  "$(printf '%s' "$SEG" | jq -r '.first')" \
+  "The agent says:
+Wiring the first half"
+check "two segments: and the segment that finished closes it" \
+  "$(printf '%s' "$SEG" | jq -r '.last')" \
+  "The agent's closing message:
+both halves done"
+
+# The resume marker's own wording, read where it is the last step: a run whose
+# budget was spent for good ends on exactly this.
+{ seg1; } > "$SEGRUN/opus-stream.jsonl"
+CEIL="$(adapter python3 "$ADAPTER" "$SEGRUN" "$SEGWT" origin/main --dry-run)"
+check "ceiling: the exhausted result is a boundary, not a closing message" \
+  "$(printf '%s' "$CEIL" | jq -r '.labels | join(",")')" \
+  "impl:narration,impl:action,impl:resume"
+check "ceiling: which says what happened and what the agent said as it stopped" \
+  "$(printf '%s' "$CEIL" | jq -r '.last')" \
+  "The agent's turn budget ran out here; the same session was resumed with a fresh budget.
+Its last words before the resume:
+still had the tests to write"
+
+# The same work without the resume: one segment, and nothing about the shape of
+# the trajectory changes.
+{ seg1 | head -4; seg2 | tail -1; } > "$SEGRUN/opus-stream.jsonl"
+ONESEG="$(adapter python3 "$ADAPTER" "$SEGRUN" "$SEGWT" origin/main --dry-run)"
+check "one segment: the implementer steps are what they always were" \
+  "$(printf '%s' "$ONESEG" | jq -r '.labels | join(",")')" \
+  "impl:narration,impl:action,impl:result"
+check "one segment: counted as one" "$(printf '%s' "$ONESEG" | jq -r '.segments')" "1"
+has_not "$ONESEG" "turn budget ran out here" \
+  "one segment: with no resume marker invented for it"
+
+# Result text is optional in stream-json, but the event is still the segment
+# boundary the verifier promises to show. It gets an explicit empty-message
+# marker instead of silently disappearing from the trajectory.
+printf '%s\n' '{"type":"result","subtype":"success","session_id":"fork-3"}' \
+  > "$SEGRUN/opus-stream.jsonl"
+NO_MESSAGE="$(adapter python3 "$ADAPTER" "$SEGRUN" "$SEGWT" origin/main --dry-run)"
+check "empty result: still emits the promised boundary step" \
+  "$(printf '%s' "$NO_MESSAGE" | jq -r '.labels | join(",")')" "impl:result"
+check "empty result: says why there is no closing text" \
+  "$(printf '%s' "$NO_MESSAGE" | jq -r '.last')" \
+  "The agent's closing message:
+(no closing message was recorded)"
+check "empty result: is still counted as one segment" \
+  "$(printf '%s' "$NO_MESSAGE" | jq -r '.segments')" "1"
 
 # A run whose implementer left nothing behind has no trajectory, and a skip is
 # the honest answer — never a fabricated step and never a score.
@@ -663,6 +751,7 @@ check "score: the model is the client-resolved DeepSeek default, not Gemini's gl
 check "score: the provider is recorded" "$(jq -r .provider "$V")" "deepseek"
 check "score: so is K" "$(jq -r .evaluations "$V")" "3"
 check "score: and the size of the trajectory it read" "$(jq -r .steps "$V")" "11"
+check "score: and how many implementer segments it spans" "$(jq -r .segments "$V")" "2"
 check "score: with nothing elided at the default budget" "$(jq -r .elided_steps "$V")" "0"
 check "score: token usage is carried over" "$(jq -r .usage.input_tokens "$V")" "900"
 check "score: including the cache columns" "$(jq -r .usage.cached_input_tokens "$V")" "100"
