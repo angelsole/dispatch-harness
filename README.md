@@ -174,6 +174,16 @@ worker's live session with its context intact, `preview.sh <RUN-ID>` runs the de
 server in the worktree to see the change before approving, and
 `cleanup.sh <RUN-ID>` promotes the run and removes the worktree.
 
+Nothing used to look back, though, and `cleanup.sh` only runs when a PR is
+promoted in session: a PR merged from GitHub's UI, merged by a teammate, or
+promoted in a session that died leaked its worktree forever.
+[`janitor.sh`](docs/operations.md#the-janitor) is the pass that closes that loop.
+It lists every worktree the harness still holds and, with `--clean`, removes
+exactly the ones whose PR is merged and whose tree is clean — through
+`cleanup.sh` itself — along with the detached test runners `flutter test` leaves
+behind. An open PR, a dirty tree, a run still going, or a PR state it could not
+read is named and left alone. Run logs are never deleted.
+
 ## What else it does
 
 **[Fire a run at a set time.](docs/operations.md#scheduling-a-run-for-later)**
@@ -367,7 +377,7 @@ test.
 | `run-task.sh` `sync-pr.sh` | The pipeline (worktree → implement → gate → review → PR), and [the base re-merge](docs/operations.md#re-merging-the-base-into-a-pushed-pr) for an already-pushed branch |
 | `schedule.sh` `capacity.sh` `quartermaster.sh` | [Fire a prepared run at a set time](docs/operations.md#scheduling-a-run-for-later), the local-file subscription accounting the [preflight](docs/operations.md#capacity-preflight-a-run-that-defers-itself) defers on, and [the 19:00 check](docs/operations.md#the-quartermaster) that fills the night with briefed work |
 | `repos.conf.sh` `setup-repo.sh` | Generic per-repo detection (sourcing your `repos.local.sh`), and the inspector that proposes or writes a repo's pinned entry |
-| `statusline.sh` `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `station.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose), the terminal monitor (`status.sh --watch` is the live dashboard), and the lifecycle helpers |
+| `statusline.sh` `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `janitor.sh` `station.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose), the terminal monitor (`status.sh --watch` is the live dashboard), and the lifecycle helpers — including [the janitor](docs/operations.md#the-janitor), the pass that sweeps the worktrees `cleanup.sh` never got to |
 | `wall.sh` `wall/` `.creative/` `mirror.sh` | [Ghost Shift](docs/wall.md): the big-screen dashboard (node server, one static page, fixtures), the art-direction contract it is graded against, and `HARNESS_MIRROR`'s run-dir copier |
 | `metrics.sh` `verify.py` | Per-run metrics from `result.json` (table / `--csv`) plus the [aggregate health report](docs/design-notes.md#reading-the-pipelines-own-vitals) (`--report`), and [the verifier](docs/reference.md#the-verifier) that scores a run's trajectory (`--dry-run` needs no library and no key) |
 | `worker-settings.json` `planner-settings.json` `setup-ai-settings.json` | The implementer's tool allow/deny list, and the read-only sandboxes for the quartermaster's self-briefing planner and `setup-repo.sh --ai` |
