@@ -133,10 +133,15 @@ gh_probe() {
 # Prints MERGED, OPEN or CLOSED — and nothing at all when the state could not be
 # read. An unreadable state is never collapsed into one of the three: that is
 # the whole difference between a janitor and a data-loss incident.
-pr_state() {  # $1 = PR url
+#
+# Asked from inside the run's own worktree, the way run-task.sh asks: the url
+# identifies the PR by itself, and the cwd makes the repo context right anyway on
+# an install where more than one host or account is configured.
+pr_state() {  # $1 = PR url, $2 = the run's worktree
   local out
   [ "$GH_OK" = 1 ] || return 0
-  out=$(capped "$GH_TIMEOUT" gh pr view "$1" --json state -q .state 2>/dev/null) || return 0
+  out=$( (cd "$2" 2>/dev/null && capped "$GH_TIMEOUT" gh pr view "$1" --json state -q .state) 2>/dev/null ) \
+    || return 0
   case "$out" in MERGED|OPEN|CLOSED) printf '%s' "$out" ;; esac
   return 0
 }
@@ -191,7 +196,7 @@ sweep_runs() {  # $1 = report | clean
       n_nopr=$((n_nopr + 1)); continue
     fi
 
-    state=$(pr_state "$pr")
+    state=$(pr_state "$pr" "$wt")
     case "$state" in
       MERGED) ;;
       OPEN)   line keep "$id" "PR is OPEN — review fixes land here" "$wt"

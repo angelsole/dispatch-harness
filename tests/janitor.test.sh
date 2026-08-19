@@ -75,7 +75,7 @@ git -C "$REPO" push -q -u origin main
 # never logged in: `auth status` fails and no state can be read at all.
 cat > "$FAKES/gh" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$GH_LOG"
+printf 'cwd:%s argv:%s\n' "\$PWD" "\$*" >> "$GH_LOG"
 mode=\$(cat "$GH_MODE" 2>/dev/null || echo authed)
 case "\${1:-}" in
   auth) [ "\$mode" = authed ] || exit 1; exit 0 ;;
@@ -241,8 +241,13 @@ fi
 # ---------------------------------------------------------------------------
 echo "== --report: one sweepable run, and nothing touched =="
 # ---------------------------------------------------------------------------
+: > "$GH_LOG"
 out=$(jan "" --report); rc=$?
 check "report: exits 0" "$rc" "0"
+# The cwd is matched by its tail: cd normalises the doubled slash mktemp can
+# leave in $TMPDIR, so the recorded path is not $WT_OPEN byte for byte.
+file_has "$GH_LOG" "/wt-open-pr argv:pr view $PR/2 --json state" \
+  "report: each PR is asked about from inside that run's own worktree"
 
 check "report: merged + clean is the one to sweep"      "$(verb "$out" merged-clean)"  "sweep"
 check "report: exactly one run is sweepable"            "$(verbs "$out" sweep)"        "1"
