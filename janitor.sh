@@ -56,13 +56,15 @@ usage() { sed -n '14,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 fail()  { echo "FATAL: $*" >&2; exit 1; }
 say()   { echo "[janitor] $*"; }
 
-# A process cap that exists on macOS, where timeout(1) does not — the same perl
-# one-liner capacity.sh uses, for the same reason.
-capped() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+# Reuse the harness's macOS-safe process cap rather than carrying another copy.
+# shellcheck source=capacity.sh
+# shellcheck disable=SC1091  # SELF_DIR is resolved at runtime.
+. "$SELF_DIR/capacity.sh" || fail "cannot read $SELF_DIR/capacity.sh — re-run install.sh"
+capped() { capacity_capped "$@"; }
 
 case "$PROC_AGE" in ''|*[!0-9]*) fail "JANITOR_PROC_AGE must be whole seconds — got [$PROC_AGE]" ;; esac
 case "$GH_TIMEOUT" in ''|*[!0-9]*) fail "JANITOR_GH_TIMEOUT must be whole seconds — got [$GH_TIMEOUT]" ;; esac
-# An empty match would select every process on the machine.
+# An empty process name is never a valid reaping policy.
 [ -n "$PROC_MATCH" ] || fail "JANITOR_PROC_MATCH must not be empty"
 
 WORK=""
@@ -96,19 +98,28 @@ line() {  # $1 = verb, $2 = run id, $3 = why, $4 = worktree
 }
 
 # ps prints elapsed time as [[DD-]HH:]MM:SS. Leading zeros make $(( )) read a
-# field as octal, so every field goes through base 10 explicitly.
-dec() { case "${1:-}" in ''|*[!0-9]*) printf '0' ;; *) printf '%d' "$((10#$1))" ;; esac; }
+# field as octal, so every validated field goes through base 10 explicitly.
+dec() { printf '%d' "$((10#$1))"; }
 
 etime_secs() {  # $1 = a ps etime field; prints seconds, fails when it is not one
-  local e="${1:-}" days=0 h=0 m=0 s=0
+  local e="${1:-}" days=0 h=0 m=0 s=0 has_days=0
   case "$e" in ''|*[!0-9:-]*) return 1 ;; esac
-  case "$e" in *-*) days="${e%%-*}"; e="${e#*-}" ;; esac
   case "$e" in
-    *:*:*) h="${e%%:*}"; e="${e#*:}"; m="${e%%:*}"; s="${e##*:}" ;;
-    *:*)   m="${e%%:*}"; s="${e##*:}" ;;
-    *)     s="$e" ;;
+    *-*) days="${e%%-*}"; e="${e#*-}"; has_days=1 ;;
   esac
-  printf '%d' "$(( $(dec "$days") * 86400 + $(dec "$h") * 3600 + $(dec "$m") * 60 + $(dec "$s") ))"
+  case "$e" in
+    *:*:*:*) return 1 ;;
+    *:*:*) h="${e%%:*}"; e="${e#*:}"; m="${e%%:*}"; s="${e##*:}" ;;
+    *:*)   [ "$has_days" -eq 0 ] || return 1
+            m="${e%%:*}"; s="${e##*:}" ;;
+    *)     [ "$has_days" -eq 0 ] || return 1
+            s="$e" ;;
+  esac
+  case "$days:$h:$m:$s" in *[!0-9:]*) return 1 ;; esac
+  [ -n "$days" ] && [ -n "$h" ] && [ -n "$m" ] && [ -n "$s" ] || return 1
+  days=$(dec "$days"); h=$(dec "$h"); m=$(dec "$m"); s=$(dec "$s")
+  [ "$h" -le 23 ] && [ "$m" -le 59 ] && [ "$s" -le 59 ] || return 1
+  printf '%d' "$((days * 86400 + h * 3600 + m * 60 + s))"
 }
 
 # ---------------------------------------------------------------------------
@@ -207,7 +218,7 @@ sweep_runs() {  # $1 = report | clean
               n_unknown=$((n_unknown + 1)); continue ;;
     esac
 
-    if ! porcelain=$(git -C "$wt" status --porcelain 2>/dev/null); then
+    if ! porcelain=$(git --no-optional-locks -C "$wt" status --porcelain 2>/dev/null); then
       line keep "$id" "not a readable git worktree" "$wt"
       n_unknown=$((n_unknown + 1)); continue
     fi
@@ -292,7 +303,7 @@ kill_proc() {  # $1 = pid
 
 reap_procs() {  # $1 = report | clean
   local mode="$1" pid etime comm secs
-  local old=0 young=0 killed=0 stubborn=0
+  local old=0 within_limit=0 killed=0 stubborn=0
 
   say "processes: $PROC_MATCH older than $(human_secs "$PROC_AGE")"
   # Read from a file, not a pipe: the counters have to survive the loop.
@@ -301,11 +312,12 @@ reap_procs() {  # $1 = report | clean
     case "$pid" in ''|*[!0-9]*) continue ;; esac
     [ "$pid" = "$$" ] && continue
     [ "$pid" = "$PPID" ] && continue
-    # comm is a full path on macOS and a bare name on Linux; both end in the name.
-    case "${comm##*/}" in *"$PROC_MATCH"*) ;; *) continue ;; esac
+    # comm is a full path on macOS and a bare name on Linux; compare its basename
+    # exactly so a similarly named process is never swept up accidentally.
+    [ "${comm##*/}" = "$PROC_MATCH" ] || continue
     secs=$(etime_secs "$etime") || continue
-    if [ "$secs" -lt "$PROC_AGE" ]; then
-      young=$((young + 1))
+    if [ "$secs" -le "$PROC_AGE" ]; then
+      within_limit=$((within_limit + 1))
       continue
     fi
     old=$((old + 1))
@@ -323,9 +335,9 @@ reap_procs() {  # $1 = report | clean
   done < "$WORK/ps"
 
   if [ "$mode" = clean ]; then
-    say "  $killed killed, $stubborn survived, $young younger than $(human_secs "$PROC_AGE") left alone"
+    say "  $killed killed, $stubborn survived, $within_limit not older than $(human_secs "$PROC_AGE") left alone"
   else
-    say "  $old to kill, $young younger than $(human_secs "$PROC_AGE") left alone"
+    say "  $old to kill, $within_limit not older than $(human_secs "$PROC_AGE") left alone"
   fi
   return 0
 }
@@ -334,16 +346,21 @@ reap_procs() {  # $1 = report | clean
 # One pass
 # ---------------------------------------------------------------------------
 pass() {  # $1 = report | clean
-  say "$(date '+%Y-%m-%d %H:%M:%S') · $1 · $RUNS"
-  if [ "$1" = clean ]; then
+  local requested_mode="$1" mode="$1"
+  say "$(date '+%Y-%m-%d %H:%M:%S') · $requested_mode · $RUNS"
+  gh_probe
+  if [ "$requested_mode" = clean ] && [ "$GH_OK" -ne 1 ]; then
+    mode=report
+    say "--clean degraded to report-only because PR state is unavailable; no worktrees or processes will be touched"
+  fi
+  if [ "$mode" = clean ]; then
     [ -r "$CLEANUP" ] || fail "cannot read $CLEANUP — re-run install.sh"
   fi
-  gh_probe
-  sweep_runs "$1"
-  [ "$1" = clean ] && prune_repos
+  sweep_runs "$mode"
+  [ "$mode" = clean ] && prune_repos
   echo
-  reap_procs "$1"
-  if [ "$1" != clean ]; then
+  reap_procs "$mode"
+  if [ "$mode" != clean ]; then
     echo
     say "--report touched nothing. janitor.sh --clean does the above."
     return 0

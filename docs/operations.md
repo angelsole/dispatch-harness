@@ -398,7 +398,7 @@ repo it touched gets a `git worktree prune`. Run directories under
 `result.json` all stay, which is what keeps `metrics.sh` honest about runs whose
 worktree is long gone.
 
-**Processes.** Any process whose name matches `JANITOR_PROC_MATCH`
+**Processes.** Any process whose name exactly matches `JANITOR_PROC_MATCH`
 (`flutter_tester`) and whose `ps` elapsed time is over `JANITOR_PROC_AGE` (two
 hours) is reaped: `TERM`, then `KILL` if it is still there a couple of seconds
 later. Nothing legitimate keeps a detached test runner alive for hours, so age

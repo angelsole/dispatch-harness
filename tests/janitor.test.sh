@@ -210,6 +210,7 @@ printf 'denied\n' > "$GH_MODE"
 out=$(jan "" --clean); rc=$?
 check "unauthed: --clean still exits 0" "$rc" "0"
 has "$out" "gh is not authenticated" "unauthed: it says the state cannot be read"
+has "$out" "--clean degraded to report-only" "unauthed: the whole pass explicitly becomes report-only"
 check "unauthed: nothing is sweepable" "$(verbs "$out" sweep)" "0"
 check "unauthed: the merged run is unknown, not merged" "$(verb "$out" merged-clean)" "keep"
 has "$out" "PR state unreadable" "unauthed: an unreadable state is named as one"
@@ -329,14 +330,19 @@ echo "== old test runners are reaped, young ones are not =="
 # Spawned from a subshell that exits immediately, so each victim is reparented
 # and `kill -0` reports its real liveness rather than a zombie's.
 spawn() { ( sleep 600 >/dev/null 2>&1 & echo $! ); }
-V_OLD1=$(spawn); V_YOUNG=$(spawn); V_OLD2=$(spawn); V_OTHER=$(spawn)
-VICTIMS="$V_OLD1 $V_YOUNG $V_OLD2 $V_OTHER"
+V_OLD1=$(spawn); V_YOUNG=$(spawn); V_EDGE=$(spawn); V_OLD2=$(spawn)
+V_SIMILAR=$(spawn); V_BAD_TIME=$(spawn); V_OTHER=$(spawn)
+VICTIMS="$V_OLD1 $V_YOUNG $V_EDGE $V_OLD2 $V_SIMILAR $V_BAD_TIME $V_OTHER"
 
-# One line per ps etime shape: days, just under the limit, just over it.
+# Cover every boundary that could turn a report into the wrong kill: days, just
+# under / exactly on / just over the limit, a similar name, and malformed etime.
 {
   printf '%s 2-03:04:05 %s\n' "$V_OLD1"  "$ROOT/flutter/cache/flutter_tester"
   printf '%s 01:59:59 %s\n'   "$V_YOUNG" "$ROOT/flutter/cache/flutter_tester"
+  printf '%s 02:00:00 %s\n'   "$V_EDGE"  "$ROOT/flutter/cache/flutter_tester"
   printf '%s 02:00:01 %s\n'   "$V_OLD2"  "$ROOT/flutter/cache/flutter_tester"
+  printf '%s 05:00:00 %s\n'   "$V_SIMILAR" "$ROOT/flutter/cache/flutter_tester_helper"
+  printf '%s 01:99:00 %s\n'   "$V_BAD_TIME" "$ROOT/flutter/cache/flutter_tester"
   printf '%s 05:00:00 %s\n'   "$V_OTHER" "/bin/sleep"
 } > "$PS_FIXTURE"
 
@@ -345,20 +351,34 @@ check "procs: --report exits 0" "$rc" "0"
 check "procs: a two-day-old runner is listed"     "$(verb "$out" "$V_OLD1")"  "kill"
 check "procs: one a second over the limit is too" "$(verb "$out" "$V_OLD2")"  "kill"
 check "procs: one a second under it is not"       "$(verb "$out" "$V_YOUNG")" ""
+check "procs: one exactly on the limit is not older" "$(verb "$out" "$V_EDGE")" ""
+check "procs: a similar process name is not a match" "$(verb "$out" "$V_SIMILAR")" ""
+check "procs: malformed elapsed time is not actionable" "$(verb "$out" "$V_BAD_TIME")" ""
 check "procs: an unrelated old process is not"    "$(verb "$out" "$V_OTHER")" ""
 has "$out" "processes: flutter_tester older than 2h00m" "procs: the report says what it looks for"
-has "$out" "2 to kill, 1 younger than 2h00m left alone" "procs: it counts both sides"
+has "$out" "2 to kill, 2 not older than 2h00m left alone" "procs: it counts both sides"
 has "$out" "up 51h04m" "procs: it says how long the oldest has been up"
 alive "procs: --report killed nothing (old #1)" "$V_OLD1"
 alive "procs: --report killed nothing (old #2)" "$V_OLD2"
 
+printf 'denied\n' > "$GH_MODE"
+out=$(jan "" --clean); rc=$?
+check "degraded reap: --clean still exits 0" "$rc" "0"
+has "$out" "no worktrees or processes will be touched" "degraded reap: the no-side-effect boundary is explicit"
+check "degraded reap: an old runner is only reported" "$(verb "$out" "$V_OLD1")" "kill"
+alive "degraded reap: the old runner is left alone" "$V_OLD1"
+printf 'authed\n' > "$GH_MODE"
+
 out=$(jan "" --clean); rc=$?
 check "reap: --clean exits 0" "$rc" "0"
 check "reap: the two-day-old runner was killed" "$(verb "$out" "$V_OLD1")" "killed"
-has "$out" "2 killed, 0 survived, 1 younger than 2h00m left alone" "reap: it reports what it killed"
+has "$out" "2 killed, 0 survived, 2 not older than 2h00m left alone" "reap: it reports what it killed"
 dead  "reap: the two-day-old runner is gone" "$V_OLD1"
 dead  "reap: the one just over the limit is gone" "$V_OLD2"
 alive "reap: the young runner is left alone" "$V_YOUNG"
+alive "reap: the runner exactly at the limit is left alone" "$V_EDGE"
+alive "reap: the similarly named process is left alone" "$V_SIMILAR"
+alive "reap: the runner with malformed elapsed time is left alone" "$V_BAD_TIME"
 alive "reap: the unrelated process is left alone" "$V_OTHER"
 
 echo "== JANITOR_PROC_AGE and JANITOR_PROC_MATCH move the line =="
