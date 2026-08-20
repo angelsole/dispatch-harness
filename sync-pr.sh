@@ -265,7 +265,7 @@ run_codex() {  # $1 = label, $2 = prompt
 # (subscription billing), worker permissions, same timeout cap. Model/effort come
 # from the run's pinned implementer knobs, with run-task.sh's own defaults.
 IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-$(cat "$RUN_DIR/implementer-model" 2>/dev/null || echo claude-opus-5)}"
-IMPLEMENTER_EFFORT="${IMPLEMENTER_EFFORT:-$(cat "$RUN_DIR/implementer-effort" 2>/dev/null || echo xhigh)}"
+IMPLEMENTER_EFFORT="${IMPLEMENTER_EFFORT:-$(cat "$RUN_DIR/implementer-effort" 2>/dev/null || echo high)}"
 run_claude_worker() {  # $1 = label, $2 = prompt
   (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
       env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \

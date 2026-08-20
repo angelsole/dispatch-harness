@@ -139,7 +139,7 @@ positive_int() {
   [ "$1" -gt 0 ] 2>/dev/null
 }
 pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
-pin_knob implementer-effort IMPLEMENTER_EFFORT xhigh
+pin_knob implementer-effort IMPLEMENTER_EFFORT high
 # A first dispatch without codex pins blank Codex reviewer knobs. The Claude
 # review tier fills the runtime/result fields from the implementer-model pins;
 # the blank files keep a resumed Claude-only run from silently acquiring Codex
@@ -831,6 +831,7 @@ Rules:
 - Delegate to subagents (Explore — they run on a cheaper model) only for sizeable, genuinely independent exploration such as a wide multi-file investigation. Do not delegate what a few tool calls of your own would answer, and never use subagents to verify or double-check your own work.
 - Leave the tree passing the verify commands from the brief.
 - Never weaken, skip, or delete tests to make them pass; if a test seems wrong, say so in your notes instead.
+- Comment policy: a comment states a constraint or gotcha the code cannot express — nothing else. Never narrate design rationale, alternatives considered, history, or ticket numbers in comments or doc comments; that context goes in commit messages and .harness/implementer-notes.md. Keep doc comments to a line or two of what the thing is for. Do not imitate verbose comments you find in the surrounding code.
 - Make small conventional commits (type(scope): description). Never mention AI, Claude, or agents in commits.
 - Never git add or commit anything under .harness/ — it is orchestration metadata, excluded from git. If git refuses a path as ignored, leave it alone; never use git add -f.
 - Do NOT push, do NOT create PRs, do NOT switch branches.
@@ -1843,7 +1844,7 @@ Work through this checklist, in order:
 2. Business logic — does the code actually satisfy each acceptance criterion in the brief? Check edge cases, error paths, and the domain invariants documented in this repo's CLAUDE.md/AGENTS.md. Read the surrounding code the diff plugs into — verify correctness in context, not just in isolation.
 3. Reuse — for every new helper/hook/component/util/query in the diff, search the codebase for an existing equivalent FIRST. If one exists, use it and delete the duplicate. If the diff duplicates logic within itself, factor it out.
 4. Hardcoding — magic numbers, inline strings/URLs/IDs/colors/timeouts that belong in the constants, enums, config, or theme this repo already has. Move them to where the repo keeps such values.
-5. Quality of the NEW code — naming, dead code, needless abstraction, overly clever constructs. Refactor confidently.
+5. Quality of the NEW code — naming, dead code, needless abstraction, overly clever constructs. Comment noise counts: delete comments that narrate rationale, history, or tickets rather than stating a constraint the code cannot express, and trim doc comments to what the thing is for. Refactor confidently.
 
 Boundary: refactor freely within the code this branch introduces or touches; do NOT launch repo-wide refactors of untouched code — record those as suggestions in your notes instead.
 - Keep the gate green: re-run the relevant tests after your changes.
