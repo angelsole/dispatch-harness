@@ -21,7 +21,7 @@ green rounds later the picture is worse than where it started.
 | File | What it is |
 |---|---|
 | `visual-gate.sh` | The stage entry — what a repo's `VISUAL_GATE_CMD` runs. Starts the server, renders the shots, runs the checks, builds the sheet, asks the critic, writes `visual-score.json`, returns pass/fail. |
-| `frames.py` | Deterministic capture on the Playwright inside shot-scraper's venv: managed Chromium (or installed stable Chrome when that versioned cache is missing), SwiftShader, frozen clock, seeded `Math.random`, an app-ready predicate. |
+| `frames.py` | Deterministic capture on the Playwright inside shot-scraper's venv: revision-pinned managed Chromium, SwiftShader, frozen clock, seeded `Math.random`, an app-ready predicate. |
 | `vcheck.py` | The model-free checks: palette conformance, grid pitch and off-grid share, pure-black share and luminance floor, TV-distance legibility, frame-to-frame continuity, 8×8-block SSIM against the champion. |
 | `contact-sheet.sh` | The frames as one sheet, kept under 500 KB (above that the Read tool recompresses PNGs to JPEG and smears every hard edge the checks care about). |
 | `critic.sh` | The critic calls: fresh session, no shell, `--json-schema`, reference board → image A → image B, asked twice with A and B swapped. |

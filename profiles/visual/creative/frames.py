@@ -3,9 +3,9 @@
 
 Runs on the Playwright that already ships inside shot-scraper's uv venv
 (~/.local/share/uv/tools/shot-scraper/bin/python) — the gate adds no dependency
-of its own. It prefers Playwright's managed Chromium and falls back to an
-installed stable Chrome when an upgrade has left that versioned browser cache
-empty. shot-scraper's own CLI cannot do this job: it has no hook that runs
+of its own. It requires Playwright's revision-pinned managed Chromium; using a
+machine's independently updated browser would make identical frames depend on
+the runner. shot-scraper's own CLI cannot do this job: it has no hook that runs
 before the app boots, so it can neither freeze the clock nor seed Math.random,
 and an animated scene captured without those is a different picture every run.
 
@@ -66,29 +66,8 @@ LAUNCH_ARGS = [
 
 
 def launch_chromium(playwright):
-    """Launch Playwright's Chromium, or stable Chrome when its cache is absent.
-
-    uv can update shot-scraper (and therefore Playwright) independently of the
-    browser bundle in Playwright's versioned cache.  An installed stable Chrome
-    is a safe fallback for that one state: it is still driven by Playwright with
-    the same context, clock and SwiftShader flags.  Do not hide a real browser
-    crash behind the fallback; unless Playwright explicitly reports a missing
-    executable, preserve its launch error verbatim.
-    """
-    try:
-        return playwright.chromium.launch(headless=True, args=LAUNCH_ARGS)
-    except Exception as managed_error:  # noqa: BLE001 — Playwright wraps launch errors
-        if "Executable doesn't exist at " not in str(managed_error):
-            raise
-        try:
-            return playwright.chromium.launch(
-                headless=True, channel="chrome", args=LAUNCH_ARGS)
-        except Exception as chrome_error:  # noqa: BLE001 — retain both useful causes
-            raise RuntimeError(
-                "%s; the installed Chrome fallback could not launch: %s"
-                % (str(managed_error).splitlines()[0],
-                   str(chrome_error).splitlines()[0])
-            ) from managed_error
+    """Launch Playwright's revision-pinned managed Chromium."""
+    return playwright.chromium.launch(headless=True, args=LAUNCH_ARGS)
 
 
 def main():

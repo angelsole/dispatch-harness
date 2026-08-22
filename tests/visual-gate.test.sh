@@ -86,14 +86,11 @@ python3 -c 'import numpy, PIL' >/dev/null 2>&1 && HAVE_PY=1
 HAVE_MAGICK=0
 command -v magick >/dev/null 2>&1 && HAVE_MAGICK=1
 
-# A shot-scraper upgrade can leave Playwright importable while its versioned
-# browser cache is empty. The renderer must use an installed stable Chrome in
-# that exact state, but must not conceal a crash when the managed browser does
-# exist. This is a pure launch-policy test; Part A below remains the integration
-# test against whichever real browser this machine can run.
-if python3 - "$CREATIVE/frames.py" "$ROOT" <<'PY'
+# The browser revision is part of the renderer contract. A missing managed
+# browser must fail rather than silently selecting a host-managed Chrome whose
+# version can differ between otherwise identical runners.
+if python3 - "$CREATIVE/frames.py" <<'PY'
 import importlib.util
-import pathlib
 import sys
 
 spec = importlib.util.spec_from_file_location("visual_frames", sys.argv[1])
@@ -102,17 +99,16 @@ spec.loader.exec_module(frames)
 
 
 class Chromium:
-    def __init__(self, executable, managed_error, fallback_succeeds=True):
-        self.executable_path = executable
+    def __init__(self, result=None, error=None):
         self.calls = []
-        self.managed_error = managed_error
-        self.fallback_succeeds = fallback_succeeds
+        self.result = result
+        self.error = error
 
     def launch(self, **kwargs):
         self.calls.append(kwargs)
-        if kwargs.get("channel") == "chrome" and self.fallback_succeeds:
-            return "stable-chrome"
-        raise RuntimeError(self.managed_error)
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
 class Playwright:
@@ -120,35 +116,24 @@ class Playwright:
         self.chromium = chromium
 
 
-missing_path = pathlib.Path(sys.argv[2]) / "no-managed-chromium"
-missing = Chromium(str(missing_path), "Executable doesn't exist at %s" % missing_path)
-assert frames.launch_chromium(Playwright(missing)) == "stable-chrome"
-assert [call.get("channel") for call in missing.calls] == [None, "chrome"]
+managed = Chromium(result="managed-chromium")
+assert frames.launch_chromium(Playwright(managed)) == "managed-chromium"
+assert managed.calls == [{"headless": True, "args": frames.LAUNCH_ARGS}]
 
-present_path = pathlib.Path(sys.argv[2]) / "managed-chromium"
-present_path.touch()
-present = Chromium(str(present_path), "launch failed")
+missing_error = RuntimeError("Executable doesn't exist at managed revision")
+missing = Chromium(error=missing_error)
 try:
-    frames.launch_chromium(Playwright(present))
+    frames.launch_chromium(Playwright(missing))
 except RuntimeError as exc:
-    assert str(exc) == "launch failed"
+    assert exc is missing_error
 else:
-    raise AssertionError("managed browser crash was hidden by Chrome fallback")
-assert len(present.calls) == 1
-
-missing_but_broken = Chromium(str(missing_path), "launch failed")
-try:
-    frames.launch_chromium(Playwright(missing_but_broken))
-except RuntimeError as exc:
-    assert str(exc) == "launch failed"
-else:
-    raise AssertionError("a non-missing launch failure was hidden by Chrome fallback")
-assert len(missing_but_broken.calls) == 1
+    raise AssertionError("missing managed Chromium selected a host fallback")
+assert missing.calls == [{"headless": True, "args": frames.LAUNCH_ARGS}]
 PY
 then
-  ok "renderer falls back only when Playwright's managed Chromium is missing"
+  ok "renderer requires Playwright's revision-pinned managed Chromium"
 else
-  bad "renderer browser fallback policy"
+  bad "renderer browser pinning policy"
 fi
 
 # --- the fake critic ---------------------------------------------------------
