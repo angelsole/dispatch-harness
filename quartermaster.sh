@@ -540,7 +540,12 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
 # reads the run afterwards: an untested criterion still builds something, and a
 # question is a question. A critic that produced no verdict also leaves the brief
 # deferred — not as evidence against it, but because the required pre-dispatch
-# reading did not happen. Both outcomes are written into $WORK/criticnotes.
+# reading did not happen.
+#
+# $WORK/criticnotes carries the one outcome that still reaches a report line: a
+# brief the critic cleared and the evening went on to publish. Every other
+# outcome returns 1, and a held brief is never listed under Self-briefed — its
+# reason travels on stderr into "Could not self-brief" instead.
 #
 # Prints the reason on stderr and returns 1 when the brief must not be armed.
 spec_critic_pass() {  # $1 ticket, $2 candidate brief, $3 repo, $4 station, $5 station dir
@@ -558,8 +563,6 @@ spec_critic_pass() {  # $1 ticket, $2 candidate brief, $3 repo, $4 station, $5 s
     [ -z "$AUTOBRIEF_MODEL" ] || export SPEC_CRITIC_MODEL="$AUTOBRIEF_MODEL"
     "$SELF_DIR/spec-critic.sh" --brief "$candidate" --repo "$repo" --out "$verdict"
   ) </dev/null >>"$run_dir/spec-critic.log" 2>&1 || {
-    printf '%s\t%s\n' "$ticket" \
-      "spec-critic: no verdict (see runs/$ticket/spec-critic.log)" >> "$WORK/criticnotes"
     echo "the spec critic produced no verdict (see runs/$ticket/spec-critic.log)" >&2
     return 1
   }
