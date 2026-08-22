@@ -974,15 +974,12 @@ if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
     || fail setup_failed "implementer-provider is pinned to zai but there is no readable key file at $ZAI_KEY_FILE (create it mode 600)"
 fi
 
-# Provider-owned variables are cleared at every model-launch boundary. This
+# Provider-routing variables are cleared at every model-launch boundary. This
 # run-task process can itself be launched by a provider-pinned harness, and its
-# ambient endpoint, credential or model overrides must not select a provider in
-# this nested run. The selected implementer provider reapplies its own values
-# after the clear; every other model stage stays provider-neutral.
+# ambient endpoint or credentials must not select a provider in this nested run.
+# CLI tuning remains inherited unless the selected provider replaces it.
 clear_provider_env() {
   unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-  unset API_TIMEOUT_MS ANTHROPIC_DEFAULT_HAIKU_MODEL
-  unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_AUTO_COMPACT_WINDOW
 }
 
 # Applied INSIDE the implementer subshell, so the credential lives in that
@@ -995,6 +992,7 @@ clear_provider_env() {
 # through the same slot and inherits the same scoping for free.
 apply_provider_env() {
   [ "$IMPLEMENTER_PROVIDER" = zai ] || return 0
+  unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
   ANTHROPIC_AUTH_TOKEN=$(cat "$ZAI_KEY_FILE") || return 1
   export ANTHROPIC_AUTH_TOKEN
   export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
