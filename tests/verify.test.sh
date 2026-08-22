@@ -56,7 +56,8 @@ CLEAN_VERIFY_ENV=(env
   -u HARNESS_VERIFY_GCP_PROJECT -u HARNESS_VERIFY_GCP_LOCATION
   -u HARNESS_VERIFY_MODEL -u HARNESS_VERIFY_EVALS
   -u HARNESS_VERIFY_MAX_CRITERIA -u HARNESS_VERIFY_STEP_CHARS
-  -u HARNESS_VERIFY_MAX_CHARS -u HARNESS_VERIFY_EFFORT)
+  -u HARNESS_VERIFY_MAX_CHARS -u HARNESS_VERIFY_EFFORT
+  -u DEEPSEEK_EFFORT -u DEEPSEEK_MAX_TOKENS)
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
 printf 'score\n' > "$VERIFY_MODE"
@@ -142,6 +143,10 @@ case "\$(cat "$VERIFY_MODE")" in
   "score": 0.83,
   "at_implementer": 0.71,
   "criteria": [{"name": "The endpoint exists | safely", "score": 0.9}],
+  "items": [{"id": "coverage", "score": 0.9,
+             "citation": "+app.get('/export'", "samples": [0.9, 0.9, 0.6]},
+            {"id": "tests", "score": 0.7,
+             "citation": "+  it('exports CSV'", "samples": [0.7, 0.7, 0.4]}],
   "model": "deepseek-v4-flash",
   "provider": "deepseek",
   "evaluations": 3,
@@ -152,6 +157,32 @@ case "\$(cat "$VERIFY_MODE")" in
 }
 JSON
     echo "verify: score 0.83"
+    ;;
+  rubric)
+    cat > "\$run/verify.json" <<'JSON'
+{
+  "score": 0.62,
+  "at_implementer": null,
+  "criteria": [{"name": "Brief coverage", "score": 0.9},
+               {"name": "No unrequested scope", "score": 1.0},
+               {"name": "Diff minimality and hygiene", "score": 0.4},
+               {"name": "Test integrity", "score": 0.2},
+               {"name": "Resume coherence", "score": 0.5}],
+  "items": [{"id": "coverage", "score": 0.9,
+             "citation": "+app.get('/export'", "samples": [0.9, 0.9, 0.6]},
+            {"id": "tests", "score": 0.2,
+             "citation": "+describe('export'", "samples": [0.2, 0.2, 0.9]}],
+  "model": "gemini-2.5-flash",
+  "provider": "vertex",
+  "evaluations": 3,
+  "steps": 42,
+  "segments": 2,
+  "elided_steps": 0,
+  "usage": {"calls": 15, "input_tokens": 4500, "output_tokens": 300},
+  "seconds": 40.1
+}
+JSON
+    echo "verify: score 0.62 (5 rubric items × 3 samples, 42 steps)"
     ;;
   garbage)  printf 'not json {{{\n' > "\$run/verify.json" ;;
   boom)     echo "boom" >&2; exit 7 ;;
@@ -271,6 +302,15 @@ check "scored: with the implementer-end checkpoint beside it" \
   "$(result .metrics.verifier.at_implementer)" "0.71"
 check "scored: and the per-criterion detail" \
   "$(result '.metrics.verifier.criteria | length')" "1"
+# The rubric vector rides along verbatim, and the fields a pre-change consumer
+# reads are untouched beside it — run-task.sh embeds verify.json whole and was
+# never taught about `items`.
+check "scored: the rubric vector reaches result.json too" \
+  "$(result '.metrics.verifier.items | length')" "2"
+check "scored: with the citation that backs each item" \
+  "$(result '.metrics.verifier.items[0].citation')" "+app.get('/export'"
+check "scored: and the samples it was aggregated from" \
+  "$(result '.metrics.verifier.items[0].samples | join(",")')" "0.9,0.9,0.6"
 file_has "$RUN/timeline" "$STAGE_LINE" "scored: the stage announced itself"
 file_has "$RUN/verify.log" "verifier: 0.83" "scored: verify.log records the score it got"
 file_has "$RUN/pr-body.md" "## Verifier" "scored: the PR body gains the section"
@@ -306,6 +346,33 @@ CSV_OUT="$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" --csv)"
 has "$CSV_OUT" "wall_minutes,score" "surfaces: and so does the CSV header"
 check "surfaces: a run with no score renders blank rather than zero" \
   "$(printf '%s\n' "$METRICS_OUT" | awk '$1 == "V-OFF" { print $NF }')" "-"
+
+# ---------------------------------------------------------------------------
+echo "== the rubric document is one a pre-change consumer already reads =="
+# ---------------------------------------------------------------------------
+# run-task.sh was never taught about the rubric, and it does not need to be: the
+# vector arrives in the fields it already renders, and the one field the rubric
+# has no answer for arrives null, which every surface already handles. Nothing
+# below asserts on `items` — that is the point.
+printf 'rubric\n' > "$VERIFY_MODE"
+dispatch V-RUBRIC ""
+printf 'score\n' > "$VERIFY_MODE"
+check "rubric doc: the run ships as it always did" "$(result .status)" "ready"
+check "rubric doc: the headline mean reaches result.json" \
+  "$(result .metrics.verifier.score)" "0.62"
+file_has "$RUN/pr-body.md" "Trajectory score **0.62** · gemini-2.5-flash · 3 evaluations" \
+  "rubric doc: the PR body headline drops the checkpoint clause it has no data for"
+file_has "$RUN/pr-body.md" "| Brief coverage | 0.9 |" \
+  "rubric doc: and the table it already had now carries the rubric"
+file_has "$RUN/pr-body.md" "| Test integrity | 0.2 |" \
+  "rubric doc: one row per item, worst included"
+file_has "$RUN/pr-body.md" "Advisory only" "rubric doc: still saying it gates nothing"
+RUBRIC_STATUS="$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/status.sh" V-RUBRIC)"
+has "$RUBRIC_STATUS" "verifier: 0.62 · 5 criteria · gemini-2.5-flash" \
+  "rubric doc: status.sh renders it without an implementer checkpoint"
+check "rubric doc: and the SCORE column is the mean of the vector" \
+  "$(env HARNESS_DIR="$HARNESS" bash "$HARNESS/metrics.sh" \
+     | awk '$1 == "V-RUBRIC" { print $NF }')" "0.62"
 
 # ---------------------------------------------------------------------------
 echo "== a broken verifier cannot touch the run =="
@@ -402,12 +469,18 @@ mkrun() { mkdir -p "$RRUNS/$1"; printf '%s\n' "$2" > "$RRUNS/$1/result.json"; }
 mkrun S-1 '{"ticket":"S-1","status":"ready","arm":"full","review":"reviewed",
   "worktree":"/w/myapp-s-1",
   "metrics":{"wall_seconds":600,"verifier":{"score":0.4,"at_implementer":0.2}}}'
+# Two runs the rubric verifier scored: the vector rides in `items`. S-1 above is
+# the shape that came before it — a scalar and nothing else — and has to keep
+# rendering exactly as it always did.
 mkrun S-2 '{"ticket":"S-2","status":"ready","arm":"full","review":"reviewed",
   "worktree":"/w/myapp-s-2",
-  "metrics":{"wall_seconds":600,"verifier":{"score":0.8,"at_implementer":0.5}}}'
+  "metrics":{"wall_seconds":600,"verifier":{"score":0.8,"at_implementer":0.5,
+    "items":[{"id":"coverage","score":0.9},{"id":"tests","score":0.8}]}}}'
 mkrun S-3 '{"ticket":"S-3","status":"ready","arm":"full","review":"reviewed",
   "worktree":"/w/myapp-s-3",
-  "metrics":{"wall_seconds":600,"verifier":{"score":0.9,"at_implementer":0.9}}}'
+  "metrics":{"wall_seconds":600,"verifier":{"score":0.9,"at_implementer":0.9,
+    "items":[{"id":"coverage","score":0.8},{"id":"tests","score":1.0},
+             {"id":"resume","score":0.5}]}}}'
 # A run from before the verifier existed: no field at all, and no zero either.
 mkrun S-LEGACY '{"ticket":"S-LEGACY","status":"ready","arm":"full",
   "worktree":"/w/myapp-s-legacy","metrics":{"wall_seconds":600}}'
@@ -417,6 +490,27 @@ has "$REPORT" "verify score 0.80 0.90 3" \
 has "$REPORT" "pipeline vitals · 4 runs" "report: while every run is still counted as a run"
 LEGACY_TABLE="$(env HARNESS_DIR="$REPORTH" bash "$HARNESS/metrics.sh")"
 has "$LEGACY_TABLE" "S-LEGACY" "report: and a legacy result.json renders in the table without erroring"
+
+# The rubric vector, indented under the scalar it was averaged from. Each item
+# is counted over the runs that carry IT, so a corpus spanning the schema change
+# reports honest Ns rather than one N for the whole block.
+has "$REPORT" "coverage 0.90 0.90 2" "report: the vector prints an item line under verify score"
+has "$REPORT" "tests 1.00 1.00 2" "report: one line per item the corpus carries"
+has "$REPORT" "resume 0.50 0.50 1" "report: an item only some runs have is counted over those runs"
+has_not "$REPORT" "minimality" "report: and an item no run carries prints no line at all"
+check "report: the SCORE column is untouched by any of it" \
+  "$(printf '%s\n' "$LEGACY_TABLE" | awk '$1 == "S-2" { print $NF }')" "0.8"
+
+# A corpus written entirely before the rubric: the scalar line, and no vector.
+OLDH="$ROOT/old-harness"
+mkdir -p "$OLDH/runs/O-1"
+printf '%s\n' '{"ticket":"O-1","status":"ready","arm":"full","review":"reviewed",
+  "worktree":"/w/myapp-o-1",
+  "metrics":{"wall_seconds":600,"verifier":{"score":0.5,"at_implementer":0.4}}}' \
+  > "$OLDH/runs/O-1/result.json"
+OLD_REPORT="$(env HARNESS_DIR="$OLDH" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
+has "$OLD_REPORT" "verify score 0.50 0.50 1" "report: a pre-rubric corpus still reports its scalar"
+has_not "$OLD_REPORT" "coverage" "report: and grows no vector block it has no data for"
 
 # ---------------------------------------------------------------------------
 echo "== verify.py: the trajectory it builds =="
@@ -505,8 +599,134 @@ has_not "$(printf '%s' "$DRY" | jq -r '.last')" "all green" \
   "dry run: whose header is taken without the gate output behind it"
 has_not "$DRY" "private reasoning" "dry run: a thinking block is not a step"
 has_not "$DRY" "sk-not-a-real-key" "dry run: and no key is read"
-check "dry run: the checkpoints are the implementer's last step and the last step" \
-  "$(printf '%s' "$DRY" | jq -r '.checkpoints | join(",")')" "5,11"
+
+# A run that never resumed — one segment, no more — and a worktree that is not a
+# git tree at all, so there is no diff to read. Between them they cover both
+# ways an item can have nothing to be asked about.
+SEGRUN_ONE="$AROOT/one-segment-run"
+mkdir -p "$SEGRUN_ONE" "$AROOT/bare-wt"
+cp "$ARUN/brief.md" "$SEGRUN_ONE/brief.md"
+cat > "$SEGRUN_ONE/opus-stream.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"One pass, no resume"}]}}
+{"type":"result","subtype":"success","result":"done in one go"}
+EOF
+
+# ---------------------------------------------------------------------------
+echo "== verify.py: five fixed rubric items, each with its own evidence =="
+# ---------------------------------------------------------------------------
+check "rubric: the five items, in order" \
+  "$(printf '%s' "$DRY" | jq -r '[.items[].id] | join(",")')" \
+  "coverage,scope,minimality,tests,resume"
+check "rubric: four are judged from the diff and one from the record" \
+  "$(printf '%s' "$DRY" | jq -r '[.items[] | .evidence] | join(",")')" \
+  "diff,diff,diff,diff,trajectory"
+check "rubric: every item gets its own prompt" \
+  "$(printf '%s' "$DRY" | jq -r '[.items[] | select(.prompt != "")] | length')" "5"
+check "rubric: and no two of them ask the same question" \
+  "$(printf '%s' "$DRY" | jq -r '[.items[].prompt] | unique | length')" "5"
+check "rubric: each prompt names exactly one item" \
+  "$(printf '%s' "$DRY" | jq -r \
+     '[.items[] | . as $i | select($i.prompt | test("RUBRIC ITEM — " + $i.title))] | length')" "5"
+has "$(printf '%s' "$DRY" | jq -r '.items[0].prompt')" "Reply with ONE JSON object" \
+  "rubric: carrying the answer contract"
+has "$(printf '%s' "$DRY" | jq -r '.items[0].prompt')" \
+  "must appear in EVIDENCE" "rubric: which makes the citation the checkable part"
+# The spec is the pre-stated contract, not the agent's account of it: brief.md
+# reaches every item, and it is what "did this do what was asked" is asked about.
+check "rubric: the task spec reaches every item" \
+  "$(printf '%s' "$DRY" | jq -r '[.items[] | select(.prompt | test("Add the export endpoint"))] | length')" "5"
+check "rubric: acceptance criteria and all" \
+  "$(printf '%s' "$DRY" | jq -r '[.items[] | select(.prompt | test("It returns CSV and XLSX"))] | length')" "5"
+# The diff items must be able to quote the diff, and only the trajectory item
+# gets the run's narration — a diff item that could read the narration would be
+# scoring the story instead of the change.
+has "$(printf '%s' "$DRY" | jq -r '.items[0].prompt')" "+b" \
+  "rubric: a diff item is shown the diff"
+has_not "$(printf '%s' "$DRY" | jq -r '.items[0].prompt')" "Adding the export endpoint now" \
+  "rubric: and not the agent's narration"
+has "$(printf '%s' "$DRY" | jq -r '.items[4].prompt')" "Adding the export endpoint now" \
+  "rubric: while the resume item reads the whole record"
+check "rubric: K samples per item is what EVALS asks for" \
+  "$(printf '%s' "$DRY" | jq -r '.samples')" "3"
+check "rubric: HARNESS_VERIFY_EVALS moves it" \
+  "$(adapter HARNESS_VERIFY_EVALS=5 python3 "$ADAPTER" "$ARUN" "$AWT" origin/main --dry-run \
+     | jq -r '.samples')" "5"
+# The diff is sent once per diff item and the record at most once, so they
+# cannot share a budget.
+check "rubric: the diff evidence gets a quarter of the trajectory budget" \
+  "$(adapter HARNESS_VERIFY_MAX_CHARS=400 python3 "$ADAPTER" "$ARUN" "$AWT" origin/main --dry-run \
+     | jq -r '.diff_chars <= 100')" "true"
+
+# Resume coherence is a question about a run that stopped and started again.
+# Asking it of a run that never resumed invents a dimension, so it is not asked.
+check "rubric: a single-segment run is not asked about resuming" \
+  "$(adapter python3 "$ADAPTER" "$SEGRUN_ONE" "$AWT" origin/main --dry-run \
+     | jq -r '[.items[].id] | join(",")')" "coverage,scope,minimality,tests"
+check "rubric: while a resumed one is" \
+  "$(printf '%s' "$DRY" | jq -r '[.items[] | select(.id == "resume")] | length')" "1"
+# And a branch with no diff at all has nothing for the four diff items to read.
+# Unknown is not zero: they are not asked, rather than scored 0 on no evidence.
+check "rubric: no diff means no diff items" \
+  "$(adapter python3 "$ADAPTER" "$SEGRUN_ONE" "$AROOT/bare-wt" origin/main --dry-run \
+     | jq -r '[.items[].id] | length')" "0"
+
+# ---------------------------------------------------------------------------
+echo "== verify.py: the judge never learns whose work it is grading =="
+# ---------------------------------------------------------------------------
+# Self-preference bias is capability-independent and does not go away because a
+# prompt asks for impartiality, and these trajectories say "opus" and "codex" out
+# loud. So the names are removed before the payload is built: every vendor and
+# model name becomes the ROLE that wore it, everywhere it appears — the brief,
+# the narration, the tool arguments, the reviewer's notes and the diff itself.
+ANON_RUN="$AROOT/anon-run"; ANON_WT="$AROOT/anon-wt"
+mkdir -p "$ANON_RUN" "$ANON_WT/.harness"
+cat > "$ANON_RUN/brief.md" <<'EOF'
+# Teach the router about Claude
+
+## Problem
+
+The router still hardcodes gpt-4o.
+
+## Acceptance criteria
+- [ ] Opus and Sonnet are both selectable
+EOF
+cat > "$ANON_RUN/opus-stream.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"I am Claude Opus and I will edit the OpenAI adapter"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"src/anthropic.ts"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"wrote src/anthropic.ts"}]}}
+{"type":"result","subtype":"error_max_turns","result":"codex will pick this up"}
+{"type":"result","subtype":"success","result":"done, over to Codex"}
+EOF
+printf '# review\n\nCodex read the diff; GPT agrees.\n' > "$ANON_WT/.harness/review-notes.md"
+git init -q "$ANON_WT"
+git -C "$ANON_WT" config user.email t@t
+git -C "$ANON_WT" config user.name t
+git -C "$ANON_WT" commit -q --allow-empty -m "chore: base"
+git -C "$ANON_WT" update-ref refs/remotes/origin/main "$(git -C "$ANON_WT" rev-parse HEAD)"
+printf 'const vendor = "anthropic";\nconst fallback = "gpt-4o";\n' > "$ANON_WT/models.ts"
+git -C "$ANON_WT" add models.ts
+git -C "$ANON_WT" commit -q -m "feat: name the vendors"
+ANON="$(adapter python3 "$ADAPTER" "$ANON_RUN" "$ANON_WT" origin/main --dry-run)"
+PAYLOAD="$(printf '%s' "$ANON" | jq -r '.items[].prompt')"
+check "anonymise: the fixture is one the rubric can actually be asked about" \
+  "$(printf '%s' "$ANON" | jq -r '.items | length')" "5"
+for vendor in opus claude sonnet codex gpt anthropic openai; do
+  if printf '%s' "$PAYLOAD" | grep -qi -- "$vendor"; then
+    bad "anonymise: no judge payload contains \"$vendor\""
+  else
+    ok "anonymise: no judge payload contains \"$vendor\""
+  fi
+done
+has "$PAYLOAD" "REVIEWER read the diff; REVIEWER agrees." \
+  "anonymise: the reviewer's own notes lose both of their names"
+has "$PAYLOAD" "Teach the router about IMPLEMENTER" \
+  "anonymise: the brief is anonymised too, title and all"
+has "$PAYLOAD" 'const vendor = "IMPLEMENTER"' \
+  "anonymise: and so is the diff the items are judged from"
+# The trajectory the run itself is measured by is the anonymised one, so the
+# character budgets are budgets on what the judge will really read.
+has "$(printf '%s' "$ANON" | jq -r '.first')" "I am IMPLEMENTER IMPLEMENTER" \
+  "anonymise: the steps carry the role tokens, not the names"
 
 # The action step is the shape the verifier's prompt is written for: what was
 # done, and what came back.
@@ -524,18 +744,25 @@ check "criteria: a ticked box is a criterion like any other" \
   "$(printf '%s' "$DRY" | jq -r '.criteria[2]')" "Tests cover both formats"
 check "criteria: and nothing from the section after it" \
   "$(printf '%s' "$DRY" | jq -r '[.criteria[] | select(test("import"))] | length')" "0"
-check "criteria: HARNESS_VERIFY_MAX_CRITERIA caps them" \
+check "criteria: HARNESS_VERIFY_MAX_CRITERIA caps what the spec quotes" \
   "$(adapter HARNESS_VERIFY_MAX_CRITERIA=2 python3 "$ADAPTER" "$ARUN" "$AWT" origin/main --dry-run \
      | jq -r '.criteria | length')" "2"
-check "criteria: and 0 asks for the overall score alone" \
-  "$(adapter HARNESS_VERIFY_MAX_CRITERIA=0 python3 "$ADAPTER" "$ARUN" "$AWT" origin/main --dry-run \
-     | jq -r '.criteria | length')" "0"
+CAP0="$(adapter HARNESS_VERIFY_MAX_CRITERIA=0 python3 "$ADAPTER" "$ARUN" "$AWT" origin/main --dry-run)"
+check "criteria: and 0 leaves the spec its Problem section alone" \
+  "$(printf '%s' "$CAP0" | jq -r '.criteria | length')" "0"
+has "$(printf '%s' "$CAP0" | jq -r '.spec')" "people screenshot the table" \
+  "criteria: which is still a spec, not an empty one"
+check "criteria: the rubric is five items whatever the brief says" \
+  "$(printf '%s' "$CAP0" | jq -r '.items | length')" "5"
 
 printf '# No rubric here\n\n## Problem\n\nNothing to check.\n' > "$AROOT/no-criteria.md"
 cp "$ARUN/brief.md" "$AROOT/brief.keep"
 cp "$AROOT/no-criteria.md" "$ARUN/brief.md"
-check "criteria: a brief with no acceptance section scores overall only" \
-  "$(adapter python3 "$ADAPTER" "$ARUN" "$AWT" origin/main --dry-run | jq -r '.criteria | length')" "0"
+NO_CRIT="$(adapter python3 "$ADAPTER" "$ARUN" "$AWT" origin/main --dry-run)"
+check "criteria: a brief with no acceptance section contributes none" \
+  "$(printf '%s' "$NO_CRIT" | jq -r '.criteria | length')" "0"
+check "criteria: and the rubric is asked all the same" \
+  "$(printf '%s' "$NO_CRIT" | jq -r '.items | length')" "5"
 cp "$AROOT/brief.keep" "$ARUN/brief.md"
 
 # Clipping and elision, both disclosed.
@@ -653,28 +880,150 @@ check "usage: too few arguments exits 2" "$?" "2"
 # ---------------------------------------------------------------------------
 echo "== verify.py: the call it makes, and the file it writes =="
 # ---------------------------------------------------------------------------
-# A stand-in for the library — the same technique as the fake CLIs above. It
-# records every track() call and refuses to build a client without the key, so a
-# green run here proves the key was read in-process and handed to the backend.
+# Stand-ins for the library and for a judge behind it — the same technique as the
+# fake CLIs above. `stubjudge` writes down every item call it is asked to answer,
+# prompt and all, and scripts the answer from two env cycles so that divergent
+# samples and missing citations are things a test can ARRANGE rather than hope
+# for. The client refuses to exist without the key, so a green run here proves
+# the key was read in-process and handed to the backend.
 STUB="$AROOT/stub"
 mkdir -p "$STUB"
-cat > "$STUB/llm_verifier.py" <<'EOF'
-"""Stand-in for llm-as-a-verifier: records the calls, invents the scores."""
+cat > "$STUB/stubjudge.py" <<'EOF'
+"""What the judge replies, and the record of having been asked.
+
+Two env cycles, each consumed one entry PER CALL, so a test can arrange exactly
+what the K samples of an item disagree about:
+
+  VERIFY_STUB_SCORES   the number each answer carries          (default 0.6)
+  VERIFY_STUB_CITES    yes | no | bogus | garbage | boom       (default yes)
+
+`yes` quotes the first line of the EVIDENCE block of the very prompt it was
+handed, so a citation the adapter cannot verify is always this stub's deliberate
+choice and never an accident of the fixture.
+"""
 import json
 import os
 
+_seen = [0]
+
+
+def _cycle(name, default):
+    parts = [p for p in (os.environ.get(name) or "").split(",") if p != ""]
+    return parts or [default]
+
+
+def _between(text, opener, closer):
+    head = text.find(opener)
+    if head < 0:
+        return ""
+    tail = text.find(closer, head)
+    return text[head + len(opener):tail if tail >= 0 else len(text)]
+
+
+def _evidence_line(prompt):
+    body = _between(prompt, "EVIDENCE — ", "\n\nRUBRIC ITEM — ")
+    for line in body.splitlines()[1:]:
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def reply(prompt, model, backend, key_seen, request=None):
+    n = _seen[0]
+    _seen[0] = n + 1
+    scores = _cycle("VERIFY_STUB_SCORES", "0.6")
+    cites = _cycle("VERIFY_STUB_CITES", "yes")
+    mode = cites[n % len(cites)]
+    with open(os.environ["VERIFY_STUB_CALLS"], "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "backend": backend, "key_seen": key_seen, "model": model,
+            "item": _between(prompt, "RUBRIC ITEM — ", "\n").strip(),
+            "chars": len(prompt), "prompt": prompt, "request": request,
+        }) + "\n")
+    if mode == "boom":
+        # A call that never came back at all — the one failure that is unknown
+        # rather than unevidenced.
+        raise RuntimeError("the backend refused credential " + str(key_seen))
+    if mode == "garbage":
+        return "Looks fine to me, honestly."
+    answer = {"score": float(scores[n % len(scores)])}
+    if mode == "yes":
+        answer["citation"] = _evidence_line(prompt)
+    elif mode == "bogus":
+        answer["citation"] = "a line that appears nowhere in this evidence block"
+    return json.dumps(answer)
+
+
+class _Bag(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def openai_response(text):
+    return _Bag(
+        choices=[_Bag(message=_Bag(content=text))],
+        usage=_Bag(prompt_tokens=300, completion_tokens=20,
+                   prompt_tokens_details=_Bag(cached_tokens=100),
+                   completion_tokens_details=_Bag(reasoning_tokens=5)))
+
+
+def genai_response(text):
+    return _Bag(text=text, usage_metadata=_Bag(
+        prompt_token_count=300, cached_content_token_count=100,
+        candidates_token_count=20, thoughts_token_count=5))
+
+
+def listing(model_id):
+    return _Bag(data=[_Bag(id=model_id)])
+EOF
+cat > "$STUB/llm_verifier.py" <<'EOF'
+"""Stand-in for llm-as-a-verifier: the client, and nothing the adapter no
+longer uses. track() and token_usage() are deliberately absent — an adapter that
+still reached for them would fail here rather than pass on a stale contract."""
+import os
+
+import stubjudge
+
 DEFAULT_MODEL = "stub-default-model"
-CALLS = os.environ["VERIFY_STUB_CALLS"]
 
 
-class _Progress:
-    def __init__(self, scores):
-        self.scores = scores
-        self.final = scores[-1]
+def deepseek_reasoning_params():
+    effort = os.environ.get("DEEPSEEK_EFFORT", "high")
+    max_tokens = int(os.environ.get("DEEPSEEK_MAX_TOKENS", "32768"))
+    if effort in ("off", "disabled", "none"):
+        return {"thinking": {"type": "disabled"}}, max_tokens
+    return ({"thinking": {"type": "enabled"},
+             "reasoning_effort": effort}, max_tokens)
 
 
-class _Client(dict):
-    pass
+class _Models:
+    """An OpenAI-compatible server names what it serves; it cannot generate."""
+
+    def list(self):
+        return stubjudge.listing("served-by-this-server")
+
+
+class _Completions:
+    def __init__(self, client):
+        self.client = client
+
+    def create(self, model=None, messages=None, **kwargs):
+        prompt = messages[0]["content"] if messages else ""
+        return stubjudge.openai_response(stubjudge.reply(
+            prompt, model, self.client.backend, self.client.key, kwargs))
+
+
+class _Chat:
+    def __init__(self, client):
+        self.completions = _Completions(client)
+
+
+class _Client:
+    def __init__(self, backend, key):
+        self.backend = backend
+        self.key = key
+        self.chat = _Chat(self)
+        self.models = _Models()
 
 
 def create_client():
@@ -694,58 +1043,44 @@ def create_client():
             break
     if backend is None:
         raise RuntimeError("no backend env var was set")
-    client = _Client(backend=backend, key=os.environ.get(backend))
+    client = _Client(backend, os.environ.get(backend))
     if backend == "DEEPSEEK_API_KEY":
         client._llm_verifier_model = "deepseek-v4-flash"
+        client._llm_verifier_deepseek = True
     return client
-
-
-def _describe(client):
-    # create_client() hands back the dict above; a Vertex service account is a
-    # client the ADAPTER built and passed in, which is the whole contract there.
-    if isinstance(client, dict):
-        return {"backend": client.get("backend"), "key_seen": client.get("key"),
-                "client_kwargs": None}
-    return {"backend": "client:" + type(client).__name__, "key_seen": None,
-            "client_kwargs": getattr(client, "kwargs", None)}
-
-
-def track(problem, steps, checkpoint_steps=None, n_evaluations=1, model=None, client=None):
-    record = {
-        "problem": problem,
-        "steps": len(steps),
-        "checkpoint_steps": checkpoint_steps,
-        "n_evaluations": n_evaluations,
-        "model": model,
-    }
-    record.update(_describe(client))
-    with open(CALLS, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
-    return _Progress([0.5, 0.75][: len(checkpoint_steps or [1])])
-
-
-def token_usage():
-    return {"calls": 4, "input_tokens": 900, "cached_input_tokens": 100,
-            "uncached_input_tokens": 800, "output_tokens": 40,
-            "reasoning_tokens": 12, "cache_hit_rate": 0.11}
 EOF
 
 CALLS="$AROOT/stub-calls.jsonl"
-: > "$CALLS"
-"${CLEAN_VERIFY_ENV[@]}" \
-    PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
-    HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_EVALS=3 \
-    python3 "$ADAPTER" "$ARUN" "$AWT" origin/main > "$ROOT/score.out" 2>"$ROOT/score.err"
+V="$ARUN/verify.json"
+judge() {  # rest = extra VAR=VAL assignments; scores this fixture run
+  : > "$CALLS"
+  "${CLEAN_VERIFY_ENV[@]}" \
+      PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
+      HARNESS_VERIFY_KEY_FILE="$KEY_FILE" \
+      "$@" python3 "$ADAPTER" "$ARUN" "$AWT" origin/main
+}
+
+judge HARNESS_VERIFY_EVALS=3 > "$ROOT/score.out" 2>"$ROOT/score.err"
 check "score: exits 0" "$?" "0"
 check "score: and says nothing on stderr" "$(cat "$ROOT/score.err")" ""
-V="$ARUN/verify.json"
 exists "score: verify.json is written" "$V"
-check "score: the overall score is the last checkpoint" "$(jq -r .score "$V")" "0.75"
-check "score: and the first checkpoint is what the implementer alone was worth" \
-  "$(jq -r .at_implementer "$V")" "0.5"
-check "score: one entry per acceptance criterion" "$(jq -r '.criteria | length' "$V")" "3"
-check "score: each with a name and a number" \
-  "$(jq -r '[.criteria[] | select(.name != "" and (.score | type) == "number")] | length' "$V")" "3"
+has "$(cat "$ROOT/score.out")" "5 rubric items × 3 samples" \
+  "score: and the line it prints says what it did"
+check "score: the headline is the plain mean of the item vector" "$(jq -r .score "$V")" "0.6"
+check "score: one entry per rubric item" "$(jq -r '.items | length' "$V")" "5"
+check "score: the five ids are the rubric's, in rubric order" \
+  "$(jq -r '[.items[].id] | join(",")' "$V")" "coverage,scope,minimality,tests,resume"
+check "score: each item carries its K samples" \
+  "$(jq -r '[.items[] | select((.samples | length) == 3)] | length' "$V")" "5"
+check "score: and the citation that backs the number" \
+  "$(jq -r '[.items[] | select(.citation != "")] | length' "$V")" "5"
+has "$(jq -r '.items[0].citation' "$V")" "diff --git" \
+  "score: which for a diff item is a line of the diff"
+check "score: the legacy criteria table now carries the rubric by title" \
+  "$(jq -r '[.criteria[].name] | join(", ")' "$V")" \
+  "Brief coverage, No unrequested scope, Diff minimality and hygiene, Test integrity, Resume coherence"
+check "score: at_implementer stays in the schema, and stays null" \
+  "$(jq -r '.at_implementer' "$V")" "null"
 check "score: the model is the client-resolved DeepSeek default, not Gemini's global default" \
   "$(jq -r .model "$V")" "deepseek-v4-flash"
 check "score: the provider is recorded" "$(jq -r .provider "$V")" "deepseek"
@@ -753,54 +1088,143 @@ check "score: so is K" "$(jq -r .evaluations "$V")" "3"
 check "score: and the size of the trajectory it read" "$(jq -r .steps "$V")" "11"
 check "score: and how many implementer segments it spans" "$(jq -r .segments "$V")" "2"
 check "score: with nothing elided at the default budget" "$(jq -r .elided_steps "$V")" "0"
-check "score: token usage is carried over" "$(jq -r .usage.input_tokens "$V")" "900"
-check "score: including the cache columns" "$(jq -r .usage.cached_input_tokens "$V")" "100"
+# The item calls ARE the bill, so the adapter counts them itself rather than
+# asking a library that no longer makes them.
+check "score: token usage counts the calls it actually made" "$(jq -r .usage.calls "$V")" "15"
+check "score: with the input it sent" "$(jq -r .usage.input_tokens "$V")" "4500"
+check "score: including the cache columns" "$(jq -r .usage.cached_input_tokens "$V")" "1500"
+check "score: and the tiny output it asked for" "$(jq -r .usage.output_tokens "$V")" "300"
 check "score: and how long it took" "$(jq -r '.seconds | type' "$V")" "number"
 file_has_not "$V" "sk-not-a-real-key" "score: the key is in no field of verify.json"
 
-check "call: one overall pass plus one per criterion" "$(grep -c '' < "$CALLS" | tr -d ' ')" "4"
-check "call: the overall pass checkpoints at the implementer end and at the end" \
-  "$(jq -r 'select(.checkpoint_steps | length == 2) | .checkpoint_steps | join(",")' "$CALLS")" "5,11"
-check "call: every pass runs K evaluations" \
-  "$(jq -s '[.[] | .n_evaluations] | unique | join(",")' "$CALLS")" '"3"'
-check "call: every pass reads the whole trajectory" \
-  "$(jq -s '[.[] | .steps] | unique | join(",")' "$CALLS")" '"11"'
-check "call: the criterion passes score one checkpoint, the final state" \
-  "$(jq -s '[.[] | select((.checkpoint_steps | length) == 1) | .checkpoint_steps[0]] | unique | join(",")' "$CALLS")" '"11"'
-check "call: each criterion is framed as the graders only check" \
-  "$(jq -s '[.[] | select(.problem | test("checks exactly one thing"))] | length' "$CALLS")" "3"
-check "call: while the overall pass carries the whole acceptance list" \
-  "$(jq -s '[.[] | select(.problem | test("checks every one of these"))] | length' "$CALLS")" "1"
-check "call: the brief title reaches the problem statement" \
-  "$(jq -s '[.[] | select(.problem | test("Add the export endpoint"))] | length' "$CALLS")" "4"
-check "call: and so does the Problem section" \
-  "$(jq -s '[.[] | select(.problem | test("people screenshot the table"))] | length' "$CALLS")" "4"
+check "call: one call per item per sample, and not one more" \
+  "$(grep -c '' < "$CALLS" | tr -d ' ')" "15"
+check "call: five distinct items were asked about" \
+  "$(jq -s '[.[] | .item] | unique | length' "$CALLS")" "5"
+check "call: each of them K times" \
+  "$(jq -s 'group_by(.item) | [.[] | length] | unique | join(",")' "$CALLS")" '"3"'
+check "call: no item is ever batched with another" \
+  "$(jq -s '[.[] | select(.prompt | test("RUBRIC ITEM"; "g"))] | length' "$CALLS")" "15"
+check "call: every call carries the pre-stated spec" \
+  "$(jq -s '[.[] | select(.prompt | test("Add the export endpoint"))] | length' "$CALLS")" "15"
+check "call: and the acceptance criteria in it" \
+  "$(jq -s '[.[] | select(.prompt | test("It returns CSV and XLSX"))] | length' "$CALLS")" "15"
+# Length cannot buy a score, so the diff items must not be shown the record: the
+# resume item is the only call that carries the narration.
+check "call: only the resume item reads the trajectory" \
+  "$(jq -s '[.[] | select(.prompt | test("Adding the export endpoint now"))] | length' "$CALLS")" "3"
 check "call: the key reached the backend the provider asked for" \
   "$(jq -s '[.[] | .backend] | unique | join(",")' "$CALLS")" '"DEEPSEEK_API_KEY"'
 check "call: read from the file rather than from an argument" \
   "$(jq -s '[.[] | .key_seen] | unique | join(",")' "$CALLS")" '"sk-not-a-real-key-0123456789"'
+check "call: and the model the client resolved is the one it names" \
+  "$(jq -s '[.[] | .model] | unique | join(",")' "$CALLS")" '"deepseek-v4-flash"'
+check "call: DeepSeek keeps the library's reasoning effort" \
+  "$(jq -s '[.[] | .request.extra_body.reasoning_effort] | unique | join(",")' "$CALLS")" '"high"'
+check "call: and its reasoning-sized output budget" \
+  "$(jq -s '[.[] | .request.max_tokens] | unique | join(",")' "$CALLS")" '"32768"'
 
-: > "$CALLS"
+judge HARNESS_VERIFY_EVALS=1 HARNESS_VERIFY_EFFORT=low >/dev/null 2>&1
+check "call: HARNESS_VERIFY_EFFORT still reaches DeepSeek item calls" \
+  "$(jq -s '[.[] | .request.extra_body.reasoning_effort] | unique | join(",")' "$CALLS")" '"low"'
+
+# ---------------------------------------------------------------------------
+echo "== verify.py: K samples per item, and what an uncited one is worth =="
+# ---------------------------------------------------------------------------
+# Judges are noisy on long agentic outputs, which is the whole reason for K > 1.
+# The stub disagrees with itself on purpose: 0.9, 0.2, 0.8 for every item.
+judge HARNESS_VERIFY_EVALS=3 VERIFY_STUB_SCORES=0.9,0.2,0.8 >/dev/null 2>&1
+check "samples: divergent samples are kept, in the order they were drawn" \
+  "$(jq -r '.items[0].samples | join(",")' "$V")" "0.9,0.2,0.8"
+check "samples: and aggregated by median, not by mean" \
+  "$(jq -r '.items[0].score' "$V")" "0.8"
+check "samples: which is what the headline averages" "$(jq -r '.score' "$V")" "0.8"
+check "samples: the published citation is the one from the sample that won" \
+  "$(jq -r '[.items[] | select(.citation != "")] | length' "$V")" "5"
+
+# The rule the design rests on: an answer that cannot point at the span deciding
+# it is worth nothing, however confident the number beside it.
+judge HARNESS_VERIFY_EVALS=3 VERIFY_STUB_SCORES=0.9 VERIFY_STUB_CITES=yes,no,yes >/dev/null 2>&1
+check "citation: the sample that answered without one scores 0" \
+  "$(jq -r '.items[0].samples | join(",")' "$V")" "0.9,0.0,0.9"
+check "citation: and the two that cited carry the item" \
+  "$(jq -r '.items[0].score' "$V")" "0.9"
+
+judge HARNESS_VERIFY_EVALS=3 VERIFY_STUB_SCORES=0.9 VERIFY_STUB_CITES=bogus >/dev/null 2>&1
+check "citation: a quote that is not in the evidence is not a citation" \
+  "$(jq -r '.items[0].samples | join(",")' "$V")" "0.0,0.0,0.0"
+check "citation: so the item scores 0 whatever number came with it" \
+  "$(jq -r '.items[0].score' "$V")" "0.0"
+check "citation: and nothing unbacked is published beside it" \
+  "$(jq -r '.items[0].citation' "$V")" ""
+check "citation: a confident, unevidenced verifier scores the run 0" \
+  "$(jq -r '.score' "$V")" "0.0"
+
+judge HARNESS_VERIFY_EVALS=1 VERIFY_STUB_SCORES=0.9 VERIFY_STUB_CITES=garbage >/dev/null 2>&1
+check "citation: an answer that is not JSON at all is worth the same" \
+  "$(jq -r '.score' "$V")" "0.0"
+check "citation: K=1 is one sample per item" \
+  "$(grep -c '' < "$CALLS" | tr -d ' ')" "5"
+
+judge HARNESS_VERIFY_EVALS=3 VERIFY_STUB_SCORES=1,1,0 >/dev/null 2>&1
+check "samples: two agreeing samples outvote a third" \
+  "$(jq -r '.items[0].score' "$V")" "1.0"
+
+# An unevidenced answer and a call that never answered are different facts. The
+# first is a 0 the run earned; the second is a hole in the measurement, and
+# filling it with a 0 would put a number in the corpus that no evidence backs.
+judge HARNESS_VERIFY_EVALS=3 VERIFY_STUB_CITES=yes,boom,yes >/dev/null 2>&1
+check "unknown: a call that never came back is dropped, not scored 0" \
+  "$(jq -r '.items[0].samples | join(",")' "$V")" "0.6,,0.6"
+check "unknown: and the item is the median of the samples that did" \
+  "$(jq -r '.items[0].score' "$V")" "0.6"
+
+# A fixed rubric must not turn into a smaller, easier rubric because every
+# sample of one item failed. There is no complete vector to average or publish.
+rm -f "$V"
+judge HARNESS_VERIFY_EVALS=3 VERIFY_STUB_CITES=boom,boom,boom,yes \
+  >/dev/null 2>"$ROOT/oneitemboom.err"
+check "unknown: an item with no answers fails the verifier" "$?" "1"
+has "$(cat "$ROOT/oneitemboom.err")" "rubric item(s) could not be scored: coverage" \
+  "unknown: naming the hole that prevented a complete vector"
+if [ ! -e "$V" ]; then
+  ok "unknown: a partial vector is never published"
+else
+  bad "unknown: a partial vector is never published"
+fi
+file_has_not "$ROOT/oneitemboom.err" "sk-not-a-real-key" \
+  "unknown: a failed call cannot leak its credential into verify.log"
+
+rm -f "$V"
+judge HARNESS_VERIFY_EVALS=2 VERIFY_STUB_CITES=boom >/dev/null 2>"$ROOT/allboom.err"
+check "unknown: a verifier that answered nothing fails rather than scoring 0" "$?" "1"
+has "$(cat "$ROOT/allboom.err")" "no rubric item could be scored" \
+  "unknown: saying so on stderr, which is what verify.log collects"
+file_has_not "$ROOT/allboom.err" "sk-not-a-real-key" \
+  "unknown: even an all-call failure keeps the credential out of verify.log"
+file_has "$ROOT/allboom.err" "<redacted>" \
+  "unknown: while leaving a readable redacted backend reason"
+
 DOTENV_CWD="$AROOT/dotenv-cwd"
 mkdir -p "$DOTENV_CWD"
 printf 'OPENAI_BASE_URL=https://wrong.invalid/v1\nDEEPSEEK_API_KEY=wrong-key\n' \
   > "$DOTENV_CWD/.env"
+: > "$CALLS"
 ( cd "$DOTENV_CWD" && \
   "${CLEAN_VERIFY_ENV[@]}" \
       PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
       HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_PROVIDER=vertex \
-      HARNESS_VERIFY_MODEL=gemini-2.5-flash HARNESS_VERIFY_MAX_CRITERIA=0 \
+      HARNESS_VERIFY_MODEL=gemini-2.5-flash HARNESS_VERIFY_EVALS=1 \
       python3 "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>&1 )
 check "provider: vertex selects the Vertex backend and nothing else" \
   "$(jq -s '[.[] | .backend] | unique | join(",")' "$CALLS")" '"VERTEX_API_KEY"'
 check "provider: a local .env cannot restore a higher-priority backend" \
   "$(jq -s '[.[] | .key_seen] | unique | join(",")' "$CALLS")" '"sk-not-a-real-key-0123456789"'
 check "provider: a pinned model is passed through" \
-  "$(jq -r '.model' "$CALLS")" "gemini-2.5-flash"
+  "$(jq -s '[.[] | .model] | unique | join(",")' "$CALLS")" '"gemini-2.5-flash"'
 check "provider: and is what verify.json records" "$(jq -r .model "$V")" "gemini-2.5-flash"
-check "provider: MAX_CRITERIA=0 makes exactly one call" "$(grep -c '' < "$CALLS" | tr -d ' ')" "1"
-check "provider: overall-only still gives that one call the full acceptance list" \
-  "$(jq -s '[.[] | select(.problem | test("It returns CSV"))] | length' "$CALLS")" "1"
+check "provider: K=1 costs one call per item and no more" \
+  "$(grep -c '' < "$CALLS" | tr -d ' ')" "5"
 
 # ---------------------------------------------------------------------------
 echo "== verify.py: Vertex authenticates as a principal, not with an API key =="
@@ -813,16 +1237,30 @@ GENAI="$AROOT/genai-stub"
 mkdir -p "$GENAI/google/genai"
 : > "$GENAI/google/__init__.py"
 cat > "$GENAI/google/genai/__init__.py" <<'EOF'
-"""Stand-in for google-genai: records the client the adapter builds."""
+"""Stand-in for google-genai: records the client the adapter builds, and
+answers the item calls it is then asked to make. A google-genai client
+generates; it does not chat, and the adapter has to know the difference."""
 import json
 import os
 
+import stubjudge
+
 CALLS = os.environ["VERIFY_GENAI_CALLS"]
+
+
+class _Models:
+    def generate_content(self, model=None, contents=None, config=None):
+        return stubjudge.genai_response(
+            stubjudge.reply(str(contents), model, "client:Client", None, config))
+
+    def list(self):
+        raise AssertionError("a genai client must never be asked to list models")
 
 
 class Client:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        self.models = _Models()
         with open(CALLS, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({
                 "kwargs": kwargs,
@@ -865,15 +1303,21 @@ vertex_run() {  # rest = extra VAR=VAL assignments for this run
   "${CLEAN_VERIFY_ENV[@]}" \
       PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" \
       VERIFY_GENAI_CALLS="$GENAI_CALLS" \
-      HARNESS_VERIFY_KEY_FILE="$SA_KEY" HARNESS_VERIFY_MAX_CRITERIA=0 \
+      HARNESS_VERIFY_KEY_FILE="$SA_KEY" HARNESS_VERIFY_EVALS=1 \
       "$@" python3 -S "$ADAPTER" "$ARUN" "$AWT" origin/main
 }
 
 vertex_run >/dev/null 2>"$ROOT/vertex.err"
 check "vertex: a service-account key file scores without a provider being set" "$?" "0"
 check "vertex: which is inferred as the vertex provider" "$(jq -r .provider "$V")" "vertex"
-check "vertex: the client is built here and handed to track()" \
+check "vertex: the client is built here, and every item call goes through it" \
   "$(jq -s '[.[] | .backend] | unique | join(",")' "$CALLS")" '"client:Client"'
+check "vertex: generating, not chatting" \
+  "$(grep -c '' < "$CALLS" | tr -d ' ')" "5"
+check "vertex: keeps the library's zero-thinking configuration" \
+  "$(jq -s '[.[] | .request.thinking_config.thinking_budget] | unique | join(",")' "$CALLS")" '"0"'
+check "vertex: output usage includes any reported thought tokens" \
+  "$(jq -r '.usage.output_tokens' "$V")" "125"
 check "vertex: as a Vertex client" \
   "$(jq -r '.kwargs.vertexai' "$GENAI_CALLS")" "true"
 check "vertex: on the project the JSON names" \
@@ -917,7 +1361,7 @@ check "vertex: and a run without a service account carries no location" \
 : > "$CALLS"
 "${CLEAN_VERIFY_ENV[@]}" \
     PYTHONPATH="$STUB:$GENAI" VERIFY_STUB_CALLS="$CALLS" VERIFY_GENAI_CALLS="$GENAI_CALLS" \
-    HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_MAX_CRITERIA=0 \
+    HARNESS_VERIFY_KEY_FILE="$KEY_FILE" HARNESS_VERIFY_EVALS=1 \
     python3 -S "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>&1
 check "inference: a one-line key with no provider set is deepseek, as before" \
   "$(jq -r .provider "$V")" "deepseek"
@@ -941,6 +1385,16 @@ file_has "$ROOT/vertex-boom.err" "vertex refused this principal" \
     python3 "$ADAPTER" "$ARUN" "$AWT" origin/main >/dev/null 2>"$ROOT/nokey.err"
 check "no key: the adapter skips with exit 3" "$?" "3"
 has "$(cat "$ROOT/nokey.err")" "no key" "no key: and one line saying so"
+
+# A run with a trajectory but nothing any item can read — no diff, one segment —
+# is a skip too, and is decided before the key is even looked at.
+"${CLEAN_VERIFY_ENV[@]}" \
+    PYTHONPATH="$STUB" VERIFY_STUB_CALLS="$CALLS" \
+    HARNESS_VERIFY_KEY_FILE="$KEY_FILE" \
+    python3 "$ADAPTER" "$SEGRUN_ONE" "$AROOT/bare-wt" origin/main \
+    >/dev/null 2>"$ROOT/noevidence.err"
+check "no evidence: exit 3, the skip code" "$?" "3"
+has "$(cat "$ROOT/noevidence.err")" "no evidence" "no evidence: with one line saying why"
 
 # A machine with no library at all is the same kind of skip.
 "${CLEAN_VERIFY_ENV[@]}" \
