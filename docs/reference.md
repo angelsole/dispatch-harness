@@ -328,7 +328,7 @@ as proof.
 | --- | --- | --- |
 | `HARNESS_GATE_INTEGRITY` | `0` disables the stage: no file, no `gate_integrity` field, and a review prompt byte-identical to what it was before this existed. | `1` |
 | `HARNESS_GATE_INTEGRITY_TIMEOUT` | Seconds the whole replay half may spend. Test files left over when it runs out are `not_run`, and the reason says so. | `300` |
-| `HARNESS_GATE_INTEGRITY_FILE_TIMEOUT` | Seconds one replayed test file may take. | `120` |
+| `HARNESS_GATE_INTEGRITY_FILE_TIMEOUT` | Seconds one replayed test file may take. Whichever cap bites first, a runner killed by one is always reported as a timeout, whatever it had printed by then. | `120` |
 | `HARNESS_GATE_INTEGRITY_MAX_FILES` | How many test files are replayed at most; the rest are `not_run` rather than silently dropped. | `10` |
 
 Both halves are heuristics, with false positives and false negatives, which is
