@@ -16,6 +16,18 @@ else
   status=1
 fi
 
+# The dispatch knobs a run pins at first dispatch, cleared for every suite.
+# The harness dispatches THIS repo, and it selects a provider by exporting
+# IMPLEMENTER_PROVIDER — which every fixture run-task.sh a suite spawns then
+# inherits, pins, and dies on at the credential check for a vendor the fixture
+# never asked for. Eleven suites failed that way, all of them reporting
+# setup_failed for reasons nothing in their own fixture explains. A suite that
+# wants one of these sets it itself; none of them may inherit one.
+GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
+          -u REVIEWER_MODEL -u REVIEWER_EFFORT -u HARNESS_OWNER
+          -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES
+          -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH)
+
 # Bash expands the glob in filename order and includes new suites before their
 # first commit. Only a failing suite prints its transcript; a green one is worth
 # exactly one line — plus its skips, if it has any. A suite that could not test
@@ -25,7 +37,7 @@ fi
 for t in tests/*.test.sh; do
   [ -e "$t" ] || continue
   started=$SECONDS
-  if out=$(bash "$t" 2>&1); then verdict=ok; else verdict=FAIL; status=1; fi
+  if out=$("${GATE_ENV[@]}" bash "$t" 2>&1); then verdict=ok; else verdict=FAIL; status=1; fi
   counts=$(printf '%s\n' "$out" | awk '
     /^  ok /   { passed++ }
     /^  FAIL / { failed++ }
