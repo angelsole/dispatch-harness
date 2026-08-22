@@ -20,4 +20,12 @@ if [ -f "$RUN/status" ]; then
   esac
 fi
 
+# A session the run billed elsewhere resumes against the wrong endpoint unless
+# the shell carries the same env the run injected. Only the key's PATH is
+# printed; the credential stays in the file.
+if [ "$(cat "$RUN/implementer-provider" 2>/dev/null || echo anthropic)" = zai ]; then
+  echo "This run's implementer is pinned to z.ai — resume it there by exporting first:"
+  echo "  export ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic API_TIMEOUT_MS=3000000 ANTHROPIC_AUTH_TOKEN=\"\$(cat ${ZAI_API_KEY_FILE:-$HARNESS_DIR/zai-api-key})\""
+fi
+
 cd "$WT" && exec env -u ANTHROPIC_API_KEY claude --resume "$(cat "$RUN/opus-session")"

@@ -120,7 +120,8 @@ shquote() {  # $1 = value; prints it single-quoted for the wrapper
 env_names() {
   { compgen -e 2>/dev/null | grep -E '^HARNESS_[A-Za-z0-9_]+$'
     printf '%s\n' HARNESS_DIR CLAUDE_CONFIG_DIR CODEX_HOME GH_CONFIG_DIR GH_TOKEN \
-      IMPLEMENTER_MODEL IMPLEMENTER_EFFORT REVIEWER_MODEL REVIEWER_EFFORT PATH
+      IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL IMPLEMENTER_EFFORT \
+      REVIEWER_MODEL REVIEWER_EFFORT PATH
   } | sort -u
 }
 
