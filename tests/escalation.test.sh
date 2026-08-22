@@ -381,6 +381,20 @@ check "guard: an attempt with no diff does not escalate" "$(spawns_of implemente
 has "$OUT" "there is no patch to correct" "guard: saying so"
 check "guard: and the run ends on the gate's verdict" "$(result .status)" "gate_failed"
 
+# A rejection from an earlier dispatch judged an earlier brief and tree. It is
+# archived during setup, before it can veto a newly-earned escalation.
+STALE_TICKET=ESC-STALE-REJECTION
+STALE_WT="$ROOT/greenapp-$(printf '%s' "$STALE_TICKET" | tr '[:upper:]' '[:lower:]')"
+git -C "$REPO" worktree add -q -b "fix/$STALE_TICKET" "$STALE_WT" origin/main
+mkdir -p "$STALE_WT/.harness"
+printf '# obsolete rejection\n' > "$STALE_WT/.harness/REJECTED.md"
+dispatch "$STALE_TICKET" commit fail "IMPLEMENTER_PROVIDER=zai"
+check "guard: a stale rejection does not suppress escalation" \
+  "$(spawns_of implementer)" "2"
+exists "guard: the stale rejection is archived" "$RUN/REJECTED.prev.md"
+absent "guard: the stale rejection is gone before the new attempt" \
+  "$WT/.harness/REJECTED.md"
+
 # The step classes: escalation-steps decides, and it is overridable.
 TEST_GATE_CMD='exit 7'
 dispatch ESC-STEP-UNKNOWN commit fail "IMPLEMENTER_PROVIDER=zai"

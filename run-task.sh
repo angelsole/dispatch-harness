@@ -955,6 +955,12 @@ mount_specs() {  # $1 = run dir, $2 = worktree
 mkdir -p "$WORKTREE/.harness"
 cp "$BRIEF" "$WORKTREE/.harness/brief.md"
 rm -f "$WORKTREE/.harness/QUESTIONS.md"   # stale questions would re-trigger needs_input
+# A rejection belongs to the dispatch that produced it. Clear it before this
+# dispatch starts work so the current implementer can still reject, while an
+# earlier verdict cannot veto escalation or survive a successful re-review.
+if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
+  mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
+fi
 mount_specs "$RUN_DIR" "$WORKTREE" \
   || fail setup_failed "could not mount $RUN_DIR/specs at $WORKTREE/.harness/specs"
 EXCLUDE_FILE="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
@@ -2704,13 +2710,6 @@ if [ "$ARM" = "no_review" ]; then
   REVIEW_CLASS="skipped"   # the ablation arm (HARNESS_SKIP_REVIEW=1)
   stage "review skipped — HARNESS_SKIP_REVIEW=1 (no_review arm)"
 else
-# A rejection from a previous dispatch must not outlive the revision it judged:
-# the outcome check below keys off this file's existence, so a re-review that
-# approves would still be read as rejected (bit us on OLYX-1497 — approval
-# round left round 1's file in place and the run skipped its PR).
-if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
-  mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
-fi
 # Same reasoning for the notes, and for the same reason the integrity check
 # below needs: a previous dispatch's review-notes.md left in the worktree would
 # be read as evidence that THIS review happened. Harvested into the run dir
