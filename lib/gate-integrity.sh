@@ -46,7 +46,7 @@ gate_integrity_positive() {  # $1 = value, $2 = fallback
 GATE_INTEGRITY_TIMEOUT=$(gate_integrity_positive "${HARNESS_GATE_INTEGRITY_TIMEOUT:-}" 300)
 GATE_INTEGRITY_FILE_TIMEOUT=$(gate_integrity_positive "${HARNESS_GATE_INTEGRITY_FILE_TIMEOUT:-}" 120)
 GATE_INTEGRITY_MAX_FILES=$(gate_integrity_positive "${HARNESS_GATE_INTEGRITY_MAX_FILES:-}" 10)
-GATE_INTEGRITY_MAX_LITERALS=$(gate_integrity_positive "${HARNESS_GATE_INTEGRITY_MAX_LITERALS:-}" 5)
+GATE_INTEGRITY_MAX_LITERALS=5
 
 # What counts as a test file. Path-shaped rather than content-shaped, and
 # deliberately narrow at the edges: `src/latest/x.js` is not a test, so every
@@ -74,7 +74,10 @@ gate_integrity_capped() {  # $1 = seconds, rest = command + args
 }
 
 gate_integrity_is_test_path() {  # $1 = repo-relative path
-  printf '%s\n' "$1" | grep -qEi -- "$GATE_INTEGRITY_TEST_RE"
+  printf '%s\n' "$1" | grep -qEi -- "$GATE_INTEGRITY_TEST_RE" && return 0
+  # JVM and frontend suites commonly use FooTest.java / WidgetTest.tsx without
+  # putting the file under a test directory.
+  printf '%s\n' "$1" | grep -qE '(^|/)([^/]+Tests?|Test[^/]*)\.[^/.]+$'
 }
 
 # A config edit the brief asked for is not a finding. Literal and cheap: the
@@ -125,27 +128,39 @@ gate_integrity_write_json() {  # $1 = out, $2 = base, $3 = head, $4 = status, $5
 # script) has to degrade to `not_run`, because the alternative reading — every
 # replayed file "fails on base" — is the one that hides a non-discriminating
 # test instead of surfacing it.
-gate_integrity_runner() {  # $1 = the tree to detect in; echoes a runner tag
+gate_integrity_runner() {  # $1 = tree, $2 = probe cap, $3 = test path; echoes a runner tag
+  case "$3" in
+    *.py)
+      if command -v python3 >/dev/null 2>&1 \
+         && ( cd "$1" 2>/dev/null \
+              && gate_integrity_capped "$2" python3 -m pytest --version ) >/dev/null 2>&1; then
+        printf 'pytest\n'; return 0
+      fi
+      return 1 ;;
+  esac
+  if [ -f "$1/package.json" ] \
+     && grep -q '"test"[[:space:]]*:' "$1/package.json" 2>/dev/null; then
+    if [ -f "$1/yarn.lock" ]; then
+      command -v yarn >/dev/null 2>&1 || return 1
+      printf 'yarn\n'; return 0
+    fi
+    if [ -f "$1/package-lock.json" ]; then
+      command -v npm >/dev/null 2>&1 || return 1
+      printf 'npm\n'; return 0
+    fi
+    if command -v npm >/dev/null 2>&1; then printf 'npm\n'; return 0; fi
+    if command -v yarn >/dev/null 2>&1; then printf 'yarn\n'; return 0; fi
+  fi
   if [ -x "$1/node_modules/.bin/vitest" ]; then printf 'vitest\n'; return 0; fi
   if [ -x "$1/node_modules/.bin/jest" ];   then printf 'jest\n';   return 0; fi
-  if [ -f "$1/package.json" ] \
-     && grep -q '"test"[[:space:]]*:' "$1/package.json" 2>/dev/null \
-     && command -v npm >/dev/null 2>&1; then
-    printf 'npm\n'; return 0
-  fi
-  if command -v python3 >/dev/null 2>&1 \
-     && ( cd "$1" 2>/dev/null \
-          && gate_integrity_capped 60 python3 -m pytest --version ) >/dev/null 2>&1; then
-    printf 'pytest\n'; return 0
-  fi
   return 1
 }
 
 # One test file against the tree it was copied into. stdin is closed for the
 # reason every other child in this pipeline closes it: a watch-mode runner that
 # inherits a live pipe waits on it forever.
-gate_integrity_run_one() {  # $1 = tree, $2 = runner, $3 = file; returns the runner's rc
-  local t="$GATE_INTEGRITY_FILE_TIMEOUT"
+gate_integrity_run_one() {  # $1 = tree, $2 = runner, $3 = file, $4 = cap; returns the runner's rc
+  local t="$4"
   case "$2" in
     vitest) ( cd "$1" && gate_integrity_capped "$t" env CI=1 \
                 node_modules/.bin/vitest run "$3" ) </dev/null ;;
@@ -153,9 +168,24 @@ gate_integrity_run_one() {  # $1 = tree, $2 = runner, $3 = file; returns the run
                 node_modules/.bin/jest --runTestsByPath "$3" ) </dev/null ;;
     npm)    ( cd "$1" && gate_integrity_capped "$t" env CI=1 \
                 npm test --silent -- "$3" ) </dev/null ;;
+    yarn)   ( cd "$1" && gate_integrity_capped "$t" env CI=1 \
+                yarn test --silent "$3" ) </dev/null ;;
     pytest) ( cd "$1" && gate_integrity_capped "$t" env CI=1 \
                 python3 -m pytest -q "$3" ) </dev/null ;;
     *)      return 127 ;;
+  esac
+}
+
+gate_integrity_runner_infra() {  # $1 = runner, $2 = rc, $3 = captured output
+  case "$1:$2" in
+    pytest:2|pytest:3|pytest:4|pytest:5) return 0 ;;
+  esac
+  case "$1" in
+    jest|vitest)
+      grep -qiE 'no tests? (found|matched)|no test files? found|no test suite' "$3" ;;
+    npm|yarn)
+      grep -qiE 'missing script:?[[:space:]]*"?test|no test specified|command not found' "$3" ;;
+    *) return 1 ;;
   esac
 }
 
@@ -163,25 +193,23 @@ gate_integrity_run_one() {  # $1 = tree, $2 = runner, $3 = file; returns the run
 # "<status> <reason> <runner>" line.
 gate_integrity_replay() {  # $1 = worktree, $2 = base sha, $3 = test list, $4 = out dir, $5 = log
   local wt="$1" base="$2" list="$3" out="$4" log="$5"
-  local scratch tree runner n=0 rc deadline reason="" first_fail="" f
+  local scratch tree runner="" file_runner runner_out n=0 rc deadline remaining cap reason="" first_fail="" f
   : > "$out/discriminating"; : > "$out/non_discriminating"; : > "$out/not_run"
 
   if [ ! -s "$list" ]; then
     printf 'ok\t%s\t\n' "no new or changed test files on this branch"; return 0
   fi
-  if ! runner=$(gate_integrity_runner "$wt"); then
-    cat "$list" >> "$out/not_run"
-    printf 'not_run\t%s\t\n' \
-      "no scoped test runner detected (jest, vitest, an npm test script or pytest)"
-    return 0
-  fi
+  deadline=$(( $(date +%s) + GATE_INTEGRITY_TIMEOUT ))
   if ! scratch=$(mktemp -d "${TMPDIR:-/tmp}/gate-integrity.XXXXXX" 2>/dev/null); then
     cat "$list" >> "$out/not_run"
     printf 'not_run\t%s\t%s\n' "no scratch directory could be created" "$runner"
     return 0
   fi
   tree="$scratch/base"
-  if ! gate_integrity_capped 120 \
+  remaining=$(( deadline - $(date +%s) ))
+  [ "$remaining" -gt 0 ] || remaining=1
+  cap=120; [ "$remaining" -lt "$cap" ] && cap="$remaining"
+  if ! gate_integrity_capped "$cap" \
         git -C "$wt" worktree add --detach --quiet "$tree" "$base" >> "$log" 2>&1; then
     rm -rf "$scratch"
     cat "$list" >> "$out/not_run"
@@ -196,7 +224,6 @@ gate_integrity_replay() {  # $1 = worktree, $2 = base sha, $3 = test list, $4 = 
     ln -s "$wt/node_modules" "$tree/node_modules" 2>/dev/null || true
   fi
 
-  deadline=$(( $(date +%s) + GATE_INTEGRITY_TIMEOUT ))
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     n=$((n + 1))
@@ -205,9 +232,15 @@ gate_integrity_replay() {  # $1 = worktree, $2 = base sha, $3 = test list, $4 = 
       reason="only the first $GATE_INTEGRITY_MAX_FILES test files were replayed"
       continue
     fi
-    if [ "$(date +%s)" -ge "$deadline" ]; then
+    remaining=$(( deadline - $(date +%s) ))
+    if [ "$remaining" -le 0 ]; then
       printf '%s\n' "$f" >> "$out/not_run"
       reason="the replay ran out of its ${GATE_INTEGRITY_TIMEOUT}s budget"
+      continue
+    fi
+    if [ -L "$wt/$f" ]; then
+      printf '%s\n' "$f" >> "$out/not_run"
+      [ -n "$first_fail" ] || first_fail="a changed test path was a symbolic link"
       continue
     fi
     mkdir -p "$tree/$(dirname "$f")" 2>/dev/null
@@ -217,17 +250,46 @@ gate_integrity_replay() {  # $1 = worktree, $2 = base sha, $3 = test list, $4 = 
         || first_fail="a changed test file could not be copied into the base tree"
       continue
     fi
+    # Detect per file inside the base checkout. This keeps mixed Python/JS
+    # repositories honest, and a test script added only by the patch cannot
+    # manufacture a "test failure on base" where the base had no such script.
+    cap=60; [ "$remaining" -lt "$cap" ] && cap="$remaining"
+    file_runner=$(gate_integrity_runner "$tree" "$cap" "$f" || true)
+    if [ -z "$file_runner" ]; then
+      printf '%s\n' "$f" >> "$out/not_run"
+      [ -n "$first_fail" ] || first_fail="no scoped test runner was detected on the base tree"
+      continue
+    fi
+    if [ -z "$runner" ]; then runner="$file_runner"
+    elif [ "$runner" != "$file_runner" ]; then runner=mixed
+    fi
+    remaining=$(( deadline - $(date +%s) ))
+    if [ "$remaining" -le 0 ]; then
+      printf '%s\n' "$f" >> "$out/not_run"
+      reason="the replay ran out of its ${GATE_INTEGRITY_TIMEOUT}s budget"
+      continue
+    fi
     printf '=== %s ===\n' "$f" >> "$log"
-    gate_integrity_run_one "$tree" "$runner" "$f" >> "$log" 2>&1
+    cap="$GATE_INTEGRITY_FILE_TIMEOUT"
+    [ "$remaining" -lt "$cap" ] && cap="$remaining"
+    runner_out="$out/runner-output"
+    gate_integrity_run_one "$tree" "$file_runner" "$f" "$cap" > "$runner_out" 2>&1
     rc=$?
+    cat "$runner_out" >> "$log"
     printf '(exit %s)\n' "$rc" >> "$log"
+    if [ "$rc" -ne 0 ] && gate_integrity_runner_infra "$file_runner" "$rc" "$runner_out"; then
+      printf '%s\n' "$f" >> "$out/not_run"
+      [ -n "$first_fail" ] \
+        || first_fail="the runner exited without executing a test (exit $rc)"
+      continue
+    fi
     case "$rc" in
       0)
         printf '%s\n' "$f" >> "$out/non_discriminating" ;;
       124|142|137|143)
         printf '%s\n' "$f" >> "$out/not_run"
         [ -n "$first_fail" ] \
-          || first_fail="the runner outlived its ${GATE_INTEGRITY_FILE_TIMEOUT}s cap" ;;
+          || first_fail="the runner outlived its ${cap}s cap" ;;
       126|127)
         printf '%s\n' "$f" >> "$out/not_run"
         [ -n "$first_fail" ] || first_fail="the runner could not be executed (exit $rc)" ;;
@@ -286,6 +348,17 @@ gate_integrity_scan_diff() {  # $1 = worktree, $2 = range, $3 = test-path list
         keep(lit, kind, path)
       }
     }
+    function assertions(text,   n) {
+      n = 0
+      while (match(text, /(^|[^a-z0-9_])(assert|expect|should|verify|xctassert|t\.(error|fatal))/)) {
+        n++
+        text = substr(text, RSTART + RLENGTH)
+      }
+      return n
+    }
+    function source_path(path) {
+      return path ~ /\.(c|cc|cpp|cxx|h|hh|hpp|cs|dart|ex|exs|go|java|js|jsx|kt|kts|m|mm|php|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/
+    }
     BEGIN {
       # Built rather than written: a single quote cannot be spelled inside the
       # single-quoted awk program, and \x escapes are not portable.
@@ -304,9 +377,9 @@ gate_integrity_scan_diff() {  # $1 = worktree, $2 = range, $3 = test-path list
     }
     file == "" { next }
     /^\+/ {
-      line = substr($0, 2); low = tolower(line)
-      if (is_test[file] && low ~ /(^|[^a-z0-9_])(assert|expect|should|verify|xctassert|t\.(error|fatal))/) {
-        add_assert[file]++
+      line = substr($0, 2); low = tolower(line); count = assertions(low)
+      if (is_test[file] && count > 0) {
+        add_assert[file] += count
         harvest(line, "exp", file)
       }
       if (line ~ /(^|[^A-Za-z0-9_])((it|test|describe|context|suite)\.(only|skip|todo|failing)|xit\(|xdescribe\(|xtest\(|@pytest\.mark\.(skip|skipif|xfail)|pytest\.(skip|xfail)\(|unittest\.skip|t\.Skip\(|@Ignore|@Disabled|#\[ignore\])/ \
@@ -316,13 +389,12 @@ gate_integrity_scan_diff() {  # $1 = worktree, $2 = range, $3 = test-path list
           ex = line; sub(/^[[:space:]]+/, "", ex); skip_ex[file] = substr(ex, 1, 80)
         }
       }
-      if (!is_test[file]) harvest(line, "src", file)
+      if (!is_test[file] && source_path(file)) harvest(line, "src", file)
       next
     }
     /^-/ {
       low = tolower(substr($0, 2))
-      if (is_test[file] && low ~ /(^|[^a-z0-9_])(assert|expect|should|verify|xctassert|t\.(error|fatal))/)
-        del_assert[file]++
+      if (is_test[file]) del_assert[file] += assertions(low)
       next
     }
     END {
@@ -348,7 +420,10 @@ gate_integrity_check() {  # $1 = worktree, $2 = base ref, $3 = run dir, $4 = bri
   local work base head range replay_line status reason runner
   local flags tests json line st p1 p2 p3 path
 
-  work=$(mktemp -d "${TMPDIR:-/tmp}/gate-integrity-work.XXXXXX" 2>/dev/null) || return 0
+  if ! work=$(mktemp -d "${TMPDIR:-/tmp}/gate-integrity-work.XXXXXX" 2>/dev/null); then
+    work="$run_dir/.gate-integrity-work.$$"
+    mkdir "$work" 2>/dev/null || return 0
+  fi
   flags="$work/flags"; tests="$work/tests"
   : > "$flags"; : > "$tests"
   json="$run_dir/gate-integrity.json"
@@ -367,14 +442,23 @@ gate_integrity_check() {  # $1 = worktree, $2 = base ref, $3 = run dir, $4 = bri
   while IFS=$'\t' read -r st p1 p2; do
     [ -n "$st" ] || continue
     path="$p1"
-    case "$st" in R*|C*) [ -n "${p2:-}" ] && path="$p2" ;; esac
+    case "$st" in
+      R*)
+        if gate_integrity_is_test_path "$p1" \
+           && ! gate_integrity_is_test_path "${p2:-}"; then
+          gate_integrity_flag deleted_test "$p1" \
+            "a test file this branch moves outside the test suite — a gate cannot fail on a test it no longer discovers" "$flags"
+        fi
+        [ -n "${p2:-}" ] && path="$p2" ;;
+      C*) [ -n "${p2:-}" ] && path="$p2" ;;
+    esac
     [ -n "$path" ] || continue
     case "$st" in
       D*)
         gate_integrity_is_test_path "$path" \
           && gate_integrity_flag deleted_test "$path" \
                "a test file this branch deletes — a gate cannot fail on a test that is gone" "$flags"
-        continue ;;
+        ;;
       *)
         gate_integrity_is_test_path "$path" && printf '%s\n' "$path" >> "$tests" ;;
     esac
@@ -390,6 +474,7 @@ gate_integrity_check() {  # $1 = worktree, $2 = base ref, $3 = run dir, $4 = bri
                "its test, lint or coverage settings changed and the brief never mentions this file" "$flags"
       fi
     fi
+    case "$st" in D*) continue ;; esac
   done <<EOF
 $(git -C "$wt" -c core.quotepath=false diff --name-status -M "$range" 2>/dev/null)
 EOF
@@ -397,7 +482,7 @@ EOF
   while IFS=$'\t' read -r st p1 p2 p3; do
     case "$st" in
       ASSERT) gate_integrity_flag assertions_removed "$p1" \
-                "$p3 assertion line(s) removed, $p2 added — a test that asserts less than it did" "$flags" ;;
+                "$p3 assertion(s) removed, $p2 added — a test that asserts less than it did" "$flags" ;;
       SKIP)   gate_integrity_flag skip_marker "$p1" \
                 "$p2 skip/only marker(s) introduced, first: $p3" "$flags" ;;
       LIT)    gate_integrity_flag literal_echoed "$p2" \
@@ -467,6 +552,6 @@ gate_integrity_section() {  # $1 = gate-integrity.json
        else
          ["Flags (\(.flags | length)):"] + [.flags[] | "- \(.kind) · \(.file) — \(.detail)"]
        end)
-    + ["The gate has already run the checks this repo defines, linters included: read .harness/gate-latest.log and cite the lines there rather than re-running it."]
+    + ["The gate has already run the checks this repo defines. Read .harness/gate-latest.log first; when it shows a linter already ran, cite those exact lines rather than re-running it."]
     | .[]' "$1" 2>/dev/null || true
 }

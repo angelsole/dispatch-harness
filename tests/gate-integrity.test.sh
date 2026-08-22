@@ -17,10 +17,10 @@
 #   4. a replay whose runner is broken  -> not_run, and the run finishes normally
 #   5. a diff that touches no test      -> "No flags", empty flags in result.json
 #
-# plus the off switch, which has to leave the review prompt byte-identical.
+# plus runner-selection, timeout, rename and assertion-count regressions.
 #
 # Nothing real is contacted: `claude` (implementer), `codex` (reviewer), `gh`
-# (the PR), `curl` (ntfy) and `npm` (the replayed test runner) are all fake
+# (the PR), `curl` (ntfy), `npm` and `yarn` (the replayed test runners) are fake
 # binaries on PATH, driven by mode files.
 #
 # Usage: bash tests/gate-integrity.test.sh
@@ -76,6 +76,7 @@ git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name  t
 mkdir -p "$REPO/src" "$REPO/tests" "$REPO/.github/workflows"
 printf '{"name":"greenapp","scripts":{"test":"fake"}}\n' > "$REPO/package.json"
+: > "$REPO/package-lock.json"
 printf 'hello world again\n' > "$REPO/src/app.js"
 printf 'jobs:\n  test:\n    runs-on: ubuntu-latest\n' > "$REPO/.github/workflows/ci.yml"
 cat > "$REPO/tests/old.test.js" <<'EOF'
@@ -85,6 +86,7 @@ assert world
 assert again
 EOF
 printf 'grep -q hello src/app.js\n' > "$REPO/tests/doomed.test.js"
+printf 'assert(1); assert(2); assert(3)\n' > "$REPO/tests/packed.test.js"
 git -C "$REPO" add -A
 git -C "$REPO" commit -q -m init
 git -C "$REPO" branch -M main
@@ -114,9 +116,21 @@ case "\$(cat "$IMPL_MODE")" in
     printf 'exit 0\n'                      > tests/passes-anywhere.test.js
     printf 'grep -q PATCHED src/app.js\n'  > tests/discriminates.test.js
     ;;
+  newrunner)
+    printf '{"name":"greenapp","scripts":{"test":"fake"}}\n' > package.json
+    printf 'exit 0\n' > tests/passes-anywhere.test.js
+    ;;
+  cameltest)
+    printf 'more\n' >> src/app.js
+    printf 'exit 0\n' > src/WidgetTest.tsx
+    ;;
   deleted)
     printf 'more\n' >> src/app.js
     rm -f tests/doomed.test.js
+    ;;
+  renamed)
+    printf 'more\n' >> src/app.js
+    git mv tests/doomed.test.js src/doomed.js
     ;;
   only)
     printf 'more\n' >> src/app.js
@@ -129,6 +143,7 @@ case "\$(cat "$IMPL_MODE")" in
       echo 'assert hello'
       echo 'assert "supersecret42"'
     } > tests/old.test.js
+    printf 'assert(1)\n' > tests/packed.test.js
     ;;
   clean)
     printf 'more\n' >> src/app.js
@@ -157,10 +172,21 @@ cat > "$FAKES/npm" <<EOF
 #!/usr/bin/env bash
 [ "\${1:-}" = test ] || exit 0
 [ "\$(cat "$NPM_MODE")" = broken ] && exit 127
+[ "\$(cat "$NPM_MODE")" = notests ] && { echo 'Error: no test specified'; exit 1; }
+[ "\$(cat "$NPM_MODE")" = slow ] && sleep 4
 last=""
 for a in "\$@"; do last="\$a"; done
 [ -f "\$last" ] || exit 1
 bash "\$last"
+EOF
+
+cat > "$FAKES/yarn" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = test ] || exit 0
+last=""
+for a in "$@"; do last="$a"; done
+[ -f "$last" ] || exit 1
+bash "$last"
 EOF
 
 cat > "$FAKES/curl" <<'EOF'
@@ -176,7 +202,7 @@ case "$1 $2" in
 esac
 EOF
 
-chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/npm" "$FAKES/curl" "$FAKES/gh"
+chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/npm" "$FAKES/yarn" "$FAKES/curl" "$FAKES/gh"
 
 # --- the harness under test ---------------------------------------------------
 RUN=""
@@ -267,6 +293,19 @@ has "$(prompt)" "tests/doomed.test.js" "deleted: and the reviewer is told which"
 check "deleted: nothing else was invented around it" "$(kinds)" "deleted_test"
 check "deleted: the run still ships" "$(result .status)" "ready"
 
+# A rename out of the suite is deletion by another spelling: the old path no
+# longer participates in discovery and must be surfaced the same way.
+dispatch GI-RENAMED renamed ""
+check "renamed: moving a test out of the suite is flagged as deletion" \
+  "$(flagged deleted_test)" "tests/doomed.test.js"
+check "renamed: the run still ships" "$(result .status)" "ready"
+
+dispatch GI-CAMELTEST cameltest ""
+check "path heuristic: a conventional CamelCase test file is replayed" \
+  "$(integrity '.replay.files.non_discriminating | join(",")')" \
+  "src/WidgetTest.tsx"
+check "path heuristic: the run still ships" "$(result .status)" "ready"
+
 # ---------------------------------------------------------------------------
 echo "== a skip/only marker that was not there before =="
 # ---------------------------------------------------------------------------
@@ -283,12 +322,15 @@ echo "== the rest of the structural signatures, in one diff =="
 # and an expected value copied out of the source it is supposed to be checking.
 dispatch GI-GAMING gaming ""
 check "structural: all three signatures come back, and nothing else" \
-  "$(kinds)" "assertions_removed,ci_config_edit,literal_echoed"
+  "$(kinds)" "assertions_removed,assertions_removed,ci_config_edit,literal_echoed"
 check "structural: the test that lost assertions is named" \
-  "$(flagged assertions_removed)" "tests/old.test.js"
+  "$(flagged assertions_removed)" "tests/old.test.js,tests/packed.test.js"
 has "$(jq -r '.flags[] | select(.kind == "assertions_removed") | .detail' \
-        "$RUN/gate-integrity.json")" "2 assertion line(s) removed, 1 added" \
+        "$RUN/gate-integrity.json")" "2 assertion(s) removed, 1 added" \
   "structural: with the delta that makes it a finding"
+has "$(jq -r '.flags[] | select(.kind == "assertions_removed" and .file == "tests/packed.test.js") | .detail' \
+        "$RUN/gate-integrity.json")" "3 assertion(s) removed, 1 added" \
+  "structural: assertions are counted even when several shared one line"
 check "structural: the CI config edited on the side is named" \
   "$(flagged ci_config_edit)" ".github/workflows/ci.yml"
 has "$(jq -r '.flags[] | select(.kind == "literal_echoed") | .detail' \
@@ -302,7 +344,7 @@ BRIEF_EXTRA="Also add a nightly schedule to .github/workflows/ci.yml."
 dispatch GI-ASKED gaming ""
 BRIEF_EXTRA=""
 check "asked: the config edit the brief asked for is not flagged" \
-  "$(kinds)" "assertions_removed,literal_echoed"
+  "$(kinds)" "assertions_removed,assertions_removed,literal_echoed"
 
 # ---------------------------------------------------------------------------
 echo "== a replay that could not run says so, and costs the run nothing =="
@@ -324,6 +366,28 @@ has "$(prompt)" "Replay against the base tree: not run" \
   "infra: the reviewer is told the replay is missing rather than clean"
 check "infra: the run finishes exactly as it would have" "$(result .status)" "ready"
 check "infra: through the gate rounds it always had" "$(rounds)" "1pass,2skipped"
+
+printf 'notests\n' > "$NPM_MODE"
+dispatch GI-NO-TESTS replay ""
+printf 'ok\n' > "$NPM_MODE"
+check "infra verdict: a runner that executed no test is not called discriminating" \
+  "$(integrity .replay.status)" "not_run"
+has "$(integrity .replay.reason)" "without executing a test" \
+  "infra verdict: the no-tests outcome is explained"
+check "infra verdict: no false discriminating count is recorded" \
+  "$(integrity .replay.discriminating)" "0"
+
+# The whole-stage cap must shorten an otherwise longer per-file cap. Without
+# that, one test can overrun the advertised budget by almost two minutes.
+printf 'slow\n' > "$NPM_MODE"
+dispatch GI-TIMEOUT replay \
+  "HARNESS_GATE_INTEGRITY_TIMEOUT=1 HARNESS_GATE_INTEGRITY_FILE_TIMEOUT=10"
+printf 'ok\n' > "$NPM_MODE"
+check "timeout: an in-flight test obeys the whole replay budget" \
+  "$(integrity .replay.status)" "not_run"
+has "$(integrity .replay.reason)" "outlived its 1s cap" \
+  "timeout: the shortened cap is explained"
+check "timeout: the run still ships" "$(result .status)" "ready"
 
 # ---------------------------------------------------------------------------
 echo "== a diff that touches no test at all =="
@@ -355,6 +419,40 @@ fi
 check "off: result.json has no gate_integrity field for anyone to read" \
   "$(jq -r 'has("gate_integrity")' "$RUN/result.json" 2>/dev/null)" "false"
 check "off: older consumers see the run they always saw" "$(result .status)" "ready"
+
+# Switch the fixture's base project from npm to Yarn. Detection follows the
+# base lockfile and the same per-file replay remains scoped.
+git -C "$REPO" rm -q package-lock.json
+: > "$REPO/yarn.lock"
+git -C "$REPO" add yarn.lock
+git -C "$REPO" commit -q -m "test: use yarn fixture"
+git -C "$REPO" push -q origin main
+dispatch GI-YARN replay ""
+check "yarn: a Yarn project uses its own runner" "$(integrity .replay.runner)" "yarn"
+check "yarn: the passing-on-base file is still found" \
+  "$(integrity '.replay.files.non_discriminating | join(",")')" \
+  "tests/passes-anywhere.test.js"
+check "yarn: the run still ships" "$(result .status)" "ready"
+
+# Runner detection belongs to the base tree. If the patch adds the test script
+# itself, the replay has no evidence either way and must not label npm's
+# "missing script" exit as a discriminating test failure.
+printf '{"name":"greenapp"}\n' > "$REPO/package.json"
+git -C "$REPO" rm -q yarn.lock
+git -C "$REPO" add package.json
+git -C "$REPO" commit -q -m "test: remove runner from fixture base"
+git -C "$REPO" push -q origin main
+dispatch GI-NEW-RUNNER newrunner ""
+check "base runner: a test script added by the patch is not used on base" \
+  "$(integrity .replay.status)" "not_run"
+check "base runner: the file is explicitly unjudged" \
+  "$(integrity '.replay.files.not_run | join(",")')" \
+  "tests/passes-anywhere.test.js"
+has "$(integrity .replay.reason)" "no scoped test runner" \
+  "base runner: the missing base infrastructure is explained"
+check "base runner: no false discriminating verdict is recorded" \
+  "$(integrity .replay.discriminating)" "0"
+check "base runner: the run still ships" "$(result .status)" "ready"
 
 echo
 printf 'gate integrity: %d passed, %d failed\n' "$pass" "$fail"

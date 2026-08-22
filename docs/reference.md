@@ -232,7 +232,7 @@ no status, no gate verdict and no PR decision depends on anything it finds.
 
 **Replay.** Every test file this branch adds or changes is run against the
 *unpatched base tree* in a scratch worktree, scoped to that one file, with the
-repo's own runner (`jest`, `vitest`, an `npm test` script, or `pytest` —
+repo's own runner (`jest`, `vitest`, an `npm`/`yarn` test script, or `pytest` —
 detected, not assumed). A test that **passes there** is non-discriminating: it
 cannot have caught the change it travels with. Anything that stops the replay
 working — no runner, no scratch worktree, a runner that will not start, the
