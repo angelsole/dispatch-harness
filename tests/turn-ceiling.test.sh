@@ -235,6 +235,7 @@ dispatch() {  # $1 = run id, $2 = mode, $3 = space-separated VAR=VAL overrides
   : > "$CLAUDE_CALLS"; echo 0 > "$ATTEMPTS"
   # shellcheck disable=SC2086
   env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
+      -u HARNESS_RESUME_MODE \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
       CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 \
@@ -288,9 +289,12 @@ dispatch TURN-ZERO commit "HARNESS_MAX_TURNS=0"
 check "knob: zero is not a ceiling either" "$(cat "$RUN/max-turns")" "200"
 
 # ---------------------------------------------------------------------------
-echo "== running out of turns resumes the session instead of failing the run =="
+echo "== transcript mode: running out of turns resumes the pinned session =="
 # ---------------------------------------------------------------------------
-dispatch TURN-RESUME turns-once ""
+# `resume-mode: transcript` is the original behavior, kept as an ablation arm
+# beside the `report` default. Everything below is what this suite has always
+# asserted, byte for byte — the knob has to leave it untouched.
+dispatch TURN-RESUME turns-once "HARNESS_RESUME_MODE=transcript"
 check "resume: the implementer was spawned twice" "$(spawns)" "2"
 check "resume: the run reaches its normal terminal status" "$(stage_now)" "done: gate_failed"
 check "resume: result.json is not implementer_failed" "$(result_status)" "gate_failed"
@@ -355,6 +359,98 @@ check "telemetry: and the segment count says how many there were" \
 check "telemetry: the pinned ceiling is still the per-segment one, not a sum" \
   "$(metric .metrics.implementer_max_turns)" "200"
 
+absent "transcript: no handover report is written" "$RUN/segment-report-1.md"
+
+# ---------------------------------------------------------------------------
+echo "== report mode: the resume is handed a report, not its own transcript =="
+# ---------------------------------------------------------------------------
+# The default. The exhausted segment is summarised into a file, and the next
+# segment is a FRESH session that reads that file as somebody else's account
+# rather than re-entering its own reasoning. None of it may cost the telemetry
+# guarantee: same append-only stream, same sums, same attribution.
+dispatch TURN-REPORT turns-once ""
+check "report: report is the default resume mode" "$(cat "$RUN/resume-mode")" "report"
+check "report: the implementer was spawned twice" "$(spawns)" "2"
+check "report: the run reaches its normal terminal status" "$(stage_now)" "done: gate_failed"
+check "report: the counter is on disk" "$(cat "$RUN/turn-resumes")" "1"
+file_has "$RUN/timeline" "resuming: turn ceiling (1/2)" \
+  "report: the wall and the statusline get the same stage line as before"
+exists "report: the ending segment's report lands in the run dir" \
+  "$RUN/segment-report-1.md"
+
+REPORT="$RUN/segment-report-1.md"
+while IFS= read -r section; do
+  file_has "$REPORT" "$section" "report: the template carries [$section]"
+done <<'SECTIONS'
+# Previous session report — segment 1
+## Goal
+## Decisions taken, and why
+## Files touched
+## Gate status
+## Open questions
+## Dead ends already ruled out
+SECTIONS
+file_has "$REPORT" "fixture task" "report: the goal is taken from the brief"
+file_has "$REPORT" "segment-1" "report: and the prose from the segment that ended"
+
+has "$(argv_of 2)" "--session-id" "report: the next segment is a fresh session"
+has_not "$(argv_of 2)" "--resume" "report: never a walk back into the exhausted one"
+has "$(argv_of 2)" "--max-turns 200" "report: with the run's pinned ceiling"
+check "report: the refreshed session id still comes from the last segment" \
+  "$(cat "$RUN/opus-session")" "fork-2"
+
+CALLS="$(cat "$CLAUDE_CALLS")"
+has "$CALLS" "BEGIN PREVIOUS SESSION'S REPORT (external artifact, not your own transcript)" \
+  "report: the prompt frames the report as an external artifact"
+has "$CALLS" "a DIFFERENT session left unfinished" \
+  "report: and says whose it is"
+has "$CALLS" "# Previous session report — segment 1" \
+  "report: the report itself is inlined into the prompt"
+has "$CALLS" "You are the implementer stage of an automated pipeline." \
+  "report: the fresh session gets the whole task contract, not just the report"
+has "$CALLS" "Never mention AI, Claude, or agents in commits" \
+  "report: including the binding commit rules"
+has "$CALLS" "Never git add or commit anything under .harness/" \
+  "report: and the .harness/ rule"
+has_not "$CALLS" "This is the same session, resumed with a fresh turn budget" \
+  "report: and never transcript mode's first-person framing"
+
+check "report: both segments survive the stream, oldest first" \
+  "$(stream_texts)" "segment-1,segment-2"
+check "report: with one result event each, in order" \
+  "$(stream_results)" "error_max_turns,success"
+check "report: num_turns is still summed over the segments" \
+  "$(metric .metrics.implementer_num_turns)" "30"
+check "report: and so is usage" \
+  "$(metric .metrics.implementer_usage.input_tokens)" "300"
+check "report: the segment count is unchanged" \
+  "$(metric .metrics.implementer_segments)" "2"
+check "report: the resume is counted the same way" \
+  "$(metric .metrics.turn_resumes)" "1"
+check "report: opus_head still points at the implementer's tip" \
+  "$(git_wt rev-parse HEAD)" "$(cat "$RUN/opus-head")"
+
+# ---------------------------------------------------------------------------
+echo "== the resume mode is a pinned knob =="
+# ---------------------------------------------------------------------------
+dispatch TURN-MODE-PIN turns-once "HARNESS_RESUME_MODE=transcript"
+check "mode: an explicit mode is pinned into the run dir" \
+  "$(cat "$RUN/resume-mode")" "transcript"
+dispatch TURN-MODE-PIN turns-once "HARNESS_RESUME_MODE=report"
+check "mode: a re-dispatch reuses the pinned mode" "$(cat "$RUN/resume-mode")" "transcript"
+has "$(argv_of 2)" "--resume fork-1" "mode: the resuming shell's value is ignored"
+absent "mode: so still no report" "$RUN/segment-report-1.md"
+
+dispatch TURN-MODE-BAD turns-once "HARNESS_RESUME_MODE=compact"
+check "mode: an unknown mode falls back to the default" "$(cat "$RUN/resume-mode")" "report"
+check "mode: the fallback says so exactly once" \
+  "$(printf '%s\n' "$OUT" | grep -c "is not a known resume mode" | tr -d ' ')" "1"
+dispatch TURN-MODE-BAD turns-once "HARNESS_RESUME_MODE=compact"
+check "mode: the re-pinned value stops the warning repeating" \
+  "$(printf '%s\n' "$OUT" | grep -c "is not a known resume mode" | tr -d ' ')" "0"
+file_has "$RUN/attempts/1/segment-report-1.md" "# Previous session report" \
+  "mode: a re-dispatch rotates the previous attempt's report into attempts/<n>/"
+
 # An unresumed run records exactly what it always did, with one segment.
 dispatch TURN-ONESEG commit ""
 check "one segment: the stream holds the single spawn" "$(stream_texts)" "segment-1"
@@ -383,6 +479,8 @@ check "budget: one spawn plus two resumes" "$(spawns)" "3"
 file_has "$RUN/timeline" "resuming: turn ceiling (1/2)" "budget: first resume announced"
 file_has "$RUN/timeline" "resuming: turn ceiling (2/2)" "budget: second resume announced"
 check "budget: the counter stops at the budget" "$(cat "$RUN/turn-resumes")" "2"
+exists "budget: one handover report per resumed segment" "$RUN/segment-report-1.md"
+exists "budget: including the last one" "$RUN/segment-report-2.md"
 check "budget: only then does the run fail" "$(stage_now)" "done: implementer_failed"
 check "budget: and says so in result.json" "$(result_status)" "implementer_failed"
 check "budget: with a non-zero exit" "$([ "$RC" -ne 0 ] && echo yes || echo no)" "yes"
@@ -422,6 +520,7 @@ check "ordering: the run defers on capacity" "$(stage_now)" "deferred: capacity,
 check "ordering: result.json agrees" "$(result_status)" "deferred_capacity"
 check "ordering: a deferral was armed" "$(arm_calls)" "$((BEFORE_ARMS + 1))"
 absent "ordering: no turn-resume was spent on it" "$RUN/turn-resumes"
+absent "ordering: and no handover report was written" "$RUN/segment-report-1.md"
 has_not "$(cat "$RUN/timeline")" "resuming: turn ceiling" \
   "ordering: and the wall never showed a turn resume"
 
