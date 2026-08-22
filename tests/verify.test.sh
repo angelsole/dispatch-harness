@@ -56,7 +56,8 @@ CLEAN_VERIFY_ENV=(env
   -u HARNESS_VERIFY_GCP_PROJECT -u HARNESS_VERIFY_GCP_LOCATION
   -u HARNESS_VERIFY_MODEL -u HARNESS_VERIFY_EVALS
   -u HARNESS_VERIFY_MAX_CRITERIA -u HARNESS_VERIFY_STEP_CHARS
-  -u HARNESS_VERIFY_MAX_CHARS -u HARNESS_VERIFY_EFFORT)
+  -u HARNESS_VERIFY_MAX_CHARS -u HARNESS_VERIFY_EFFORT
+  -u DEEPSEEK_EFFORT -u DEEPSEEK_MAX_TOKENS)
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
 printf 'score\n' > "$VERIFY_MODE"
@@ -927,7 +928,7 @@ def _evidence_line(prompt):
     return ""
 
 
-def reply(prompt, model, backend, key_seen):
+def reply(prompt, model, backend, key_seen, request=None):
     n = _seen[0]
     _seen[0] = n + 1
     scores = _cycle("VERIFY_STUB_SCORES", "0.6")
@@ -937,12 +938,12 @@ def reply(prompt, model, backend, key_seen):
         fh.write(json.dumps({
             "backend": backend, "key_seen": key_seen, "model": model,
             "item": _between(prompt, "RUBRIC ITEM — ", "\n").strip(),
-            "chars": len(prompt), "prompt": prompt,
+            "chars": len(prompt), "prompt": prompt, "request": request,
         }) + "\n")
     if mode == "boom":
         # A call that never came back at all — the one failure that is unknown
         # rather than unevidenced.
-        raise RuntimeError("the backend refused this call")
+        raise RuntimeError("the backend refused credential " + str(key_seen))
     if mode == "garbage":
         return "Looks fine to me, honestly."
     answer = {"score": float(scores[n % len(scores)])}
@@ -986,6 +987,15 @@ import stubjudge
 DEFAULT_MODEL = "stub-default-model"
 
 
+def deepseek_reasoning_params():
+    effort = os.environ.get("DEEPSEEK_EFFORT", "high")
+    max_tokens = int(os.environ.get("DEEPSEEK_MAX_TOKENS", "32768"))
+    if effort in ("off", "disabled", "none"):
+        return {"thinking": {"type": "disabled"}}, max_tokens
+    return ({"thinking": {"type": "enabled"},
+             "reasoning_effort": effort}, max_tokens)
+
+
 class _Models:
     """An OpenAI-compatible server names what it serves; it cannot generate."""
 
@@ -1000,7 +1010,7 @@ class _Completions:
     def create(self, model=None, messages=None, **kwargs):
         prompt = messages[0]["content"] if messages else ""
         return stubjudge.openai_response(stubjudge.reply(
-            prompt, model, self.client.backend, self.client.key))
+            prompt, model, self.client.backend, self.client.key, kwargs))
 
 
 class _Chat:
@@ -1036,6 +1046,7 @@ def create_client():
     client = _Client(backend, os.environ.get(backend))
     if backend == "DEEPSEEK_API_KEY":
         client._llm_verifier_model = "deepseek-v4-flash"
+        client._llm_verifier_deepseek = True
     return client
 EOF
 
@@ -1108,6 +1119,14 @@ check "call: read from the file rather than from an argument" \
   "$(jq -s '[.[] | .key_seen] | unique | join(",")' "$CALLS")" '"sk-not-a-real-key-0123456789"'
 check "call: and the model the client resolved is the one it names" \
   "$(jq -s '[.[] | .model] | unique | join(",")' "$CALLS")" '"deepseek-v4-flash"'
+check "call: DeepSeek keeps the library's reasoning effort" \
+  "$(jq -s '[.[] | .request.extra_body.reasoning_effort] | unique | join(",")' "$CALLS")" '"high"'
+check "call: and its reasoning-sized output budget" \
+  "$(jq -s '[.[] | .request.max_tokens] | unique | join(",")' "$CALLS")" '"32768"'
+
+judge HARNESS_VERIFY_EVALS=1 HARNESS_VERIFY_EFFORT=low >/dev/null 2>&1
+check "call: HARNESS_VERIFY_EFFORT still reaches DeepSeek item calls" \
+  "$(jq -s '[.[] | .request.extra_body.reasoning_effort] | unique | join(",")' "$CALLS")" '"low"'
 
 # ---------------------------------------------------------------------------
 echo "== verify.py: K samples per item, and what an uncited one is worth =="
@@ -1159,10 +1178,32 @@ check "unknown: a call that never came back is dropped, not scored 0" \
   "$(jq -r '.items[0].samples | join(",")' "$V")" "0.6,,0.6"
 check "unknown: and the item is the median of the samples that did" \
   "$(jq -r '.items[0].score' "$V")" "0.6"
+
+# A fixed rubric must not turn into a smaller, easier rubric because every
+# sample of one item failed. There is no complete vector to average or publish.
+rm -f "$V"
+judge HARNESS_VERIFY_EVALS=3 VERIFY_STUB_CITES=boom,boom,boom,yes \
+  >/dev/null 2>"$ROOT/oneitemboom.err"
+check "unknown: an item with no answers fails the verifier" "$?" "1"
+has "$(cat "$ROOT/oneitemboom.err")" "rubric item(s) could not be scored: coverage" \
+  "unknown: naming the hole that prevented a complete vector"
+if [ ! -e "$V" ]; then
+  ok "unknown: a partial vector is never published"
+else
+  bad "unknown: a partial vector is never published"
+fi
+file_has_not "$ROOT/oneitemboom.err" "sk-not-a-real-key" \
+  "unknown: a failed call cannot leak its credential into verify.log"
+
+rm -f "$V"
 judge HARNESS_VERIFY_EVALS=2 VERIFY_STUB_CITES=boom >/dev/null 2>"$ROOT/allboom.err"
 check "unknown: a verifier that answered nothing fails rather than scoring 0" "$?" "1"
 has "$(cat "$ROOT/allboom.err")" "no rubric item could be scored" \
   "unknown: saying so on stderr, which is what verify.log collects"
+file_has_not "$ROOT/allboom.err" "sk-not-a-real-key" \
+  "unknown: even an all-call failure keeps the credential out of verify.log"
+file_has "$ROOT/allboom.err" "<redacted>" \
+  "unknown: while leaving a readable redacted backend reason"
 
 DOTENV_CWD="$AROOT/dotenv-cwd"
 mkdir -p "$DOTENV_CWD"
@@ -1210,7 +1251,7 @@ CALLS = os.environ["VERIFY_GENAI_CALLS"]
 class _Models:
     def generate_content(self, model=None, contents=None, config=None):
         return stubjudge.genai_response(
-            stubjudge.reply(str(contents), model, "client:Client", None))
+            stubjudge.reply(str(contents), model, "client:Client", None, config))
 
     def list(self):
         raise AssertionError("a genai client must never be asked to list models")
@@ -1273,6 +1314,10 @@ check "vertex: the client is built here, and every item call goes through it" \
   "$(jq -s '[.[] | .backend] | unique | join(",")' "$CALLS")" '"client:Client"'
 check "vertex: generating, not chatting" \
   "$(grep -c '' < "$CALLS" | tr -d ' ')" "5"
+check "vertex: keeps the library's zero-thinking configuration" \
+  "$(jq -s '[.[] | .request.thinking_config.thinking_budget] | unique | join(",")' "$CALLS")" '"0"'
+check "vertex: output usage includes any reported thought tokens" \
+  "$(jq -r '.usage.output_tokens' "$V")" "125"
 check "vertex: as a Vertex client" \
   "$(jq -r '.kwargs.vertexai' "$GENAI_CALLS")" "true"
 check "vertex: on the project the JSON names" \

@@ -85,9 +85,8 @@ Env (all optional except the key file, which run-task.sh always passes):
                               evidence gets a quarter of it, because it is sent
                               once per diff item and the trajectory only once
   HARNESS_VERIFY_EFFORT       passed through as DEEPSEEK_EFFORT (default high),
-                              which is the library's own dial for the client it
-                              builds; the item calls made here set no effort of
-                              their own — the answers are one small JSON object
+                              using the library's existing DeepSeek request
+                              configuration
 
 Exit codes: 0 scored (or dry-run ok) · 2 usage · 3 skipped, one line on stderr
 (no trajectory, no evidence, no key, library missing) · 1 anything else,
@@ -836,26 +835,30 @@ def token_counts(response):
     """(input, cached input, output, reasoning) from either response shape."""
     usage = getattr(response, "usage", None)          # OpenAI-compatible
     if usage is not None:
+        cached = getattr(getattr(usage, "prompt_tokens_details", None),
+                         "cached_tokens", 0) or 0
+        if not cached:
+            cached = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
         return (
             getattr(usage, "prompt_tokens", 0) or 0,
-            getattr(getattr(usage, "prompt_tokens_details", None),
-                    "cached_tokens", 0) or 0,
+            cached,
             getattr(usage, "completion_tokens", 0) or 0,
             getattr(getattr(usage, "completion_tokens_details", None),
                     "reasoning_tokens", 0) or 0,
         )
     meta = getattr(response, "usage_metadata", None)  # google-genai
     if meta is not None:
+        thoughts = getattr(meta, "thoughts_token_count", 0) or 0
         return (
             getattr(meta, "prompt_token_count", 0) or 0,
             getattr(meta, "cached_content_token_count", 0) or 0,
-            getattr(meta, "candidates_token_count", 0) or 0,
-            getattr(meta, "thoughts_token_count", 0) or 0,
+            (getattr(meta, "candidates_token_count", 0) or 0) + thoughts,
+            thoughts,
         )
     return 0, 0, 0, 0
 
 
-def make_asker(client, model, usage):
+def make_asker(client, model, usage, deepseek_params=None):
     """One prompt in, one answer out, whichever client shape we were handed.
 
     These are the same two calls the library makes internally — generate_content
@@ -865,18 +868,40 @@ def make_asker(client, model, usage):
     Token usage is counted here because these calls are the whole bill.
     """
     genai = is_genai(client)
+    deepseek = bool(getattr(client, "_llm_verifier_deepseek", False))
+
+    def openai_request(**kwargs):
+        usage["calls"] += 1
+        return client.chat.completions.create(**kwargs)
 
     def ask(prompt):
         if genai:
+            usage["calls"] += 1
             response = client.models.generate_content(
                 model=model, contents=prompt,
-                config={"temperature": 1.0, "max_output_tokens": ANSWER_TOKENS})
+                config={"temperature": 1.0,
+                        "max_output_tokens": ANSWER_TOKENS,
+                        "thinking_config": {"thinking_budget": 0}})
         else:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=1.0, max_tokens=ANSWER_TOKENS)
-        usage["calls"] += 1
+            params = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 1.0,
+            }
+            if deepseek:
+                extra_body, max_tokens = deepseek_params()
+                response = openai_request(
+                    max_tokens=max_tokens, extra_body=extra_body, **params)
+            else:
+                params["max_tokens"] = ANSWER_TOKENS
+                try:
+                    # Preserve the library's vLLM/SGLang fast path. Servers
+                    # that do not understand it get the same plain fallback.
+                    response = openai_request(
+                        extra_body={"chat_template_kwargs": {
+                            "enable_thinking": False}}, **params)
+                except Exception:
+                    response = openai_request(**params)
         got, cached, out, reasoning = token_counts(response)
         usage["input_tokens"] += got
         usage["cached_input_tokens"] += cached
@@ -1101,7 +1126,17 @@ def main(argv):
     model = judge_model(lv, client, env_text("HARNESS_VERIFY_MODEL"))
     counts = {"calls": 0, "input_tokens": 0, "cached_input_tokens": 0,
               "output_tokens": 0, "reasoning_tokens": 0}
-    ask = make_asker(client, model, counts)
+    deepseek_params = None
+    if getattr(client, "_llm_verifier_deepseek", False):
+        # Reuse the library's established DeepSeek request configuration: the
+        # reasoning effort and its larger shared output budget are provider
+        # settings, not part of the logprob scoring machinery we replaced.
+        deepseek_params = getattr(lv, "deepseek_reasoning_params", None)
+        if deepseek_params is None:
+            from llm_verifier.fine_grained_reward import (
+                deepseek_reasoning_params)
+            deepseek_params = deepseek_reasoning_params
+    ask = make_asker(client, model, counts, deepseek_params)
     started = time.time()
 
     scored = []
@@ -1114,15 +1149,24 @@ def main(argv):
         scored.append({"item": item, "score": score, "citation": citation,
                        "samples": vector, "drawn": drawn})
 
-    vector = [entry["score"] for entry in scored if entry["score"] is not None]
-    if not vector:
-        # Every call failed. That is a broken verifier, not a bad run, and the
-        # stage's contract for a broken verifier is a failure with the reason on
-        # stderr — never a score nothing backs.
-        notes = [d["note"] for entry in scored for d in entry["drawn"] if d["note"]]
-        sys.stderr.write("verify.py: no rubric item could be scored (%s)\n"
-                         % (notes[0] if notes else "no answers"))
+    unscored = [entry for entry in scored if entry["score"] is None]
+    if unscored:
+        # Publishing a partial vector would silently remove a fixed rubric item
+        # from the headline mean, and would put a null where the schema promises
+        # an item score. One failed sample is harmless when its siblings answer;
+        # an item with no answers makes the verifier attempt a failure.
+        notes = [d["note"] for entry in unscored
+                 for d in entry["drawn"] if d["note"]]
+        detail = redact(notes[0] if notes else "no answers", cred)
+        if len(unscored) == len(scored):
+            reason = "no rubric item could be scored"
+        else:
+            reason = "rubric item(s) could not be scored: " + ", ".join(
+                entry["item"]["id"] for entry in unscored)
+        sys.stderr.write("verify.py: %s (%s)\n" % (reason, detail))
         return EXIT_FAIL
+
+    vector = [entry["score"] for entry in scored]
 
     document = {
         # The plain mean of the item scores, and nothing else. Every other
