@@ -321,7 +321,8 @@ starts: anything it wrote elsewhere is put back byte for byte, the planner's
 version quarantined beside it, and the ticket left unarmed — a steered planner
 cannot plant an armable brief in a sibling ticket's directory or overwrite one
 a human approved. The report lists self-written
-briefs under *Self-briefed* — no human has read those plans, which is the trade
+briefs under *Self-briefed*, each with what the critic below made of it — no
+human has read those plans, which is the trade
 the default makes; set `QM_AUTOBRIEF=0` to restore the stricter contract where
 unbriefed tickets are listed under *needs a brief* and left alone. `--report`
 never briefs. Knobs: `QM_AUTOBRIEF_TIMEOUT` (planner seconds, default 1200),
@@ -346,6 +347,23 @@ the estimate is this machine's own history rather than a guess. Then
 It is an estimate, and the safety factor is there because it is one — when
 ccusage cannot account for a station at all, the report says so and falls back
 to `QM_FALLBACK_N` rather than inventing a number.
+
+**A second reading, by something that did not write it.** A self-written brief
+is the only specification the night has, and by 02:00 there is nobody to ask
+about it. So before the quartermaster publishes one, `spec-critic.sh` reads it
+against the repo it names — a second confined session, read-only, on the same
+station's subscription — and returns `{contradictions,
+criteria_not_testing_problem, conflicts_with_current_behavior, questions}`; the
+full contract is in [The spec critic](reference.md#the-spec-critic). Only
+`contradictions` hold a brief back: it is quarantined to `brief.rejected.md`
+like every other rejected brief, the ticket is listed under *Could not
+self-brief* with the count and the path to `runs/<TICKET>/spec-critic.json`, and
+nothing is armed. The other three lists are advice for whoever reads the run
+afterwards — an untested criterion still builds something, and a question is a
+question. A critic that produced no verdict at all (unreachable model, timeout,
+turn ceiling) holds nothing back either: an outage is not evidence against a
+brief, and the *Self-briefed* line says `spec-critic: no verdict` so the gap is
+visible rather than assumed clean. `QM_SPEC_CRITIC=0` drops the pass entirely.
 
 **No brief arms unchecked.** Before a brief is handed to `schedule.sh` —
 self-written or hand-written, it makes no difference — its `Repo` must be one
@@ -408,8 +426,8 @@ argument in the plist) is the one-line flip to letting it act. macOS only, like
 | `LINEAR_API_KEY_FILE` | The Linear key (mode 600, never echoed anywhere) | `$HARNESS_DIR/linear-api-key` |
 
 `QM_AUTOBRIEF`, `QM_AUTOBRIEF_TIMEOUT`, `QM_AUTOBRIEF_MODEL`,
-`QM_AUTOBRIEF_MAX_BODY`, `QM_REPO_ROOTS` and `QM_REPO_DEPTH` are described in
-the self-briefing paragraph above.
+`QM_AUTOBRIEF_MAX_BODY`, `QM_SPEC_CRITIC`, `QM_REPO_ROOTS` and `QM_REPO_DEPTH`
+are described in the self-briefing paragraphs above.
 
 ## The Janitor
 

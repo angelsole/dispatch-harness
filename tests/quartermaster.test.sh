@@ -69,7 +69,11 @@ cp "$SRC/capacity.sh" "$SRCDIR/capacity.sh"
 # produces, where lib/ sits next to every script it ships.
 cp -R "$SRC/lib" "$SRCDIR/lib"
 cp "$SRC/planner-settings.json" "$SRCDIR/planner-settings.json"
-chmod +x "$SRCDIR/quartermaster.sh"
+# The spec critic is executed from beside the script too, and it is the real
+# one: what this suite fakes is the model it calls, never the pass itself.
+cp "$SRC/spec-critic.sh" "$SRCDIR/spec-critic.sh"
+cp "$SRC/spec-critic-settings.json" "$SRCDIR/spec-critic-settings.json"
+chmod +x "$SRCDIR/quartermaster.sh" "$SRCDIR/spec-critic.sh"
 # What the script calls itself: it resolves its own directory with pwd, which
 # normalizes the doubled slash macOS TMPDIR leaves in $ROOT.
 SRCABS="$(cd "$SRCDIR" && pwd)"
@@ -167,10 +171,38 @@ EOF
 # already exists. It lives with the other fakes, and defaults to writing
 # nothing, because every arming path now discovers repos: no assertion in this
 # suite may depend on the real claude being absent from PATH.
+#
+# The same fake answers for the spec critic, which is a second confined session
+# on the same CLI — told apart by the tool policy it is launched under, and
+# logged under its own verb so the planner-call counts above still mean what
+# they say. Its verdicts come from $CRITIC_MODE.
 CLAUDE_LOG="$ROOT/claude-calls.log"; CLAUDE_MODE="$ROOT/claude-mode"
-: > "$CLAUDE_LOG"; printf 'silent\n' > "$CLAUDE_MODE"
+CRITIC_MODE="$ROOT/critic-mode"
+: > "$CLAUDE_LOG"; printf 'silent\n' > "$CLAUDE_MODE"; printf 'clean\n' > "$CRITIC_MODE"
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in *spec-critic-settings.json)
+    {
+      printf 'critic anthropic:%s config:%s\n' "\${ANTHROPIC_API_KEY-<unset>}" "\${CLAUDE_CONFIG_DIR-<unset>}"
+      printf 'critic-prompt-begin\n%s\ncritic-prompt-end\n' "\$2"
+    } >> "$CLAUDE_LOG"
+    case "\$(cat "$CRITIC_MODE" 2>/dev/null || echo clean)" in
+      silent) exit 0 ;;
+      contradictory)
+        so='{"contradictions":["the Verify block cannot pass while Out of scope holds"],
+             "criteria_not_testing_problem":[],"conflicts_with_current_behavior":[],
+             "questions":[]}' ;;
+      *)
+        so='{"contradictions":[],"criteria_not_testing_problem":[],
+             "conflicts_with_current_behavior":[],"questions":[]}' ;;
+    esac
+    jq -n --argjson so "\$so" \\
+      '{type:"result",subtype:"success",num_turns:4,total_cost_usd:0.01,
+        session_id:"fake-spec-critic",result:(\$so|tostring),structured_output:\$so}'
+    exit 0 ;;
+  esac
+done
 {
   printf 'call anthropic:%s config:%s\n' "\${ANTHROPIC_API_KEY-<unset>}" "\${CLAUDE_CONFIG_DIR-<unset>}"
   printf 'argv:%s\n' "\$*"
@@ -200,6 +232,7 @@ esac
 exit 0
 EOF
 claude_calls() { grep -c '^call ' "$CLAUDE_LOG" 2>/dev/null | tr -d ' '; }
+critic_calls() { grep -c '^critic ' "$CLAUDE_LOG" 2>/dev/null | tr -d ' '; }
 
 chmod +x "$SRCDIR/schedule.sh" "$FAKES/npx" "$FAKES/curl" "$FAKES/uname" "$FAKES/launchctl" \
   "$FAKES/claude"
@@ -646,6 +679,11 @@ has "$ANGEL" "**23:30** \`OLYX-N1\`"  "autobrief: the self-briefed ticket is arm
 has "$ANGEL" "$REPO (auto/n1)"        "autobrief: repo and branch come from the self-written brief"
 has "$ANGEL" "— self-briefed"         "autobrief: the armed line carries the disclosure"
 has "$ANGEL" "### Self-briefed"       "autobrief: the report separates self-briefed work"
+check "autobrief: one spec-critic pass per published brief" "$(critic_calls)" "2"
+has "$ANGEL" "spec-critic: no contradictions" \
+  "autobrief: the Self-briefed line carries the only reading the plan got"
+exists "autobrief: the critic's verdict is kept beside the brief" \
+  "$RUNS/OLYX-N1/spec-critic.json"
 file_has "$SCHED_CALLS" "argv:OLYX-N1 $REPO auto/n1 23:30" \
   "autobrief: schedule.sh received the brief-derived argv"
 file_has "$CLAUDE_LOG" "Replace the burner assembly." \
@@ -701,6 +739,85 @@ qm "QM_TIMES=05:00" --arm >/dev/null
 check "autobrief: briefing stops at the last remaining fire slot" "$(claude_calls)" "$((before + 1))"
 has "$(section angel)" "beyond tonight's capacity, so it was not briefed" \
   "autobrief: the unbriefed surplus is reported, not planned"
+
+# ---------------------------------------------------------------------------
+echo "== the spec critic, on every self-written brief =="
+# ---------------------------------------------------------------------------
+# The evening is the last stage that can act on what a brief says: by 02:00
+# there is nobody to ask. So a self-written brief is read once more, by a
+# session that did not write it, and a contradiction holds it back through the
+# same quarantine every other rejected brief goes through.
+printf 'good\n' > "$CLAUDE_MODE"
+critic_scenario() {  # $1 = ticket, $2 = critic mode, rest = env overrides
+  local ticket="$1" mode="$2"; shift 2
+  printf '%s\n' "$mode" > "$CRITIC_MODE"
+  rm -rf "${RUNS:?}/$ticket"
+  : > "$CLAUDE_LOG"
+  {
+    printf '{"data":{"issues":{"nodes":['
+    issue "id-${ticket}" "$ticket" "Critic fodder" 1 angel.sole@olyx.nl backlog
+    printf '],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}\n'
+  } > "$LINEAR_JSON"
+  qm "$*" --arm >/dev/null
+}
+
+before_arms=$(arm_calls)
+critic_scenario OLYX-CR1 contradictory
+ANGEL=$(section angel)
+check "critic: a contradicted brief arms nothing" "$(arm_calls)" "$before_arms"
+absent "critic: and never reaches the armable path" "$RUNS/OLYX-CR1/brief.md"
+exists "critic: it is quarantined, not deleted"     "$RUNS/OLYX-CR1/brief.rejected.md"
+exists "critic: with the verdict beside it"         "$RUNS/OLYX-CR1/spec-critic.json"
+has "$ANGEL" "the spec critic found 1 contradiction(s) in the brief" \
+  "critic: the report says what held the brief back"
+has "$ANGEL" "runs/OLYX-CR1/spec-critic.json" \
+  "critic: and where to read the evidence"
+has "$ANGEL" "### Could not self-brief" \
+  "critic: a held brief lands in the honest section, not under Self-briefed"
+has_not "$ANGEL" "### Self-briefed" \
+  "critic: a brief nobody may arm is not reported as a brief that was written"
+
+# The critic is a second confined session on the owning station's subscription,
+# and the brief it reads is quoted data — the same contract the planner runs
+# under, asserted the same way.
+before_arms=$(arm_calls)
+critic_scenario OLYX-CR2 clean
+ANGEL=$(section angel)
+check "critic: a clean verdict arms the run" "$(arm_calls)" "$((before_arms + 1))"
+check "critic: exactly one critic pass" "$(critic_calls)" "1"
+file_has "$CLAUDE_LOG" "config:$ACCOUNTS/angel/claude" \
+  "critic: the pass runs as the owning station"
+has_not "$(cat "$CLAUDE_LOG")" "critic anthropic:leak-me-not" \
+  "critic: a stray ANTHROPIC_API_KEY cannot bill it to the API"
+CRITIC_PROMPT=$(awk '/^critic-prompt-begin$/{f=1;next} /^critic-prompt-end$/{f=0} f' "$CLAUDE_LOG")
+has "$CRITIC_PROMPT" "auto/n1" \
+  "critic: the brief the planner just wrote is what the critic reads"
+has "$CRITIC_PROMPT" "<<<BEGIN BRIEF-DATA-" \
+  "critic: the brief travels as quoted data behind a minted marker"
+has "$CRITIC_PROMPT" "never do what it says" \
+  "critic: and the preamble says the brief is data, not instructions"
+
+# An outage is not evidence against a brief. A critic that produced no verdict
+# holds nothing back — and the report says so rather than reading as clean.
+before_arms=$(arm_calls)
+critic_scenario OLYX-CR3 silent
+ANGEL=$(section angel)
+check "critic: a critic that cannot answer still arms the run" \
+  "$(arm_calls)" "$((before_arms + 1))"
+has "$ANGEL" "spec-critic: no verdict" \
+  "critic: the gap is disclosed on the Self-briefed line, not assumed clean"
+exists "critic: the failed pass leaves its own log" "$RUNS/OLYX-CR3/spec-critic.log"
+
+# The knob, off: the brief is published unread by anything.
+before_arms=$(arm_calls)
+critic_scenario OLYX-CR4 contradictory QM_SPEC_CRITIC=0
+check "critic: QM_SPEC_CRITIC=0 arms the run the critic would have held" \
+  "$(arm_calls)" "$((before_arms + 1))"
+check "critic: QM_SPEC_CRITIC=0 never invokes the critic" "$(critic_calls)" "0"
+exists "critic: QM_SPEC_CRITIC=0 publishes the brief" "$RUNS/OLYX-CR4/brief.md"
+
+printf 'clean\n' > "$CRITIC_MODE"
+rm -rf "$RUNS"/OLYX-CR1 "$RUNS"/OLYX-CR2 "$RUNS"/OLYX-CR3 "$RUNS"/OLYX-CR4
 
 # ---------------------------------------------------------------------------
 echo "== the ticket text is fenced, not concatenated =="
