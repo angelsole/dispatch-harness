@@ -406,10 +406,18 @@ record_attempt() {  # $1 = the status this attempt is ending on
 }
 
 write_result() {
-  local metrics
+  local metrics integrity
   # Before the metrics, so this attempt's own row is in the ledger they read.
   record_attempt "$1"
   metrics=$(collect_metrics)
+  # Additive and optional: a run that never reached the integrity stage (or ran
+  # with it off) carries no field at all rather than a null every consumer would
+  # have to learn to ignore.
+  integrity=null
+  if [ -f "$RUN_DIR/gate-integrity.json" ]; then
+    integrity=$(jq -c . "$RUN_DIR/gate-integrity.json" 2>/dev/null) || integrity=null
+    [ -n "$integrity" ] || integrity=null
+  fi
   jq -n \
     --argjson attempt "${ATTEMPT:-1}" --argjson attempts_total "${ATTEMPT:-1}" \
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
@@ -419,12 +427,13 @@ write_result() {
     --arg worktree "$WORKTREE" --arg branch "$BRANCH" --arg base "$BASE_BRANCH" \
     --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
-    --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,attempt:$attempt,attempts_total:$attempts_total,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}
+    --argjson metrics "$metrics" --argjson integrity "$integrity" \
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,attempt:$attempt,attempts_total:$attempts_total,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,gate_integrity:$integrity,metrics:$metrics,logs:$run_dir}
      # The account label belongs to a review that happened: the arms that never
      # attempt one carry no field at all rather than an empty string nobody can
      # tell apart from "primary".
-     | if .review_account == "" then del(.review_account) else . end' \
+     | if .review_account == "" then del(.review_account) else . end
+     | if .gate_integrity == null then del(.gate_integrity) else . end' \
     > "$RUN_DIR/result.json"
 }
 
@@ -1816,6 +1825,37 @@ verify_pr_section() {
 
 run_gate 1 || true
 
+# --- 5a. Gate integrity: is that green earned? --------------------------------
+# The pipeline's whole defence against a gate made green rather than earned used
+# to be one line of the reviewer's checklist. This is the deterministic half of
+# it: the new and changed test files are replayed against the unpatched base
+# tree, and the diff is read for the structural signatures of a weakened gate.
+# Both halves are heuristics, so this iteration only FLAGS — nothing here can
+# change a status, the gate verdict or the PR decision. The findings go into
+# gate-integrity.json, into result.json, and into the review prompt below, where
+# they give checklist item 1 evidence to start from instead of a blank diff.
+#
+# Optional in exactly the way mirroring and the capacity preflight are: an
+# install that predates the library, or HARNESS_GATE_INTEGRITY=0, leaves the
+# review prompt byte-identical to what it was and writes no file at all.
+GATE_INTEGRITY_SECTION=""
+# An earlier attempt's findings describe an earlier tree, and result.json embeds
+# whatever this file holds: clear it before the stage that earns it, the same
+# rule the verifier's score follows.
+rm -f "$RUN_DIR/gate-integrity.json"
+if [ "${HARNESS_GATE_INTEGRITY:-1}" != 0 ] && [ -r "$HARNESS_DIR/lib/gate-integrity.sh" ]; then
+  # shellcheck source=lib/gate-integrity.sh
+  . "$HARNESS_DIR/lib/gate-integrity.sh"
+  echo "[harness] gate integrity: replaying this branch's tests against base (script — no model)"
+  gate_integrity_check "$WORKTREE" "$BASE_REF" "$RUN_DIR" "$BRIEF" "$GATE_STATUS" || true
+  GI_SECTION_TEXT=$(gate_integrity_section "$RUN_DIR/gate-integrity.json" || true)
+  if [ -n "$GI_SECTION_TEXT" ]; then
+    GATE_INTEGRITY_SECTION="
+$GI_SECTION_TEXT
+"
+  fi
+fi
+
 # --- Review + fix rounds ------------------------------------------------------
 # Every arm reviews or holds. The review runs in tiers, and every tier decision
 # is made from EVIDENCE (notes, a rejection, or reviewer commits — section 5b),
@@ -1838,7 +1878,7 @@ gate-latest.log is a clipped extract, not the whole gate log: its header states 
 implementer-notes.md is the implementer's own account of its work: treat it as claims to verify against the diff, not as facts.
 Review ALL changes on this branch: git log $BASE_REF..HEAD and git diff $BASE_REF...HEAD.
 Lockfiles are the one exception to what you read: when the diff touches package-lock.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, Podfile.lock, pubspec.lock or composer.lock, exclude that file from the diff you read (git diff $BASE_REF...HEAD -- . ':(exclude)package-lock.json' and so on) and judge the corresponding manifest instead — package.json, Cargo.toml, Podfile, pubspec.yaml, composer.json. A resolver writes thousands of lines nobody reviews line by line. This exempts those seven filenames and nothing else: no other generated or vendored file is excused, and checklist item 1 below keeps its full force over every file in the diff.
-
+$GATE_INTEGRITY_SECTION
 Work through this checklist, in order:
 1. Gate-gaming — weakened or deleted tests, skipped/disabled cases, loosened assertions, hardcoded expected values, modified fixtures. A green gate proves nothing if the tests were touched to make it green; restore proper tests and fix the code instead. Highest priority.
 2. Business logic — does the code actually satisfy each acceptance criterion in the brief? Check edge cases, error paths, and the domain invariants documented in this repo's CLAUDE.md/AGENTS.md. Read the surrounding code the diff plugs into — verify correctness in context, not just in isolation.
