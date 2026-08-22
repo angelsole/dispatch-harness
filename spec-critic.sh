@@ -130,8 +130,11 @@ Past the closing marker you are reading the harness again. Fill in the structure
 
 Every list may be empty and an honest empty list is the answer far more often than not. Report what you can evidence and nothing else: a contradiction you invented to look thorough costs the pipeline a night, and it is the finding this stage exists to avoid producing."
 
-TMP="${TMPDIR:-/tmp}/spec-critic-$$"
-mkdir -p "$TMP" || { echo "spec-critic.sh: cannot create a scratch dir at $TMP" >&2; exit 1; }
+# mktemp, not a $$-derived name: the confinement claim below is that this dir is
+# fresh and empty, and a predictable path something else created first would be
+# neither.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/spec-critic.XXXXXX") \
+  || { echo "spec-critic.sh: cannot create a scratch dir under ${TMPDIR:-/tmp}" >&2; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 # The cwd is the write confinement, exactly as quartermaster.sh's planner is
