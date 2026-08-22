@@ -17,19 +17,19 @@
 # which is what keeps a run without profiles byte-identical to one from before
 # any of this existed.
 #
-# HARNESS_HOOKS and HARNESS_ACTIVE_PROFILES are outputs read by the sourcing
+# PROFILE_HOOKS and ACTIVE_PROFILES are outputs read by the sourcing
 # script, which shellcheck cannot see from here.
 # shellcheck disable=SC2034
 
-HARNESS_HOOKS="implementer_env post_gate review_prompt_extra pr_body_sections result_json_extra outcome_status"
+PROFILE_HOOKS="implementer_env post_gate review_prompt_extra pr_body_sections result_json_extra outcome_status"
 
 # Which profiles this run loaded, space-separated. Empty on every ordinary run.
-HARNESS_ACTIVE_PROFILES=""
+ACTIVE_PROFILES=""
 
 # bash 3.2 is the only bash on stock macOS and has no associative arrays, so the
 # registry is one dynamically-named variable per hook.
 hook_register() {  # $1 = hook name, $2 = function name
-  eval "_HARNESS_HOOK_$1=\"\${_HARNESS_HOOK_$1:-} \$2\""
+  eval "_PROFILE_HOOK_$1=\"\${_PROFILE_HOOK_$1:-} \$2\""
 }
 
 # Registered names that are actually defined functions right now. Core hooks are
@@ -37,7 +37,7 @@ hook_register() {  # $1 = hook name, $2 = function name
 # implement only the hooks it cares about, so the filter is the contract.
 hook_impls() {  # $1 = hook name
   local list fn
-  eval "list=\"\${_HARNESS_HOOK_$1:-}\""
+  eval "list=\"\${_PROFILE_HOOK_$1:-}\""
   # shellcheck disable=SC2086  # the registry is a space-separated list of names
   for fn in $list; do
     declare -F "$fn" >/dev/null || continue
@@ -94,21 +94,21 @@ hook_json() {  # $1 = hook name
 # hooks are.
 harness_load_profiles() {  # $1 = target repo path, $2 = the directory profiles live in
   local repo="$1" root="$2" dir name hook
-  HARNESS_ACTIVE_PROFILES=""
+  ACTIVE_PROFILES=""
   [ "${HARNESS_PROFILES:-1}" != 0 ] || return 0
   [ -d "$root" ] || return 0
   for dir in "$root"/*/; do
     [ -r "$dir/activate.sh" ] && [ -r "$dir/profile.sh" ] || continue
     name=$(basename "$dir")
     # shellcheck source=/dev/null
-    ( HARNESS_PROFILE_DIR="${dir%/}"; . "$dir/activate.sh" "$repo" ) || continue
-    HARNESS_PROFILE_DIR="${dir%/}"
+    ( PROFILE_DIR="${dir%/}"; . "$dir/activate.sh" "$repo" ) || continue
+    PROFILE_DIR="${dir%/}"
     # shellcheck source=/dev/null
     . "$dir/profile.sh"
-    for hook in $HARNESS_HOOKS; do
+    for hook in $PROFILE_HOOKS; do
       hook_register "$hook" "${name}_${hook}"
     done
-    HARNESS_ACTIVE_PROFILES="$HARNESS_ACTIVE_PROFILES $name"
-    echo "[harness] profile: $name (from $HARNESS_PROFILE_DIR)"
+    ACTIVE_PROFILES="$ACTIVE_PROFILES $name"
+    echo "[harness] profile: $name (from $PROFILE_DIR)"
   done
 }

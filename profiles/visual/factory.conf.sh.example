@@ -1,0 +1,17 @@
+# Copy to $HARNESS_DIR/factory.conf.sh, chmod 600, and fill in.
+#
+# The asset factories' keys, and nothing else. run-task.sh sources this file
+# into the IMPLEMENTER's process only — never the gate, the reviewer, the PR
+# stage or the live feed — and only when the repo pins MCP_CONFIG. Missing file
+# = one SKIP line, not an error.
+#
+# install.sh does not seed this one, because it is a credential and you should
+# create it deliberately. Never commit it and never write either value into a
+# worktree, a brief or a run dir.
+#
+#   PIXELLAB_SECRET          pixellab.ai/account         -> Authorization: Bearer
+#   RETRO_DIFFUSION_API_KEY  retrodiffusion.ai/app/devtools -> X-RD-Token (REST),
+#                                                              Bearer (MCP)
+
+export PIXELLAB_SECRET=""
+export RETRO_DIFFUSION_API_KEY=""

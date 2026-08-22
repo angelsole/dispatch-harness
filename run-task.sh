@@ -15,14 +15,14 @@ set -u -o pipefail
 # from there, HARNESS_DIR once install.sh has shipped lib/ into it. Sourced out
 # here rather than inside main() for the same reason main() exists: the lib is
 # read at parse time, so editing it while a run is live cannot corrupt that run.
-_HARNESS_LIB_DIR="$(dirname "${BASH_SOURCE[0]}")/lib"
-[ -r "$_HARNESS_LIB_DIR/common.sh" ] \
+_LIB_DIR="$(dirname "${BASH_SOURCE[0]}")/lib"
+[ -r "$_LIB_DIR/common.sh" ] \
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 # shellcheck source=lib/common.sh
-. "$_HARNESS_LIB_DIR/common.sh"
+. "$_LIB_DIR/common.sh"
 # shellcheck source=lib/profile.sh
-. "$_HARNESS_LIB_DIR/profile.sh"
-unset _HARNESS_LIB_DIR
+. "$_LIB_DIR/profile.sh"
+unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
 # editing this file while a run is live can no longer corrupt that run.
@@ -70,14 +70,6 @@ fi
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
 repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD
-
-# The pipeline's extension points and who fills them (lib/profile.sh). The core
-# registrations name functions defined further down: a hook records a name, and
-# only resolves it when it fires. Profiles load last so a repo's own profile
-# cannot displace what the pipeline itself puts in these slots.
-hook_register implementer_env  apply_provider_env
-hook_register pr_body_sections verify_pr_section
-harness_load_profiles "$REPO" "$SELF_DIR/profiles"
 # Keep the unset path independent of the optional library, including on an old
 # install that predates mirror.sh.
 if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
@@ -213,6 +205,19 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
   REVIEWER_MODEL=""
   REVIEWER_EFFORT=""
 fi
+
+# --- The pipeline's extension points, and who fills them ---------------------
+# The six hooks are lib/profile.sh's; these two are the pipeline's own claims on
+# them. Registration records a NAME, so both functions may be — and are —
+# defined further down; a hook only resolves what it holds when it fires.
+#
+# Profiles load after, so a repo's profile can add to a slot but never displace
+# what the pipeline itself put there, and after repo_config and the helpers
+# above, which are what a profile decides and configures itself from. A run with
+# no active profile registers nothing more and behaves exactly as it always has.
+hook_register implementer_env  apply_provider_env
+hook_register pr_body_sections verify_pr_section
+harness_load_profiles "$REPO" "$SELF_DIR/profiles"
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
 # The top-level gate command the standing verdict died on, isolated by the trap
