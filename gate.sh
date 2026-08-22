@@ -22,19 +22,12 @@ fi
 # inherits, pins, and dies on at the credential check for a vendor the fixture
 # never asked for. Eleven suites failed that way, all of them reporting
 # setup_failed for reasons nothing in their own fixture explains. A suite that
-# wants one of these sets it itself; none of them may inherit one. The
-# provider's own env — endpoint, credential, request timeout, the CLI's small
-# and subagent models — is the same leak out of a provider-pinned dispatch, and
-# is cleared for the same reason: suites assert those vars are empty on the
-# stages the provider must not reach.
+# wants one of these sets it itself; none of them may inherit one.
 GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
           -u REVIEWER_MODEL -u REVIEWER_EFFORT -u HARNESS_OWNER
           -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES
           -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH
-          -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS
-          -u API_TIMEOUT_MS -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN
-          -u ANTHROPIC_DEFAULT_HAIKU_MODEL -u ANTHROPIC_API_KEY
-          -u CLAUDE_CODE_SUBAGENT_MODEL)
+          -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS)
 
 # Bash expands the glob in filename order and includes new suites before their
 # first commit. Only a failing suite prints its transcript; a green one is worth
