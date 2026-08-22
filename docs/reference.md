@@ -223,6 +223,49 @@ and **`verify.log`** (one line per attempt: the score, or `skipped (<reason>)`,
 or `failed (<reason>)`).
 Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
 
+## The gate integrity check
+
+Between the implementer's gate round and the review stage, `lib/gate-integrity.sh`
+asks the question a green gate cannot answer about itself: **was it earned?** It
+is deterministic (no model), best-effort, time-boxed, and it only ever **flags** —
+no status, no gate verdict and no PR decision depends on anything it finds.
+
+**Replay.** Every test file this branch adds or changes is run against the
+*unpatched base tree* in a scratch worktree, scoped to that one file, with the
+repo's own runner (`jest`, `vitest`, an `npm test` script, or `pytest` —
+detected, not assumed). A test that **passes there** is non-discriminating: it
+cannot have caught the change it travels with. Anything that stops the replay
+working — no runner, no scratch worktree, a runner that will not start, the
+per-file or whole-stage cap — is recorded as `not_run` with a reason, never as a
+clean result.
+
+**Structural.** The diff is read for the signatures of a gate made green rather
+than earned: deleted test files, a net-negative assertion count in a touched
+test, a `it.only` / `.skip` / `@pytest.mark.xfail` / `t.Skip` marker introduced,
+CI/lint/coverage config changed on a branch whose brief never mentions that file,
+and an expected value in a changed test that this same diff also introduces in
+the source.
+
+**Where it goes.** `gate-integrity.json` in the run dir (embedded verbatim in
+`result.json` as `gate_integrity`), the runner transcript in
+`gate-integrity-replay.log`, the same block in the worktree at
+`.harness/gate-integrity.log` beside `gate-latest.log`, and a
+`## Gate integrity flags` section in the review prompt — so the reviewer's
+anti-gaming checklist starts from evidence instead of a blank diff. A clean
+branch gets an explicit *no flags*, which is stated as absence of evidence, not
+as proof.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_GATE_INTEGRITY` | `0` disables the stage: no file, no `gate_integrity` field, and a review prompt byte-identical to what it was before this existed. | `1` |
+| `HARNESS_GATE_INTEGRITY_TIMEOUT` | Seconds the whole replay half may spend. Test files left over when it runs out are `not_run`, and the reason says so. | `300` |
+| `HARNESS_GATE_INTEGRITY_FILE_TIMEOUT` | Seconds one replayed test file may take. | `120` |
+| `HARNESS_GATE_INTEGRITY_MAX_FILES` | How many test files are replayed at most; the rest are `not_run` rather than silently dropped. | `10` |
+
+Both halves are heuristics, with false positives and false negatives, which is
+why this iteration only flags. Read `flags` as *look here first*, not as a
+verdict — and read an empty list as nothing found, not as a gate proven honest.
+
 ## The repo pin
 
 `repos.conf.sh` (shipped) auto-detects sensible defaults for any repo: install
@@ -348,6 +391,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `review-notes.md` / `REJECTED.md` | The reviewer's findings, or its rejection |
 | `feed.log` | Live transcript across both model stages |
 | `gate-*.log`, `gate-rounds.log` | Each gate round's output and its one-line verdict |
+| `gate-integrity.json`, `gate-integrity-replay.log` | The [integrity check's](#the-gate-integrity-check) findings (copied into `result.json` as `gate_integrity`), and the transcript of replaying this branch's tests against base |
 | `result.json` | The run's machine-readable outcome and metrics ([schema](#metrics-schema)) |
 | `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
@@ -456,6 +500,7 @@ fields are `null`/empty):
 | --- | --- |
 | `review` | How the review stage actually went: `reviewed` \| `reviewed_claude` \| `failed_silent` \| `skipped`, empty when the run never reached it. Runs recorded before this ticket may also carry the retired `no_evidence` — an empty Codex review now falls through to the Claude tier instead of shipping. See [Reading the pipeline's own vitals](design-notes.md#reading-the-pipelines-own-vitals). |
 | `review_account` | Which backend the review attempt ran on: `primary` \| `fallback` \| `claude`. Absent (not empty) on the arm that never attempts a review. Set the moment a tier is entered, so it names the attempt, not the outcome — `review` is what says a diff was read. See [A second Codex account](operations.md#a-second-codex-account-for-a-dry-primary). |
+| `gate_integrity` | The [integrity check's](#the-gate-integrity-check) own `gate-integrity.json`, verbatim: `{base, head, replay: {status, reason, runner, discriminating, non_discriminating, not_run, files{}}, flags[], flag_count}`. Additive and optional — absent on a run that never reached the stage (or ran with it off), and `flags: []` on a branch it found nothing in. Advisory: nothing in the pipeline branches on it. |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
 | `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `result` is `pass` \| `fail` \| `skipped` (see [When the post-review gate is skipped](design-notes.md#when-the-post-review-gate-is-skipped)); a skipped round records `0` seconds. `failed_step` is the command a failing round died on, `null` on a passing or skipped round and on rounds recorded before this existed. |
