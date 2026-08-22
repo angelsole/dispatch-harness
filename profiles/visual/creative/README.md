@@ -175,6 +175,11 @@ human judged outright (`expect` of `better` or `worse`) comes out wrong; a pair
 expected to `tie` is reported, never failed. `summary.json` lands beside the
 verdicts.
 
+The bundled pair set is dispatch-harness's own calibration fixture: its rubric
+and reference-board paths resolve from this source checkout. From an installed
+profile, pass `--pairs` for the target repo's eval set instead; that set should
+name the same rubric and refs its visual gate uses.
+
 Run it **after any model or prompt change**, and **before trusting a new repo's
 rubric** — point `--pairs` at that repo's own set, or add `"rubric"` and
 `"refs"` keys to the pairs file (or pass `--refs`). Do not tune the prompt
