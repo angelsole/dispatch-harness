@@ -50,9 +50,19 @@ MAX_BYTES="${SPEC_CRITIC_MAX_BYTES:-60000}"
 BRIEF=""; REPO=""; OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --brief) BRIEF="${2:-}"; shift 2 ;;
-    --repo)  REPO="${2:-}";  shift 2 ;;
-    --out)   OUT="${2:-}";   shift 2 ;;
+    --brief|--repo|--out)
+      option="$1"
+      [ $# -ge 2 ] || {
+        echo "spec-critic.sh: $option requires a value" >&2
+        exit 2
+      }
+      case "$option" in
+        --brief) BRIEF="$2" ;;
+        --repo)  REPO="$2" ;;
+        --out)   OUT="$2" ;;
+      esac
+      shift 2
+      ;;
     -h|--help) harness_usage "$0"; exit 0 ;;
     *) echo "spec-critic.sh: unknown option $1" >&2; exit 2 ;;
   esac

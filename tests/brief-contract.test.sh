@@ -195,6 +195,9 @@ critic() {  # rest = argv for spec-critic.sh
 echo "== the critic's usage guards =="
 # ---------------------------------------------------------------------------
 before=$(critic_calls)
+out=$(critic --brief); rc=$?
+check "guard: an option without a value exits 2" "$rc" "2"
+has "$out" "--brief requires a value" "guard: and names the missing option value"
 out=$(critic --brief "$BRIEF"); rc=$?
 check "guard: a call with no --repo exits 2" "$rc" "2"
 has "$out" "usage: spec-critic.sh" "guard: and prints the usage"
