@@ -379,8 +379,10 @@ Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
 
 Between the implementer's gate round and the review stage, `lib/gate-integrity.sh`
 asks the question a green gate cannot answer about itself: **was it earned?** It
-is deterministic (no model), best-effort, time-boxed, and it only ever **flags** —
-no status, no gate verdict and no PR decision depends on anything it finds.
+is deterministic (no model), best-effort, and time-boxed. It reports **flags**
+rather than rewriting the gate verdict; non-empty flags also veto
+[escalation](#escalation), so they can affect provider routing and the run's
+eventual outcome.
 
 **Replay.** Every test file this branch adds or changes is run against the
 *unpatched base tree* in a scratch worktree, scoped to that one file, with the
@@ -782,7 +784,7 @@ fields are `null`/empty):
 | --- | --- |
 | `review` | How the review stage actually went: `reviewed` \| `reviewed_claude` \| `failed_silent` \| `skipped`, empty when the run never reached it. Runs recorded before this ticket may also carry the retired `no_evidence` — an empty Codex review now falls through to the Claude tier instead of shipping. See [Reading the pipeline's own vitals](design-notes.md#reading-the-pipelines-own-vitals). |
 | `review_account` | Which backend the review attempt ran on: `primary` \| `fallback` \| `claude`. Absent (not empty) on the arm that never attempts a review. Set the moment a tier is entered, so it names the attempt, not the outcome — `review` is what says a diff was read. See [A second Codex account](operations.md#a-second-codex-account-for-a-dry-primary). |
-| `gate_integrity` | The [integrity check's](#the-gate-integrity-check) own `gate-integrity.json`, verbatim: `{base, head, replay: {status, reason, runner, discriminating, non_discriminating, not_run, files{}}, flags[], flag_count}`. Additive and optional — absent on a run that never reached the stage (or ran with it off), and `flags: []` on a branch it found nothing in. Advisory: nothing in the pipeline branches on it. |
+| `gate_integrity` | The [integrity check's](#the-gate-integrity-check) own `gate-integrity.json`, verbatim: `{base, head, replay: {status, reason, runner, discriminating, non_discriminating, not_run, files{}}, flags[], flag_count}`. Additive and optional — absent on a run that never reached the stage (or ran with it off), and `flags: []` on a branch it found nothing in. It does not rewrite the gate verdict, but non-empty flags veto [escalation](#escalation) and can therefore affect routing and the eventual outcome. |
 | `review_findings` | [Find, refute, fix](#find-refute-fix): `{found, refuted, promoted, fixed, refute}`. `fixed` is counted from the commit log (the fix pass names the finding id in its message), so a promoted finding nobody committed for reads as promoted-not-fixed rather than as fixed. `refute` is `ok` \| `failed` \| `off`, and on anything but `ok` every finding was promoted unchecked. Additive and optional — absent on a review that produced no structured findings, which is the single-pass review this replaced. |
 | `escalation` | [Escalation](#escalation): `{triggered, from_provider, from_model, at_attempt, failed_step, glm_head}` — the vendor and model the run implemented on before it escalated, the attempt and the failing gate step that triggered it, and the commit the cheap tier's work ends at. Additive and optional: absent on every run that did not escalate, which is every run before this existed. |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
