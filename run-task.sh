@@ -714,8 +714,9 @@ session_limit_reset() {  # prints the epoch the limit message names, or fails
 # the segment that just ended, and a first segment that hit the ceiling must not
 # keep re-arming the loop after a resume finished the work cleanly.
 max_turns_hit() {
-  jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
-    "$RUN_DIR/opus-stream.jsonl" >/dev/null 2>&1 && return 0
+  segment_stream \
+    | jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
+        >/dev/null 2>&1 && return 0
   grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
 }
 
@@ -997,6 +998,10 @@ OPUS_SESSION_FILE="$RUN_DIR/opus-session"
 CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns "$MAX_TURNS")
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
 
+segment_stream() {
+  tail -n "+${OPUS_STREAM_START_LINE:-1}" "$RUN_DIR/opus-stream.jsonl" 2>/dev/null
+}
+
 # One implementer segment: leaves OPUS_EXIT, the worker's final message and the
 # refreshed session id behind. Stream events go to the statusline and feed.log
 # so a run shows live what the worker is doing (tool by tool); the raw stream is
@@ -1052,9 +1057,12 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   # every result event would concatenate one closing message per segment into
   # opus.log, and hand session_limit_hit an exhausted segment's prose as
   # evidence about this one.
-  jq -r -s 'map(select(.type == "result")) | (last // {}) | .result // empty' \
-    "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
-  new_session=$(jq -r 'select(.type == "result") | .session_id // empty' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null | tail -1)
+  segment_stream \
+    | jq -r -s 'map(select(.type == "result")) | (last // {}) | .result // empty' \
+        > "$RUN_DIR/opus.log" 2>/dev/null || true
+  new_session=$(segment_stream \
+    | jq -r 'select(.type == "result") | .session_id // empty' 2>/dev/null \
+    | tail -1)
   if [ -n "$new_session" ]; then
     OPUS_SESSION="$new_session"
     echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
@@ -1100,10 +1108,6 @@ opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
 TURN_RESUME_PROMPT="You stopped because you ran out of turns, not because the work is done. This is the same session, resumed with a fresh turn budget. Check what is already committed (git log, git status) before redoing anything, then finish the task under the same rules as before: leave the tree passing the brief's verify commands and write .harness/implementer-notes.md.
 
 $RESUME_RULES"
-
-segment_stream() {
-  tail -n "+${OPUS_STREAM_START_LINE:-1}" "$RUN_DIR/opus-stream.jsonl" 2>/dev/null
-}
 
 # Write the fixed handover template from the ending segment's trajectory.
 segment_report() {  # $1 = destination path, $2 = the ending segment's ordinal

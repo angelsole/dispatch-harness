@@ -151,6 +151,10 @@ case "\$(cat "$CLAUDE_MODE")" in
   turns-always)
     exhausted; exit 1
     ;;
+  turns-then-empty)
+    if [ "\$n" -eq 1 ]; then exhausted; else echo "boom: no result event" >&2; fi
+    exit 1
+    ;;
   limit-and-turns)
     echo "API Error: You've hit your session limit · resets 1:30pm" >&2
     exhausted; exit 1
@@ -233,10 +237,7 @@ dispatch() {  # $1 = run id, $2 = mode, $3 = space-separated VAR=VAL overrides
   printf '# fixture task\n' > "$RUN/brief.md"
   printf '%s\n' "$mode" > "$CLAUDE_MODE"
   : > "$CLAUDE_CALLS"; echo 0 > "$ATTEMPTS"
-  # The implementer knobs are unset for the same reason the HARNESS_* ones are:
-  # this suite is dispatched BY the pipeline, and a station shell that pins the
-  # implementer to another provider would otherwise pin every fixture run to it
-  # — which fails setup on the missing credential long before the turn ceiling.
+  # Fixture dispatches must not inherit provider pins from the invoking pipeline.
   # shellcheck disable=SC2086
   env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
       -u HARNESS_RESUME_MODE \
@@ -438,6 +439,22 @@ check "report: the resume is counted the same way" \
   "$(metric .metrics.turn_resumes)" "1"
 check "report: opus_head still points at the implementer's tip" \
   "$(git_wt rev-parse HEAD)" "$(cat "$RUN/opus-head")"
+
+# A replacement session can fail before the CLI writes a result event. Its
+# predecessor's result must not be mistaken for evidence about this segment.
+dispatch TURN-REPORT-EMPTY turns-then-empty ""
+check "report error: the failed fresh session is not resumed again" "$(spawns)" "2"
+check "report error: only the exhausted segment spends a resume" \
+  "$(cat "$RUN/turn-resumes")" "1"
+check "report error: the run reports the replacement session's failure" \
+  "$(stage_now)" "done: implementer_failed"
+check "report error: no stale final message is carried forward" \
+  "$(cat "$RUN/opus.log")" ""
+EMPTY_SECOND_SESSION=$(argv_of 2 | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')
+check "report error: the fresh session remains pinned without a result event" \
+  "$(cat "$RUN/opus-session")" "$EMPTY_SECOND_SESSION"
+absent "report error: no report is invented for the result-less segment" \
+  "$RUN/segment-report-2.md"
 
 # ---------------------------------------------------------------------------
 echo "== the resume mode is a pinned knob =="
