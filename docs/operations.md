@@ -585,6 +585,10 @@ never durations:
 The pipeline never marks a PR ready and never merges, in any arm; opening a
 draft PR is as far as automation goes.
 
+The tiers decide *who* reviews. Whichever one takes it then runs the same three
+passes — find, refute, fix — so what it reports is disproved before it is
+edited; that half is [Find, refute, fix](reference.md#find-refute-fix).
+
 How an empty review is told apart from a fast, honest one — and what
 `HARNESS_REVIEW_MIN_SECONDS` and `HARNESS_REVIEW_TRIVIAL_LINES` are for — is in
 [the design notes](design-notes.md#when-the-review-stage-does-not-happen).
