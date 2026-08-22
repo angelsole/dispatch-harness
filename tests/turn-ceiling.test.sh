@@ -291,9 +291,7 @@ check "knob: zero is not a ceiling either" "$(cat "$RUN/max-turns")" "200"
 # ---------------------------------------------------------------------------
 echo "== transcript mode: running out of turns resumes the pinned session =="
 # ---------------------------------------------------------------------------
-# `resume-mode: transcript` is the original behavior, kept as an ablation arm
-# beside the `report` default. Everything below is what this suite has always
-# asserted, byte for byte — the knob has to leave it untouched.
+# Pin the original behavior as the transcript comparison arm.
 dispatch TURN-RESUME turns-once "HARNESS_RESUME_MODE=transcript"
 check "resume: the implementer was spawned twice" "$(spawns)" "2"
 check "resume: the run reaches its normal terminal status" "$(stage_now)" "done: gate_failed"
@@ -364,10 +362,7 @@ absent "transcript: no handover report is written" "$RUN/segment-report-1.md"
 # ---------------------------------------------------------------------------
 echo "== report mode: the resume is handed a report, not its own transcript =="
 # ---------------------------------------------------------------------------
-# The default. The exhausted segment is summarised into a file, and the next
-# segment is a FRESH session that reads that file as somebody else's account
-# rather than re-entering its own reasoning. None of it may cost the telemetry
-# guarantee: same append-only stream, same sums, same attribution.
+# Report mode must preserve the same telemetry as transcript mode.
 dispatch TURN-REPORT turns-once ""
 check "report: report is the default resume mode" "$(cat "$RUN/resume-mode")" "report"
 check "report: the implementer was spawned twice" "$(spawns)" "2"
@@ -392,10 +387,19 @@ done <<'SECTIONS'
 SECTIONS
 file_has "$REPORT" "fixture task" "report: the goal is taken from the brief"
 file_has "$REPORT" "segment-1" "report: and the prose from the segment that ended"
+has_not "$(cat "$REPORT")" "segment-2" "report: it excludes later segments"
 
 has "$(argv_of 2)" "--session-id" "report: the next segment is a fresh session"
 has_not "$(argv_of 2)" "--resume" "report: never a walk back into the exhausted one"
 has "$(argv_of 2)" "--max-turns 200" "report: with the run's pinned ceiling"
+FIRST_SESSION=$(argv_of 1 | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')
+SECOND_SESSION=$(argv_of 2 | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')
+if [ -n "$FIRST_SESSION" ] && [ -n "$SECOND_SESSION" ] \
+   && [ "$FIRST_SESSION" != "$SECOND_SESSION" ]; then
+  ok "report: the fresh session id differs from the exhausted one"
+else
+  bad "report: the fresh session id differs from the exhausted one"
+fi
 check "report: the refreshed session id still comes from the last segment" \
   "$(cat "$RUN/opus-session")" "fork-2"
 
@@ -451,6 +455,25 @@ check "mode: the re-pinned value stops the warning repeating" \
 file_has "$RUN/attempts/1/segment-report-1.md" "# Previous session report" \
   "mode: a re-dispatch rotates the previous attempt's report into attempts/<n>/"
 
+# A preserved report is immutable, and its collision is detected before any
+# live evidence is moved out of the current attempt.
+dispatch TURN-REPORT-COLLISION turns-once ""
+mkdir -p "$RUN/attempts/1"
+printf 'preserved report\n' > "$RUN/attempts/1/segment-report-1.md"
+LIVE_STREAM=$(cat "$RUN/opus-stream.jsonl")
+LIVE_REPORT=$(cat "$RUN/segment-report-1.md")
+dispatch TURN-REPORT-COLLISION turns-once ""
+check "rotation: a report collision fails the dispatch" \
+  "$([ "$RC" -ne 0 ] && echo yes || echo no)" "yes"
+check "rotation: the preserved report is not overwritten" \
+  "$(cat "$RUN/attempts/1/segment-report-1.md")" "preserved report"
+check "rotation: the live report is not moved after a collision" \
+  "$(cat "$RUN/segment-report-1.md")" "$LIVE_REPORT"
+check "rotation: the live stream is not moved after a collision" \
+  "$(cat "$RUN/opus-stream.jsonl")" "$LIVE_STREAM"
+has "$OUT" "refusing to overwrite preserved attempt telemetry" \
+  "rotation: the collision is explained"
+
 # An unresumed run records exactly what it always did, with one segment.
 dispatch TURN-ONESEG commit ""
 check "one segment: the stream holds the single spawn" "$(stream_texts)" "segment-1"
@@ -481,6 +504,10 @@ file_has "$RUN/timeline" "resuming: turn ceiling (2/2)" "budget: second resume a
 check "budget: the counter stops at the budget" "$(cat "$RUN/turn-resumes")" "2"
 exists "budget: one handover report per resumed segment" "$RUN/segment-report-1.md"
 exists "budget: including the last one" "$RUN/segment-report-2.md"
+file_has "$RUN/segment-report-2.md" "segment-2" \
+  "budget: the second report reads the segment that just ended"
+has_not "$(cat "$RUN/segment-report-2.md")" "segment-1" \
+  "budget: the second report excludes the earlier segment"
 check "budget: only then does the run fail" "$(stage_now)" "done: implementer_failed"
 check "budget: and says so in result.json" "$(result_status)" "implementer_failed"
 check "budget: with a non-zero exit" "$([ "$RC" -ne 0 ] && echo yes || echo no)" "yes"

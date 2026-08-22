@@ -193,11 +193,8 @@ fi
 # experimental condition, and 0 switches the self-resume off.
 MAX_RESUMES="${HARNESS_MAX_RESUMES:-$DEFAULT_MAX_RESUMES}"
 case "$MAX_RESUMES" in ''|*[!0-9]*) MAX_RESUMES=$DEFAULT_MAX_RESUMES ;; esac
-# What a turn-ceiling resume hands the next segment. `transcript` re-enters the
-# exhausted session with --resume; `report` starts a fresh session and gives it
-# the previous segment's state as an external artifact. Pinned like the model
-# knobs, because it is an experimental condition: a re-dispatch from a shell
-# that exports the other value must not switch a run's arm mid-flight.
+# What a turn-ceiling resume hands the next segment. Pinning prevents an
+# experimental arm from changing across dispatches.
 DEFAULT_RESUME_MODE=report
 pin_knob resume-mode HARNESS_RESUME_MODE "$DEFAULT_RESUME_MODE"
 RESUME_MODE="$HARNESS_RESUME_MODE"
@@ -782,22 +779,23 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
     echo "FATAL: cannot preserve attempt $PREV_ATTEMPT telemetry at $attempt_dir" >&2
     exit 1
   fi
+  attempt_files=()
   for f in $ATTEMPT_FILES; do
-    [ -f "$RUN_DIR/$f" ] || continue
-    if [ -e "$attempt_dir/$f" ]; then
-      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$f" >&2
-      exit 1
-    fi
-    if ! mv "$RUN_DIR/$f" "$attempt_dir/$f"; then
-      echo "FATAL: cannot preserve $f for attempt $PREV_ATTEMPT" >&2
+    [ ! -f "$RUN_DIR/$f" ] || attempt_files+=("$RUN_DIR/$f")
+  done
+  for f in "$RUN_DIR"/segment-report-*.md; do
+    [ ! -f "$f" ] || attempt_files+=("$f")
+  done
+  # Check every destination before moving any evidence, so a collision cannot
+  # leave a partially rotated attempt.
+  for f in "${attempt_files[@]}"; do
+    if [ -e "$attempt_dir/$(basename "$f")" ]; then
+      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
       exit 1
     fi
   done
-  # Turn-ceiling handover reports are the attempt's evidence too, and there is
-  # no fixed number of them to name in $ATTEMPT_FILES.
-  for f in "$RUN_DIR"/segment-report-*.md; do
-    [ -f "$f" ] || continue
-    if ! mv "$f" "$attempt_dir/"; then
+  for f in "${attempt_files[@]}"; do
+    if ! mv "$f" "$attempt_dir/$(basename "$f")"; then
       echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
       exit 1
     fi
@@ -1018,9 +1016,7 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   if [ -f "$RUN_DIR/feed.log" ]; then
     OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
   fi
-  # Same trick on the append-only stream: where this segment's events begin, so
-  # a handover report can quote the segment that just ended and not the ones
-  # before it.
+  # Mark where this segment begins in the append-only stream.
   OPUS_STREAM_START_LINE=1
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     OPUS_STREAM_START_LINE=$(( $(wc -l < "$RUN_DIR/opus-stream.jsonl") + 1 ))
@@ -1096,27 +1092,19 @@ opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
 # a session that cannot spawn anyway. A pending QUESTIONS.md wins too: a worker
 # that stopped to ask must not be talked over.
 #
-# WHAT the next segment is handed is the `resume-mode` knob. `transcript` walks
-# the exhausted session forward with --resume; `report` hands a fresh session a
-# written account of where the last one got to. Both spend the same budget and
-# both append to the same stream, so the telemetry cannot tell them apart.
+# Both resume modes spend the same budget and append to the same stream.
 TURN_RESUME_PROMPT="You stopped because you ran out of turns, not because the work is done. This is the same session, resumed with a fresh turn budget. Check what is already committed (git log, git status) before redoing anything, then finish the task under the same rules as before: leave the tree passing the brief's verify commands and write .harness/implementer-notes.md.
 
 $RESUME_RULES"
 
-# Just this segment's slice of the append-only stream.
 segment_stream() {
   tail -n "+${OPUS_STREAM_START_LINE:-1}" "$RUN_DIR/opus-stream.jsonl" 2>/dev/null
 }
 
-# The handover the next segment reads in `report` mode. The harness extracts it
-# from the ending segment's own trajectory rather than asking the model for it:
-# a session that ran out of turns has none left to write a handover, so anything
-# that needs its cooperation is not a recovery path. Every section is always
-# present — an empty one says it is empty, so "the segment recorded nothing" and
-# "the harness did not look" stay distinguishable.
+# Write the fixed handover template from the ending segment's trajectory.
 segment_report() {  # $1 = destination path, $2 = the ending segment's ordinal
   local out="$1" n="$2" goal decisions notes committed dirty gate questions texts trail
+  local file_lines=100 text_items=3 text_chars=400 tool_items=40 tool_chars=100
   goal=$(grep -m1 '^#[[:space:]]' "$WORKTREE/.harness/brief.md" 2>/dev/null \
          | sed 's/^#[[:space:]]*//')
   [ -n "$goal" ] || goal='(the brief carries no title line — read it in full)'
@@ -1127,11 +1115,11 @@ segment_report() {  # $1 = destination path, $2 = the ending segment's ordinal
   [ ! -s "$WORKTREE/.harness/implementer-notes.md" ] \
     || notes=$(cat "$WORKTREE/.harness/implementer-notes.md")
 
-  # Capped: a report is a compaction, and a worktree full of untracked build
-  # output must not push the brief out of the next segment's prompt.
-  committed=$(git -C "$WORKTREE" diff --name-status "$BASE_REF...HEAD" 2>/dev/null | head -100)
+  # Keep untracked build output from crowding the brief out of the next prompt.
+  committed=$(git -C "$WORKTREE" diff --name-status "$BASE_REF...HEAD" 2>/dev/null \
+              | sed -n "1,${file_lines}p")
   [ -n "$committed" ] || committed='(nothing committed)'
-  dirty=$(git -C "$WORKTREE" status --porcelain 2>/dev/null | head -100)
+  dirty=$(git -C "$WORKTREE" status --porcelain 2>/dev/null | sed -n "1,${file_lines}p")
   [ -n "$dirty" ] || dirty='(clean)'
 
   gate='The gate has not run in this attempt.'
@@ -1140,14 +1128,16 @@ segment_report() {  # $1 = destination path, $2 = the ending segment's ordinal
   questions='None recorded.'
   [ ! -s "$WORKTREE/.harness/QUESTIONS.md" ] || questions=$(cat "$WORKTREE/.harness/QUESTIONS.md")
 
-  texts=$(segment_stream | jq -r 'select(.type == "assistant") | .message.content[]?
-            | select(.type == "text") | (.text // "") | gsub("\\s+"; " ") | .[0:400]' \
-          2>/dev/null | tail -3)
+  texts=$(segment_stream | jq -r --argjson chars "$text_chars" \
+            'select(.type == "assistant") | .message.content[]?
+             | select(.type == "text") | (.text // "") | gsub("\\s+"; " ") | .[0:$chars]' \
+          2>/dev/null | tail -n "$text_items")
   [ -n "$texts" ] || texts='(the segment sent no prose)'
-  trail=$(segment_stream | jq -r 'select(.type == "assistant") | .message.content[]?
-            | select(.type == "tool_use")
-            | "- \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:100])"' \
-          2>/dev/null | tail -40)
+  trail=$(segment_stream | jq -r --argjson chars "$tool_chars" \
+            'select(.type == "assistant") | .message.content[]?
+             | select(.type == "tool_use")
+             | "- \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:$chars])"' \
+          2>/dev/null | tail -n "$tool_items")
   [ -n "$trail" ] || trail='(no tool calls recorded)'
 
   # printf with %s placeholders, never an expanding heredoc: commit subjects and
@@ -1164,14 +1154,11 @@ segment_report() {  # $1 = destination path, $2 = the ending segment's ordinal
     printf '## Gate status\n\n%s\n\n' "$gate"
     printf '## Open questions\n\n%s\n\n' "$questions"
     printf '## Dead ends already ruled out\n\nThe segment kept no such list. The tool trail below is the only record of what it already tried.\n\n'
-    printf '## Tool trail (last 40 calls of segment %s)\n\n%s\n' "$n" "$trail"
+    printf '## Tool trail (last %s calls of segment %s)\n\n%s\n' "$tool_items" "$n" "$trail"
   } > "$out"
 }
 
-# The framing is the point: the same content read as "my own last thoughts"
-# suppresses self-correction, read as a third party's account it does not. So
-# the report is labelled as someone else's, fallible, and subordinate to the
-# repository and the brief.
+# Frame the report as external, fallible, and subordinate to the brief.
 turn_resume_report_prompt() {  # $1 = the segment report to hand over
   local report
   report=$(cat "$1" 2>/dev/null)
