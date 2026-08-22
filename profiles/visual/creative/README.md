@@ -39,13 +39,7 @@ green rounds later the picture is worse than where it started.
 
 ## Turning it on for a repo
 
-Two things, one on each side. In `repos.local.sh`:
-
-```sh
-VISUAL_GATE_CMD="bash $HARNESS_DIR/creative/visual-gate.sh"
-```
-
-and in the repo itself, `.creative/visual.conf.sh` — the contract: what to
+One thing: `.creative/visual.conf.sh` in the repo itself — the contract. What to
 serve, which shots, viewport and dpr, the palette LUT (optional), the reference
 board (optional), and one threshold per check. **A threshold you do not set is
 measured and reported but not enforced**, which is the honest default: the same
@@ -54,17 +48,26 @@ anti-aliased dashboard. This repo's own `.creative/visual.conf.sh` is the worked
 example, and every number in it is annotated with what the shipped wall
 measures.
 
-Unset `VISUAL_GATE_CMD` and the stage does not exist: one skipped line on
-stdout, no `visual` field in `result.json`, nothing else changed.
+`run-task.sh` loads this profile for any repo carrying `.creative/`, and the
+gate below is what it runs. A repo with a gate of its own says so in
+`repos.local.sh` instead, which is the other way in:
+
+```sh
+VISUAL_GATE_CMD="bash $HARNESS_DIR/profiles/visual/creative/visual-gate.sh"
+```
+
+Neither, and the profile never loads: no `visual` field in `result.json`, no
+stage, no hook, nothing else changed.
 
 ## The factory
 
 **Every asset passes the post-pass; palette and grid are asserted, never
 eyeballed; provenance is recorded per asset; and the keys reach the worker
-only.** A repo whose `MCP_CONFIG` names `creative/factory.mcp.json` gets the
-PixelLab and Retro Diffusion MCP servers in the implementer's session — and
-`run-task.sh` sources `$HARNESS_DIR/factory.conf.sh` (mode 600, the two API
-keys) into that one process, so no other stage can leak what it never had.
+only.** A repo whose `MCP_CONFIG` names this directory's `factory.mcp.json` gets
+the PixelLab and Retro Diffusion MCP servers in the implementer's session — and
+this profile's `implementer_env` hook sources `$HARNESS_DIR/factory.conf.sh`
+(mode 600, the two API keys) into that one process, so no other stage can leak
+what it never had.
 Bulk work goes through `factory.py`, which freezes one prompt template and one
 style block per tool (the coherence rule: two hundred sprites stop looking like
 one set the moment a prompt drifts), derives every seed from the asset id,
@@ -79,14 +82,17 @@ skipped the post-pass is an asset; it is just a picture a model made.
 
 ## The loop, by hand
 
+Run from the repo being judged; `$P` is `profiles/visual/creative` in this
+checkout, `$HARNESS_DIR/profiles/visual/creative` in an install.
+
 ```sh
 # 1. render the reigning look and crown it
-VISUAL_WORLD=dom VISUAL_CRITIC=0 bash creative/visual-gate.sh
-creative/champion.sh promote creative-harness .harness
+VISUAL_WORLD=dom VISUAL_CRITIC=0 bash "$P/visual-gate.sh"
+"$P/champion.sh" promote dispatch-harness .harness
 
 # 2. render the challenger and let the critic compare them
-VISUAL_WORLD=canvas bash creative/visual-gate.sh
-creative/champion.sh show creative-harness
+VISUAL_WORLD=canvas bash "$P/visual-gate.sh"
+"$P/champion.sh" show dispatch-harness
 ```
 
 `VISUAL_CRITIC=0` re-renders for free while you calibrate thresholds; the
@@ -157,10 +163,10 @@ render", "the new one" in a rubric hand back exactly the bias the swap removes.
 ### Measuring it: `critic-eval.sh`
 
 ```sh
-VISUAL_LIVE=1 creative/critic-eval.sh --repeats 2        # ~$0.5–1.5 per pair-repeat
+VISUAL_LIVE=1 "$P/critic-eval.sh" --repeats 2            # ~$0.5–1.5 per pair-repeat
 ```
 
-`creative/eval/pairs.json` holds pairs of contact sheets whose ranking a human
+`eval/pairs.json` holds pairs of contact sheets whose ranking a human
 already settled; the runner puts each through the real critic N times and
 prints, per run, what it answered, whether the two orders agreed and whether the
 margin was used — then three numbers: **accuracy** against the human ranking,
