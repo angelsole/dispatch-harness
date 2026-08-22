@@ -65,7 +65,7 @@ harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
     # that fell through to the Claude tier is not Codex's work.
     'visual fix'*Claude*)      HARNESS_ACTOR='Claude';      HARNESS_ACTOR_COLOR="$C_BLUE" ;;
     'visual fix'*Codex*)       HARNESS_ACTOR='Codex';       HARNESS_ACTOR_COLOR="$C_GREEN" ;;
-    'visual gate'*)            HARNESS_ACTOR='visual gate'; HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
+    'visual gate'*)            HARNESS_ACTOR='visual';      HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
     'review — Codex unavailable'*|*'— Claude reviewer'*) \
                                HARNESS_ACTOR='Claude';      HARNESS_ACTOR_COLOR="$C_BLUE" ;;
     # Written after the LAST tier gave up, so it is nobody's work in progress —

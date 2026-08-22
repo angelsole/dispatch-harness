@@ -197,6 +197,18 @@ for p in '^visual fix.*Claude' '^visual fix.*Codex' '^visual gate'; do
     bad "visual: the table carries $p"
   fi
 done
+# These are compatibility rows ported from the creative wall, not names this
+# table is free to invent. Pin the actor and key themselves so changing the
+# vocabulary and both consumers together cannot silently rewrite that contract.
+visual_mapping() {
+  jq -r --arg p "$1" '.stages[] | select(.pattern == $p) | "\(.actor)/\(.key)"' "$VOCAB"
+}
+check "visual: the Claude fix row preserves its actor and key" \
+  "$(visual_mapping '^visual fix.*Claude')" "Claude/opus"
+check "visual: the Codex fix row preserves its actor and key" \
+  "$(visual_mapping '^visual fix.*Codex')" "Codex/codex"
+check "visual: the gate row preserves its actor and key" \
+  "$(visual_mapping '^visual gate')" "visual/gate"
 check "visual: done: visual_failed is a failure, not a ship" "$(r '.visualFailedState')" "failed"
 check "visual: and it parks on the rung the visual gate stands on" \
   "$(r '.visualFailedFloor')" "$(r '.visualGateFloor')"

@@ -103,7 +103,7 @@
     },
     {
       "pattern": "^visual gate",
-      "actor": "visual gate",
+      "actor": "visual",
       "key": "gate",
       "state": "active",
       "color": "yellow",
