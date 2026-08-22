@@ -1,0 +1,228 @@
+{
+  "note": [
+    "THE STAGE-TEXT VOCABULARY — the wire format run-task.sh's stage() writes and",
+    "every monitoring surface parses. It used to be three independent copies (an",
+    "array in wall/server.js, a case in statusline.sh, and status.sh sourcing that",
+    "case) of a format nothing checked; this file is the one table, and the copies",
+    "are held to it by tests/stage-vocab.test.sh. docs/wall-contract.md is the prose.",
+    "",
+    "The table is ORDERED for reading and DISJOINT by construction: `unless` vetoes a",
+    "match, so exactly one entry wins for any stage text and resolution never depends",
+    "on the order. Patterns are matched case-insensitively.",
+    "",
+    "  pattern  the stage text this entry claims",
+    "  unless   a match here vetoes the entry — what keeps the table disjoint",
+    "  actor    who is working: the name statusline.sh and the wall both print",
+    "  key      the wall's neon signature for that actor, and its rung on FLOOR_OF",
+    "  state    the wall's run state: active | alarm | ready | failed",
+    "  color    statusline.sh's colour for the actor column",
+    "  example  a stage string this entry must win, and no other entry may",
+    "  inert    true when nothing in THIS repo emits it yet — the creative harness's",
+    "           visual stages, carried here ahead of re-unifying the two walls",
+    "  why      a note for the row, when the row is not self-evident",
+    "",
+    "Consumers: wall/server.js reads this file at startup. statusline.sh keeps",
+    "hardcoded case arms (status.sh --watch sources them) so a statusline costs no jq",
+    "on every prompt — the test is what stops them drifting. Adding a stage string to",
+    "run-task.sh means adding a row here in the same commit; the test fails until you do."
+  ],
+  "stages": [
+    {
+      "pattern": "^waiting",
+      "actor": "needs input",
+      "key": "alarm",
+      "state": "alarm",
+      "color": "red",
+      "example": "waiting — implementer needs your input (QUESTIONS.md)",
+      "why": "The loudest thing on the wall: a run stopped on a human."
+    },
+    {
+      "pattern": "^(implementing|resuming)",
+      "actor": "Opus",
+      "key": "opus",
+      "state": "active",
+      "color": "blue",
+      "example": "implementing — Opus (Claude sub)"
+    },
+    {
+      "pattern": "^review skipped",
+      "actor": "skipped",
+      "key": "skipped",
+      "state": "active",
+      "color": "dim",
+      "example": "review skipped — HARNESS_SKIP_REVIEW=1 (no_review arm)"
+    },
+    {
+      "pattern": "Claude reviewer",
+      "unless": "^visual",
+      "actor": "Claude",
+      "key": "opus",
+      "state": "active",
+      "color": "blue",
+      "example": "review — Codex unavailable (no codex CLI on this machine) → Claude reviewer (Claude sub)",
+      "why": "Unanchored: the Claude tier is named mid-sentence by the fallback stage and at the head of a fix round. `unless` hands the visual rows below their own version of it."
+    },
+    {
+      "pattern": "^review failed silently",
+      "actor": "unreviewed",
+      "key": "unreviewed",
+      "state": "active",
+      "color": "red",
+      "example": "review failed silently — diff is unreviewed",
+      "why": "Written after the LAST tier gave up, so it is nobody's work in progress — and it must not read as Codex's, which Codex may never have been part of."
+    },
+    {
+      "pattern": "^(review|fix)",
+      "unless": "^review skipped|^review failed silently|Claude reviewer",
+      "actor": "Codex",
+      "key": "codex",
+      "state": "active",
+      "color": "green",
+      "example": "review — Codex (ChatGPT sub)",
+      "why": "The greedy arm. Everything above it that starts with review/fix is vetoed here rather than by sitting earlier in the list."
+    },
+    {
+      "pattern": "^visual fix.*Claude",
+      "actor": "Claude",
+      "key": "opus",
+      "state": "active",
+      "color": "blue",
+      "example": "visual fix round 2 — Claude reviewer (Claude sub)",
+      "inert": true
+    },
+    {
+      "pattern": "^visual fix.*Codex",
+      "unless": "Claude",
+      "actor": "Codex",
+      "key": "codex",
+      "state": "active",
+      "color": "green",
+      "example": "visual fix round 2 — Codex (ChatGPT sub)",
+      "inert": true,
+      "why": "Vetoed by Claude for the same reason the code path is: a visual fix that fell through to the Claude tier belongs to the row above."
+    },
+    {
+      "pattern": "^visual gate",
+      "actor": "visual gate",
+      "key": "gate",
+      "state": "active",
+      "color": "yellow",
+      "example": "visual gate — rendering the shots (script, no model)",
+      "inert": true,
+      "why": "The creative harness's render-and-grade round. Deterministic like the test gate, so it borrows the gate's neon and its rung rather than inventing a floor."
+    },
+    {
+      "pattern": "^verify",
+      "actor": "verifier",
+      "key": "skipped",
+      "state": "active",
+      "color": "dim",
+      "example": "verify — trajectory score (verifier · third vendor)",
+      "why": "The third-vendor trajectory score. It runs on the review floor and is nobody the city has a neon for — no model of the pipeline, no decision of its own — so it borrows the neutral grey the other non-model stages use."
+    },
+    {
+      "pattern": "^test gate.* skipped",
+      "actor": "skipped",
+      "key": "skipped",
+      "state": "active",
+      "color": "dim",
+      "example": "test gate #2 skipped — review committed nothing"
+    },
+    {
+      "pattern": "^test gate",
+      "unless": "skipped",
+      "actor": "gate",
+      "key": "gate",
+      "state": "active",
+      "color": "yellow",
+      "example": "test gate #1 (deterministic — no model)"
+    },
+    {
+      "pattern": "^ticket sync",
+      "actor": "ticket",
+      "key": "pr",
+      "state": "active",
+      "color": "magenta",
+      "example": "ticket sync — PR link + In Review (script — no model)"
+    },
+    {
+      "pattern": "^push",
+      "actor": "PR",
+      "key": "pr",
+      "state": "active",
+      "color": "magenta",
+      "example": "push + draft PR (script — no model)"
+    },
+    {
+      "pattern": "^demo",
+      "actor": "demo",
+      "key": "demo",
+      "state": "active",
+      "color": "magenta",
+      "example": "demo — recording (script, no model)"
+    },
+    {
+      "pattern": "^(setup|installing)",
+      "actor": "setup",
+      "key": "setup",
+      "state": "active",
+      "color": "cyan",
+      "example": "setup: worktree"
+    },
+    {
+      "pattern": "^deferred:",
+      "actor": "deferred",
+      "key": "deferred",
+      "state": "active",
+      "color": "yellow",
+      "example": "deferred: capacity, armed for 13:35",
+      "why": "A run that deferred itself is neither working nor finished; it keeps a live panel while it waits for its own one-shot to fire."
+    },
+    {
+      "pattern": "^(base sync|already up)",
+      "actor": "sync",
+      "key": "sync",
+      "state": "active",
+      "color": "cyan",
+      "example": "base sync — merge latest main (script — no model)"
+    },
+    {
+      "pattern": "^sync failed",
+      "actor": "failed",
+      "key": "failed",
+      "state": "active",
+      "color": "red",
+      "example": "sync failed: gate failed after base sync",
+      "why": "sync-pr.sh's failure is not a terminal `done:`, so the run stays a live panel — a loud one."
+    },
+    {
+      "pattern": "^done:\\s*needs_input\\b",
+      "actor": "done",
+      "key": "done",
+      "state": "alarm",
+      "color": "dim",
+      "example": "done: needs_input",
+      "why": "Terminal, and still an alarm: the run stopped on a human and stays pinned up until somebody answers. wall/server.js re-labels the actor to `needs input` and recovers the floor work stopped on from stages.log; the terminals hide every `done:` line, so the actor here is theirs."
+    },
+    {
+      "pattern": "^done:.*(fail|reject)",
+      "unless": "^done:\\s*needs_input\\b",
+      "actor": "done",
+      "key": "done",
+      "state": "failed",
+      "color": "dim",
+      "example": "done: gate_failed",
+      "why": "Match the failure WORDS, not a whitelist of the good ones: every failing STATUS in run-task.sh ends in _failed or is `rejected` (the creative harness's `visual_failed` included), while sync-pr.sh's prose `done: PR branch synced …` is a success."
+    },
+    {
+      "pattern": "^done:",
+      "unless": "^done:\\s*needs_input\\b|fail|reject",
+      "actor": "done",
+      "key": "done",
+      "state": "ready",
+      "color": "dim",
+      "example": "done: ready",
+      "why": "Only `done: ready` pours a building into the district — that check is DONE_READY in wall/server.js, not this row, which is the broader `it finished and nothing failed`."
+    }
+  ]
+}
