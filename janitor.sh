@@ -34,9 +34,12 @@
 # What leaves this machine: one read-only `gh pr view` per run that has a PR.
 set -u
 
-# shellcheck source=lib/common.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+[ -r "$_COMMON_LIB_PATH" ] \
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+. "$_COMMON_LIB_PATH"
+unset _COMMON_LIB_PATH
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNS="$HARNESS_DIR/runs"

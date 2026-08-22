@@ -15,9 +15,12 @@ set -u -o pipefail
 # from there, HARNESS_DIR once install.sh has shipped lib/ into it. Sourced out
 # here rather than inside main() for the same reason main() exists: the lib is
 # read at parse time, so editing it while a run is live cannot corrupt that run.
-# shellcheck source=lib/common.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+[ -r "$_COMMON_LIB_PATH" ] \
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+. "$_COMMON_LIB_PATH"
+unset _COMMON_LIB_PATH
 
 # Whole script runs inside main() so bash parses it fully before executing —
 # editing this file while a run is live can no longer corrupt that run.

@@ -21,9 +21,12 @@
 
 # The shared helpers, read from beside this file — the checkout when it is
 # sourced from there, HARNESS_DIR once install.sh has shipped lib/ into it.
-# shellcheck source=lib/common.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+[ -r "$_COMMON_LIB_PATH" ] \
   || { echo "FATAL: cannot read lib/common.sh beside repos.conf.sh — re-run install.sh" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+. "$_COMMON_LIB_PATH"
+unset _COMMON_LIB_PATH
 
 # Load user pins, if any. repos.local.sh lives alongside this file (i.e. inside
 # HARNESS_DIR once installed) and defines repo_config_local().
