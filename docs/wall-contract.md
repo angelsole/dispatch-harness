@@ -86,9 +86,12 @@ success. Consequences worth knowing, both deliberate:
   building in the district: only the literal `done: ready` does that, and that
   check lives in `DONE_READY`, not in this table.
 - `done: needs_input` is terminal and still an **alarm** — the run stopped on a
-  human and stays pinned up until somebody answers. The wall relabels its actor
-  and recovers the floor work stopped on from `stages.log`; the terminals hide
-  every `done:` line, so the row's `actor` is theirs, not the wall's.
+  human and stays pinned up until somebody answers. Its `actor` in the table is
+  the terminals' word, `done`, because that is what `status.sh --watch` prints
+  for a finished run (`statusline.sh` drops them entirely); the wall relabels it
+  to `needs input` on top of the table and recovers the floor work stopped on
+  from `stages.log`, so the alarm stays where it happened instead of jumping to
+  a rooftop it never reached.
 
 **The inert rows.** Three rows — `^visual fix.*Claude`, `^visual fix.*Codex` and
 `^visual gate` — belong to the creative harness's render-and-grade round.
@@ -204,10 +207,12 @@ The same policy is why the wall reads *first lines* out of `status`, `owner`,
 ## The one file the wall writes
 
 `wall-city.jsonl` — the district's memory, beside the runs dir by default, moved
-with `--city` / `WALL_CITY`. It is the **only** file the wall writes, and
-**nothing else in the harness reads it**: not `run-task.sh`, not `metrics.sh`,
-not `cleanup.sh`. It is not a schema anybody else may depend on, and its rules,
-its rollover and what deleting it does are on the wall page under
+with `--city` / `WALL_CITY`. It is the **only** file the wall writes (plus the
+`.tmp` beside it that Monday's rollover renames over it, and the parent
+directory if it has to make one), and **nothing else in the harness reads it**:
+not `run-task.sh`, not `metrics.sh`, not `cleanup.sh`. It is not a schema
+anybody else may depend on, and its rules, its rollover and what deleting it
+does are on the wall page under
 [The ledger is the city's memory](wall.md#the-ledger-is-the-citys-memory).
 
 The reason it exists at all is this contract's one real asymmetry: a run dir is
