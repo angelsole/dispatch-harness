@@ -164,8 +164,9 @@ a quote the adapter cannot find verbatim in the evidence it sent scores that
 sample **0**, whatever number came with it. The K samples are aggregated by
 median; the headline `score` is the plain **mean** of the item scores, which is
 an aggregate no amount of trajectory length can inflate. A call that never
-returned is dropped rather than counted zero — and a run where none of them
-returned is recorded as a failed verifier, never as a bad run.
+returned is dropped rather than counted zero; if every sample for one item
+fails, the whole verifier attempt fails rather than publishing a partial vector
+or silently removing that item from the headline mean.
 
 **Turning it on.**
 
@@ -222,7 +223,7 @@ no config file. Only the path reaches the environment (as
 | `HARNESS_VERIFY_STEP_CHARS` | Per-step clip, marker included. | `2000` |
 | `HARNESS_VERIFY_MAX_CHARS` | Whole-trajectory clip. Over budget, the head and tail are kept and the middle becomes one `[N agent steps elided]` step, counted in `elided_steps`. The diff evidence gets a **quarter** of this, because it is sent once per diff item while the trajectory is sent at most K times. | `400000` |
 | `HARNESS_VERIFY_TIMEOUT` | Seconds the whole stage may take before it is killed (and recorded as a failure that changes nothing). | `900` |
-| `HARNESS_VERIFY_EFFORT` | Passed through as `DEEPSEEK_EFFORT` (`off` \| `low` \| `high` \| `max`) — the library's own dial for the client it builds. The rubric calls the adapter makes carry no effort setting of their own; each answer is one small JSON object. | `high` |
+| `HARNESS_VERIFY_EFFORT` | Passed through as `DEEPSEEK_EFFORT` (`off` \| `low` \| `high` \| `max`) and applied through the library's existing DeepSeek request configuration. | `high` |
 
 Two files per run: **`verify.json`** (the score, the rubric vector in `items`
 with each item's citation and its K raw samples, the same vector by title in the

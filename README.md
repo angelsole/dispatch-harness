@@ -362,7 +362,8 @@ a third vendor scores the finished change — the diff, and the run's own record
 of producing it — against a fixed five-item rubric: brief coverage, unrequested
 scope, diff minimality, test integrity and resume coherence. Every item is asked
 on its own, several times, and every answer has to quote the line that decides
-it; the headline number in [0, 1] is the mean of the five.
+it; the headline number in [0, 1] is the mean of the applicable items (resume
+coherence is omitted when the run never resumed).
 **It is advisory, and it never gates.** Nothing in the pipeline branches on it;
 a verifier that is off, unkeyed or broken leaves the run byte-for-byte what it
 would have been. Turning it on: [The verifier](docs/reference.md#the-verifier).
