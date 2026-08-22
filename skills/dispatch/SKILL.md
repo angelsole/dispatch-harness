@@ -224,6 +224,17 @@ holds, and `result.json` records how it actually went in `review`:
 - empty — the run never got that far. Older runs may also carry the retired
   `no_evidence`, which used to ship; it now falls through to the Claude tier.
 
+The review runs as three passes — find, refute, fix — and only a finding a
+second, independent session failed to disprove earns an edit. `review_findings`
+in result.json carries `{found, refuted, promoted, fixed, refute}`, and
+`review-notes.md` ends with both lists: what was fixed, and what was dropped
+with the evidence it was dropped on. Read the refuted list — a finding dropped
+on a bad refutation is a defect nobody edited. When `refute` is anything but
+`ok` (`failed` — the pass crashed or timed out; `off` — the knob), EVERY finding
+was promoted unchecked, so the fixes are a reviewer's unverified claims and
+deserve the scrutiny a single-pass review's would. The field is absent when the
+review produced no structured findings.
+
 `arm` names the condition the run was pinned to: `full` (codex installed),
 `claude_only` (no codex CLI — reviewed on the Claude tier), or `no_review` (the
 explicit ablation). A failed review changes `review`/`status`, not this pinned

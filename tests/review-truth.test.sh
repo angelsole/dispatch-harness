@@ -103,19 +103,32 @@ git -C "$REPO" push -q -u origin main
 # One claude stand-in, two jobs, told apart by the prompt: the implementer
 # writes a diff big enough that the review floor applies to it, and the Claude
 # review tier — the last one, reached when both Codex accounts came up empty —
-# either leaves notes or leaves a commit, which is exactly the distinction the
-# gate-#2 skip has to make for a non-Codex reviewer.
+# either leaves notes or sends a finding through refute and fix. The resulting
+# commit is what the gate-#2 skip has to distinguish for a non-Codex reviewer.
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
 prompt=""; prev=""
 for a in "\$@"; do [ "\$prev" = "-p" ] && prompt="\$a"; prev="\$a"; done
 case "\$prompt" in
+  *"refutation stage"*)
+    cat > .harness/refuted.json <<'JSON'
+[{"id":"F1","refuted":false,"reason":"impl.txt still shows the reported issue"}]
+JSON
+    ;;
+  *"fix stage"*)
+    if [ "\$(cat "$CLAUDE_MODE")" = commits ]; then
+      printf 'claude reviewer touched this\n' >> impl.txt
+      git add -A && git commit -q -m "refactor: claude reviewer change [F1]"
+    fi
+    ;;
   *"reviewer stage"*)
     mkdir -p .harness
     echo "claude tier: sound" > .harness/review-notes.md
     if [ "\$(cat "$CLAUDE_MODE")" = commits ]; then
-      printf 'claude reviewer touched this\n' >> impl.txt
-      git add -A && git commit -q -m "refactor: claude reviewer change"
+      echo "review fixes remain attributable to the reviewing tier" > .harness/expected-properties.md
+      cat > .harness/findings.json <<'JSON'
+[{"file":"impl.txt","line":1,"claim":"the fixture needs a reviewer change","scenario":"the review fix is absent from the committed tree"}]
+JSON
     fi
     ;;
   *)
@@ -132,14 +145,44 @@ EOF
 # nothing at all.
 cat > "$FAKES/codex" <<EOF
 #!/usr/bin/env bash
-wt=""; prev=""
+wt=""; prev=""; prompt=""
 for a in "\$@"; do
-  if [ "\$prev" = "-C" ]; then wt="\$a"; break; fi
-  prev="\$a"
+  [ "\$prev" = "-C" ] && wt="\$a"
+  prev="\$a"; prompt="\$a"
 done
 printf '%s\n' "\$*" >> "$CODEX_ARGV"
 printf '%s\0' "\$@" >> "$CODEX_ARGS"
 printf '%s\n' "\${CODEX_HOME-<unset>}" >> "$CODEX_HOMES"
+case "\$prompt" in
+  *"refutation stage"*)
+    cat > "\$wt/.harness/refuted.json" <<'JSON'
+[{"id":"F1","refuted":false,"reason":"the fixture still exhibits the reported issue"}]
+JSON
+    exit 0
+    ;;
+  *"fix stage"*)
+    case "\$(cat "$CODEX_MODE")" in
+      commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
+                 && git add -A && git commit -q -m "refactor: reviewer change [F1]" ) ;;
+      fix)     ( cd "\$wt" && printf 'ok\n' > fixed.txt && git add -A \
+                 && git commit -q -m "fix: make the gate pass [F1]" ) ;;
+    esac
+    exit 0
+    ;;
+  *"reviewer stage"*)
+    case "\$(cat "$CODEX_MODE")" in
+      commits|fix)
+        mkdir -p "\$wt/.harness"
+        printf '# review\n\nOne finding.\n' > "\$wt/.harness/review-notes.md"
+        printf 'review fixes remain attributable to the reviewer\n' > "\$wt/.harness/expected-properties.md"
+        cat > "\$wt/.harness/findings.json" <<'JSON'
+[{"file":"impl.txt","line":1,"claim":"the fixture needs a reviewer change","scenario":"the review fix is absent from the committed tree"}]
+JSON
+        exit 0
+        ;;
+    esac
+    ;;
+esac
 case "\$(cat "$CODEX_MODE")" in
   instant) echo "codex: done" ;;
   credits) case "\${CODEX_HOME-}" in "$FBHOME/harness-review"/*)
@@ -151,10 +194,6 @@ case "\$(cat "$CODEX_MODE")" in
   refresh) rm -f "\$CODEX_HOME/auth.json"
            printf 'refreshed-token\n' > "\$CODEX_HOME/auth.json"
            printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md" ;;
-  commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
-             && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
-  fix)     ( cd "\$wt" && printf 'ok\n' > fixed.txt && git add -A \
-             && git commit -q -m "fix: make the gate pass" ) ;;
 esac
 EOF
 
@@ -198,6 +237,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
       -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
+      IMPLEMENTER_PROVIDER=claude \
       TEST_GATE_CMD="$TEST_GATE_CMD" \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=review-truth-test \
       $overrides \

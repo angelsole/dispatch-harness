@@ -48,6 +48,17 @@ weakened or deleted tests, skipped cases, loosened assertions, hardcoded values
 and edited fixtures, and restores proper tests instead. A green gate counts only
 if the tests earning it weren't touched.
 
+**Finding is not the same job as fixing.** A reviewer that does both in one
+breath turns every false positive into an edit to code that already passed the
+gate — and roughly half of what a review reports does not survive checking. So
+the stage is three passes: the reviewer writes down what a correct change must
+do *before* it opens the diff and then reports findings without touching
+anything; a fresh session that has not seen the diff tries to **disprove** each
+one; and only the survivors are fixed, one commit per finding. What was dropped,
+and the evidence it was dropped on, is in `review-notes.md` and in
+`review_findings` — see
+[Find, refute, fix](docs/reference.md#find-refute-fix).
+
 **The guarantee: every arm reviews or holds.** Cross-vendor is the preference;
 a review is the requirement, and no path in `run-task.sh` opens a PR on a diff
 nothing read. When Codex is out of credits, crashed or absent, the same review
@@ -106,13 +117,17 @@ sequenceDiagram
 
     S->>S: test gate #1 (per-repo cmds)
     S->>C: diff + brief + gate log
-    C->>C: checklist: gate-gaming · business logic<br/>reuse · hardcoding · quality
+    C->>C: find: expected properties before the diff, then<br/>gate-gaming · logic · blind spots<br/>reuse · hardcoding · quality — fixes nothing
 
     alt fundamental flaw
         C->>F: REJECTED.md
         F->>O: sharpened brief — re-dispatch
-    else fixes / refactors in branch footprint
-        C->>S: fix commits + review-notes.md<br/>(gate re-runs, max 2 rounds)
+    else findings
+        C->>S: findings.json
+        S->>C: refute — fresh session, disprove each
+        C->>S: refuted.json — only survivors are promoted
+        S->>C: fix — promoted findings only
+        C->>S: one commit per finding + review-notes.md<br/>(gate re-runs, max 2 rounds)
     end
 
     S->>S: verify — third-vendor trajectory score (best-effort)

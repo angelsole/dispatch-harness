@@ -134,20 +134,44 @@ EOF
 # touched nothing at all.
 cat > "$FAKES/codex" <<EOF
 #!/usr/bin/env bash
-wt=""; prev=""
+wt=""; prev=""; prompt=""
 for a in "\$@"; do
-  if [ "\$prev" = "-C" ]; then wt="\$a"; break; fi
-  prev="\$a"
+  [ "\$prev" = "-C" ] && wt="\$a"
+  prev="\$a"; prompt="\$a"
 done
 printf 'codex %s\n' "\$wt" >> "$CODEX_CALLS"
 printf '%s\n' "\$*" >> "$PROMPTS"
+case "\$prompt" in
+  *"refutation stage"*)
+    cat > "\$wt/.harness/refuted.json" <<'JSON'
+[{"id":"F1","refuted":false,"reason":"the fixture still needs the reported review change"}]
+JSON
+    exit 0
+    ;;
+  *"fix stage"*)
+    case "\$(cat "$CODEX_MODE")" in
+      commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
+                 && git add -A && git commit -q -m "refactor: reviewer change [F1]" ) ;;
+      marker)  ( cd "\$wt" && printf 'reviewed\n' > reviewed.txt \
+                 && git add -A && git commit -q -m "refactor: reviewer change [F1]" ) ;;
+    esac
+    exit 0
+    ;;
+  *"reviewer stage"*)
+    case "\$(cat "$CODEX_MODE")" in
+      commits|marker)
+        printf 'review fixes must remain visible in telemetry\n' > "\$wt/.harness/expected-properties.md"
+        cat > "\$wt/.harness/findings.json" <<'JSON'
+[{"file":"impl.txt","line":1,"claim":"the fixture needs a reviewer change","scenario":"the review fix is absent from the committed tree"}]
+JSON
+        exit 0
+        ;;
+    esac
+    ;;
+esac
 case "\$(cat "$CODEX_MODE")" in
   instant) echo "codex: done" ;;
   notes)   printf '# review\n\nEverything is sound.\n' > "\$wt/.harness/review-notes.md" ;;
-  commits) ( cd "\$wt" && printf 'reviewer touched this\n' >> impl.txt \
-             && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
-  marker)  ( cd "\$wt" && printf 'reviewed\n' > reviewed.txt \
-             && git add -A && git commit -q -m "refactor: reviewer change" ) ;;
   reject)  printf '# rejected\n\nWrong approach entirely.\n' > "\$wt/.harness/REJECTED.md" ;;
 esac
 EOF
@@ -219,6 +243,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
       -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
+      IMPLEMENTER_PROVIDER=claude \
       TEST_GATE_CMD="$TEST_GATE_CMD" \
       HARNESS_REVIEW_NETWORK=0 \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=telemetry-test \
@@ -273,7 +298,9 @@ BEFORE=$(codex_calls)
 dispatch REV-COMMITS ""
 check "commits: a review that commits but writes no notes is accepted" \
   "$(result .review)" "reviewed"
-check "commits: and is not retried" "$(codex_calls)" "$((BEFORE + 1))"
+check "commits: find, refute and fix run without a review retry" \
+  "$(codex_calls)" "$((BEFORE + 3))"
+absent "commits: no review retry log" "$RUN/codex-1-retry.log"
 check "commits: the reviewer's commit is attributed to the reviewer" \
   "$(result .metrics.codex_commits)" "1"
 
