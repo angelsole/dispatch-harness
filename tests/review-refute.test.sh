@@ -48,9 +48,10 @@ FIX_PROMPT_FILE="$ROOT/fix-prompt.txt"
 FIND_MODE="$ROOT/find-mode"
 REFUTE_MODE="$ROOT/refute-mode"
 BACKEND="$ROOT/backend"          # codex | claude — which tier the fake plays
+TIMEOUTS="$ROOT/timeouts.log"
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
-: > "$ROLES"
+: > "$ROLES"; : > "$TIMEOUTS"
 printf 'two\n'      > "$FIND_MODE"
 printf 'spurious\n' > "$REFUTE_MODE"
 printf 'codex\n'    > "$BACKEND"
@@ -104,6 +105,12 @@ case "\$role" in
     echo "reviewer: read the diff, changed nothing" > .harness/review-notes.md
     echo "a correct change keeps the counter one-based" > .harness/expected-properties.md
     case "\$(cat "$FIND_MODE")" in
+      mutate-once)
+        printf 'reviewer mutation\n' > other.txt
+        git add other.txt
+        git commit -q -m "bad finder edit"
+        printf 'two\n' > "$FIND_MODE"
+        ;;
       two) cat > .harness/findings.json <<'JSON'
 [{"file": "impl.txt", "line": 1,
   "claim": "the counter starts at zero and is never advanced",
@@ -129,6 +136,25 @@ JSON
 [{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached"},
  {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
 JSON
+        ;;
+      no-reason) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "   "},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
+JSON
+        ;;
+      mutate) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached"},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
+JSON
+        printf 'refuter mutation\n' > other.txt
+        git add other.txt
+        git commit -q -m "bad refuter edit"
+        ;;
+      fail-valid) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached"},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
+JSON
+        exit 7
         ;;
       none) echo "refuter: died before writing anything" ;;
     esac
@@ -181,6 +207,13 @@ cat > "$FAKES/curl" <<'EOF'
 exit 0
 EOF
 
+cat > "$FAKES/timeout" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$TIMEOUTS"
+shift
+exec "\$@"
+EOF
+
 cat > "$FAKES/gh" <<'EOF'
 #!/usr/bin/env bash
 case "$1 $2" in
@@ -189,7 +222,8 @@ case "$1 $2" in
 esac
 EOF
 
-chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/curl" "$FAKES/gh"
+chmod +x "$FAKES/claude" "$FAKES/codex" "$FAKES/curl" "$FAKES/gh" \
+  "$FAKES/timeout"
 
 # --- the harness under test ---------------------------------------------------
 RUN=""; WT=""
@@ -199,7 +233,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   RUN="$RUNS/$ticket"; WT="$ROOT/greenapp-$lc"
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
-  : > "$ROLES"
+  : > "$ROLES"; : > "$TIMEOUTS"
   # The fallback account is a documented operator knob: a station that has one
   # configured would spend a second Codex attempt inside runs this suite counts
   # backend calls in.
@@ -207,6 +241,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   env -u CODEX_HOME -u HARNESS_CODEX_HOME_FALLBACK \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
+      IMPLEMENTER_PROVIDER=claude \
       HARNESS_REVIEW_NETWORK=0 \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=review-refute-test \
       $overrides \
@@ -333,6 +368,8 @@ check "refute dead: every finding is promoted" \
   "$(result .review_findings.promoted)" "2"
 check "refute dead: and every one of them fixed" \
   "$(result .review_findings.fixed)" "2"
+check "refute dead: each fix has its own commit" \
+  "$(result .metrics.codex_commits)" "2"
 check "refute dead: the state is recorded honestly, not as a clean pass" \
   "$(result .review_findings.refute)" "failed"
 exists "refute dead: the first finding was acted on"  "$WT/fix-F1.txt"
@@ -343,6 +380,57 @@ has "$(cat "$ROOT/run-RR-REFUTE-DEAD.log")" "the refutation pass left no usable 
   "refute dead: and the console says it before spending the fix pass"
 check "refute dead: the run still ships" "$(result .status)" "ready"
 printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- a failed process cannot launder verdicts it wrote before dying --"
+printf 'fail-valid\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-FAIL-VALID ""
+check "refute failed with json: the process failure is recorded" \
+  "$(result .review_findings.refute)" "failed"
+check "refute failed with json: no finding is dropped" \
+  "$(result .review_findings.refuted)" "0"
+check "refute failed with json: every finding is promoted" \
+  "$(result .review_findings.promoted)" "2"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- a zero timeout cannot disable the refute time-box --"
+dispatch RR-REFUTE-TIMEOUT-ZERO "HARNESS_REFUTE_TIMEOUT=0"
+check "zero timeout: the normal three passes still run" \
+  "$(roles)" "find,refute,fix"
+check "zero timeout: refute uses the positive default" \
+  "$(grep -c '^900$' "$TIMEOUTS" | tr -d ' ')" "1"
+
+echo "-- a refutation needs evidence before it can drop a finding --"
+printf 'no-reason\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-NO-REASON ""
+check "no reason: the unsupported verdict is promoted" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "no reason: the evidenced verdict is still refuted" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- the refuter cannot mutate the reviewed worktree --"
+printf 'mutate\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-MUTATES ""
+check "refute mutation: its source edit was discarded" \
+  "$(cat "$WT/other.txt")" "untouched"
+has_not "$(subjects)" "bad refuter edit" \
+  "refute mutation: its commit did not land on the reviewed branch"
+check "refute mutation: its verdicts are discarded with its failed pass" \
+  "$(result .review_findings.refute),$(result .review_findings.refuted)" "failed,0"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- the find pass cannot mutate the reviewed worktree either --"
+printf 'mutate-once\n' > "$FIND_MODE"
+dispatch RR-FIND-MUTATES ""
+check "find mutation: the clean retry completed the three stages" \
+  "$(roles)" "find,find,refute,fix"
+check "find mutation: its source edit was discarded before the retry" \
+  "$(cat "$WT/other.txt")" "untouched"
+has_not "$(subjects)" "bad finder edit" \
+  "find mutation: its commit did not land on the reviewed branch"
+check "find mutation: only the promoted fix commit remains" \
+  "$(result .metrics.codex_commits)" "1"
+printf 'two\n' > "$FIND_MODE"
 
 echo "-- and the knob does the same thing, on purpose --"
 dispatch RR-REFUTE-OFF "HARNESS_REVIEW_REFUTE=0"
@@ -417,6 +505,8 @@ dispatch RR-STALE ""
 check "stale: the first dispatch shipped" "$(result .status)" "ready"
 printf '[{"file":"gone.txt","claim":"a claim from an earlier revision"}]\n' \
   > "$WT/.harness/findings.json"
+printf 'properties from an earlier revision\n' \
+  > "$WT/.harness/expected-properties.md"
 dispatch RR-STALE "HARNESS_REDISPATCH=1"
 exists "stale: the previous attempt's findings are harvested, not deleted" \
   "$RUN/findings.prev.json"
@@ -425,6 +515,10 @@ file_has "$RUN/findings.prev.json" "an earlier revision" \
 check "stale: and no pass is run against them" "$(roles)" "find"
 check "stale: nor are they counted as this attempt's" \
   "$(jq -r 'has("review_findings")' "$RUN/result.json")" "false"
+file_has "$RUN/expected-properties.prev.md" "properties from an earlier revision" \
+  "stale: previous expected properties are preserved separately"
+file_has "$RUN/expected-properties.md" "keeps the counter one-based" \
+  "stale: current expected properties describe the current review"
 printf 'two\n' > "$FIND_MODE"
 
 echo

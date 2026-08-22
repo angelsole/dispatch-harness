@@ -1686,6 +1686,42 @@ run_claude_worker() {  # $1 = round label, $2 = prompt
   return "${PIPESTATUS[0]}"
 }
 
+# Find and refute are read-only jobs, but both CLIs need normal worktree access
+# to inspect generated files and run the installed test tools. Start only from a
+# clean tree and restore it if either session changes code; ignored .harness
+# evidence is deliberately outside that check.
+run_readonly_review_pass() {  # $1 = round label, $2 = prompt, $3 = find|refute
+  local before rc changed=0
+  before=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null) || return 1
+  if [ -n "$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>/dev/null)" ]; then
+    echo "[harness] refusing a read-only review pass on a dirty worktree"
+    return 1
+  fi
+  if [ "$REVIEW_AGENT" = codex ]; then
+    run_codex "$1" "$2"; rc=$?
+  else
+    run_claude_worker "$1" "$2"; rc=$?
+  fi
+  [ "$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null)" = "$before" ] || changed=1
+  [ -z "$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>/dev/null)" ] \
+    || changed=1
+  if [ "$changed" = 1 ]; then
+    git -C "$WORKTREE" reset --hard "$before" >/dev/null 2>&1 || true
+    git -C "$WORKTREE" clean -fd >/dev/null 2>&1 || true
+    if [ "$3" = find ]; then
+      rm -f "$WORKTREE/.harness/expected-properties.md" \
+            "$WORKTREE/.harness/findings.json" \
+            "$WORKTREE/.harness/review-notes.md" \
+            "$WORKTREE/.harness/REJECTED.md"
+    else
+      rm -f "$WORKTREE/.harness/refuted.json"
+    fi
+    echo "[harness] read-only review pass changed the worktree — its code changes were discarded"
+    return 1
+  fi
+  return "$rc"
+}
+
 # Merge-conflict resolution is PR mechanics, not quality review, so it runs in
 # BOTH arms — on codex when it is installed (unchanged), on Claude otherwise.
 resolve_conflicts() {  # $1 = round label, $2 = prompt
@@ -1779,7 +1815,7 @@ claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcom
   CLAUDE_TIER_REASON="$1"
   REVIEWER_MODEL="$CLAUDE_WORKER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
   printf 'claude fallback: %s\n' "$1" >> "$RUN_DIR/review-fallback"
-  run_claude_worker 1-claude "$REVIEW_PROMPT" || true
+  run_readonly_review_pass 1-claude "$REVIEW_PROMPT" find || true
   if review_evidence; then
     REVIEW_CLASS="reviewed_claude"
   else
@@ -1818,6 +1854,7 @@ REVIEW_REFUTE="${HARNESS_REVIEW_REFUTE:-1}"
 DEFAULT_REFUTE_TIMEOUT=900
 REFUTE_TIMEOUT="${HARNESS_REFUTE_TIMEOUT:-$DEFAULT_REFUTE_TIMEOUT}"
 case "$REFUTE_TIMEOUT" in ''|*[!0-9]*) REFUTE_TIMEOUT=$DEFAULT_REFUTE_TIMEOUT ;; esac
+case "$REFUTE_TIMEOUT" in *[1-9]*) ;; *) REFUTE_TIMEOUT=$DEFAULT_REFUTE_TIMEOUT ;; esac
 
 # What result.json reports as review_findings, and what the ledger below counts.
 REVIEW_FOUND=0; REVIEW_REFUTED=0; REVIEW_PROMOTED=0; REVIEW_FIXED=0
@@ -1859,19 +1896,16 @@ review_findings_normalize() {  # -> 1 when there is no readable findings file
   cp "$RUN_DIR/findings.json" "$src"
 }
 
-# The refute pass, on the backend that reviewed and in a session that has never
-# seen the diff. CODEX_TIMEOUT is shadowed rather than passed: run_codex and
-# run_claude_worker both read it from the enclosing scope, and a local here is
-# what bash gives their call frames — which is the whole time-box.
+# The refute pass uses the read-only wrapper above. CODEX_TIMEOUT is local on
+# purpose: both worker functions read it through bash's dynamic scope.
 run_refute_pass() {  # $1 = prompt
   local CODEX_TIMEOUT="$REFUTE_TIMEOUT"
   if [ "$REVIEW_AGENT" = codex ]; then
     stage "review refute — Codex (ChatGPT sub)"
-    run_codex 1-refute "$1"
   else
     stage "review refute — Claude reviewer (Claude sub)"
-    run_claude_worker 1-refute "$1"
   fi
+  run_readonly_review_pass 1-refute "$1" refute
 }
 
 # Verdicts, joined onto the findings they judge. `refuted` counts only when the
@@ -1887,8 +1921,8 @@ review_refute_verdicts() {  # -> writes refuted.json + promoted.json, or 1
       | map(select(type == "object"))
       | map({id: ((.id // "") | tostring),
              refuted: (.refuted == true or .refuted == "true"),
-             reason: ((.reason // "") | tostring)})
-      | map(select(.id != "" and .refuted))' \
+             reason: ((.reason // "") | tostring | gsub("^\\s+|\\s+$"; ""))})
+      | map(select(.id != "" and .refuted and .reason != ""))' \
     "$src" > "$verdicts" 2>/dev/null || return 1
   jq -s '.[0] as $found | .[1] as $dropped
          | (reduce $dropped[] as $v ({}; .[$v.id] = $v)) as $by_id
@@ -1964,8 +1998,11 @@ review_refute_and_fix() {
       REVIEW_REFUTE_STATE="off"
     else
       rm -f "$WORKTREE/.harness/refuted.json"
-      run_refute_pass "$REFUTE_PROMPT" || true
-      review_refute_verdicts || REVIEW_REFUTE_STATE="failed"
+      if run_refute_pass "$REFUTE_PROMPT"; then
+        review_refute_verdicts || REVIEW_REFUTE_STATE="failed"
+      else
+        REVIEW_REFUTE_STATE="failed"
+      fi
     fi
     if [ "$REVIEW_REFUTE_STATE" != ok ]; then
       cp "$RUN_DIR/findings.json" "$RUN_DIR/promoted.json"
@@ -2286,11 +2323,11 @@ if [ -f "$WORKTREE/.harness/findings.json" ]; then
   mv "$WORKTREE/.harness/findings.json" "$RUN_DIR/findings.prev.json"
 fi
 if [ -f "$WORKTREE/.harness/expected-properties.md" ]; then
-  mv "$WORKTREE/.harness/expected-properties.md" "$RUN_DIR/expected-properties.md"
+  mv "$WORKTREE/.harness/expected-properties.md" "$RUN_DIR/expected-properties.prev.md"
 fi
 rm -f "$WORKTREE/.harness/refuted.json" "$WORKTREE/.harness/promoted.json" \
       "$RUN_DIR/findings.json" "$RUN_DIR/refuted.json" "$RUN_DIR/promoted.json" \
-      "$RUN_DIR/review-findings.json"
+      "$RUN_DIR/review-findings.json" "$RUN_DIR/expected-properties.md"
 
 # The tree the review stage is handed, so the post-review gate below can prove
 # whether anything at all changed under it. Captured before the FIRST tier, so
@@ -2315,7 +2352,7 @@ REVIEW_STARTED=$(date +%s)
 # Read before the attempt, not after: run_codex may move the account for the
 # NEXT attempt, and this records the one that actually ran this review.
 REVIEW_ACCOUNT="$CODEX_ACCOUNT"
-run_codex 1 "$REVIEW_PROMPT" || true
+run_readonly_review_pass 1 "$REVIEW_PROMPT" find || true
 REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
 
 # --- 5b. Did the review actually happen? -------------------------------------
@@ -2375,7 +2412,7 @@ if [ -n "$REVIEW_RETRY_REASON" ]; then
   stage "review retry — Codex (ChatGPT sub)$REVIEW_RETRY_SUFFIX"
   REVIEW_STARTED=$(date +%s)
   REVIEW_ACCOUNT="$CODEX_ACCOUNT"
-  run_codex 1-retry "$REVIEW_PROMPT" || true
+  run_readonly_review_pass 1-retry "$REVIEW_PROMPT" find || true
   REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
   if review_evidence; then
     REVIEW_CLASS="reviewed"
