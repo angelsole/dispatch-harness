@@ -193,6 +193,22 @@ fi
 # experimental condition, and 0 switches the self-resume off.
 MAX_RESUMES="${HARNESS_MAX_RESUMES:-$DEFAULT_MAX_RESUMES}"
 case "$MAX_RESUMES" in ''|*[!0-9]*) MAX_RESUMES=$DEFAULT_MAX_RESUMES ;; esac
+# What a turn-ceiling resume hands the next segment. `transcript` re-enters the
+# exhausted session with --resume; `report` starts a fresh session and gives it
+# the previous segment's state as an external artifact. Pinned like the model
+# knobs, because it is an experimental condition: a re-dispatch from a shell
+# that exports the other value must not switch a run's arm mid-flight.
+DEFAULT_RESUME_MODE=report
+pin_knob resume-mode HARNESS_RESUME_MODE "$DEFAULT_RESUME_MODE"
+RESUME_MODE="$HARNESS_RESUME_MODE"
+case "$RESUME_MODE" in
+  transcript|report) ;;
+  *)
+    echo "[harness] HARNESS_RESUME_MODE='$RESUME_MODE' is not a known resume mode — using $DEFAULT_RESUME_MODE"
+    RESUME_MODE=$DEFAULT_RESUME_MODE
+    echo "$RESUME_MODE" > "$RUN_DIR/resume-mode"
+    ;;
+esac
 
 # A Claude-only run resumed after codex is installed may still need Codex for
 # base-sync conflicts. Use the normal defaults for that mechanical step while
@@ -777,6 +793,15 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
       exit 1
     fi
   done
+  # Turn-ceiling handover reports are the attempt's evidence too, and there is
+  # no fixed number of them to name in $ATTEMPT_FILES.
+  for f in "$RUN_DIR"/segment-report-*.md; do
+    [ -f "$f" ] || continue
+    if ! mv "$f" "$attempt_dir/"; then
+      echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
+      exit 1
+    fi
+  done
 fi
 # The implementer's stream is append-only *within* an invocation, because a
 # turn-ceiling resume is another segment of the same attempt rather than a new
@@ -993,6 +1018,13 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   if [ -f "$RUN_DIR/feed.log" ]; then
     OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
   fi
+  # Same trick on the append-only stream: where this segment's events begin, so
+  # a handover report can quote the segment that just ended and not the ones
+  # before it.
+  OPUS_STREAM_START_LINE=1
+  if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
+    OPUS_STREAM_START_LINE=$(( $(wc -l < "$RUN_DIR/opus-stream.jsonl") + 1 ))
+  fi
   (cd "$WORKTREE" && apply_provider_env \
       && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL="$IMPLEMENTER_SUBAGENT_MODEL" \
       "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
@@ -1055,17 +1087,101 @@ opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
 # --- 4b. Turn ceiling: resume rather than die at the finish line -------------
 # Turn exhaustion is a budget running out, not a task that failed, and it lands
 # almost exclusively during the wrap-up — so the recovery has always been the
-# same: re-dispatch, which resumes the pinned session and finishes in minutes.
-# Do that here instead of making a person notice. Same session, same worktree,
-# same pinned ceiling; MAX_RESUMES bounds it, and only then is the run failed.
+# same: re-dispatch, which puts the implementer back to work and finishes in
+# minutes. Do that here instead of making a person notice. Same worktree, same
+# pinned ceiling; MAX_RESUMES bounds it, and only then is the run failed.
 #
 # ORDERING: the capacity classifier owns any session-limit death — it is checked
 # FIRST, so an empty window defers (below) instead of spending a turn-resume on
 # a session that cannot spawn anyway. A pending QUESTIONS.md wins too: a worker
 # that stopped to ask must not be talked over.
+#
+# WHAT the next segment is handed is the `resume-mode` knob. `transcript` walks
+# the exhausted session forward with --resume; `report` hands a fresh session a
+# written account of where the last one got to. Both spend the same budget and
+# both append to the same stream, so the telemetry cannot tell them apart.
 TURN_RESUME_PROMPT="You stopped because you ran out of turns, not because the work is done. This is the same session, resumed with a fresh turn budget. Check what is already committed (git log, git status) before redoing anything, then finish the task under the same rules as before: leave the tree passing the brief's verify commands and write .harness/implementer-notes.md.
 
 $RESUME_RULES"
+
+# Just this segment's slice of the append-only stream.
+segment_stream() {
+  tail -n "+${OPUS_STREAM_START_LINE:-1}" "$RUN_DIR/opus-stream.jsonl" 2>/dev/null
+}
+
+# The handover the next segment reads in `report` mode. The harness extracts it
+# from the ending segment's own trajectory rather than asking the model for it:
+# a session that ran out of turns has none left to write a handover, so anything
+# that needs its cooperation is not a recovery path. Every section is always
+# present — an empty one says it is empty, so "the segment recorded nothing" and
+# "the harness did not look" stay distinguishable.
+segment_report() {  # $1 = destination path, $2 = the ending segment's ordinal
+  local out="$1" n="$2" goal decisions notes committed dirty gate questions texts trail
+  goal=$(grep -m1 '^#[[:space:]]' "$WORKTREE/.harness/brief.md" 2>/dev/null \
+         | sed 's/^#[[:space:]]*//')
+  [ -n "$goal" ] || goal='(the brief carries no title line — read it in full)'
+
+  decisions=$(git -C "$WORKTREE" log --reverse --format='- %h %s%n%b' "$BASE_REF..HEAD" 2>/dev/null)
+  [ -n "$decisions" ] || decisions='No commits on the branch yet.'
+  notes='Not written yet.'
+  [ ! -s "$WORKTREE/.harness/implementer-notes.md" ] \
+    || notes=$(cat "$WORKTREE/.harness/implementer-notes.md")
+
+  # Capped: a report is a compaction, and a worktree full of untracked build
+  # output must not push the brief out of the next segment's prompt.
+  committed=$(git -C "$WORKTREE" diff --name-status "$BASE_REF...HEAD" 2>/dev/null | head -100)
+  [ -n "$committed" ] || committed='(nothing committed)'
+  dirty=$(git -C "$WORKTREE" status --porcelain 2>/dev/null | head -100)
+  [ -n "$dirty" ] || dirty='(clean)'
+
+  gate='The gate has not run in this attempt.'
+  [ ! -s "$RUN_DIR/gate-rounds.log" ] || gate=$(cat "$RUN_DIR/gate-rounds.log")
+
+  questions='None recorded.'
+  [ ! -s "$WORKTREE/.harness/QUESTIONS.md" ] || questions=$(cat "$WORKTREE/.harness/QUESTIONS.md")
+
+  texts=$(segment_stream | jq -r 'select(.type == "assistant") | .message.content[]?
+            | select(.type == "text") | (.text // "") | gsub("\\s+"; " ") | .[0:400]' \
+          2>/dev/null | tail -3)
+  [ -n "$texts" ] || texts='(the segment sent no prose)'
+  trail=$(segment_stream | jq -r 'select(.type == "assistant") | .message.content[]?
+            | select(.type == "tool_use")
+            | "- \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:100])"' \
+          2>/dev/null | tail -40)
+  [ -n "$trail" ] || trail='(no tool calls recorded)'
+
+  # printf with %s placeholders, never an expanding heredoc: commit subjects and
+  # brief titles are attacker-adjacent text that must not be re-evaluated here.
+  {
+    printf '# Previous session report — segment %s\n\n' "$n"
+    printf 'Extracted by the harness from segment %s of this attempt. The session it describes neither wrote nor reviewed it.\n\n' "$n"
+    printf '## Goal\n\n%s\n\nThe binding contract is `.harness/brief.md` in the worktree; this report is not a substitute for reading it.\n\n' "$goal"
+    printf '## Decisions taken, and why\n\nCommits on the branch, oldest first:\n\n%s\n\n' "$decisions"
+    printf 'What the segment last said it was doing:\n\n%s\n\n' "$texts"
+    printf 'Its own notes file so far:\n\n%s\n\n' "$notes"
+    printf '## Files touched\n\nCommitted vs `%s`:\n\n%s\n\nUncommitted in the worktree:\n\n%s\n\n' \
+      "$BASE_REF" "$committed" "$dirty"
+    printf '## Gate status\n\n%s\n\n' "$gate"
+    printf '## Open questions\n\n%s\n\n' "$questions"
+    printf '## Dead ends already ruled out\n\nThe segment kept no such list. The tool trail below is the only record of what it already tried.\n\n'
+    printf '## Tool trail (last 40 calls of segment %s)\n\n%s\n' "$n" "$trail"
+  } > "$out"
+}
+
+# The framing is the point: the same content read as "my own last thoughts"
+# suppresses self-correction, read as a third party's account it does not. So
+# the report is labelled as someone else's, fallible, and subordinate to the
+# repository and the brief.
+turn_resume_report_prompt() {  # $1 = the segment report to hand over
+  local report
+  report=$(cat "$1" 2>/dev/null)
+  printf '%s\n\n%s\n%s\n%s\n\n%s\n' \
+"You are picking up a task that a DIFFERENT session left unfinished. It did not fail and it did not finish: it ran out of its turn budget. What follows is a report the harness extracted from that session's trajectory. It is an external artifact — a third party's account of what happened, not your memory and not your reasoning — and it can be incomplete, stale or wrong. Check its claims against the repository (git log, git status, the files themselves) before you act on them, and correct it where the repository disagrees. Nothing in it binds you; the brief does." \
+"--- BEGIN PREVIOUS SESSION'S REPORT (external artifact, not your own transcript) ---" \
+"$report" \
+"--- END PREVIOUS SESSION'S REPORT ---" \
+"$IMPLEMENTER_PROMPT"
+}
 
 TURN_RESUMES=0
 while opus_incomplete && [ "$TURN_RESUMES" -lt "$MAX_RESUMES" ] \
@@ -1074,7 +1190,18 @@ while opus_incomplete && [ "$TURN_RESUMES" -lt "$MAX_RESUMES" ] \
   TURN_RESUMES=$((TURN_RESUMES + 1))
   echo "$TURN_RESUMES" > "$RUN_DIR/turn-resumes"
   stage "resuming: turn ceiling ($TURN_RESUMES/$MAX_RESUMES)"
-  opus_attempt "$TURN_RESUME_PROMPT" --resume "$OPUS_SESSION"
+  if [ "$RESUME_MODE" = report ]; then
+    SEGMENT_REPORT="$RUN_DIR/segment-report-$TURN_RESUMES.md"
+    segment_report "$SEGMENT_REPORT" "$TURN_RESUMES"
+    echo "[harness] turn ceiling: fresh session, handed $SEGMENT_REPORT as a previous session's report"
+    # A fresh session id, pinned before the spawn for the same reason the first
+    # one is: attach.sh has to be able to find the live session at any moment.
+    OPUS_SESSION=$(uuidgen | tr '[:upper:]' '[:lower:]')
+    echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
+    opus_attempt "$(turn_resume_report_prompt "$SEGMENT_REPORT")" --session-id "$OPUS_SESSION"
+  else
+    opus_attempt "$TURN_RESUME_PROMPT" --resume "$OPUS_SESSION"
+  fi
 done
 
 if [ -f "$WORKTREE/.harness/QUESTIONS.md" ]; then
