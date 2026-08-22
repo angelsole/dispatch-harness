@@ -788,13 +788,17 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
   done
   # Check every destination before moving any evidence, so a collision cannot
   # leave a partially rotated attempt.
-  for f in "${attempt_files[@]}"; do
+  #
+  # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
+  # treats an empty array as unbound under `set -u`, and an attempt that left
+  # none of these files behind must rotate to nothing, not abort the run.
+  for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if [ -e "$attempt_dir/$(basename "$f")" ]; then
       echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
       exit 1
     fi
   done
-  for f in "${attempt_files[@]}"; do
+  for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if ! mv "$f" "$attempt_dir/$(basename "$f")"; then
       echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
       exit 1
