@@ -1223,6 +1223,18 @@ check "truncated: on every diff item alike" \
   "$(jq -r '[.items[] | select(.id != "resume") | select(.evidence_truncated)] | length' "$V")" "4"
 check "truncated: and an over-budget record is clipped too, elided middle and all" \
   "$(jq -r '.items[] | select(.id == "resume") | .evidence_truncated' "$V")" "true"
+
+# Per-step clipping can remove evidence while the joined trajectory remains
+# below its separate budget. That cut must be disclosed even when no complete
+# step was elided and the diff was preserved in full.
+judge HARNESS_VERIFY_EVALS=1 HARNESS_VERIFY_STEP_CHARS=60 >/dev/null 2>&1
+check "truncated: a per-step-only cut records the resume evidence as clipped" \
+  "$(jq -r '.items[] | select(.id == "resume") | .evidence_truncated' "$V")" "true"
+check "truncated: a per-step-only cut does not mark the intact diff" \
+  "$(jq -r '[.items[] | select(.id != "resume") | select(.evidence_truncated)] | length' "$V")" "0"
+check "truncated: a per-step-only cut needs no whole steps elided" \
+  "$(jq -r '.elided_steps' "$V")" "0"
+
 judge HARNESS_VERIFY_EVALS=1 >/dev/null 2>&1
 check "truncated: a run inside every budget records false" \
   "$(jq -r '[.items[] | select(.evidence_truncated)] | length' "$V")" "0"

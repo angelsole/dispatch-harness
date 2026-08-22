@@ -472,12 +472,12 @@ def elide(steps, max_chars):
 def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
     """Every step of the run, in the order it happened, clipped and anonymised.
 
-    Returns (steps, elided_steps, segments, diff) — segments being how many
-    implementer stretches the trajectory spans across every attempt, one per
-    result event, which is also what decides whether the resume coherence item
-    is asked at all. Never fabricates a step: a run whose implementer left no
-    stream has no trajectory, and the caller turns that into a skip rather than
-    into a number.
+    Returns (steps, elided_steps, segments, diff, steps_clipped) — segments
+    being how many implementer stretches the trajectory spans across every
+    attempt, one per result event, which is also what decides whether the resume
+    coherence item is asked at all. Never fabricates a step: a run whose
+    implementer left no stream has no trajectory, and the caller turns that
+    into a skip rather than into a number.
 
     Anonymisation happens before the budgets are applied, so every count a
     caller can assert on is a count of the text the judge will actually read.
@@ -489,14 +489,16 @@ def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
         steps.extend(file_steps)
         segments += file_segments
     if not steps:
-        return [], 0, 0, ""
+        return [], 0, 0, "", False
     diff = branch_diff(worktree, base_ref)
     steps.extend(gate_steps(run_dir))
     steps.extend(review_steps(run_dir, worktree))
     steps.extend(final_steps(worktree, base_ref, diff))
-    steps = [(kind, clip(anonymize(text), step_chars)) for kind, text in steps]
+    anonymized = [(kind, anonymize(text)) for kind, text in steps]
+    steps_clipped = any(len(text) > step_chars for _, text in anonymized)
+    steps = [(kind, clip(text, step_chars)) for kind, text in anonymized]
     steps, elided = elide(steps, max_chars)
-    return steps, elided, segments, diff
+    return steps, elided, segments, diff, steps_clipped
 
 
 # --- the rubric --------------------------------------------------------------
@@ -1053,7 +1055,7 @@ def main(argv):
     samples = env_int("HARNESS_VERIFY_EVALS", 3, minimum=1)
     max_criteria = env_int("HARNESS_VERIFY_MAX_CRITERIA", 8, minimum=0)
 
-    steps, elided, segments, diff = build_trajectory(
+    steps, elided, segments, diff, steps_clipped = build_trajectory(
         run_dir, worktree, base_ref, step_chars, max_chars)
     if not steps:
         sys.stderr.write("no trajectory: no implementer stream under %s\n" % run_dir)
@@ -1072,10 +1074,11 @@ def main(argv):
     # A citation past a cut cannot match, so a genuine quote from clipped-away
     # evidence false-zeroes — a known limitation, recorded per item rather than
     # fixed: `evidence_truncated` in verify.json says which items were scored
-    # on clipped evidence (the whole-diff budget; the record's elided middle).
+    # on clipped evidence (the whole-diff budget; per-step trajectory cuts; the
+    # record's elided middle).
     truncated = {
         "diff": len(diff_text) > diff_limit,
-        "trajectory": elided > 0,
+        "trajectory": steps_clipped or elided > 0,
     }
     # An item with nothing to read is unknown, not zero: a branch with no diff
     # tells you nothing about test integrity, and inventing a 0 for it would put
