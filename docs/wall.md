@@ -9,6 +9,11 @@ doing right now. It reads the same run dirs as
 [everything else](reference.md#monitoring-surfaces) and never dispatches
 anything.
 
+This page is what the wall *means*. What it **reads** — every run-dir file,
+every `result.json` field, the exact tolerance for a file caught mid-write, and
+the stage-text vocabulary all three monitoring surfaces parse — is its own
+page: [the wall's data contract](wall-contract.md).
+
 ## The city
 
 The wall is a **city at night**. Each project is a tower; each run is a lit car
@@ -132,6 +137,18 @@ wall.sh --city /var/wall/city.jsonl # keep the district's memory somewhere else
 
 Each flag has an environment equivalent: `WALL_PORT`, `WALL_HOST`, `WALL_RUNS`,
 `WALL_CITY`.
+
+`--runs` is not only for the fixtures: it takes **any** directory of run dirs
+written to [the contract](wall-contract.md), which is how one screen serves a
+second harness living beside this one.
+
+```bash
+wall.sh --runs ~/.claude/creative-harness/runs   # a sibling harness's runs
+```
+
+The city ledger defaults to *beside the runs dir*, so that second harness
+accretes its own district rather than sharing this one's — pass `--city` if you
+want them somewhere else.
 
 Then point a browser on the TV at `http://<this-machine>:4711/` and put it in
 fullscreen (Chrome: `--kiosk --app=http://<host>:4711/`). With nothing running

@@ -25,4 +25,29 @@ if [ -f "$RUN/status" ]; then
   esac
 fi
 
+# A z.ai session cannot be resumed before this process starts with the provider
+# environment. Stop with an actionable command instead of immediately opening
+# the session against Anthropic. Only the key's path is printed.
+if [ "$(cat "$RUN/implementer-provider" 2>/dev/null || echo anthropic)" = zai ]; then
+  zai_env_missing=0
+  [ "${ANTHROPIC_BASE_URL:-}" = https://api.z.ai/api/anthropic ] \
+    && [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] \
+    && [ "${API_TIMEOUT_MS:-}" = 3000000 ] \
+    && [ "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" = glm-4.7 ] \
+    && [ "${CLAUDE_CODE_SUBAGENT_MODEL:-}" = glm-4.7 ] \
+    || zai_env_missing=1
+  compact_export=""
+  case "$(cat "$RUN/implementer-model" 2>/dev/null || true)" in
+    *'[1m]')
+      compact_export=" CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000"
+      [ "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" = 1000000 ] || zai_env_missing=1
+      ;;
+  esac
+  if [ "$zai_env_missing" = 1 ]; then
+    echo "This run's implementer is pinned to z.ai. Export its environment, then rerun attach.sh:"
+    echo "  export ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic API_TIMEOUT_MS=3000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.7 CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7${compact_export} ANTHROPIC_AUTH_TOKEN=\"\$(cat \"${ZAI_API_KEY_FILE:-$HARNESS_DIR/zai-api-key}\")\""
+    exit 2
+  fi
+fi
+
 cd "$WT" && exec env -u ANTHROPIC_API_KEY claude --resume "$(cat "$RUN/opus-session")"

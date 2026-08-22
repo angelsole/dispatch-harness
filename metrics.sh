@@ -77,7 +77,13 @@ REPORT_FILTER='
     # The advisory trajectory score from the verifier stage. Empty on every run
     # it did not score, which keeps those runs out of the statistic rather than
     # sinking it with zeros they never earned.
-    ((.metrics.verifier.score // "") | tostring)
+    ((.metrics.verifier.score // "") | tostring),
+    # The rubric vector behind that score, id:score per item. Runs scored
+    # before the verifier kept one are simply absent from it, so every item
+    # statistic counts the runs that actually carry that item.
+    (((.metrics.verifier.items // [])
+      | map(select((.score | type) == "number"))
+      | map(((.id // "") | tostring) + ":" + (.score | tostring)) | join(",")))
   ] | @tsv'
 
 # One line per attempt of every run: the status it died on, and the idle gap
@@ -204,6 +210,19 @@ report() {
         if ($6 + 0 > $15 + 0) overceil++
       }
       if ($16 != "") vscore[++nvs] = $16 + 0
+      # The rubric items behind that score. Each item keeps its own sample, so a
+      # corpus that spans a schema change reports every item over the runs that
+      # actually carry it rather than over the runs that carry any of them.
+      if ($17 != "") {
+        ni = split($17, iv, ",")
+        for (i = 1; i <= ni; i++) {
+          split(iv[i], kv, ":")
+          if (kv[1] == "") continue
+          if (!(kv[1] in itemseen)) itemorder[++nitems] = kv[1]
+          itemseen[kv[1]] = 1
+          items[kv[1], ++icount[kv[1]]] = kv[2] + 0
+        }
+      }
     }
     END {
       printf "pipeline vitals · %d runs · %s\n%s\n", total, stamp, runs
@@ -281,6 +300,18 @@ report() {
       # N is how many runs the verifier scored at all — the rest are absent from
       # this line rather than counted as zero.
       statline("verify score", vscore, nvs, 2)
+      # And the rubric vector underneath it, indented under its own headline:
+      # the scalar says how good the corpus is, these say what it is bad AT.
+      # Runs scored before the verifier kept a vector contribute nothing here,
+      # so a corpus with none of them prints no extra lines at all.
+      for (i = 1; i <= nitems; i++) {
+        key = itemorder[i]
+        # statline/pctl read a[1..n] and nothing above it, so a shorter item
+        # reusing this array behind a longer one needs no `delete` — which is
+        # a gawk extension this script has no other reason to require.
+        for (j = 1; j <= icount[key]; j++) one[j] = items[key, j]
+        statline("  " key, one, icount[key], 2)
+      }
       # The CLI and the ceiling do not count the same thing, and pretending they
       # do turned two honest runs into a phantom "206 turns against a 200 cap".
       if (nceil + 0 > 0)

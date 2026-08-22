@@ -24,15 +24,20 @@ HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 # The implementer knobs' defaults. Two scripts have to agree on them —
 # run-task.sh pins them into the run dir at first dispatch, sync-pr.sh falls
 # back to them when it re-runs the implementer on a PR whose run dir predates
-# the pin — so they are defined once. Explicit model IDs, never aliases: "opus"
-# silently changed meaning the day Opus 5 shipped, which is exactly the
-# condition drift the pinning exists to stop.
+# the pin — so they are defined once. The provider selects its default model;
+# the Anthropic model is also what every Claude-subscription fallback uses when
+# the implementer itself bills to another vendor. Explicit model IDs, never
+# aliases: "opus" silently changed meaning the day Opus 5 shipped, which is
+# exactly the condition drift the pinning exists to stop.
 #
 # Deliberately not HARNESS_*: in this repo that prefix means "an environment
-# knob a user may set", and these two are constants the environment cannot
+# knob a user may set", and these are constants the environment cannot
 # reach. IMPLEMENTER_MODEL / IMPLEMENTER_EFFORT are the knobs; these are only
 # what they fall back to.
-DEFAULT_IMPLEMENTER_MODEL="claude-opus-5"
+DEFAULT_IMPLEMENTER_PROVIDER="anthropic"
+DEFAULT_ANTHROPIC_MODEL="claude-opus-5"
+DEFAULT_ZAI_MODEL="glm-5.3"
+DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 DEFAULT_IMPLEMENTER_EFFORT="high"
 
 # Cap a long-running child. macOS ships no timeout(1), so fall back to a

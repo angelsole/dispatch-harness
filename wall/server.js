@@ -170,51 +170,51 @@ function shippedDiffOf(result) {
 }
 
 // --- the stage-text -> actor contract ----------------------------------------
-// CONTRACT: mirrors harness_actor() in statusline.sh, which is the single source
-// of truth for the stage strings run-task.sh's stage() writes. Prefix matching,
-// same order — tests/statusline.test.sh pins every literal on the shell side, so
-// a new stage lands there first and gets its line here in the same commit.
-// `key` is the neon signature the page colours the panel with.
-const ACTORS = [
-  [/^waiting/, 'needs input', 'alarm'],
-  [/^(implementing|resuming)/, 'Opus', 'opus'],
-  [/^review skipped/, 'skipped', 'skipped'],
-  [/Claude reviewer/, 'Claude', 'opus'],
-  [/^review failed silently/, 'unreviewed', 'unreviewed'],
-  [/^(review|fix)/, 'Codex', 'codex'],
-  // The third-vendor trajectory score. It runs on the review floor and is
-  // nobody the city has a neon for — no model of the pipeline, no decision of
-  // its own — so it borrows the neutral grey the other non-model stages use.
-  [/^verify/, 'verifier', 'skipped'],
-  [/^test gate.* skipped/, 'skipped', 'skipped'],
-  [/^test gate/, 'gate', 'gate'],
-  [/^ticket sync/, 'ticket', 'pr'],
-  [/^push/, 'PR', 'pr'],
-  [/^demo/, 'demo', 'demo'],
-  [/^(setup|installing)/, 'setup', 'setup'],
-  [/^deferred:/, 'deferred', 'deferred'],
-  [/^(base sync|already up)/, 'sync', 'sync'],
-  [/^sync failed/, 'failed', 'failed'],
-  [/^done:/, 'done', 'done'],
-];
+// CONTRACT: stage-vocab.json beside this file is the machine-readable stage
+// vocabulary — the one table mapping the stage strings run-task.sh's stage()
+// writes onto who is working (`actor`, plus the `key` the page colours the panel
+// with) and what state that leaves the run in. It used to be an array here, and
+// separately the case arms in statusline.sh, and status.sh sourcing those:
+// three copies of a wire format nothing checked. tests/stage-vocab.test.sh now
+// proves the table covers everything run-task.sh emits and that both consumers
+// still agree with it; docs/wall-contract.md is the prose.
+//
+// The entries are DISJOINT by construction — `unless` vetoes a match — so
+// exactly one wins for any stage text and the file's order is for reading, not
+// for resolution. Required rather than read, like room.js: it ships beside this
+// file, and a wall with no vocabulary has nothing to render a run with.
+const VOCAB = require('./stage-vocab.json').stages.map((entry) => ({
+  actor: entry.actor,
+  key: entry.key,
+  state: entry.state,
+  re: new RegExp(entry.pattern, 'i'),
+  veto: entry.unless ? new RegExp(entry.unless, 'i') : null,
+}));
 
-function actorOf(stage) {
-  for (const [re, actor, key] of ACTORS) {
-    if (re.test(stage)) return { actor, actorKey: key };
+function vocabOf(stage) {
+  const text = String(stage || '');
+  for (const entry of VOCAB) {
+    if (entry.re.test(text) && !(entry.veto && entry.veto.test(text))) return entry;
   }
-  return { actor: '?', actorKey: 'unknown' };
+  return null;   // a stage with no row is an honest '?', never a guess
 }
 
-// active | alarm | ready | failed. `done: <status>` carries the outcome, and
-// every failing STATUS in run-task.sh ends in _failed or is "rejected"; sync-pr's
-// "done: PR branch synced …" is a success, so match the failure words, not a
-// whitelist of the good ones.
+function actorOf(stage) {
+  const entry = vocabOf(stage);
+  return entry
+    ? { actor: entry.actor, actorKey: entry.key }
+    : { actor: '?', actorKey: 'unknown' };
+}
+
+// active | alarm | ready | failed, off the same table. `done: <status>` carries
+// the outcome, and every failing STATUS in run-task.sh ends in _failed or is
+// "rejected"; sync-pr's "done: PR branch synced …" is a success, so the table
+// matches the failure words, not a whitelist of the good ones.
 const DONE_NEEDS_INPUT = /^done:\s*needs_input\b/i;
 
 function stateOf(stage) {
-  if (/^waiting/.test(stage) || DONE_NEEDS_INPUT.test(stage)) return 'alarm';
-  if (/^done:/.test(stage)) return /fail|reject/i.test(stage.slice(5)) ? 'failed' : 'ready';
-  return 'active';
+  const entry = vocabOf(stage);
+  return entry ? entry.state : 'active';
 }
 
 // --- the stage -> floor ladder -------------------------------------------------
@@ -244,7 +244,10 @@ const FLOOR_ACTOR = ['setup', 'opus', 'gate', 'codex', 'demo', 'pr'];
 const DONE_FLOOR = [
   [/setup_failed/, 0],
   [/implementer_failed|capacity_failed/, 1],
-  [/gate_failed/, 2],
+  // visual_failed is the creative harness's render-and-grade round giving up.
+  // Its live stage borrows the gate's rung (stage-vocab.json), so its burnout
+  // parks there too rather than on a roof the run never reached.
+  [/gate_failed|visual_failed/, 2],
   [/rejected|review_failed/, 3],
 ];
 
@@ -1202,4 +1205,7 @@ module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
   shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
   assetOf, ASSETS, roster, crewSigns, todayOf,
+  // The stage vocabulary, resolved by the real code: tests/stage-vocab.test.sh
+  // asks these the same questions a poll does, without staging a run dir per row.
+  actorOf, stateOf, floorOf, FLOOR_OF, FLOORS,
 };

@@ -256,15 +256,20 @@ run_codex() {  # $1 = label, $2 = prompt
 }
 
 # Claude fallback, mirroring run-task.sh: fresh session, ANTHROPIC_API_KEY unset
-# (subscription billing), worker permissions, same timeout cap. Model/effort come
-# from the run's pinned implementer knobs, falling back to the same defaults
-# run-task.sh pins them with — one definition, in lib/common.sh.
+# (subscription billing), worker permissions, same timeout cap. Provider,
+# model, and effort come from the run's pinned implementer knobs, falling back
+# to the same defaults run-task.sh pins them with — one definition, in
+# lib/common.sh. A cross-vendor implementer's model never leaks into this
+# Anthropic-billed fallback.
+IMPLEMENTER_PROVIDER="${IMPLEMENTER_PROVIDER:-$(harness_knob "$RUN_DIR" implementer-provider "$DEFAULT_IMPLEMENTER_PROVIDER")}"
 IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-$(harness_knob "$RUN_DIR" implementer-model "$DEFAULT_IMPLEMENTER_MODEL")}"
 IMPLEMENTER_EFFORT="${IMPLEMENTER_EFFORT:-$(harness_knob "$RUN_DIR" implementer-effort "$DEFAULT_IMPLEMENTER_EFFORT")}"
+CLAUDE_WORKER_MODEL="$IMPLEMENTER_MODEL"
+[ "$IMPLEMENTER_PROVIDER" = anthropic ] || CLAUDE_WORKER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 run_claude_worker() {  # $1 = label, $2 = prompt
   (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
       env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
-      "$CLAUDE_BIN" -p "$2" --model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
+      "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \
     | tee "$RUN_DIR/claude-$1.log" \

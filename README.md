@@ -25,6 +25,7 @@ then the whole pipeline runs on flat-rate plans. Only the implementer and
 reviewer are fixed by the pipeline. This page is the product; the manuals are
 under [`docs/`](docs/) — [Operations](docs/operations.md) ·
 [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) ·
+[The wall's data contract](docs/wall-contract.md) ·
 [Design notes](docs/design-notes.md).
 
 ## Why it's built this way
@@ -33,7 +34,10 @@ under [`docs/`](docs/) — [Operations](docs/operations.md) ·
 `claude-opus-5` by default) writes and commits; the reviewer (OpenAI's Codex,
 `gpt-5.6-sol` by default) reads the diff cold and fixes what it finds. Neither
 sees the other's reasoning — only the committed result. A self-review by the
-same model rationalizes its own choices; a different lab's model does not.
+same model rationalizes its own choices; a different lab's model does not. Which
+vendor implements is itself a pinned knob: `IMPLEMENTER_PROVIDER=zai` runs the
+implementer on Zhipu's GLM Coding Plan and moves nothing else
+([GLM as the implementer](docs/reference.md#glm-as-the-implementer)).
 
 **A deterministic gate between the models.** Between implement and review runs a
 plain test gate — your repo's own `lint`/`type-check`/`test` commands, no model
@@ -50,7 +54,9 @@ nothing read. When Codex is out of credits, crashed or absent, the same review
 prompt falls through to a second Codex account and then to a fresh Claude
 session — never the implementer's own, so still a cold read — and the arm is
 recorded (`claude_only`, `reviewed_claude`) rather than dressed up as
-cross-vendor. If even that leaves no evidence the run ends `review_failed` with
+cross-vendor. That last tier is the honest label for an Anthropic implementer;
+behind a `zai` one it happens to be cross-vendor anyway. If even that leaves no
+evidence the run ends `review_failed` with
 `review: failed_silent` and pushes nothing. The one exception is an operator
 asking for the unreviewed baseline on purpose (`HARNESS_SKIP_REVIEW=1`) — see [When Codex dies mid-run](docs/operations.md#when-codex-dies-mid-run-out-of-credits).
 
@@ -253,9 +259,10 @@ absence costs exactly the feature named.
 | `python3` (≥ 3.9, with `venv`) | `install.sh --verifier` builds a venv and installs the scoring library into it; it also runs the one-time login capture for demo recordings. Nothing else needs Python. | [The verifier](docs/reference.md#the-verifier) |
 | `docker`, `nc`, `shellcheck` | The copyable Postgres preflight example, and this repo's own gate. | [`examples/`](examples/), [Development](#development) |
 
-The verifier also needs a third-vendor credential for a backend that returns
-logprobs — never Claude and never the two subscriptions the pipeline runs on.
-Without both, the stage records one line and the run is exactly what it was.
+The verifier also needs a third-vendor credential — never Claude and never the
+two subscriptions the pipeline runs on, because no model grades its own
+homework. Without both, the stage records one line and the run is exactly what
+it was.
 
 Portability: the scripts target **bash 3.2** (the macOS default), and macOS
 ships no `timeout(1)`, so a `perl -e 'alarm ...'` wrapper is the process cap.
@@ -357,9 +364,12 @@ which round the gate fails, what a run costs, how many diffs went unreviewed
 ([schema](docs/reference.md#metrics-schema), [how to read it](docs/design-notes.md#reading-the-pipelines-own-vitals)).
 
 None of that says how *well* a run satisfied its brief, so after the review stage
-a third vendor scores the run's whole trajectory — the implementer's steps, the
-gate rounds, the reviewer's notes, the observed end state — as a number in
-[0, 1], overall and per acceptance criterion.
+a third vendor scores the finished change — the diff, and the run's own record
+of producing it — against a fixed five-item rubric: brief coverage, unrequested
+scope, diff minimality, test integrity and resume coherence. Every item is asked
+on its own, several times, and every answer has to quote the line that decides
+it; the headline number in [0, 1] is the mean of the applicable items (resume
+coherence is omitted when the run never resumed).
 **It is advisory, and it never gates.** Nothing in the pipeline branches on it;
 a verifier that is off, unkeyed or broken leaves the run byte-for-byte what it
 would have been. Turning it on: [The verifier](docs/reference.md#the-verifier).
@@ -385,7 +395,7 @@ test.
 | `brief-template.md` `skills/dispatch/SKILL.md` `skills/briefed-dispatch/SKILL.md` | The per-task contract, and the planner protocol with and without the approval pause |
 | `install.sh` `notify.conf.example` `demo.conf.sh.example` `repos.local.sh.example` `demo-auth.sh` `auth-capture.py` | Idempotent installer, the templates it seeds your local config from, and the one-time login capture for demo recordings |
 | `gate.sh` `tests/` `.github/workflows/gate.yml` | This repo's own gate (`shellcheck` + `bash -n`, then every suite) and the same gate on Linux CI |
-| `docs/` `bench/DESIGN.md` `examples/` | [Operations](docs/operations.md) · [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) · [Design notes](docs/design-notes.md), the benchmark design, and copyable templates |
+| `docs/` `bench/DESIGN.md` `examples/` | [Operations](docs/operations.md) · [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) · [The wall's data contract](docs/wall-contract.md) · [Design notes](docs/design-notes.md), the benchmark design, and copyable templates |
 | `README.md` `FLOW.md` `harness-flow.html` `RELEASING.md` `LICENSE` `.gitignore` `.gitattributes` | This front page, the pipeline diagrams, the publication checklist, the license, and Git metadata |
 
 ## Development

@@ -57,8 +57,8 @@ SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 
 # Runtime files installed into HARNESS_DIR. `wall` and `lib` are directories:
-# the wall's page and server travel with wall.sh, and every installed script
-# reads lib/common.sh from beside itself, so it has to travel with all of them.
+# the wall's page and server travel with wall.sh, while lib/ holds the shared
+# runtime pieces every installed script reads from beside itself.
 FILES=(
   lib mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
   metrics.sh attach.sh cleanup.sh janitor.sh preview.sh station.sh wall.sh wall demo-auth.sh

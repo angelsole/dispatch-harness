@@ -4062,13 +4062,17 @@ for (const run of api.runs) {
   }
 }
 // Every actor key the SERVER can put in a snapshot, read off its own tables rather
-// than copied into this file. server.js is not the room's to edit and does not
-// export them, so they are parsed out of the source — a second hand-kept copy of
-// that list is exactly the thing that goes stale the week a stage is added, which
-// is the failure this probe exists to catch.
+// than copied into this file. Half of them now come straight out of the stage
+// vocabulary (wall/stage-vocab.json — the one table statusline.sh is held to as
+// well); FLOOR_ACTOR is still parsed out of the source, which the room does not
+// get to edit and which does not export it. A second hand-kept copy of this list
+// is exactly the thing that goes stale the week a stage is added, which is the
+// failure this probe exists to catch.
 const SERVER_SRC = fs.readFileSync(path.join(process.argv[4], "wall", "server.js"), "utf8");
+const STAGE_VOCAB = JSON.parse(
+  fs.readFileSync(path.join(process.argv[4], "wall", "stage-vocab.json"), "utf8"));
 const SERVER_KEYS = [...new Set(
-  [...SERVER_SRC.matchAll(/^\s*\[\/.*\/, '[^']*', '([a-z]+)'\],$/gm)].map((m) => m[1])
+  STAGE_VOCAB.stages.map((row) => row.key)
     .concat(/const FLOOR_ACTOR = \[([^\]]+)\]/.exec(SERVER_SRC)[1].match(/[a-z]+/g))
     // actorOf() falls through to this one, and it is in no table.
     .concat(["unknown"]))].sort();
