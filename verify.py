@@ -1,25 +1,57 @@
-"""Score a finished run's trajectory with a third-vendor verifier.
+"""Score a finished run against a fixed rubric with a third-vendor verifier.
 
 The harness records plenty about how a run BEHAVED — turns, tokens, gate rounds,
 commit counts, +/- lines — and nothing about how well it satisfied its brief.
-This adapter turns the artefacts a run already leaves on disk into the input
-[llm-as-a-verifier](https://github.com/llm-as-a-verifier/llm-as-a-verifier)
-wants — a problem statement plus an ordered list of agent steps, each one an
-action WITH its observed output — and records the score it returns.
+This adapter turns the artefacts a run already leaves on disk into evidence a
+judge can read — the ordered trajectory (each action WITH its observed output)
+and the complete diff — and scores it.
 
-The verifier is a third vendor on purpose. Its reward is the expectation over
-the logprobs of a 20-letter score token, and neither Claude nor the ChatGPT
-subscription this pipeline runs on exposes logprobs; that it is nobody's own
-homework being graded is the second reason. `llm_verifier.create_client()` picks
-the backend from OPENAI_BASE_URL, DEEPSEEK_API_KEY or VERTEX_API_KEY, in that
-order, so this process sets exactly one of them and clears the rest.
+WHY A RUBRIC AND NOT ONE NUMBER. A single-pass scalar over a long agentic
+trajectory is close to uninterpretable, and the judge literature says why:
+judges are noisy on long agentic-coding outputs and per-item scoring beats
+batched (2606.29920); self-preference bias is real and capability-independent,
+and structured multi-dimensional decomposition cuts it by ~31.5% (2604.22891) —
+and our trajectories NAME the models, which is an open invitation; judges carry
+verbosity/length bias (2510.24367), so a raw trajectory score rewards exactly
+the bloat we want it to penalise; and judging against a pre-stated spec rather
+than the raw trajectory cut judge FPR from 0.64 to 0.28 (2510.03217). So:
+
+  * five FIXED rubric items, each scored on its own call, never batched;
+  * K independent samples per item, aggregated by median;
+  * every sample must quote the diff hunk or trajectory line that decides it —
+    a quote that is not found verbatim in the evidence scores that sample 0;
+  * the evidence is anonymised before the judge sees it: every vendor and model
+    name becomes an IMPLEMENTER/REVIEWER role token;
+  * the headline scalar is the plain MEAN of the item scores, so nothing about
+    the LENGTH of a trajectory can move it — a longer run has more to be judged
+    on, not more to be rewarded for.
+
+Four of the five items are judged from the DIFF against a spec written before
+the work started (brief.md), which is the regime that measured the lowest false
+positives; only "resume coherence" needs the trajectory, and it is only asked at
+all when the run actually has more than one segment.
+
+The verifier is a third vendor on purpose: it is nobody's own homework being
+graded. `llm_verifier.create_client()` picks the backend from OPENAI_BASE_URL,
+DEEPSEEK_API_KEY or VERTEX_API_KEY, in that order, so this process sets exactly
+one of them and clears the rest, and the item calls go to whichever client that
+produced — `client.models.generate_content` for google-genai,
+`client.chat.completions.create` for an OpenAI-compatible one.
 
 Vertex is the exception, and the corporate-safe backend: outside express mode it
 refuses API keys outright (`401 UNAUTHENTICATED: API keys are not supported by
 this API. Expected OAuth2 access token or other authentication credentials that
 assert a principal`), so a service-account JSON in the key file is authenticated
 as a principal instead — GOOGLE_APPLICATION_CREDENTIALS gets the PATH, and the
-`google.genai` client this file builds is handed straight to `track()`.
+`google.genai` client this file builds is used directly.
+
+WHAT IT COSTS. At most `items × K` calls: 15 with the defaults, 12 for a run
+that never resumed. The item prompts are a few hundred characters and the
+answers are one small JSON object each, so the bill is the evidence: a diff item
+carries at most MAX_CHARS/4 characters (~25k tokens) and the one trajectory item
+at most MAX_CHARS (~100k tokens), which is ~600k input tokens in the worst case
+against the ~2.7M of the single-scalar design this replaces (up to 9 passes ×
+K over the whole trajectory).
 
 The score is ADVISORY. Nothing in run-task.sh branches on it: a run that scores
 0.1 ships exactly like one that scores 0.9, and the only thing the number is for
@@ -27,10 +59,10 @@ is sorting a corpus by "how well did this actually satisfy its brief".
 
 Usage: verify.py <run-dir> <worktree> <base-ref> [--dry-run]
 
-  --dry-run  build the steps and the criteria, print them as JSON, and stop —
-             without importing llm_verifier and without reading the key. This is
-             the whole adapter minus the network, which is what the test suite
-             drives on a machine that has neither.
+  --dry-run  build the trajectory, the evidence and the item prompts, print them
+             as JSON, and stop — without importing llm_verifier and without
+             reading the key. This is the whole adapter minus the network, which
+             is what the test suite drives on a machine that has neither.
 
 Env (all optional except the key file, which run-task.sh always passes):
   HARNESS_VERIFY_KEY_FILE     the credential: either a one-line API key or a
@@ -44,18 +76,26 @@ Env (all optional except the key file, which run-task.sh always passes):
   HARNESS_VERIFY_GCP_LOCATION vertex region (default global; pin an EU region
                               for data residency)
   HARNESS_VERIFY_MODEL        model id; the library's default when unset
-  HARNESS_VERIFY_EVALS        K repeats per checkpoint (default 3)
-  HARNESS_VERIFY_MAX_CRITERIA cap on scored acceptance criteria (default 8;
-                              0 = the overall score only)
+  HARNESS_VERIFY_EVALS        K independent samples per rubric item (default 3)
+  HARNESS_VERIFY_MAX_CRITERIA cap on the acceptance criteria quoted into the
+                              task spec (default 8; 0 = the Problem section
+                              alone)
   HARNESS_VERIFY_STEP_CHARS   per-step clip (default 2000)
-  HARNESS_VERIFY_MAX_CHARS    whole-trajectory clip (default 400000)
-  HARNESS_VERIFY_EFFORT       passed through as DEEPSEEK_EFFORT
+  HARNESS_VERIFY_MAX_CHARS    whole-trajectory clip (default 400000); the diff
+                              evidence gets a quarter of it, because it is sent
+                              once per diff item and the trajectory only once
+  HARNESS_VERIFY_EFFORT       passed through as DEEPSEEK_EFFORT (default high),
+                              which is the library's own dial for the client it
+                              builds; the item calls made here set no effort of
+                              their own — the answers are one small JSON object
 
 Exit codes: 0 scored (or dry-run ok) · 2 usage · 3 skipped, one line on stderr
-(no trajectory, no key, library missing) · 1 anything else, traceback on stderr.
+(no trajectory, no evidence, no key, library missing) · 1 anything else,
+traceback on stderr.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -70,12 +110,6 @@ LOCKFILES = (
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
     "Podfile.lock", "pubspec.lock", "composer.lock",
 )
-
-# Which part of the run a step came from. The order of this tuple IS the order
-# of the trajectory, and the `impl:` prefix is what marks the steps the
-# implementer itself produced — the "score at implementer end" checkpoint is the
-# last of those.
-KIND_IMPLEMENTER = "impl:"
 
 
 # --- small helpers -----------------------------------------------------------
@@ -138,6 +172,36 @@ def git(worktree, *args):
     return out.stdout.decode("utf-8", "replace")
 
 
+# --- anonymisation -----------------------------------------------------------
+# Self-preference bias is capability-independent and survives every prompt that
+# merely asks a judge to be impartial, so the names are removed rather than
+# deprecated: a judge that cannot tell whose work this is cannot prefer its own.
+# Substrings, not word boundaries — `opus-stream.jsonl` and `.claude/` are names
+# too, and a guarantee with an exception is not a guarantee.
+VENDOR_ROLES = (
+    ("anthropic", "IMPLEMENTER"),
+    ("openai", "REVIEWER"),
+    ("claude", "IMPLEMENTER"),
+    ("sonnet", "IMPLEMENTER"),
+    ("codex", "REVIEWER"),
+    ("opus", "IMPLEMENTER"),
+    ("gpt", "REVIEWER"),
+)
+VENDOR_RE = re.compile("|".join(re.escape(name) for name, _ in VENDOR_ROLES),
+                       re.IGNORECASE)
+VENDOR_ROLE_OF = {name: role for name, role in VENDOR_ROLES}
+
+
+def anonymize(text):
+    """Every vendor and model name replaced by the role that wore it.
+
+    Idempotent: the role tokens contain none of the names, so a payload can be
+    passed through this twice — once as it is built, once as it is sent.
+    """
+    return VENDOR_RE.sub(lambda m: VENDOR_ROLE_OF[m.group(0).lower()],
+                         text or "")
+
+
 # --- the implementer's stream ------------------------------------------------
 
 def content_blocks(event):
@@ -175,9 +239,8 @@ def stream_steps(path):
 
     Each assistant text block is a narration step and each tool_use is folded
     together with its matching tool_result into a single "action + observed
-    output" step, which is the shape the verifier's prompt is written for: it is
-    told to distrust the narration and read the output. `system` events carry no
-    work.
+    output" step: the judge is told to distrust the narration and read the
+    output. `system` events carry no work.
 
     A `result` event is a segment boundary, not the end of the file: the
     implementer's stream is append-only within an invocation, so a turn-ceiling
@@ -186,7 +249,8 @@ def stream_steps(path):
     marker for a turn budget that ran out, the closing message for the segment
     that ended the attempt — so the trajectory reads as the continuous piece of
     work it was rather than jumping from the first segment's last tool call to
-    the last segment's first one.
+    the last segment's first one. Those boundaries are also what the resume
+    coherence item is asked about.
     """
     events = []
     for line in read_text(path).splitlines():
@@ -335,21 +399,25 @@ def review_steps(run_dir, worktree):
     return steps
 
 
-def final_steps(run_dir, worktree, base_ref):
-    """The observed end state: the whole diff, and the standing gate verdict.
+def branch_diff(worktree, base_ref):
+    """The complete diff of this branch against its base, lockfiles excluded.
 
-    This is the evidence the score is really about — everything above is how the
-    run got here, and this is what it actually leaves behind.
+    This is the evidence four of the five rubric items are judged from — what
+    the run actually leaves behind, rather than how it narrated getting there.
     """
-    steps = []
     excludes = [":(exclude)%s" % name for name in LOCKFILES]
-    diff = git(worktree, "diff", "%s...HEAD" % base_ref, "--", ".", *excludes)
-    if diff.strip():
+    return git(worktree, "diff", "%s...HEAD" % base_ref, "--", ".", *excludes).strip()
+
+
+def final_steps(worktree, base_ref, diff):
+    """The observed end state as trajectory steps: the diff, and the verdict."""
+    steps = []
+    if diff:
         steps.append((
             "final:diff",
             "FINAL STATE — the complete diff of this branch against %s, "
             "lockfiles excluded (git diff %s...HEAD):\n%s"
-            % (base_ref, base_ref, diff.strip()),
+            % (base_ref, base_ref, diff),
         ))
     header = []
     for line in read_text(os.path.join(worktree, ".harness", "gate-latest.log")).splitlines():
@@ -402,14 +470,17 @@ def elide(steps, max_chars):
 
 
 def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
-    """Every step of the run, in the order it happened, clipped to budget.
+    """Every step of the run, in the order it happened, clipped and anonymised.
 
-    Returns (steps, elided_steps, segments) — segments being how many
+    Returns (steps, elided_steps, segments, diff) — segments being how many
     implementer stretches the trajectory spans across every attempt, one per
-    result event, so a score can be read against the shape of the run that
-    produced it. Never fabricates a step: a run whose implementer left no stream
-    at all has no trajectory to score, and the caller turns that into a skip
-    rather than into a number.
+    result event, which is also what decides whether the resume coherence item
+    is asked at all. Never fabricates a step: a run whose implementer left no
+    stream has no trajectory, and the caller turns that into a skip rather than
+    into a number.
+
+    Anonymisation happens before the budgets are applied, so every count a
+    caller can assert on is a count of the text the judge will actually read.
     """
     steps = []
     segments = 0
@@ -418,29 +489,140 @@ def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
         steps.extend(file_steps)
         segments += file_segments
     if not steps:
-        return [], 0, 0
+        return [], 0, 0, ""
+    diff = branch_diff(worktree, base_ref)
     steps.extend(gate_steps(run_dir))
     steps.extend(review_steps(run_dir, worktree))
-    steps.extend(final_steps(run_dir, worktree, base_ref))
-    steps = [(kind, clip(text, step_chars)) for kind, text in steps]
+    steps.extend(final_steps(worktree, base_ref, diff))
+    steps = [(kind, clip(anonymize(text), step_chars)) for kind, text in steps]
     steps, elided = elide(steps, max_chars)
-    return steps, elided, segments
-
-
-def last_implementer_step(steps):
-    """1-based index of the last step the implementer itself produced.
-
-    The library numbers steps `=== Agent Step k ===` from 1, and the overall
-    call checkpoints here and at the end, so the curve reads "what the
-    implementer alone was worth" then "what shipped".
-    """
-    for i in range(len(steps) - 1, -1, -1):
-        if steps[i][0].startswith(KIND_IMPLEMENTER):
-            return i + 1
-    return len(steps)
+    return steps, elided, segments, diff
 
 
 # --- the rubric --------------------------------------------------------------
+# Five items, and only five. Each one is a question a reader of the diff can
+# answer on its own, none of them is a proxy for "how much work was this", and
+# together they are the vector the headline mean is taken over.
+#
+# `evidence` says which block the item is shown and, with it, where a citation
+# has to come from: `diff` items may only quote the diff, the `trajectory` item
+# may only quote a trajectory line.
+RUBRIC = (
+    {
+        "id": "coverage",
+        "title": "Brief coverage",
+        "evidence": "diff",
+        "question":
+            "Does this change actually deliver everything the TASK SPEC asked"
+            " for? Score 1.0 only when every stated requirement is present in"
+            " the diff. Score down for each requirement that is missing, stubbed"
+            " or only half-built. Judge the code, not any claim about it.",
+    },
+    {
+        "id": "scope",
+        "title": "No unrequested scope",
+        "evidence": "diff",
+        "question":
+            "Does this change stay inside what the TASK SPEC asked for? Score"
+            " 1.0 when nothing in the diff is beyond the task. Score down for"
+            " each unrequested addition — drive-by refactors, unrelated files,"
+            " speculative options nobody asked for, renames the task did not"
+            " need.",
+    },
+    {
+        "id": "minimality",
+        "title": "Diff minimality and hygiene",
+        "evidence": "diff",
+        "question":
+            "Is this the smallest, cleanest diff the task allows? Score 1.0 for"
+            " a change with no dead code, no leftover debugging, no"
+            " commented-out blocks, no reformatting churn and no duplication of"
+            " something the codebase already has. Score down in proportion to"
+            " the bulk the task did not require. A big change that the task"
+            " genuinely requires is not a penalty.",
+    },
+    {
+        "id": "tests",
+        "title": "Test integrity",
+        "evidence": "diff",
+        "question":
+            "Do the tests in this diff genuinely exercise this change? Judge"
+            " from the diff alone. Score 1.0 when a new or changed test would"
+            " fail if the change under it were reverted. Score down for tests"
+            " that assert nothing, tests weakened, skipped or deleted to make a"
+            " suite pass, and for behaviour of this kind left untested"
+            " altogether.",
+    },
+    {
+        "id": "resume",
+        "title": "Resume coherence",
+        "evidence": "trajectory",
+        "needs_segments": 2,
+        "question":
+            "This work stopped and was picked up again at least once; the"
+            " boundaries are the steps saying a turn budget ran out or a"
+            " segment closed. Did the work after a boundary stay consistent"
+            " with the work before it? Score 1.0 when the later segments"
+            " continue the earlier ones. Score down for work redone from"
+            " scratch, for a decision made earlier and contradicted later, and"
+            " for a half-finished change abandoned across the boundary.",
+    },
+)
+
+# The diff is sent once per diff item (four of them) and the trajectory at most
+# once, so they cannot share a budget: the diff gets a quarter of MAX_CHARS,
+# which keeps the worst-case bill of a rubric pass below that of the single
+# whole-trajectory pass it replaces.
+DIFF_SHARE = 4
+
+# A quote shorter than this cannot identify a hunk or a line, and would match
+# somewhere in any evidence block by accident — which is the one way a citation
+# requirement can be satisfied without citing anything.
+MIN_CITATION = 8
+
+# The library's own cap. The answer is one small JSON object; the cap only has
+# to be wide enough that a reasoning model reaches it.
+ANSWER_TOKENS = 4096
+
+ANSWER_CONTRACT = """ANSWER FORMAT
+Reply with ONE JSON object and nothing else, citation first:
+{"citation": "<a span copied verbatim out of the EVIDENCE above>", "score": <number from 0.0 to 1.0>}
+
+- The citation is what makes the score checkable. It must appear in EVIDENCE
+  character for character; an answer whose quote is not found there scores 0
+  whatever number it carries.
+- Quote the SMALLEST span that decides the item — one changed line, one hunk
+  header, one line of the record. Never quote this instruction block.
+- 1.0 is fully satisfied and 0.0 is not satisfied at all. Use the range in
+  between; most real work is neither.
+- Do not explain, do not add prose around the JSON, do not use markdown."""
+
+PREAMBLE = """You are grading ONE item of a fixed rubric about a finished software change.
+
+Everyone in this record is anonymous and stays that way: IMPLEMENTER wrote the
+change and REVIEWER read it afterwards. Judge the evidence in front of you and
+nothing about who produced it. Length is not quality: a long record is more to
+read, not more to reward."""
+
+
+def item_prompt(item, spec, evidence):
+    """The whole payload for one rubric item, anonymised as it goes out.
+
+    Same skeleton for every item so that only the question and the evidence
+    differ between them — an item is a question about a body of evidence, and
+    nothing in the framing should vary with which item it is.
+    """
+    label = ("the complete diff of the finished change"
+             if item["evidence"] == "diff"
+             else "the ordered record of the run, step by step")
+    return anonymize("\n\n".join([
+        PREAMBLE,
+        "TASK SPEC — written before any of this work started\n" + spec,
+        "EVIDENCE — %s\n%s" % (label, evidence),
+        "RUBRIC ITEM — %s\n%s" % (item["title"], item["question"]),
+        ANSWER_CONTRACT,
+    ]))
+
 
 def brief_sections(run_dir):
     """(title, problem, criteria) from the brief the run was dispatched with."""
@@ -479,25 +661,22 @@ def brief_sections(run_dir):
     return title, "\n".join(problem).strip(), [c for c in criteria if c]
 
 
-def overall_problem(title, problem, criteria, limit):
+def task_spec(title, problem, criteria, limit):
+    """The pre-stated spec every item is graded against.
+
+    The acceptance criteria are the spec at its sharpest, which is why they are
+    quoted into every item rather than scored one by one: a judge that reads a
+    diff against a written contract is a far better false-positive filter than
+    one that reads a trajectory and forms its own idea of the task.
+    """
     parts = ["Task: " + (title or "(untitled)")]
     if problem:
         parts.append("What the task is about:\n" + clip(problem, limit))
     if criteria:
         parts.append(
-            "The hidden grader checks every one of these:\n"
+            "What the task must deliver:\n"
             + "\n".join("%d. %s" % (i + 1, c) for i, c in enumerate(criteria))
         )
-    return "\n\n".join(parts)
-
-
-def criterion_problem(title, problem, criterion, limit):
-    parts = [
-        "Task: " + (title or "(untitled)"),
-        "The hidden grader checks exactly one thing: " + criterion,
-    ]
-    if problem:
-        parts.append("Context for that check:\n" + clip(problem, limit))
     return "\n\n".join(parts)
 
 
@@ -549,16 +728,16 @@ def redact(text, cred):
     return text
 
 
-# --- scoring -----------------------------------------------------------------
+# --- the client --------------------------------------------------------------
 
 def vertex_client(cred):
     """A Vertex client authenticated as a service-account principal.
 
     Verified against the real service: an API key created for aiplatform is
     refused outside express mode, while a service-account JSON with
-    roles/aiplatform.user returns logprobs. Only the PATH goes into the
-    environment — GOOGLE_APPLICATION_CREDENTIALS is a filename by contract, and
-    the private key never leaves this process.
+    roles/aiplatform.user is accepted. Only the PATH goes into the environment —
+    GOOGLE_APPLICATION_CREDENTIALS is a filename by contract, and the private
+    key never leaves this process.
 
     Returns (client, location); the location is recorded because where the
     scoring ran is the whole point of pinning an EU region.
@@ -625,13 +804,193 @@ def make_client(provider, cred, base_url):
     return llm_verifier, client, location
 
 
-def score_of(result):
-    """The absolute score a ProgressResult ends on, and the curve behind it."""
-    scores = list(getattr(result, "scores", None) or [])
-    final = getattr(result, "final", None)
-    if final is None and scores:
-        final = scores[-1]
-    return final, scores
+def is_genai(client):
+    """google-genai clients generate; OpenAI-compatible ones chat.
+
+    Both expose `.models`, so the discriminator is the method, not the
+    attribute: an OpenAI client's `.models` only lists them.
+    """
+    return hasattr(getattr(client, "models", None), "generate_content")
+
+
+def judge_model(lv, client, pinned):
+    """The model id these calls will actually name.
+
+    A pinned id always wins. Otherwise the library's own resolution: DeepSeek
+    and OpenAI-compatible clients cache what they serve on the client, and a
+    server that has not been asked yet is asked once — recording the package's
+    global Gemini default for a DeepSeek run would mislabel it in every surface.
+    """
+    if pinned:
+        return pinned
+    name = str(getattr(client, "_llm_verifier_model", "") or "")
+    if not name and not is_genai(client):
+        try:
+            name = str(client.models.list().data[0].id)
+        except Exception:  # an unlistable server is not worth a failed run
+            name = ""
+    return name or str(getattr(lv, "DEFAULT_MODEL", "") or "")
+
+
+def token_counts(response):
+    """(input, cached input, output, reasoning) from either response shape."""
+    usage = getattr(response, "usage", None)          # OpenAI-compatible
+    if usage is not None:
+        return (
+            getattr(usage, "prompt_tokens", 0) or 0,
+            getattr(getattr(usage, "prompt_tokens_details", None),
+                    "cached_tokens", 0) or 0,
+            getattr(usage, "completion_tokens", 0) or 0,
+            getattr(getattr(usage, "completion_tokens_details", None),
+                    "reasoning_tokens", 0) or 0,
+        )
+    meta = getattr(response, "usage_metadata", None)  # google-genai
+    if meta is not None:
+        return (
+            getattr(meta, "prompt_token_count", 0) or 0,
+            getattr(meta, "cached_content_token_count", 0) or 0,
+            getattr(meta, "candidates_token_count", 0) or 0,
+            getattr(meta, "thoughts_token_count", 0) or 0,
+        )
+    return 0, 0, 0, 0
+
+
+def make_asker(client, model, usage):
+    """One prompt in, one answer out, whichever client shape we were handed.
+
+    These are the same two calls the library makes internally — generate_content
+    for google-genai, chat.completions.create for OpenAI-compatible — minus the
+    logprob machinery, which a rubric answer has no use for: the number is in
+    the answer, and the citation beside it is what makes the number checkable.
+    Token usage is counted here because these calls are the whole bill.
+    """
+    genai = is_genai(client)
+
+    def ask(prompt):
+        if genai:
+            response = client.models.generate_content(
+                model=model, contents=prompt,
+                config={"temperature": 1.0, "max_output_tokens": ANSWER_TOKENS})
+        else:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=1.0, max_tokens=ANSWER_TOKENS)
+        usage["calls"] += 1
+        got, cached, out, reasoning = token_counts(response)
+        usage["input_tokens"] += got
+        usage["cached_input_tokens"] += cached
+        usage["output_tokens"] += out
+        usage["reasoning_tokens"] += reasoning
+        if genai:
+            try:
+                return str(getattr(response, "text", "") or "")
+            except (AttributeError, ValueError):
+                return ""  # a blocked or empty candidate has no text at all
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return ""
+        return str(getattr(choices[0].message, "content", "") or "")
+
+    return ask
+
+
+# --- reading one answer ------------------------------------------------------
+
+def parse_answer(reply):
+    """(score, citation) out of whatever the judge actually replied.
+
+    The contract asks for one bare JSON object; models fence it, prefix it or
+    trail it anyway, so the outermost brace pair is tried as well. Anything this
+    cannot read is an answer with no score and no citation, which the caller
+    scores exactly as it scores an invented quote.
+    """
+    text = (reply or "").strip()
+    data = None
+    for candidate in (text, text[text.find("{"): text.rfind("}") + 1]):
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            data = parsed
+            break
+    if data is None:
+        return None, ""
+    try:
+        score = float(data.get("score"))
+    except (TypeError, ValueError):
+        return None, str(data.get("citation") or "")
+    if score != score:  # NaN compares unequal to itself
+        return None, str(data.get("citation") or "")
+    return min(1.0, max(0.0, score)), str(data.get("citation") or "")
+
+
+def squeeze(text):
+    """Whitespace- and case-insensitive form, for matching a quote to evidence.
+
+    A judge that re-wraps a quoted line or copies it out of a rendered view has
+    still cited the line; one that paraphrases it has not.
+    """
+    return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
+def sample_item(ask, prompt, haystack):
+    """One independent sample of one item: {score, citation, note}.
+
+    The rule the whole design rests on: a sample that cannot point at the span
+    deciding it scores 0. Not "is dropped" — an unevidenced judgement is a real
+    observation about this sample, and three of them mean the item is 0. Only a
+    call that never returned an answer is unknown, and that one is dropped.
+    """
+    try:
+        reply = ask(prompt)
+    except Exception as exc:  # noqa: BLE001 — one flaky call is not a verdict
+        return {"score": None, "citation": "", "note": "call failed: %s" % exc}
+    score, citation = parse_answer(reply)
+    quote = squeeze(citation)
+    if len(quote) < MIN_CITATION or quote not in haystack:
+        return {"score": 0.0, "citation": "",
+                "note": "no verifiable citation" if citation else "no citation"}
+    if score is None:
+        return {"score": 0.0, "citation": citation, "note": "no readable score"}
+    return {"score": score, "citation": citation, "note": ""}
+
+
+def median(values):
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def aggregate(samples):
+    """(median score, the citation behind it, the per-sample vector).
+
+    Median rather than mean, because K is small and one confused sample should
+    not drag an item: with the default K=3 the median IS the majority when two
+    samples agree. The citation reported is the one from the sample nearest the
+    median — the quote that actually backs the number being published.
+    """
+    vector = [s["score"] for s in samples]
+    scored = [v for v in vector if v is not None]
+    if not scored:
+        return None, "", vector
+    middle = median(scored)
+    best, distance = "", None
+    for sample in samples:
+        if sample["score"] is None or not sample["citation"]:
+            continue
+        gap = abs(sample["score"] - middle)
+        if distance is None or gap < distance:
+            best, distance = sample["citation"], gap
+    return middle, best, vector
 
 
 def rounded(value):
@@ -640,7 +999,7 @@ def rounded(value):
 
 # --- entry point -------------------------------------------------------------
 
-def usage():
+def usage_line():
     sys.stderr.write("usage: verify.py <run-dir> <worktree> <base-ref> [--dry-run]\n")
     return EXIT_USAGE
 
@@ -655,34 +1014,38 @@ def main(argv):
             sys.stdout.write(__doc__)
             return EXIT_OK
         elif arg.startswith("-"):
-            return usage()
+            return usage_line()
         else:
             args.append(arg)
     if len(args) != 3:
-        return usage()
+        return usage_line()
     run_dir, worktree, base_ref = args
 
     step_chars = env_int("HARNESS_VERIFY_STEP_CHARS", 2000, minimum=1)
     max_chars = env_int("HARNESS_VERIFY_MAX_CHARS", 400000, minimum=1)
-    evals = env_int("HARNESS_VERIFY_EVALS", 3, minimum=1)
+    samples = env_int("HARNESS_VERIFY_EVALS", 3, minimum=1)
     max_criteria = env_int("HARNESS_VERIFY_MAX_CRITERIA", 8, minimum=0)
 
-    steps, elided, segments = build_trajectory(
+    steps, elided, segments, diff = build_trajectory(
         run_dir, worktree, base_ref, step_chars, max_chars)
     if not steps:
         sys.stderr.write("no trajectory: no implementer stream under %s\n" % run_dir)
         return EXIT_SKIP
 
-    title, problem, all_criteria = brief_sections(run_dir)
-    # The cap controls the extra per-criterion calls only. The overall verifier
-    # always receives the full rubric; MAX_CRITERIA=0 means "overall only", not
-    # "discard the acceptance criteria from the overall question".
-    criteria = all_criteria[:max_criteria]
-    texts = [text for _, text in steps]
-    implementer_end = last_implementer_step(steps)
-    checkpoints = [implementer_end, len(steps)]
-    if checkpoints[0] == checkpoints[1]:
-        checkpoints = [len(steps)]
+    title, problem, criteria = brief_sections(run_dir)
+    spec = task_spec(title, problem, criteria[:max_criteria], step_chars)
+    evidence = {
+        "diff": clip(anonymize(diff), max(1, max_chars // DIFF_SHARE)),
+        "trajectory": "\n\n".join(
+            "=== step %d ===\n%s" % (i + 1, text)
+            for i, (_, text) in enumerate(steps)),
+    }
+    # An item with nothing to read is unknown, not zero: a branch with no diff
+    # tells you nothing about test integrity, and inventing a 0 for it would put
+    # a number in the corpus that no evidence backs.
+    asked = [item for item in RUBRIC
+             if evidence[item["evidence"]]
+             and segments >= item.get("needs_segments", 0)]
 
     if dry_run:
         json.dump({
@@ -692,17 +1055,30 @@ def main(argv):
             "steps": len(steps),
             "segments": segments,
             "labels": [kind for kind, _ in steps],
-            "chars": sum(len(text) for text in texts),
+            "chars": sum(len(text) for _, text in steps),
             "elided_steps": elided,
             "step_chars": step_chars,
             "max_chars": max_chars,
-            "checkpoints": checkpoints,
-            "criteria": criteria,
-            "first": texts[0],
-            "last": texts[-1],
+            "diff_chars": len(evidence["diff"]),
+            "samples": samples,
+            "criteria": criteria[:max_criteria],
+            "spec": spec,
+            "items": [{
+                "id": item["id"],
+                "title": item["title"],
+                "evidence": item["evidence"],
+                "prompt": item_prompt(item, spec, evidence[item["evidence"]]),
+            } for item in asked],
+            "first": steps[0][1],
+            "last": steps[-1][1],
         }, sys.stdout, indent=2, ensure_ascii=False)
         sys.stdout.write("\n")
         return EXIT_OK
+
+    if not asked:
+        sys.stderr.write("no evidence: nothing under %s to score a rubric item "
+                         "against\n" % run_dir)
+        return EXIT_SKIP
 
     key_file = env_text("HARNESS_VERIFY_KEY_FILE")
     cred = read_credential(key_file)
@@ -722,56 +1098,62 @@ def main(argv):
         sys.stderr.write("library missing: %s\n" % exc)
         return EXIT_SKIP
 
-    model = env_text("HARNESS_VERIFY_MODEL")
+    model = judge_model(lv, client, env_text("HARNESS_VERIFY_MODEL"))
+    counts = {"calls": 0, "input_tokens": 0, "cached_input_tokens": 0,
+              "output_tokens": 0, "reasoning_tokens": 0}
+    ask = make_asker(client, model, counts)
     started = time.time()
 
-    def track(problem_text, checkpoint_steps):
-        kwargs = {
-            "checkpoint_steps": checkpoint_steps,
-            "n_evaluations": evals,
-            "client": client,
-        }
-        if model:
-            kwargs["model"] = model
-        return lv.track(problem_text, texts, **kwargs)
-
-    result = track(overall_problem(title, problem, all_criteria, step_chars), checkpoints)
-    final, curve = score_of(result)
-    at_implementer = curve[0] if len(curve) > 1 else None
-
     scored = []
-    for criterion in criteria:
-        one, _ = score_of(track(
-            criterion_problem(title, problem, criterion, step_chars), [len(steps)]))
-        scored.append({"name": criterion, "score": rounded(one)})
+    for item in asked:
+        body = evidence[item["evidence"]]
+        prompt = item_prompt(item, spec, body)
+        haystack = squeeze(body)
+        drawn = [sample_item(ask, prompt, haystack) for _ in range(samples)]
+        score, citation, vector = aggregate(drawn)
+        scored.append({"item": item, "score": score, "citation": citation,
+                       "samples": vector, "drawn": drawn})
 
-    usage_counts = {}
-    try:
-        raw = lv.token_usage() or {}
-        for name in ("calls", "input_tokens", "cached_input_tokens",
-                     "output_tokens", "reasoning_tokens"):
-            if name in raw:
-                usage_counts[name] = raw[name]
-    except Exception:  # a usage counter is never worth losing the score over
-        usage_counts = {}
+    vector = [entry["score"] for entry in scored if entry["score"] is not None]
+    if not vector:
+        # Every call failed. That is a broken verifier, not a bad run, and the
+        # stage's contract for a broken verifier is a failure with the reason on
+        # stderr — never a score nothing backs.
+        notes = [d["note"] for entry in scored for d in entry["drawn"] if d["note"]]
+        sys.stderr.write("verify.py: no rubric item could be scored (%s)\n"
+                         % (notes[0] if notes else "no answers"))
+        return EXIT_FAIL
 
     document = {
-        "score": rounded(final),
-        "at_implementer": rounded(at_implementer),
-        "criteria": scored,
-        # DeepSeek and OpenAI-compatible clients resolve the package's global
-        # Gemini default to the model the client actually serves, and cache that
-        # answer on the client. Record that resolved model, not DEFAULT_MODEL,
-        # or a default DeepSeek run is mislabeled as Gemini in every surface.
-        "model": (model or getattr(client, "_llm_verifier_model", "")
-                  or getattr(result, "model", "")
-                  or getattr(lv, "DEFAULT_MODEL", "")),
+        # The plain mean of the item scores, and nothing else. Every other
+        # aggregate a trajectory scorer might use — a weighted sum, a
+        # last-checkpoint reading, anything computed over the steps themselves —
+        # moves when the trajectory gets longer. This cannot: five bounded
+        # answers to five fixed questions, averaged.
+        "score": rounded(sum(vector) / len(vector)),
+        # Kept for the schema, and null on purpose: the implementer-end
+        # checkpoint belonged to the progress curve this rubric replaces, and a
+        # rubric is a statement about the finished change, not about a prefix
+        # of the run. Every consumer already renders null as "not recorded".
+        "at_implementer": None,
+        # The legacy per-criterion table, now carrying the rubric by its titles,
+        # so a consumer written against the old schema (the PR body's table,
+        # status.sh's count) renders the vector without being taught anything.
+        "criteria": [{"name": entry["item"]["title"], "score": rounded(entry["score"])}
+                     for entry in scored],
+        "items": [{
+            "id": entry["item"]["id"],
+            "score": rounded(entry["score"]),
+            "citation": entry["citation"],
+            "samples": [rounded(v) for v in entry["samples"]],
+        } for entry in scored],
+        "model": model,
         "provider": provider,
-        "evaluations": evals,
+        "evaluations": samples,
         "steps": len(steps),
         "segments": segments,
         "elided_steps": elided,
-        "usage": usage_counts,
+        "usage": counts,
         "seconds": round(time.time() - started, 3),
     }
     # Vertex only, and only when a region was actually chosen: where the scoring
@@ -779,8 +1161,8 @@ def main(argv):
     if location:
         document["location"] = location
     write_json(os.path.join(run_dir, "verify.json"), document)
-    sys.stdout.write("verify: score %s (%d steps, %d criteria)\n"
-                     % (document["score"], len(steps), len(scored)))
+    sys.stdout.write("verify: score %s (%d rubric items × %d samples, %d steps)\n"
+                     % (document["score"], len(scored), samples, len(steps)))
     return EXIT_OK
 
 
