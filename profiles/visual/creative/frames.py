@@ -63,6 +63,30 @@ LAUNCH_ARGS = [
 ]
 
 
+def launch_chromium(chromium):
+    """Launch the managed browser, or stable Chrome when its cache is absent.
+
+    `uv tool upgrade shot-scraper` can update Playwright without downloading the
+    matching browser build. Playwright still exposes the new executable path in
+    that state, but launch() dies before a page exists. A machine that already
+    has stable Chrome can render safely through Playwright's named channel; the
+    managed build remains the first choice so normal captures stay pinned.
+    """
+    managed = pathlib.Path(chromium.executable_path)
+    if managed.is_file():
+        return chromium.launch(headless=True, args=LAUNCH_ARGS)
+    try:
+        return chromium.launch(headless=True, channel="chrome", args=LAUNCH_ARGS)
+    except Exception as exc:  # noqa: BLE001 — preserve the launch reason below
+        reason = str(exc).splitlines()[0][:300]
+        raise RuntimeError(
+            "Playwright Chromium is missing at %s and the stable Chrome "
+            "fallback could not launch: %s. Install the managed browser with "
+            "'%s -m playwright install chromium'."
+            % (managed, reason, sys.executable)
+        ) from exc
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
@@ -110,7 +134,11 @@ def main():
     shots = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
+        try:
+            browser = launch_chromium(p.chromium)
+        except Exception as exc:  # noqa: BLE001 — one actionable render error
+            sys.stderr.write("frames.py: browser launch failed: %s\n" % exc)
+            return 2
         ctx = browser.new_context(
             viewport={"width": a.width, "height": a.height},
             device_scale_factor=a.dpr,
