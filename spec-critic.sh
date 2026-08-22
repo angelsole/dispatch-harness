@@ -74,6 +74,10 @@ done
 [ -f "$BRIEF" ] || { echo "spec-critic.sh: no brief at $BRIEF" >&2; exit 2; }
 [ -d "$REPO" ]  || { echo "spec-critic.sh: no repo directory at $REPO" >&2; exit 2; }
 [ -r "$SETTINGS" ] || { echo "spec-critic.sh: no tool policy at $SETTINGS" >&2; exit 2; }
+[ -z "$OUT" ] || rm -f "$OUT" || {
+  echo "spec-critic.sh: cannot clear the previous verdict at $OUT" >&2
+  exit 1
+}
 command -v "$CLAUDE_BIN" >/dev/null 2>&1 || [ -x "$CLAUDE_BIN" ] || {
   echo "spec-critic.sh: no claude CLI at $CLAUDE_BIN" >&2; exit 1; }
 

@@ -316,13 +316,13 @@ echo "== a critic that cannot answer says so, and answers nothing =="
 # ---------------------------------------------------------------------------
 cannot_answer() {  # $1 = fake mode, $2 = expected reason, $3 = label
   : > "$CLAUDE_LOG"; printf '%s\n' "$1" > "$CRITIC_MODE"
-  rm -f "$OUT"
+  printf '{"stale":true}\n' > "$OUT"
   local o r
   o=$(critic --brief "$BRIEF" --repo "$REPO" --out "$OUT"); r=$?
   check "noverdict: $3 exits 1" "$r" "1"
   has "$o" "$2" "noverdict: $3 says why"
-  if [ -e "$OUT" ]; then bad "noverdict: $3 wrote a verdict anyway"
-  else ok "noverdict: $3 leaves no verdict behind"; fi
+  if [ -e "$OUT" ]; then bad "noverdict: $3 left the stale verdict behind"
+  else ok "noverdict: $3 removes the stale verdict"; fi
   check "noverdict: $3 is retried exactly once" "$(critic_calls)" "2"
   exists "noverdict: $3 keeps the first envelope for the post-mortem" "$OUT.attempt-1.log"
 }
