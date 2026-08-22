@@ -51,8 +51,10 @@ printf 'clean\n' > "$IMPL_MODE"
 printf 'ok\n'    > "$NPM_MODE"
 
 cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
+cp -R "$SRC/lib" "$SRCDIR/lib"
 chmod +x "$SRCDIR/run-task.sh"
 cp "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
+cp "$SRC/lib/common.sh" "$HARNESS/lib/common.sh"
 cp "$SRC/lib/gate-integrity.sh" "$HARNESS/lib/"
 
 # `true`, not the empty string: an unset value means "auto-detect", and the

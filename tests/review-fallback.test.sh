@@ -54,6 +54,10 @@ printf 'lin_api_TESTKEY\n' > "$KEYFILE"; chmod 600 "$KEYFILE"
 cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
 chmod +x "$SRCDIR/run-task.sh"
 cp "$SRC/capacity.sh" "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
+# Every harness script reads lib/common.sh from beside itself, so the shared
+# helpers travel with both staged copies — the layout install.sh produces.
+cp -R "$SRC/lib" "$SRCDIR/lib"
+cp -R "$SRC/lib" "$HARNESS/lib"
 cat > "$HARNESS/repos.local.sh" <<EOF
 repo_config_local() {
   case "\$2" in

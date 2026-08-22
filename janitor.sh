@@ -11,12 +11,14 @@
 # leaves detached `flutter_tester` processes behind, and removing a worktree does
 # not kill them.
 #
+# >>> --help >>>
 # Usage:
 #   janitor.sh [--report]        what --clean would do; sweeps nothing
 #   janitor.sh --clean           sweep those worktrees, reap those processes
 #   janitor.sh --install [MODE]  daily LaunchAgent (MODE: --report|--clean)
 #   janitor.sh --uninstall       remove that agent
 #
+# <<< --help <<<
 # A run is swept only when every one of these holds: its result.json carries a
 # pr_url, `gh pr view` says that PR is MERGED, the worktree is still there, and
 # `git status --porcelain` in it is empty. Everything else is listed and left —
@@ -32,8 +34,14 @@
 # What leaves this machine: one read-only `gh pr view` per run that has a PR.
 set -u
 
+_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+[ -r "$_COMMON_LIB_PATH" ] \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+. "$_COMMON_LIB_PATH"
+unset _COMMON_LIB_PATH
+
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 RUNS="$HARNESS_DIR/runs"
 JAN_DIR="$RUNS/janitor"
 AGENTS_DIR="$HOME/Library/LaunchAgents"
@@ -52,7 +60,7 @@ GH_TIMEOUT="${JANITOR_GH_TIMEOUT:-20}"          # seconds allowed per gh call
 # rather than quietly reaping the default's processes instead.
 PROC_MATCH="${JANITOR_PROC_MATCH-flutter_tester}"   # process name to reap
 
-usage() { sed -n '14,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { harness_usage "$0" >&2; exit 2; }
 fail()  { echo "FATAL: $*" >&2; exit 1; }
 say()   { echo "[janitor] $*"; }
 
@@ -181,8 +189,8 @@ sweep_runs() {  # $1 = report | clean
     id="${d##*/}"
     n_runs=$((n_runs + 1))
 
-    # The worktree, read exactly the way cleanup.sh reads it.
-    wt=$(cat "$d/worktree" 2>/dev/null || jq -r '.worktree // empty' "$d/result.json" 2>/dev/null)
+    # The worktree, read exactly the way cleanup.sh reads it — the same helper.
+    wt=$(harness_worktree "$d")
     if [ -z "$wt" ] || [ ! -d "$wt" ]; then
       n_gone=$((n_gone + 1))
       continue

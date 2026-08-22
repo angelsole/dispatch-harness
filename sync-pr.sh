@@ -10,26 +10,20 @@
 # recreates the worktree from origin if it was cleaned up.
 set -u -o pipefail
 
+# The shared helpers, read from beside this script — the checkout when it runs
+# from there, HARNESS_DIR once install.sh has shipped lib/ into it. Sourced out
+# here rather than inside main() so it is read at parse time, like run-task.sh.
+_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+[ -r "$_COMMON_LIB_PATH" ] \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+. "$_COMMON_LIB_PATH"
+unset _COMMON_LIB_PATH
+
 main() {
 
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
-CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo codex)}"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
-# The codex CLI is optional; without it a Claude worker resolves the conflicts.
-if command -v "$CODEX_BIN" >/dev/null 2>&1; then CODEX_AVAILABLE=1; else CODEX_AVAILABLE=0; fi
-CONFLICT_AGENT="Codex, ChatGPT sub"; CONFLICT_MODEL="Codex"
-[ "$CODEX_AVAILABLE" = 1 ] || { CONFLICT_AGENT="Claude sub"; CONFLICT_MODEL="Claude"; }
-
-# Cap a long-running child. macOS ships no timeout(1), so fall back to a
-# perl alarm wrapper (SIGALRM survives exec and kills the child after N secs).
-with_timeout() {  # $1 = seconds, rest = command + args
-  local secs="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$@"
-  else
-    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
-  fi
-}
+harness_codex_preamble   # CODEX_BIN CODEX_AVAILABLE CONFLICT_AGENT CONFLICT_MODEL
 
 [ $# -eq 1 ] || { echo "usage: sync-pr.sh <RUN-ID>" >&2; exit 2; }
 TICKET="$1"
@@ -262,14 +256,20 @@ run_codex() {  # $1 = label, $2 = prompt
 }
 
 # Claude fallback, mirroring run-task.sh: fresh session, ANTHROPIC_API_KEY unset
-# (subscription billing), worker permissions, same timeout cap. Model/effort come
-# from the run's pinned implementer knobs, with run-task.sh's own defaults.
-IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-$(cat "$RUN_DIR/implementer-model" 2>/dev/null || echo claude-opus-5)}"
-IMPLEMENTER_EFFORT="${IMPLEMENTER_EFFORT:-$(cat "$RUN_DIR/implementer-effort" 2>/dev/null || echo high)}"
+# (subscription billing), worker permissions, same timeout cap. Provider,
+# model, and effort come from the run's pinned implementer knobs, falling back
+# to the same defaults run-task.sh pins them with — one definition, in
+# lib/common.sh. A cross-vendor implementer's model never leaks into this
+# Anthropic-billed fallback.
+IMPLEMENTER_PROVIDER="${IMPLEMENTER_PROVIDER:-$(harness_knob "$RUN_DIR" implementer-provider "$DEFAULT_IMPLEMENTER_PROVIDER")}"
+IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-$(harness_knob "$RUN_DIR" implementer-model "$DEFAULT_IMPLEMENTER_MODEL")}"
+IMPLEMENTER_EFFORT="${IMPLEMENTER_EFFORT:-$(harness_knob "$RUN_DIR" implementer-effort "$DEFAULT_IMPLEMENTER_EFFORT")}"
+CLAUDE_WORKER_MODEL="$IMPLEMENTER_MODEL"
+[ "$IMPLEMENTER_PROVIDER" = anthropic ] || CLAUDE_WORKER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 run_claude_worker() {  # $1 = label, $2 = prompt
   (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
       env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
-      "$CLAUDE_BIN" -p "$2" --model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
+      "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \
     | tee "$RUN_DIR/claude-$1.log" \

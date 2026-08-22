@@ -47,6 +47,10 @@ printf 'commit\n' > "$CLAUDE_MODE"
 cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
 chmod +x "$SRCDIR/run-task.sh"
 cp "$SRC/capacity.sh" "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
+# Every harness script reads lib/common.sh from beside itself, so the shared
+# helpers travel with both staged copies — the layout install.sh produces.
+cp -R "$SRC/lib" "$SRCDIR/lib"
+cp -R "$SRC/lib" "$HARNESS/lib"
 # A failing gate parks every dispatching run at gate_failed, which keeps the
 # whole suite short of gh and a network while still exercising everything the
 # implementer stage hands downstream.

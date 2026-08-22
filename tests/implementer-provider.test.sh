@@ -46,13 +46,15 @@ ATTEMPTS="$ROOT/attempts"
 ZAI_KEY='zai-not-a-real-key-0123456789'
 ZAI_URL='https://api.z.ai/api/anthropic'
 
-mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$STATION/claude"
+mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$STATION/claude" "$HARNESS/lib"
 : > "$SCHED_CALLS"; : > "$CLAUDE_CALLS"; : > "$ENVLOG"; : > "$NPX_CALLS"
 printf 'commit\n' > "$CLAUDE_MODE"
 
 cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
+cp -R "$SRC/lib" "$SRCDIR/lib"
 chmod +x "$SRCDIR/run-task.sh"
 cp "$SRC/capacity.sh" "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
+cp "$SRC/lib/common.sh" "$HARNESS/lib/common.sh"
 ( umask 077; printf '%s\n' "$ZAI_KEY" > "$HARNESS/zai-api-key" )
 
 # A failing gate parks every dispatching run at gate_failed, which keeps the

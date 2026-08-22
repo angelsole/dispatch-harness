@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# >>> --help >>>
 # The Quartermaster — the 19:00 brain between capacity that expires and work
 # that is waiting.
 #
@@ -19,6 +20,7 @@
 # writes runs/<TICKET>/brief.md from the ticket text, and the run is armed with
 # nobody having read the plan. QM_AUTOBRIEF=0 restores the stricter contract
 # where only a human-approved brief is armable. --report never briefs.
+# <<< --help <<<
 #
 # The report is written to runs/quartermaster/<YYYY-MM-DD>.md and pushed as one
 # compact summary when notify.conf sets HARNESS_NTFY_TOPIC.
@@ -30,8 +32,14 @@
 # contacts no model provider.
 set -u
 
+_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+[ -r "$_COMMON_LIB_PATH" ] \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+. "$_COMMON_LIB_PATH"
+unset _COMMON_LIB_PATH
+
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 RUNS="$HARNESS_DIR/runs"
 QM_DIR="$RUNS/quartermaster"
 AGENTS_DIR="$HOME/Library/LaunchAgents"
@@ -74,7 +82,7 @@ REPO_ROOTS="${QM_REPO_ROOTS:-$HOME/Projects}"
 REPO_DEPTH="${QM_REPO_DEPTH:-3}"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { harness_usage "$0" >&2; exit 2; }
 fail()  { echo "FATAL: $*" >&2; exit 1; }
 
 # The capacity accountant, shared with run-task.sh's dispatch preflight so the

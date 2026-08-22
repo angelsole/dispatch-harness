@@ -5586,6 +5586,7 @@ FENCE="$ROOT/fence"
 mkdir -p "$FENCE"
 cp "$SRC/wall.sh" "$FENCE/wall.sh"
 cp -R "$SRC/wall" "$FENCE/wall"
+cp -R "$SRC/lib" "$FENCE/lib"   # wall.sh reads the shared helpers from beside itself
 printf 'the private key\n' > "$ROOT/outside.txt"
 ln -s "$ROOT/outside.txt" "$FENCE/wall/assets/room/escape.png"
 ln -s "$FENCE/wall/assets/room" "$FENCE/wall/assets/shortcut"

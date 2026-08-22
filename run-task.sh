@@ -11,34 +11,24 @@
 #   ~/.claude/harness/runs/<TICKET>/brief.md
 set -u -o pipefail
 
+# The shared helpers, read from beside this script — the checkout when it runs
+# from there, HARNESS_DIR once install.sh has shipped lib/ into it. Sourced out
+# here rather than inside main() for the same reason main() exists: the lib is
+# read at parse time, so editing it while a run is live cannot corrupt that run.
+_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+[ -r "$_COMMON_LIB_PATH" ] \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# shellcheck source=lib/common.sh
+. "$_COMMON_LIB_PATH"
+unset _COMMON_LIB_PATH
+
 # Whole script runs inside main() so bash parses it fully before executing —
 # editing this file while a run is live can no longer corrupt that run.
 main() {
 
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"   # where schedule.sh lives, for deferrals
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
-CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo codex)}"
-# The Codex CLI is optional: a Claude subscription alone runs the same pipeline
-# with a fresh Claude review tier and Claude handling base-sync conflicts.
-# Resolved once per invocation so no stage ever shells out to a missing binary
-# and logs a 127.
-if command -v "$CODEX_BIN" >/dev/null 2>&1; then CODEX_AVAILABLE=1; else CODEX_AVAILABLE=0; fi
-# Labels for the conflict-resolution stage line and the escalation text: they
-# name whichever CLI actually does the work.
-CONFLICT_AGENT="Codex, ChatGPT sub"; CONFLICT_MODEL="Codex"
-[ "$CODEX_AVAILABLE" = 1 ] || { CONFLICT_AGENT="Claude sub"; CONFLICT_MODEL="Claude"; }
-
-# Cap a long-running child. macOS ships no timeout(1), so fall back to a
-# perl alarm wrapper (SIGALRM survives exec and kills the child after N secs).
-with_timeout() {  # $1 = seconds, rest = command + args
-  local secs="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$@"
-  else
-    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
-  fi
-}
+harness_codex_preamble   # CODEX_BIN CODEX_AVAILABLE CONFLICT_AGENT CONFLICT_MODEL
 
 usage() { echo "usage: run-task.sh <TICKET> <repo-path> <branch-name>" >&2; exit 2; }
 [ $# -eq 3 ] || usage
@@ -121,9 +111,9 @@ else
   else                                         ARM="full"; fi
   echo "$ARM" > "$ARM_FILE"
 fi
-# Model/effort knobs follow the same pin-at-first-dispatch rule. Defaults are
-# explicit model IDs, never aliases: "opus" silently changed meaning the day
-# Opus 5 shipped, which is exactly the condition drift this file exists to stop.
+# Model/effort knobs follow the same pin-at-first-dispatch rule. The defaults
+# live in lib/common.sh, with the reason they are spelled-out model IDs rather
+# than aliases, because sync-pr.sh has to fall back to the same two values.
 pin_knob() {  # $1 = file basename, $2 = var name, $3 = default
   local f="$RUN_DIR/$1" v
   if [ -f "$f" ]; then
@@ -142,9 +132,6 @@ positive_int() {
 # this pipeline was built around; `zai` is Zhipu's GLM Coding Plan, served over
 # an Anthropic-compatible endpoint the same `claude` binary speaks. It is the
 # implementer's alone: every other model stage stays where it is.
-DEFAULT_IMPLEMENTER_PROVIDER=anthropic
-DEFAULT_ANTHROPIC_MODEL=claude-opus-5
-DEFAULT_ZAI_MODEL=glm-5.3
 pin_knob implementer-provider IMPLEMENTER_PROVIDER "$DEFAULT_IMPLEMENTER_PROVIDER"
 # An unknown provider must neither reach the injection below nor become the
 # run's pinned condition: say so once, fall back, and re-pin what it used.
@@ -159,7 +146,7 @@ esac
 DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 [ "$IMPLEMENTER_PROVIDER" != zai ] || DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ZAI_MODEL"
 pin_knob implementer-model  IMPLEMENTER_MODEL  "$DEFAULT_IMPLEMENTER_MODEL"
-pin_knob implementer-effort IMPLEMENTER_EFFORT high
+pin_knob implementer-effort IMPLEMENTER_EFFORT "$DEFAULT_IMPLEMENTER_EFFORT"
 # What every OTHER Claude-subscription stage spawns with: the Claude review
 # tier, its fix rounds and the conflict resolver. Normally the implementer's own
 # model — a cross-vendor implementer makes the two different things, and a GLM

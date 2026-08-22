@@ -122,6 +122,7 @@ mkharness() {  # $1 = ticket
   local h="$ROOT/harness-$1"
   mkdir -p "$h/runs/$1"
   cp "$SRC/repos.conf.sh" "$SRC/mirror.sh" "$SRC/worker-settings.json" "$h/"
+  cp -R "$SRC/lib" "$h/lib"   # repos.conf.sh reads the shared helpers from beside itself
   printf '# fixture task\n' > "$h/runs/$1/brief.md"
   printf '%s' "$h"
 }

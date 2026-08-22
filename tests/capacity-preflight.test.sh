@@ -49,6 +49,10 @@ printf 'commit\n' > "$CLAUDE_MODE"
 cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
 chmod +x "$SRCDIR/run-task.sh"
 cp "$SRC/capacity.sh" "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
+# Every harness script reads lib/common.sh from beside itself, so the shared
+# helpers travel with both staged copies — the layout install.sh produces.
+cp -R "$SRC/lib" "$SRCDIR/lib"
+cp -R "$SRC/lib" "$HARNESS/lib"
 # Pin both commands so the fixture proves what it claims: INSTALL_CMD leaves a
 # marker (a deferral must never reach it) and GATE_CMD fails, which parks every
 # dispatching run at gate_failed instead of walking into gh and a network.

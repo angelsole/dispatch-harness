@@ -239,6 +239,7 @@ check "verify: file untouched on failed verify" "$(cat "$HV/repos.local.sh")" "$
 # (as install.sh does inside HARNESS_DIR) before sourcing.
 echo "== repos.conf.sh integration =="
 cp "$CONF" "$H/repos.conf.sh"
+cp -R "$SRC/lib" "$H/lib"   # ...and the shared helpers it reads from beside itself
 conf_check() {
   export HARNESS_DIR="$H"; GATE_CMD=""
   # shellcheck disable=SC1090
