@@ -200,7 +200,17 @@ VERDICT=$(printf '%s' "$VERDICT" | jq -c '
       (.code_evidence // "")
       | test("(^|[[:space:]`(])[^[:space:]:`]+:[1-9][0-9]*([^0-9]|$)")))')
 
-if [ -n "$OUT" ]; then printf '%s\n' "$VERDICT" > "$OUT"; else printf '%s\n' "$VERDICT"; fi
+if [ -n "$OUT" ]; then
+  verdict_tmp="$OUT.tmp.$$"
+  if ! printf '%s\n' "$VERDICT" > "$verdict_tmp" \
+      || ! mv -f "$verdict_tmp" "$OUT"; then
+    rm -f "$verdict_tmp"
+    echo "spec-critic.sh: cannot write verdict to $OUT" >&2
+    exit 1
+  fi
+else
+  printf '%s\n' "$VERDICT"
+fi
 printf 'spec-critic: %s contradiction(s), %s untested criteri(a), %s conflict(s), %s question(s)\n' \
   "$(printf '%s' "$VERDICT" | jq -r '.contradictions | length')" \
   "$(printf '%s' "$VERDICT" | jq -r '.criteria_not_testing_problem | length')" \

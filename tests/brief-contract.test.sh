@@ -229,6 +229,17 @@ check "clean: and nothing else is" \
   "conflicts_with_current_behavior,contradictions,criteria_not_testing_problem,questions"
 has "$out" "spec-critic: 0 contradiction(s)" "clean: the summary states the counts"
 
+BAD_OUT="$RUN/missing/spec-critic.json"
+out=$(critic --brief "$BRIEF" --repo "$REPO" --out "$BAD_OUT"); rc=$?
+check "output: an unwritable verdict destination exits 1" "$rc" "1"
+has "$out" "cannot write verdict to $BAD_OUT" \
+  "output: and names the verdict it failed to write"
+if [ -e "$BAD_OUT" ]; then
+  bad "output: a failed write reported a verdict on disk"
+else
+  ok "output: a failed write leaves no verdict on disk"
+fi
+
 ARGV=$(grep '^flags:' "$CLAUDE_LOG" | head -1)
 has "$ARGV" "--settings $SRC/spec-critic-settings.json" \
   "confinement: the shipped tool policy is what the call runs under"
