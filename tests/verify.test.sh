@@ -216,6 +216,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   # shellcheck disable=SC2086
   "${CLEAN_VERIFY_ENV[@]}" \
       -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
+      -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       TEST_GATE_CMD="$TEST_GATE_CMD" \

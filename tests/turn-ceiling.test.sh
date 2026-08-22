@@ -233,9 +233,14 @@ dispatch() {  # $1 = run id, $2 = mode, $3 = space-separated VAR=VAL overrides
   printf '# fixture task\n' > "$RUN/brief.md"
   printf '%s\n' "$mode" > "$CLAUDE_MODE"
   : > "$CLAUDE_CALLS"; echo 0 > "$ATTEMPTS"
+  # The implementer knobs are unset for the same reason the HARNESS_* ones are:
+  # this suite is dispatched BY the pipeline, and a station shell that pins the
+  # implementer to another provider would otherwise pin every fixture run to it
+  # — which fails setup on the missing credential long before the turn ceiling.
   # shellcheck disable=SC2086
   env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
       -u HARNESS_RESUME_MODE \
+      -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
       CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 \

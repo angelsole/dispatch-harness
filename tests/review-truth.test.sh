@@ -195,6 +195,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   # set it — env applies -u before its own assignments.
   # shellcheck disable=SC2086
   env -u CODEX_HOME -u HARNESS_CODEX_HOME_FALLBACK \
+      -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       TEST_GATE_CMD="$TEST_GATE_CMD" \

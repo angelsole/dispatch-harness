@@ -203,7 +203,8 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
   printf '# fixture task\n' > "$RUN/brief.md"
   rm -f "$INSTALL_MARK"
   # shellcheck disable=SC2086
-  env HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
+      HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
       CLAUDE_CONFIG_DIR="$STATION/claude" \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=cap-test \

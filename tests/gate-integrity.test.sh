@@ -218,6 +218,7 @@ dispatch() {  # $1 = run id, $2 = implementer mode, $3 = VAR=VAL overrides (may 
   : > "$PROMPT"
   # shellcheck disable=SC2086
   env -u CODEX_HOME -u HARNESS_CODEX_HOME_FALLBACK \
+      -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       HARNESS_NOTIFY=0 HARNESS_VERIFY=0 \
