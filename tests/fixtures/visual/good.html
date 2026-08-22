@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>visual gate fixture — good</title>
+<!--
+  A render the gate must PASS, built to be exactly what the checks measure:
+
+    * 16 colours and no others. Every block below is one of the palette
+      entries tests/visual-gate.test.sh writes into palette.png, so
+      offpalette_pct comes out at 0. No text, no gradients, no shadows, no
+      border radius: each of those is an anti-aliased edge, and an
+      anti-aliased edge is a colour that is not in the palette.
+    * Everything on a 16 px grid, at 640x360 with dpr 1.
+    * A luminance floor. The background is #14182c, not #000 — dark enough to
+      read as night, light enough that pure_black_pct is 0.
+    * Static. No animation and no script, so consecutive frames are identical
+      and continuity RMSE is 0.
+
+  Its counterpart is bad.html, which breaks the last three on purpose.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #14182c; }
+  body { width: 640px; height: 360px; overflow: hidden; }
+  i { position: absolute; display: block; }
+</style>
+<body>
+  <!-- ground: two bands, grid-aligned -->
+  <i style="left:0;   top:288px; width:640px; height:32px;  background:#1e2440"></i>
+  <i style="left:0;   top:320px; width:640px; height:40px;  background:#2b3358"></i>
+
+  <!-- towers: every edge on a multiple of 16 -->
+  <i style="left:32px;  top:160px; width:96px;  height:128px; background:#3d4a78"></i>
+  <i style="left:48px;  top:176px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:96px;  top:176px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:48px;  top:224px; width:16px;  height:16px;  background:#f0d890"></i>
+  <i style="left:96px;  top:224px; width:16px;  height:16px;  background:#e0a45c"></i>
+
+  <i style="left:176px; top:96px;  width:112px; height:192px; background:#5a6ea0"></i>
+  <i style="left:192px; top:112px; width:16px;  height:16px;  background:#f0d890"></i>
+  <i style="left:240px; top:112px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:192px; top:160px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:240px; top:160px; width:16px;  height:16px;  background:#f0d890"></i>
+  <i style="left:192px; top:208px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:240px; top:208px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:208px; top:64px;  width:48px;  height:32px;  background:#7d94c0"></i>
+
+  <i style="left:336px; top:144px; width:80px;  height:144px; background:#3d4a78"></i>
+  <i style="left:352px; top:160px; width:16px;  height:16px;  background:#f0d890"></i>
+  <i style="left:384px; top:160px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:352px; top:208px; width:16px;  height:16px;  background:#e0a45c"></i>
+
+  <i style="left:464px; top:112px; width:128px; height:176px; background:#7d94c0"></i>
+  <i style="left:480px; top:128px; width:16px;  height:16px;  background:#f0d890"></i>
+  <i style="left:528px; top:128px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:560px; top:128px; width:16px;  height:16px;  background:#f0d890"></i>
+  <i style="left:480px; top:176px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:528px; top:176px; width:16px;  height:16px;  background:#f0d890"></i>
+  <i style="left:480px; top:224px; width:16px;  height:16px;  background:#e0a45c"></i>
+  <i style="left:544px; top:80px;  width:32px;  height:32px;  background:#a8bce0"></i>
+
+  <!-- far skyline, one plane back -->
+  <i style="left:128px; top:208px; width:32px;  height:80px;  background:#2b3358"></i>
+  <i style="left:288px; top:192px; width:48px;  height:96px;  background:#2b3358"></i>
+  <i style="left:416px; top:224px; width:32px;  height:64px;  background:#2b3358"></i>
+  <i style="left:592px; top:192px; width:48px;  height:96px;  background:#2b3358"></i>
+
+  <!-- street: warm and cool markers on the same grid -->
+  <i style="left:64px;  top:304px; width:32px;  height:16px;  background:#b4703c"></i>
+  <i style="left:224px; top:304px; width:32px;  height:16px;  background:#7a4a2a"></i>
+  <i style="left:400px; top:304px; width:32px;  height:16px;  background:#4a7a3c"></i>
+  <i style="left:528px; top:304px; width:32px;  height:16px;  background:#7ab45c"></i>
+  <i style="left:0;     top:336px; width:640px; height:16px;  background:#4a2e1e"></i>
+  <i style="left:16px;  top:336px; width:64px;  height:16px;  background:#2e4a2e"></i>
+  <i style="left:288px; top:336px; width:64px;  height:16px;  background:#2e4a2e"></i>
+  <i style="left:560px; top:336px; width:64px;  height:16px;  background:#2e4a2e"></i>
+  <i style="left:0;     top:352px; width:640px; height:8px;   background:#d6e2f5"></i>
+</body>
