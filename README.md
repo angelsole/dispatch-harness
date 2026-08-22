@@ -253,9 +253,10 @@ absence costs exactly the feature named.
 | `python3` (≥ 3.9, with `venv`) | `install.sh --verifier` builds a venv and installs the scoring library into it; it also runs the one-time login capture for demo recordings. Nothing else needs Python. | [The verifier](docs/reference.md#the-verifier) |
 | `docker`, `nc`, `shellcheck` | The copyable Postgres preflight example, and this repo's own gate. | [`examples/`](examples/), [Development](#development) |
 
-The verifier also needs a third-vendor credential for a backend that returns
-logprobs — never Claude and never the two subscriptions the pipeline runs on.
-Without both, the stage records one line and the run is exactly what it was.
+The verifier also needs a third-vendor credential — never Claude and never the
+two subscriptions the pipeline runs on, because no model grades its own
+homework. Without both, the stage records one line and the run is exactly what
+it was.
 
 Portability: the scripts target **bash 3.2** (the macOS default), and macOS
 ships no `timeout(1)`, so a `perl -e 'alarm ...'` wrapper is the process cap.
@@ -357,9 +358,11 @@ which round the gate fails, what a run costs, how many diffs went unreviewed
 ([schema](docs/reference.md#metrics-schema), [how to read it](docs/design-notes.md#reading-the-pipelines-own-vitals)).
 
 None of that says how *well* a run satisfied its brief, so after the review stage
-a third vendor scores the run's whole trajectory — the implementer's steps, the
-gate rounds, the reviewer's notes, the observed end state — as a number in
-[0, 1], overall and per acceptance criterion.
+a third vendor scores the finished change — the diff, and the run's own record
+of producing it — against a fixed five-item rubric: brief coverage, unrequested
+scope, diff minimality, test integrity and resume coherence. Every item is asked
+on its own, several times, and every answer has to quote the line that decides
+it; the headline number in [0, 1] is the mean of the five.
 **It is advisory, and it never gates.** Nothing in the pipeline branches on it;
 a verifier that is off, unkeyed or broken leaves the run byte-for-byte what it
 would have been. Turning it on: [The verifier](docs/reference.md#the-verifier).

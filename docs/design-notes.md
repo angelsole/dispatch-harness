@@ -267,11 +267,26 @@ not be sorted by quality and the paired experiment in
 [`bench/DESIGN.md`](../bench/DESIGN.md) had no cheap proxy. Hence the
 [verifier](reference.md#the-verifier).
 
-The score needs logprobs, which neither Claude nor the ChatGPT subscription
-exposes — so the verifier runs on DeepSeek, on Gemini via Vertex (as a
-service-account principal), or on any OpenAI-compatible server that returns
-them. That constraint happens to enforce the rule the review stage already
-follows: no model grades its own homework.
+The verifier runs on DeepSeek, on Gemini via Vertex (as a service-account
+principal), or on any OpenAI-compatible server, which enforces the rule the
+review stage already follows: no model grades its own homework. It is not enough
+on its own — self-preference bias is capability-independent and survives being
+asked politely for impartiality — so the evidence is anonymised on the way out:
+every vendor and model name becomes the `IMPLEMENTER`/`REVIEWER` role that wore
+it, and the judge cannot tell whose work it is grading.
+
+**A vector, not a scalar.** One number over a whole trajectory is close to
+uninterpretable: judges are noisy on long agentic-coding outputs, they prefer
+their own family, and they reward length — which would make the score rise with
+exactly the bloat it should be penalising. So five fixed rubric items are scored
+independently, one call each, K samples apiece aggregated by median; every
+sample must quote the diff hunk or trajectory line that decides it, and one that
+cannot is worth 0 however confident its number; and the headline is the plain
+MEAN of the items, an aggregate nothing about trajectory length can move. Four
+of the five items read the DIFF against the brief's acceptance criteria as a
+pre-stated spec, which is the regime that measures the fewest false positives;
+only resume coherence reads the trajectory, and only when the run actually
+resumed.
 
 **It is advisory, and it never gates.** No status, no gate verdict, no PR
 decision, no ready-promotion and no notification priority depends on the number.
@@ -279,10 +294,12 @@ A verifier that is off, unkeyed, uninstalled, timed out, crashed or writing
 garbage leaves the run byte-for-byte what it would have been — same `status`,
 same `pr_url`, same PR body. It is data.
 
-**What it costs.** `(1 + criteria) × K` calls, each carrying the clipped
-trajectory — with the default K, a three-criterion brief makes 12 calls over a
-trajectory bounded at 400 000 characters. `HARNESS_VERIFY_MAX_CRITERIA=0`
-(overall only), `HARNESS_VERIFY_EVALS=1` and a smaller
+**What it costs.** `items × K` calls: 15 with the defaults, 12 for a run that
+never resumed. The prompts are a few hundred characters and each answer is one
+small JSON object, so the bill is the evidence — a diff item carries at most a
+quarter of `HARNESS_VERIFY_MAX_CHARS` and the one trajectory item all of it,
+which is ~600k input tokens in the worst case against the ~2.7M of the
+single-scalar design it replaced. `HARNESS_VERIFY_EVALS=1` and a smaller
 `HARNESS_VERIFY_MAX_CHARS` are the dials, in that order of effect.
 
 ## The public-benchmark experiment
