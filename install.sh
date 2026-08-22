@@ -17,6 +17,13 @@
 #   ./install.sh --statusline     wire without prompting when run in a terminal
 #   ./install.sh --no-statusline  never touch settings.json, just print how
 #   ./install.sh --verifier       also build the opt-in verifier venv (needs python3)
+#   ./install.sh --pixel          also install /dispatch-pixel, the visual planner
+#   ./install.sh --no-pixel       never install it
+#
+# /dispatch-pixel is the planner protocol for the visual profile. Without either
+# flag it is installed only on a machine that already does visual work: one that
+# has the skill already, pins a VISUAL_GATE_CMD in repos.local.sh, or still
+# carries the old ~/.claude/creative-harness the profile replaces.
 #
 # Env overrides:
 #   HARNESS_DIR           install target         (default: ~/.claude/harness)
@@ -38,6 +45,7 @@ usage() { harness_usage "$0"; }
 MODE=symlink
 STATUSLINE=ask
 VERIFIER=0
+PIXEL=auto
 for arg in "$@"; do
   case "$arg" in
     --copy)          MODE=copy ;;
@@ -45,6 +53,8 @@ for arg in "$@"; do
     --statusline)    STATUSLINE=yes ;;
     --no-statusline) STATUSLINE=no ;;
     --verifier)      VERIFIER=1 ;;
+    --pixel)         PIXEL=yes ;;
+    --no-pixel)      PIXEL=no ;;
     -h|--help)       usage; exit 0 ;;
     *)               echo "unknown option: $arg" >&2; echo >&2; usage >&2; exit 2 ;;
   esac
@@ -53,14 +63,32 @@ done
 SRC="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_ROOT="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 SKILLS=(dispatch briefed-dispatch)
+# Three signals that this machine does visual work, any one of which is enough.
+# The legacy directory is the migration case: the creative harness used to be a
+# separate install, and its operator must not lose /dispatch-pixel by upgrading.
+if [ "$PIXEL" = auto ]; then
+  PIXEL=no
+  if [ -f "$SKILLS_ROOT/dispatch-pixel/SKILL.md" ] \
+     || [ -d "$HOME/.claude/creative-harness" ] \
+     || grep -q 'VISUAL_GATE_CMD=[^"]*"[^"]' "$HARNESS_DIR/repos.local.sh" 2>/dev/null; then
+    PIXEL=yes
+  fi
+fi
+[ "$PIXEL" = no ] || SKILLS=("${SKILLS[@]}" dispatch-pixel)
 SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 
-# Runtime files installed into HARNESS_DIR. `wall` and `lib` are directories:
-# the wall's page and server travel with wall.sh, while lib/ holds the shared
-# runtime pieces every installed script reads from beside itself.
+# Runtime files installed into HARNESS_DIR. `wall`, `lib` and `profiles` are
+# directories: the wall's page and server travel with wall.sh, lib/ holds the
+# shared runtime pieces every installed script reads from beside itself, and
+# profiles/ holds the optional stages run-task.sh loads per repo — a repo's
+# VISUAL_GATE_CMD and MCP_CONFIG name paths inside it.
+#
+# The profiles' own credential template (profiles/visual/factory.conf.sh.example)
+# is installed but deliberately NOT seeded: it holds two API keys, and a
+# credential should be created by hand, like linear-api-key.
 FILES=(
-  lib mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
+  lib profiles mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
   metrics.sh attach.sh cleanup.sh janitor.sh preview.sh station.sh wall.sh wall demo-auth.sh
   auth-capture.py verify.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
   planner-settings.json brief-template.md
@@ -212,6 +240,13 @@ wire_statusline
 echo
 echo "Installed into $HARNESS_DIR (mode: $MODE)."
 echo "Next: pin your repos in $HARNESS_DIR/repos.local.sh — see README.md."
+if [ "$PIXEL" = yes ]; then
+  echo
+  echo "Visual profile: /dispatch-pixel is installed. A repo activates the profile"
+  echo "  by carrying .creative/ or by pinning VISUAL_GATE_CMD in repos.local.sh."
+  echo "  Asset factories (optional): cp $HARNESS_DIR/profiles/visual/factory.conf.sh.example \\"
+  echo "      $HARNESS_DIR/factory.conf.sh && chmod 600 $HARNESS_DIR/factory.conf.sh"
+fi
 
 # An `[ … ] && …` tail would make a plain install exit 1 under `set -e`.
 if [ "$VERIFIER" = 1 ]; then install_verifier; fi
