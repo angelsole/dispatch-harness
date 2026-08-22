@@ -69,17 +69,87 @@ CRITIC_QUALITY="$ROOT/critic-quality"; mkdir -p "$CRITIC_QUALITY"
 
 VISUAL_PY="${VISUAL_PY:-$HOME/.local/share/uv/tools/shot-scraper/bin/python}"
 HAVE_PW=0
-"$VISUAL_PY" - <<'PY' >/dev/null 2>&1 && HAVE_PW=1
+"$VISUAL_PY" - "$CREATIVE/frames.py" <<'PY' >/dev/null 2>&1 && HAVE_PW=1
+import importlib.util
+import sys
 from playwright.sync_api import sync_playwright
+
+spec = importlib.util.spec_from_file_location("visual_frames", sys.argv[1])
+frames = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frames)
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=[
-        "--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
+    browser = frames.launch_chromium(p)
     browser.close()
 PY
 HAVE_PY=0
 python3 -c 'import numpy, PIL' >/dev/null 2>&1 && HAVE_PY=1
 HAVE_MAGICK=0
 command -v magick >/dev/null 2>&1 && HAVE_MAGICK=1
+
+# A shot-scraper upgrade can leave Playwright importable while its versioned
+# browser cache is empty. The renderer must use an installed stable Chrome in
+# that exact state, but must not conceal a crash when the managed browser does
+# exist. This is a pure launch-policy test; Part A below remains the integration
+# test against whichever real browser this machine can run.
+if python3 - "$CREATIVE/frames.py" "$ROOT" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+spec = importlib.util.spec_from_file_location("visual_frames", sys.argv[1])
+frames = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frames)
+
+
+class Chromium:
+    def __init__(self, executable, managed_error, fallback_succeeds=True):
+        self.executable_path = executable
+        self.calls = []
+        self.managed_error = managed_error
+        self.fallback_succeeds = fallback_succeeds
+
+    def launch(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("channel") == "chrome" and self.fallback_succeeds:
+            return "stable-chrome"
+        raise RuntimeError(self.managed_error)
+
+
+class Playwright:
+    def __init__(self, chromium):
+        self.chromium = chromium
+
+
+missing_path = pathlib.Path(sys.argv[2]) / "no-managed-chromium"
+missing = Chromium(str(missing_path), "Executable doesn't exist at %s" % missing_path)
+assert frames.launch_chromium(Playwright(missing)) == "stable-chrome"
+assert [call.get("channel") for call in missing.calls] == [None, "chrome"]
+
+present_path = pathlib.Path(sys.argv[2]) / "managed-chromium"
+present_path.touch()
+present = Chromium(str(present_path), "launch failed")
+try:
+    frames.launch_chromium(Playwright(present))
+except RuntimeError as exc:
+    assert str(exc) == "launch failed"
+else:
+    raise AssertionError("managed browser crash was hidden by Chrome fallback")
+assert len(present.calls) == 1
+
+missing_but_broken = Chromium(str(missing_path), "launch failed")
+try:
+    frames.launch_chromium(Playwright(missing_but_broken))
+except RuntimeError as exc:
+    assert str(exc) == "launch failed"
+else:
+    raise AssertionError("a non-missing launch failure was hidden by Chrome fallback")
+assert len(missing_but_broken.calls) == 1
+PY
+then
+  ok "renderer falls back only when Playwright's managed Chromium is missing"
+else
+  bad "renderer browser fallback policy"
+fi
 
 # --- the fake critic ---------------------------------------------------------
 # One `claude` stand-in for every model call in this suite, answering in the
