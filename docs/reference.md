@@ -240,7 +240,7 @@ disk — rather than losing the run.
 
   | Class | Matched on | In the default set |
   | --- | --- | --- |
-  | `type-check` | `tsc`, `typecheck`, `type-check`, `mypy`, `pyright`, `analyze` | yes |
+  | `type-check` | `tsc`, `typecheck`, `type-check`, `type_check`, `check:types`, `check-types`, `check_types`, `types:check`, `cargo check`, `mypy`, `pyright`, `analyze` | yes |
   | `lint` | `lint`, `rubocop`, `shellcheck`, `ruff`, `flake8`, `clippy` | yes |
   | `test` | `test`, `spec`, `jest`, `cypress` | yes |
   | `build` | `build`, `compile`, `webpack` | no |
