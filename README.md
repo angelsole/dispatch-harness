@@ -25,6 +25,7 @@ then the whole pipeline runs on flat-rate plans. Only the implementer and
 reviewer are fixed by the pipeline. This page is the product; the manuals are
 under [`docs/`](docs/) — [Operations](docs/operations.md) ·
 [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) ·
+[The wall's data contract](docs/wall-contract.md) ·
 [Design notes](docs/design-notes.md).
 
 ## Why it's built this way
@@ -384,7 +385,7 @@ test.
 | `brief-template.md` `skills/dispatch/SKILL.md` `skills/briefed-dispatch/SKILL.md` | The per-task contract, and the planner protocol with and without the approval pause |
 | `install.sh` `notify.conf.example` `demo.conf.sh.example` `repos.local.sh.example` `demo-auth.sh` `auth-capture.py` | Idempotent installer, the templates it seeds your local config from, and the one-time login capture for demo recordings |
 | `gate.sh` `tests/` `.github/workflows/gate.yml` | This repo's own gate (`shellcheck` + `bash -n`, then every suite) and the same gate on Linux CI |
-| `docs/` `bench/DESIGN.md` `examples/` | [Operations](docs/operations.md) · [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) · [Design notes](docs/design-notes.md), the benchmark design, and copyable templates |
+| `docs/` `bench/DESIGN.md` `examples/` | [Operations](docs/operations.md) · [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) · [The wall's data contract](docs/wall-contract.md) · [Design notes](docs/design-notes.md), the benchmark design, and copyable templates |
 | `README.md` `FLOW.md` `harness-flow.html` `RELEASING.md` `LICENSE` `.gitignore` `.gitattributes` | This front page, the pipeline diagrams, the publication checklist, the license, and Git metadata |
 
 ## Development

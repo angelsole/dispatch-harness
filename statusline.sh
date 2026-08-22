@@ -45,11 +45,27 @@ usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
 # here, and tests/statusline.test.sh asserts every literal in both scripts maps
 # to a known actor (never the "?" fallback). Add the mapping in the same commit
 # as any new stage string.
+#
+# The vocabulary itself now lives in wall/stage-vocab.json, which wall/server.js
+# reads and docs/wall-contract.md describes. These arms stay hardcoded on
+# purpose: a statusline re-renders on every prompt and must not pay for a jq
+# read of a table to do it. tests/stage-vocab.test.sh drives harness_actor with
+# every row in that file and fails the moment the two disagree — including the
+# colour — so the copy is checked rather than trusted.
 harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
   case "$1" in
     waiting*)                  HARNESS_ACTOR='needs input'; HARNESS_ACTOR_COLOR="$C_RED" ;;
     implementing*|resuming*)   HARNESS_ACTOR='Opus';        HARNESS_ACTOR_COLOR="$C_BLUE" ;;
     'review skipped'*)         HARNESS_ACTOR='skipped';     HARNESS_ACTOR_COLOR="$C_DIM" ;;
+    # The creative harness's rounds, carried here ahead of re-unifying the two
+    # walls: nothing in this repo emits them yet, and a shared vocabulary is
+    # only shared if both copies already know the whole of it. Above the review
+    # arms because the table hands every `visual *` stage to these rows, and the
+    # Claude one leads for the same reason its code path does — a visual fix
+    # that fell through to the Claude tier is not Codex's work.
+    'visual fix'*Claude*)      HARNESS_ACTOR='Claude';      HARNESS_ACTOR_COLOR="$C_BLUE" ;;
+    'visual fix'*Codex*)       HARNESS_ACTOR='Codex';       HARNESS_ACTOR_COLOR="$C_GREEN" ;;
+    'visual gate'*)            HARNESS_ACTOR='visual';      HARNESS_ACTOR_COLOR="$C_YELLOW" ;;
     'review — Codex unavailable'*|*'— Claude reviewer'*) \
                                HARNESS_ACTOR='Claude';      HARNESS_ACTOR_COLOR="$C_BLUE" ;;
     # Written after the LAST tier gave up, so it is nobody's work in progress —

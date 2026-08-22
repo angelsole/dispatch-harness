@@ -356,6 +356,14 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
 | `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
 
+That table is the paper trail for a human. The same directory is also a **wire
+format**: [Ghost Shift](wall.md) reads it live over the shoulder of a running
+pipeline, so which of these files it opens, which `result.json` fields it takes
+out of them, and how much half-written-ness each one tolerates is written down
+and tested in [the wall's data contract](wall-contract.md) — along with the
+stage-text vocabulary (`wall/stage-vocab.json`) that `statusline.sh` and
+`status.sh` parse out of `status` too.
+
 ### Spec attachments
 
 When the real spec lives in an office document — a Word feature spec, an Excel
