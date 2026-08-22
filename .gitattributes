@@ -4,3 +4,9 @@
 # in a pull request. What actually pins the file is its sha256 in
 # wall/THIRD_PARTY.md — read that, not the bytes.
 wall/vendor/** -diff linguist-vendored
+
+# The frozen reference board the visual critic grades against, and the eval
+# set's contact sheets. Binary by nature, and `-diff` keeps a re-frozen board
+# from printing as pages of nothing in a review.
+.creative/refs/** -diff
+profiles/visual/creative/eval/sheets/** -diff

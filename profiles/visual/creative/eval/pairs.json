@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "The critic's eval set: pairs of contact sheets whose ranking a human has",
+    "already settled, so that a change to the prompt, the model or the protocol",
+    "is answered with a number instead of an opinion. Run it with",
+    "profiles/visual/creative/critic-eval.sh — live only, and it costs real money.",
+    "",
+    "Every path is relative to profiles/visual/creative/eval/. Per pair:",
+    "  id      — what the table calls it.",
+    "  better  — the sheet the human ranked higher. The runner promotes this one",
+    "            as the CHAMPION, because that is the role the reigning render",
+    "            plays in a real round.",
+    "  worse   — the sheet the human ranked lower; run as the CHALLENGER. null",
+    "            means 'the same file again', which is how the identical-sheets",
+    "            pair is written.",
+    "  challenger — optional, 'worse' (default) or 'better': which side is",
+    "            presented as the challenger. Flip it to author a pair whose",
+    "            expected answer is `better`.",
+    "  expect  — what the calibrated gate should return for the challenger:",
+    "            better | worse | tie.",
+    "",
+    "Only pairs whose expect is `better` or `worse` are enforced (a wrong",
+    "answer there exits non-zero): those are the ones a human judged outright.",
+    "A `tie` pair is measured and reported — a concordant strong verdict on one",
+    "is information, not a regression.",
+    "",
+    "The sheets are the real artefacts from PR #1's live demo of the wall:",
+    "six frames of the same shot, 3x2, under the 500 KB the Read tool",
+    "recompresses above.",
+    "",
+    "refs — optional directory of reference-board PNGs (relative to this",
+    "file), handed to the critic exactly as the gate hands VISUAL_REFS. Measure",
+    "with the board the gate will use: without one the judge grades raw taste,",
+    "which is not what the gate acts on. --refs on the command line overrides."
+  ],
+  "rubric": "../../../../.creative/rubric.md",
+  "refs": "../../../../.creative/refs",
+  "pairs": [
+    {
+      "id": "dom-vs-chaotic",
+      "better": "sheets/dom-wall.png",
+      "worse": "sheets/canvas-chaotic.png",
+      "expect": "worse",
+      "note": "The shipped DOM city against the rejected 'city life' canvas render. The owner's verdict was unambiguous and instant; the un-calibrated critic answered `worse` when the DOM sheet was labelled the champion and `worse` again when the labels were swapped, which is the status-quo bias this protocol exists to remove. The pair that has to come out right."
+    },
+    {
+      "id": "dom-vs-parity",
+      "better": "sheets/dom-wall.png",
+      "worse": "sheets/canvas-parity.png",
+      "expect": "tie",
+      "note": "The ?world=canvas parity port of the same city: near-equal by eye, and the pair that produced `worse`/`fail` on one run and `better`/`pass` on the next from identical inputs. A concordant `better` or `worse` here is tolerated and reported rather than failed — what would be a regression is the two orders disagreeing every time."
+    },
+    {
+      "id": "dom-vs-dom",
+      "better": "sheets/dom-wall.png",
+      "worse": null,
+      "expect": "tie",
+      "note": "The same sheet twice. There is no picture to prefer, so anything but `tie` is the judge preferring a position over an image — the cheapest possible detector of the bias, and the one that must never regress."
+    }
+  ]
+}

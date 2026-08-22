@@ -17,8 +17,7 @@
     "  state    the wall's run state: active | alarm | ready | failed",
     "  color    statusline.sh's colour for the actor column",
     "  example  a stage string this entry must win, and no other entry may",
-    "  inert    true when nothing in THIS repo emits it yet — the creative harness's",
-    "           visual stages, carried here ahead of re-unifying the two walls",
+    "  inert    true when nothing in THIS repo emits it yet",
     "  why      a note for the row, when the row is not self-evident",
     "",
     "Consumers: wall/server.js reads this file at startup. statusline.sh keeps",
@@ -87,8 +86,7 @@
       "key": "opus",
       "state": "active",
       "color": "blue",
-      "example": "visual fix round 2 — Claude reviewer (Claude sub)",
-      "inert": true
+      "example": "visual fix round 2 — Claude reviewer (Claude sub)"
     },
     {
       "pattern": "^visual fix.*Codex",
@@ -98,7 +96,6 @@
       "state": "active",
       "color": "green",
       "example": "visual fix round 2 — Codex (ChatGPT sub)",
-      "inert": true,
       "why": "Vetoed by Claude for the same reason the code path is: a visual fix that fell through to the Claude tier belongs to the row above."
     },
     {
@@ -108,8 +105,7 @@
       "state": "active",
       "color": "yellow",
       "example": "visual gate — rendering the shots (script, no model)",
-      "inert": true,
-      "why": "The creative harness's render-and-grade round. Deterministic like the test gate, so it borrows the gate's neon and its rung rather than inventing a floor."
+      "why": "The visual profile's render-and-grade round. Deterministic like the test gate, so it borrows the gate's neon and its rung rather than inventing a floor."
     },
     {
       "pattern": "^verify",
@@ -212,7 +208,7 @@
       "state": "failed",
       "color": "dim",
       "example": "done: gate_failed",
-      "why": "Match the failure WORDS, not a whitelist of the good ones: every failing STATUS in run-task.sh ends in _failed or is `rejected` (the creative harness's `visual_failed` included), while sync-pr.sh's prose `done: PR branch synced …` is a success."
+      "why": "Match the failure WORDS, not a whitelist of the good ones: every failing STATUS ends in _failed or is `rejected` — the visual profile's `visual_failed` included, which is why a profile can add an outcome without touching this table — while sync-pr.sh's prose `done: PR branch synced …` is a success."
     },
     {
       "pattern": "^done:",

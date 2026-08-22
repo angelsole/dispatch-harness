@@ -116,7 +116,7 @@ PREREQ_BINS='claude gh jq git bash curl perl lsof uuidgen'
 # open docs/, and README's Prerequisites table is the single answer; letting a
 # binary count as documented because a design note happens to mention it in
 # passing would be a weaker check than the one this replaces.
-DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl'
+DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl magick'
 
 # Guarded at every call site and degrade silently when absent — README owes
 # them nothing.
@@ -325,7 +325,9 @@ list_ok "$missing" "claim: Repository layout names every tracked top-level file"
 # for the handful a newcomer needs, docs/ for the rest — or, for the ones whose
 # home is a config file, in the shipped template that seeds it.
 echo "== env knobs vs. the docs =="
-KNOBS="$(grep -ohE 'HARNESS_[A-Z_]+' "$SRC/run-task.sh" | sort -u)"
+# shellcheck disable=SC2046  # the globs are the point; these paths hold no spaces
+KNOBS="$(grep -ohE 'HARNESS_[A-Z_]+' "$SRC/run-task.sh" \
+  $(echo "$SRC"/lib/*.sh) $(echo "$SRC"/profiles/*/profile.sh) | sort -u)"
 n=$(printf '%s\n' "$KNOBS" | grep -c '' | tr -d ' ')
 if [ "$n" -ge 10 ]; then ok "knobs: run-task.sh reads $n HARNESS_* knobs"; else bad "knobs: only $n HARNESS_* knobs found — extraction broken?"; fi
 
@@ -366,7 +368,9 @@ list_ok "$missing_ref" "knobs: reference carries every QM_* knob" \
 # leaves the orchestrator staring at a word it has no instruction for — which
 # is exactly what an undocumented `deferred_capacity` would have done.
 echo "== run statuses vs. the planner's triage list =="
+# shellcheck disable=SC2046  # a profile's outcome_status hook writes STATUS too
 STATUSES="$(grep -ohE '(^|[^_A-Za-z])STATUS="[a-z_]+"' "$SRC/run-task.sh" \
+  $(echo "$SRC"/profiles/*/profile.sh) \
   | tr -d ' \t' | sed -e 's/^STATUS="//' -e 's/"$//' | sort -u)"
 n=$(printf '%s\n' "$STATUSES" | grep -c '' | tr -d ' ')
 if [ "$n" -ge 8 ]; then ok "status: found $n run outcomes"; else bad "status: only $n run outcomes found — extraction broken?"; fi

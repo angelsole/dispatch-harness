@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>visual gate fixture — bad</title>
+<!--
+  A render the gate must FAIL, and fail on the checks alone — no critic, no
+  opinion, no model. It breaks exactly three things good.html gets right:
+
+    * Pure black. #000 over most of the frame, so pure_black_pct lands far
+      above any sane ceiling and min_luma is 0. This is the "the scene has no
+      luminance floor" failure — the one the shipped wall itself very nearly
+      has.
+    * Off-palette. Two smooth gradients and a blur, i.e. thousands of colours
+      none of which are in the 16-entry LUT.
+    * Off-grid. The gradient panels sit at 37 px and 213 px, on nothing.
+
+  Static and scriptless like good.html: what differs between the two fixtures
+  is only what is being measured.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #000; }
+  body { width: 640px; height: 360px; overflow: hidden; }
+  i { position: absolute; display: block; }
+</style>
+<body>
+  <i style="left:37px; top:23px; width:229px; height:117px;
+            background:linear-gradient(127deg,#ff00c8,#00ffd5 60%,#ffe600)"></i>
+  <i style="left:213px; top:171px; width:311px; height:83px;
+            background:radial-gradient(circle at 30% 40%,#7b2fff,#0b0033 78%);
+            filter:blur(1px)"></i>
+  <i style="left:451px; top:37px; width:97px; height:61px;
+            background:linear-gradient(19deg,#123,#abcdef);
+            border-radius:19px"></i>
+</body>

@@ -306,6 +306,65 @@ which is ~600k input tokens in the worst case against the ~2.7M of the
 single-scalar design it replaced. `HARNESS_VERIFY_EVALS=1` and a smaller
 `HARNESS_VERIFY_MAX_CHARS` are the dials, in that order of effect.
 
+## The extension points, and why there are exactly six
+
+For a year the pipeline had one shape and every addition went straight into
+`run-task.sh`. Then two independent features arrived: the [verifier](#the-verifier-why-a-third-vendor),
+and — in a fork of this repo that existed for nothing else — a visual gate that
+renders the app and asks a critic whether the picture got better. They were
+written a month apart by people not talking to each other, and they landed on
+the same slots: a stage after the gate, a clause in the reviewer's prompt, a
+section in the PR body, an object in `result.json`, a rung in the outcome
+ladder, an export the implementer alone may see.
+
+Two features converging on the same seams is what an extension point *is*, so
+the seams are named. `lib/profile.sh` holds the registry; the six hooks are:
+
+| Hook | Where it fires | Filled by |
+|---|---|---|
+| `implementer_env` | inside the implementer's subshell, before the spawn | the provider seam (`apply_provider_env`) · the visual profile's factory keys |
+| `post_gate` | between test gate #1 and the review | the visual profile's render-and-grade rounds |
+| `review_prompt_extra` | appended to the reviewer's prompt | the visual profile's "you cannot render this yourself" clause |
+| `pr_body_sections` | appended to the PR body | the verifier's score table · the visual profile's contact sheet |
+| `result_json_extra` | merged into `result.json` | the visual profile's `visual` object |
+| `outcome_status` | the §6 elif ladder, below `gate_failed` | the visual profile's `visual_failed` |
+
+**A hook nothing registers produces nothing at all.** Not an empty string, not a
+null key, not a blank line — the branch is not taken. That is the whole
+guarantee: a dispatch to a repo with no profile writes the `result.json` it
+wrote before any of this existed, key for key, which is what
+`tests/visual-gate.test.sh` asserts against a literal key list rather than
+against `has("visual") == false`.
+
+**Registration order is core first.** `run-task.sh` claims its own slots before
+`harness_load_profiles` runs, so a profile can add to a slot and never displace
+what the pipeline put there. Implementations must not depend on each other;
+`hook_run` fires them in order and stops at the first failure, which is how a
+missing credential still aborts a spawn.
+
+**Three shapes of hook, not one.** `hook_run` fires implementations in the
+caller's own shell, so `post_gate` can move the stage and set variables the rest
+of the run reads. `hook_claim` is for a decision — the first implementation to
+return 0 has set `STATUS` and owns the outcome. `hook_json` merges objects. A
+single generic "call and capture stdout" would have forced the outcome ladder to
+round-trip a status word through a subshell, which is a data channel where a
+plain assignment belongs.
+
+**Where the seams sit is a constraint, not an aesthetic.** They are at region
+boundaries and every edit inside `run-task.sh` is one line, because the file is
+worked on concurrently. `review_prompt_extra` splices at the *end* of the
+reviewer's prompt rather than into its body for the same reason — the checklist
+is contract text several stages read, and a hook woven through it would make
+every future edit of the checklist an edit of the seam.
+
+**A profile is a directory, not a config flag.** `profiles/<name>/activate.sh`
+is a predicate over the target repo, sourced in a subshell so deciding whether a
+profile applies cannot change the run it is deciding about;
+`profiles/<name>/profile.sh` is sourced into `run-task.sh`'s shell, because its
+hooks are. The visual profile applies to a repo that pins `VISUAL_GATE_CMD` *or*
+carries a `.creative/` contract — having to do both was a step that only ever
+got forgotten. `HARNESS_PROFILES=0` switches the whole mechanism off.
+
 ## The public-benchmark experiment
 
 [`bench/DESIGN.md`](../bench/DESIGN.md) specifies a **paired** comparison on a

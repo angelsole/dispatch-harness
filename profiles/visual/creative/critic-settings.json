@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "Tool policy for the visual critic: the fresh `claude -p` session that",
+    "grades a contact sheet against the rubric and against the reigning",
+    "champion. It is the narrowest profile the harness ships, for two reasons.",
+    "",
+    "First, the critic's prompt is UNTRUSTED TEXT. The rubric comes from the",
+    "target repo (.creative/rubric.md) or from a planner-written brief, and the",
+    "frames it looks at were produced by the very worker it is grading. A critic",
+    "with a shell is a critic a bad rubric can turn into a shell. There is no",
+    "Bash rule here at all, and Bash is denied besides: permission patterns",
+    "match the head of a command line and cannot see what it goes on to run.",
+    "",
+    "Second, a critic that can write is a critic that can grade its own work.",
+    "No Edit, no Write, no Task — the whole point of this stage is a cold read",
+    "by something that had no hand in the render. Read and Glob are what it",
+    "needs and all it gets: the reference board, the champion sheet, the",
+    "challenger sheet, and the JSON it returns through --json-schema.",
+    "",
+    "The network tools are denied so the images and the rubric cannot leave the",
+    "machine, and the harness's own secrets are denied by path for the same",
+    "reason the planner's are: a critic that can read them writes them into a",
+    "verdict that later stages quote."
+  ],
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob"
+    ],
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Task",
+      "TodoWrite",
+      "Read(~/.claude/harness/linear-api-key)",
+      "Read(~/.claude/harness/notify.conf)",
+      "Read(~/.claude/harness/auth/**)",
+      "Read(~/.claude/harness/factory.conf.sh)"
+    ]
+  }
+}

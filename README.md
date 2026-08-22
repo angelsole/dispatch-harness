@@ -105,8 +105,12 @@ sequenceDiagram
     U->>F: approve (± create a ticket)
     F->>S: launch run (background)
     S->>S: worktree from origin/<base><br/>copy .env · install deps
-    S->>O: brief.md
+    S->>O: brief.md<br/>+ factory keys, if MCP_CONFIG is pinned
     O->>O: design + implement + commit<br/>(cheaper subagents explore)
+
+    opt MCP_CONFIG is pinned (repos with an asset factory)
+        O->>O: PixelLab / Retro Diffusion via MCP or factory.py<br/>then the mandatory post-pass
+    end
 
     alt brief doesn't resolve a fork
         O->>F: QUESTIONS.md — needs_input ⏸
@@ -116,7 +120,16 @@ sequenceDiagram
     end
 
     S->>S: test gate #1 (per-repo cmds)
-    S->>C: diff + brief + gate log
+    opt the visual profile applies (repos judged by eye)
+        S->>S: visual gate: render fixed shots<br/>model-free checks · contact sheet
+        S->>S: critic (fresh, no shell): rubric<br/>+ pairwise vs champion
+        alt worse than the champion, or a check failed
+            S->>C: visual fix round — frames + one_fix<br/>(Claude fallback when Codex is unavailable)
+            C->>S: fix commits, then re-render
+        end
+    end
+
+    S->>C: diff + brief + gate log<br/>+ contact-sheet.png + visual-score.json
     C->>C: find: expected properties before the diff, then<br/>gate-gaming · logic · blind spots<br/>reuse · hardcoding · quality — fixes nothing
 
     alt fundamental flaw
@@ -247,6 +260,15 @@ laptop's run shows on the office wall — and never blocks a run if that fails.
 re-merges the base into an already-pushed branch and hands the conflicts to the
 same reviewer backend the run used, escalating rather than guessing.
 
+**[Eyes, for work judged by eye.](docs/reference.md#profiles)** The pipeline has
+six [named extension points](docs/design-notes.md#the-extension-points-and-why-there-are-exactly-six)
+and one profile that fills them: on a repo carrying an art-direction contract in
+`.creative/`, a visual gate renders fixed shots, measures them, and asks a blind
+VLM critic — twice, with the images swapped — whether this beats the reigning
+champion. A `worse` fails the run into a fix round however green the tests are.
+`/dispatch-pixel` is its planner protocol. On every other repo not one line of
+this runs.
+
 **[A video in the PR body.](docs/operations.md#demo-recordings)** With demo
 upload configured, a frontend run records the implementer's storyboard against
 a dev server in the worktree and embeds it. Two more are under [Measuring](#measuring).
@@ -273,6 +295,7 @@ absence costs exactly the feature named.
 | [`shot-scraper`](https://shot-scraper.datasette.io/), `ffmpeg`, [`rclone`](https://rclone.org/) | Recording the storyboard, transcoding it into a video plus preview GIF, and uploading both to any S3-compatible bucket. | [Demo recordings](docs/operations.md#demo-recordings) |
 | `python3` (≥ 3.9, with `venv`) | `install.sh --verifier` builds a venv and installs the scoring library into it; it also runs the one-time login capture for demo recordings. Nothing else needs Python. | [The verifier](docs/reference.md#the-verifier) |
 | `docker`, `nc`, `shellcheck` | The copyable Postgres preflight example, and this repo's own gate. | [`examples/`](examples/), [Development](#development) |
+| `magick` (ImageMagick 7), plus `shot-scraper`'s Playwright and `python3` with `numpy`/`Pillow` | The visual profile's contact sheet, its headless render and its model-free frame checks. Only a repo the profile applies to needs any of them. | [Profiles](docs/reference.md#profiles) |
 
 The verifier also needs a third-vendor credential — never Claude and never the
 two subscriptions the pipeline runs on, because no model grades its own
@@ -403,11 +426,12 @@ test.
 | `schedule.sh` `capacity.sh` `quartermaster.sh` | [Fire a prepared run at a set time](docs/operations.md#scheduling-a-run-for-later), the local-file subscription accounting the [preflight](docs/operations.md#capacity-preflight-a-run-that-defers-itself) defers on, and [the 19:00 check](docs/operations.md#the-quartermaster) that fills the night with briefed work |
 | `repos.conf.sh` `setup-repo.sh` | Generic per-repo detection (sourcing your `repos.local.sh`), and the inspector that proposes or writes a repo's pinned entry |
 | `lib/common.sh` | The plumbing every script shares, sourced from beside it: `HARNESS_DIR`, the macOS-safe timeout cap, the `--help` that reads a script's own header comment, the run's worktree and pinned knobs, and the Codex-availability preamble |
+| `lib/profile.sh` `profiles/` | [The pipeline's six named extension points](docs/design-notes.md#the-extension-points-and-why-there-are-exactly-six) and the loader that fills them per repo, plus the one profile that ships: [`profiles/visual/`](profiles/visual/creative/README.md), the visual gate, the blind critic and the asset factories |
 | `statusline.sh` `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `janitor.sh` `station.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose), the terminal monitor (`status.sh --watch` is the live dashboard), and the lifecycle helpers — including [the janitor](docs/operations.md#the-janitor), the pass that sweeps the worktrees `cleanup.sh` never got to |
 | `wall.sh` `wall/` `.creative/` `mirror.sh` | [Ghost Shift](docs/wall.md): the big-screen dashboard (node server, one static page, fixtures), the art-direction contract it is graded against, and `HARNESS_MIRROR`'s run-dir copier |
 | `metrics.sh` `verify.py` | Per-run metrics from `result.json` (table / `--csv`) plus the [aggregate health report](docs/design-notes.md#reading-the-pipelines-own-vitals) (`--report`), and [the verifier](docs/reference.md#the-verifier) that scores a run's trajectory (`--dry-run` needs no library and no key) |
 | `worker-settings.json` `planner-settings.json` `setup-ai-settings.json` | The implementer's tool allow/deny list, and the read-only sandboxes for the quartermaster's self-briefing planner and `setup-repo.sh --ai` |
-| `brief-template.md` `skills/dispatch/SKILL.md` `skills/briefed-dispatch/SKILL.md` | The per-task contract, and the planner protocol with and without the approval pause |
+| `brief-template.md` `skills/dispatch/SKILL.md` `skills/briefed-dispatch/SKILL.md` `skills/dispatch-pixel/SKILL.md` | The per-task contract, the planner protocol with and without the approval pause, and the art-director protocol for visual work (`install.sh --pixel`) |
 | `install.sh` `notify.conf.example` `demo.conf.sh.example` `repos.local.sh.example` `demo-auth.sh` `auth-capture.py` | Idempotent installer, the templates it seeds your local config from, and the one-time login capture for demo recordings |
 | `gate.sh` `tests/` `.github/workflows/gate.yml` | This repo's own gate (`shellcheck` + `bash -n`, then every suite) and the same gate on Linux CI |
 | `docs/` `bench/DESIGN.md` `examples/` | [Operations](docs/operations.md) · [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) · [The wall's data contract](docs/wall-contract.md) · [Design notes](docs/design-notes.md), the benchmark design, and copyable templates |

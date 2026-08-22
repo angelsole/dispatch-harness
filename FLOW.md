@@ -23,8 +23,12 @@ sequenceDiagram
     U->>F: approve (± create a ticket)
     F->>S: launch run (background)
     S->>S: worktree from origin/<base><br/>copy .env · install deps
-    S->>O: brief.md
+    S->>O: brief.md<br/>+ factory keys, if MCP_CONFIG is pinned
     O->>O: design + implement + commit<br/>(cheaper subagents explore)
+
+    opt MCP_CONFIG is pinned (repos with an asset factory)
+        O->>O: PixelLab / Retro Diffusion via MCP or factory.py<br/>then the mandatory post-pass
+    end
 
     alt brief doesn't resolve a fork
         O->>F: QUESTIONS.md — needs_input ⏸
@@ -34,7 +38,16 @@ sequenceDiagram
     end
 
     S->>S: test gate #1 (per-repo cmds)
-    S->>C: diff + brief + gate log
+    opt the visual profile applies (repos judged by eye)
+        S->>S: visual gate: render fixed shots<br/>model-free checks · contact sheet
+        S->>S: critic (fresh, no shell): rubric<br/>+ pairwise vs champion
+        alt worse than the champion, or a check failed
+            S->>C: visual fix round — frames + one_fix<br/>(Claude fallback when Codex is unavailable)
+            C->>S: fix commits, then re-render
+        end
+    end
+
+    S->>C: diff + brief + gate log<br/>+ contact-sheet.png + visual-score.json
     C->>C: find: expected properties before the diff, then<br/>gate-gaming · logic · blind spots<br/>reuse · hardcoding · quality — fixes nothing
 
     alt fundamental flaw
@@ -59,6 +72,37 @@ sequenceDiagram
 
 The same block is inlined in [`README.md`](README.md); `tests/docs.test.sh`
 asserts the two stay byte-identical.
+
+## The visual gate (repos the visual profile applies to)
+
+A stage between the test gate and the review, for work judged by eye. It renders
+fixed shots headless, measures them without a model (palette, grid, luminance
+floor, legibility, continuity, SSIM against the reigning champion), and then asks
+one fresh critic — no shell, strict JSON schema — to grade a rubric and, the
+verdict that decides the round, whether the challenger is **better or worse than
+the champion**. Worse fails, however good the absolute scores are. A failure runs
+a visual fix round on the normal fix backend (Codex when available, a fresh
+Claude worker otherwise) and re-renders; when the rounds run out the run ends
+`visual_failed` with the frames, the sheet and the critic's reasons, and no PR.
+Champions are promoted by a human at milestones, never by the pipeline.
+
+The profile applies to a repo that carries a `.creative/` contract or pins
+`VISUAL_GATE_CMD`; for every other repo none of this exists. See
+[Profiles](docs/reference.md#profiles) and
+[`profiles/visual/creative/README.md`](profiles/visual/creative/README.md).
+
+## The factory (repos that set `MCP_CONFIG`)
+
+Not a stage — a set of hands the implementer has, and a rule about what it does
+with them. Pinning `MCP_CONFIG` to
+`profiles/visual/creative/factory.mcp.json` gives the worker the PixelLab and
+Retro Diffusion MCP servers, and makes the visual profile source
+`$HARNESS_DIR/factory.conf.sh` into **that process only**, through the same
+`implementer_env` hook the GLM credential uses: the gate, the reviewer, the PR
+stage and the live feed never see a key. Bulk work goes through
+`profiles/visual/creative/factory.py` (frozen prompt templates, `seed =
+sha256(id)`, a body-hash cache, a provenance manifest), and everything it
+produces goes through `postpass.py` before it is an asset.
 
 ## Claude-only mode (no `codex` CLI)
 

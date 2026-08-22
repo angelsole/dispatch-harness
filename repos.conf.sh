@@ -4,8 +4,13 @@
 # shellcheck disable=SC2034
 # Per-repo pipeline config, sourced by run-task.sh / sync-pr.sh / preview.sh.
 # repo_config <repo-or-worktree-path> sets:
-#   BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUBDIRS DEV_CMD \
-#   PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD
+#   BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD MCP_CONFIG ENV_SUBDIRS \
+#   DEV_CMD PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD
+#
+# VISUAL_GATE_CMD is the visual profile's gate — the stage that renders the app
+# and judges the picture. Never auto-detected here: the profile supplies its own
+# default for a repo that carries a .creative/ contract, and a repo that carries
+# neither has no visual stage at all.
 #
 # PREPROD=1 marks a repo that has not shipped yet: run-task.sh then states the
 # pre-production posture (delete obsolete paths, no compatibility layers, no
@@ -38,8 +43,8 @@ unset _conf_dir
 repo_config() {
   local repo="$1"
   local name; name=$(basename "$repo")
-  BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; MCP_CONFIG=""; ENV_SUBDIRS=""
-  DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
+  BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
+  ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
 
   # User pins first (if repos.local.sh defined the hook); auto-detection then
   # fills only the fields the hook left blank, so a pin can set just one value.

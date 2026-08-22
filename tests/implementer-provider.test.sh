@@ -455,15 +455,26 @@ echo "== the injection has exactly one home =="
 # Every segment of every attempt goes through opus_attempt, so the provider env
 # is applied there and only there. A second call site is how a resume path
 # quietly reverts to the wrong vendor.
+#
+# apply_provider_env reaches that subshell through the implementer_env hook now,
+# which puts the invariant in two halves: the function is defined once and
+# registered once (never called by hand from a second place), and the hook that
+# fires it is fired exactly once, inside opus_attempt's subshell. A profile that
+# registers itself on the same hook adds an export to that one spawn; it cannot
+# add a second place where the provider is chosen.
 RT="$SRC/run-task.sh"
-check "wiring: apply_provider_env is defined once and called once" \
+check "wiring: apply_provider_env is defined once and registered once" \
   "$(grep -c 'apply_provider_env' "$RT" | tr -d ' ')" "2"
-call_line=$(grep -n 'apply_provider_env \\' "$RT" | cut -d: -f1)
+check "wiring: and reaches the implementer through the hook, not a hand-written call" \
+  "$(grep -c 'hook_register implementer_env  *apply_provider_env' "$RT" | tr -d ' ')" "1"
+check "wiring: the implementer_env hook is fired exactly once" \
+  "$(grep -c 'hook_run implementer_env' "$RT" | tr -d ' ')" "1"
+call_line=$(grep -n 'hook_run implementer_env' "$RT" | cut -d: -f1)
 open_line=$(grep -n '^opus_attempt() {' "$RT" | cut -d: -f1)
 exit_line=$(grep -n '^  OPUS_EXIT=' "$RT" | cut -d: -f1)
 if [ -n "$call_line" ] && [ -n "$open_line" ] && [ -n "$exit_line" ] \
    && [ "$call_line" -gt "$open_line" ] && [ "$call_line" -lt "$exit_line" ]; then
-  ok "wiring: and the call sits inside opus_attempt's subshell"
+  ok "wiring: and that firing sits inside opus_attempt's subshell"
 else
   bad "wiring: call=[$call_line] opus_attempt=[$open_line] exit=[$exit_line]"
 fi

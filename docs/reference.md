@@ -339,6 +339,58 @@ Both halves are heuristics, with false positives and false negatives, which is
 why this iteration only flags. Read `flags` as *look here first*, not as a
 verdict — and read an empty list as nothing found, not as a gate proven honest.
 
+## Profiles
+
+A **profile** is an optional bundle of pipeline stages that applies to some
+repos and not others. `run-task.sh` loads the ones that apply to the run's
+target repo and they fill [the six named hooks](design-notes.md#the-extension-points-and-why-there-are-exactly-six);
+a repo no profile applies to behaves exactly as it always has, down to
+`result.json`'s key set. `profiles/` ships in the install, so a repo's pins can
+name paths inside `$HARNESS_DIR/profiles/`.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_PROFILES` | `0` loads no profile at all, whatever the repo carries. | `1` |
+
+One profile ships: **`profiles/visual/`**, the visual gate, the blind VLM critic
+and the PixelLab / Retro Diffusion asset factories — the pipeline for work that
+is judged by eye. Its own documentation is
+[`profiles/visual/creative/README.md`](../profiles/visual/creative/README.md);
+the planner protocol is `/dispatch-pixel`
+([`skills/dispatch-pixel/SKILL.md`](../skills/dispatch-pixel/SKILL.md), installed
+by `install.sh --pixel`).
+
+It applies to a repo that pins `VISUAL_GATE_CMD` **or** carries a `.creative/`
+art-direction contract (bible, rubric, reference board, palette, thresholds).
+When it applies, the run gains a render-and-grade stage between the test gate
+and the review, up to `HARNESS_VISUAL_ROUNDS` of them with a fix round in
+between, a `visual` object in `result.json`
+(`{status, rounds, pairwise, worst_axis, score_path}`), a `## Visual gate`
+section in the PR body, and one more terminal status — **`visual_failed`**: the
+tests pass and the picture does not.
+
+| Env var | Effect | Default |
+| --- | --- | --- |
+| `HARNESS_VISUAL_ROUNDS` | Visual gate rounds a run may spend before `visual_failed`. Anything that is not a positive integer falls back. | `2` |
+| `VISUAL_GATE_CMD` | The gate command itself, pinned per repo in `repos.local.sh`. Unpinned, a `.creative/` repo gets `profiles/visual/creative/visual-gate.sh`. | (the shipped gate) |
+
+The factories' two API keys live in `~/.claude/harness/factory.conf.sh` (mode
+600, never seeded — copy `profiles/visual/factory.conf.sh.example` and fill it
+in). They are applied through the `implementer_env` hook, which means the same
+scoping the GLM credential gets: inside the implementer's subshell and nowhere
+else, and only when the repo pins `MCP_CONFIG`. No gate, reviewer, PR stage or
+log ever holds one. A missing file is one `factory keys SKIP` line.
+
+**Migrating from `~/.claude/creative-harness`.** That fork is what this profile
+was: a whole second install with its own `runs/`, `champion/`, `repos.local.sh`
+and skill. There is one `HARNESS_DIR` now. Re-run `./install.sh` from this
+checkout, move `~/.claude/creative-harness/champion/` to
+`~/.claude/harness/champion/` and `factory.conf.sh` beside it, repoint any
+`VISUAL_GATE_CMD` pin at `$HARNESS_DIR/profiles/visual/creative/visual-gate.sh`
+(or drop the pin — `.creative/` is enough), and the old directory can go. Runs
+already in `~/.claude/creative-harness/runs/` stay readable where they are
+(`wall.sh --runs`), and nothing moves them for you.
+
 ## Find, refute, fix
 
 The review stage is three passes, not one. A reviewer that finds and fixes in
@@ -410,6 +462,7 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 | `BASE_BRANCH` | Base branch PRs target | detected: `staging` → `main` → `master` |
 | `INSTALL_CMD` | Install deps in a fresh worktree | from lockfile (`npm ci` / `yarn install` / `uv sync`) |
 | `GATE_CMD` | The deterministic test gate | from lockfile (`npm test` / `yarn test` / `uv run pytest`) |
+| `VISUAL_GATE_CMD` | The [visual profile's](#profiles) gate. Setting it is one of the two ways a repo opts in | none; the shipped gate once the profile applies |
 | `MCP_CONFIG` | Path to an `.mcp.json` the worker loads | none (skipped if the path is missing) |
 | `ENV_SUBDIRS` | Extra dirs besides `.` to copy `.env*` into | none |
 | `DEV_CMD` | Dev server command for `preview.sh` | `npm run dev` |
@@ -529,6 +582,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
 | `verify.json`, `verify.log` | The [verifier's](#the-verifier) score, and why it did or did not produce one |
+| `visual/`, `visual-*.log`, `visual-rounds.log` | The [visual profile's](#profiles) frames, contact sheet and score, one log per round, and the round ledger. Only on a repo the profile applies to |
 | `segment-report-<n>.md` | In `report` [resume mode](operations.md#turn-ceiling-a-run-that-resumes-itself), the handover the turn-ceiling resume gave segment `<n>+1` about segment `<n>` |
 | `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds, final message and segment reports, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |

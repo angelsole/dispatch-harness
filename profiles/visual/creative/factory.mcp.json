@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "pixellab": {
+      "type": "http",
+      "url": "https://api.pixellab.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${PIXELLAB_SECRET}"
+      }
+    },
+    "retro-diffusion": {
+      "type": "http",
+      "url": "https://mcp.retrodiffusion.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${RETRO_DIFFUSION_API_KEY}"
+      }
+    }
+  }
+}

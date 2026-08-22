@@ -15,12 +15,14 @@ set -u -o pipefail
 # from there, HARNESS_DIR once install.sh has shipped lib/ into it. Sourced out
 # here rather than inside main() for the same reason main() exists: the lib is
 # read at parse time, so editing it while a run is live cannot corrupt that run.
-_COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-[ -r "$_COMMON_LIB_PATH" ] \
+_LIB_DIR="$(dirname "${BASH_SOURCE[0]}")/lib"
+[ -r "$_LIB_DIR/common.sh" ] \
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 # shellcheck source=lib/common.sh
-. "$_COMMON_LIB_PATH"
-unset _COMMON_LIB_PATH
+. "$_LIB_DIR/common.sh"
+# shellcheck source=lib/profile.sh
+. "$_LIB_DIR/profile.sh"
+unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
 # editing this file while a run is live can no longer corrupt that run.
@@ -67,7 +69,7 @@ fi
 
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
-repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD
+repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD
 # Keep the unset path independent of the optional library, including on an old
 # install that predates mirror.sh.
 if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
@@ -216,6 +218,19 @@ if [ "$CODEX_AVAILABLE" = 0 ]; then
   REVIEWER_MODEL=""
   REVIEWER_EFFORT=""
 fi
+
+# --- The pipeline's extension points, and who fills them ---------------------
+# The six hooks are lib/profile.sh's; these two are the pipeline's own claims on
+# them. Registration records a NAME, so both functions may be — and are —
+# defined further down; a hook only resolves what it holds when it fires.
+#
+# Profiles load after, so a repo's profile can add to a slot but never displace
+# what the pipeline itself put there, and after repo_config and the helpers
+# above, which are what a profile decides and configures itself from. A run with
+# no active profile registers nothing more and behaves exactly as it always has.
+hook_register implementer_env  apply_provider_env
+hook_register pr_body_sections verify_pr_section
+harness_load_profiles "$REPO" "$SELF_DIR/profiles"
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
 # The top-level gate command the standing verdict died on, isolated by the trap
@@ -432,10 +447,15 @@ record_attempt() {  # $1 = the status this attempt is ending on
 }
 
 write_result() {
-  local metrics integrity findings
+  local metrics integrity findings extra
   # Before the metrics, so this attempt's own row is in the ledger they read.
   record_attempt "$1"
   metrics=$(collect_metrics)
+  # What the active profiles add (result_json_extra). Merged after the fact
+  # rather than spliced into the filter, so a run with no profile — or one whose
+  # profile has nothing to report this attempt — writes the file this pipeline
+  # has always written, key for key.
+  extra=$(hook_json result_json_extra)
   # Additive and optional: a run that never reached the integrity stage (or ran
   # with it off) carries no field at all rather than a null every consumer would
   # have to learn to ignore.
@@ -471,6 +491,10 @@ write_result() {
      | if .gate_integrity == null then del(.gate_integrity) else . end
      | if .review_findings == null then del(.review_findings) else . end' \
     > "$RUN_DIR/result.json"
+  if [ -n "$extra" ]; then
+    jq --argjson extra "$extra" '. + $extra' "$RUN_DIR/result.json" > "$RUN_DIR/result.json.tmp" \
+      && mv "$RUN_DIR/result.json.tmp" "$RUN_DIR/result.json"
+  fi
 }
 
 # Live stage tracking: status (current), timeline (history), macOS notification
@@ -955,6 +979,10 @@ fi
 # discipline as the verifier and Linear keys, which travel as a path or a header
 # file. Nothing is exported for the default provider, which is what keeps an
 # anthropic run byte-identical to one from before this existed.
+#
+# The pipeline's own implementer_env hook: everything else that needs the
+# implementer's environment and nothing else — a profile's API keys — arrives
+# through the same slot and inherits the same scoping for free.
 apply_provider_env() {
   [ "$IMPLEMENTER_PROVIDER" = zai ] || return 0
   ANTHROPIC_AUTH_TOKEN=$(cat "$ZAI_KEY_FILE") || return 1
@@ -1039,7 +1067,7 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     OPUS_STREAM_START_LINE=$(( $(wc -l < "$RUN_DIR/opus-stream.jsonl") + 1 ))
   fi
-  (cd "$WORKTREE" && apply_provider_env \
+  (cd "$WORKTREE" && hook_run implementer_env \
       && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL="$IMPLEMENTER_SUBAGENT_MODEL" \
       "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
       --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
@@ -1926,7 +1954,10 @@ review_diff_is_trivial() {
 # recorded loudly: a stage line, the review-fallback marker,
 # review_account/reviewer_model in result.json — and REVIEW_AGENT flips so any
 # later fix round stays on the backend that actually reviewed.
-REVIEW_AGENT="codex"
+# Initialised from what this machine actually has, because a fix round can fire
+# BEFORE the review stage flips it: a post-gate profile stage on a machine with
+# no codex CLI would otherwise send its fix to a backend that is not installed.
+if [ "$CODEX_AVAILABLE" = 1 ]; then REVIEW_AGENT="codex"; else REVIEW_AGENT="claude"; fi
 # Why this tier was reached, kept for the phone push at the end of the run: the
 # highest-priority notification the pipeline sends used to carry no reason at all.
 CLAUDE_TIER_REASON=""
@@ -2283,7 +2314,8 @@ verify_stage() {  # uses RUN_DIR, WORKTREE, BASE_REF; always returns 0
 
 # The `## Verifier` section of the PR body, printed only when this attempt
 # actually scored: absent verify.json (or one jq cannot read a score out of)
-# leaves the body byte-identical to what it has always been.
+# leaves the body byte-identical to what it has always been. The pipeline's own
+# pr_body_sections hook; a profile's sections arrive through the same slot.
 verify_pr_section() {
   local v="$RUN_DIR/verify.json"
   [ -f "$v" ] || return 0
@@ -2306,6 +2338,12 @@ verify_pr_section() {
 }
 
 run_gate 1 || true
+
+# --- Post-gate profile stages -------------------------------------------------
+# The slot between the test gate and the review, for a stage that asks something
+# neither of them does. The visual profile's render-and-grade rounds sit here.
+# Nothing is registered on an ordinary run, so nothing happens.
+hook_run post_gate || true
 
 # --- 5a. Gate integrity: is that green earned? --------------------------------
 # The pipeline's whole defence against a gate made green rather than earned used
@@ -2354,6 +2392,14 @@ fi
 # operator asking for the unreviewed baseline on purpose. The deterministic gate
 # above still ran there, so a failing gate still yields gate_failed downstream,
 # and the base-sync step below still runs in every arm.
+# What the active profiles want the reviewer told (review_prompt_extra). Spliced
+# at the END of the prompt rather than into its body: the assembly below is
+# contract text several stages read, and a hook that had to be woven through it
+# would make every future edit of the checklist an edit of this seam too. Empty
+# on an ordinary run, and an empty expansion adds nothing.
+REVIEW_PROMPT_EXTRA=$(hook_run review_prompt_extra || true)
+[ -z "$REVIEW_PROMPT_EXTRA" ] || REVIEW_PROMPT_EXTRA="
+$REVIEW_PROMPT_EXTRA"
 REVIEW_PROMPT="You are the reviewer stage of an automated pipeline; another agent just implemented a task.
 Context (all inside .harness/): brief.md (the task contract), specs/ when present (the task's source documents converted to markdown — part of the contract, read them alongside the brief), implementer-notes.md, gate-latest.log (test gate output — current status: $GATE_STATUS$(gate_step_clause)).
 gate-latest.log is a clipped extract, not the whole gate log: its header states which round it is, how many of that round's lines it holds, and where lines were cut. Trust the header over your instinct that you are looking at everything — the rest of that log is not reachable from here, so if the extract does not explain the failure, re-run the failing step yourself.
@@ -2386,7 +2432,7 @@ Boundary: report freely on the code this branch introduces or touches; do NOT re
 - Do NOT push or create PRs.
 - Write .harness/review-notes.md: what you read, what you concluded, and anything you noticed but deliberately did not raise as a finding.
 - If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: write it to .harness/REJECTED.md and stop.
-- If everything is genuinely sound, say so in review-notes.md, write an empty findings array, and change nothing.$PREPROD_POSTURE_REVIEW"
+- If everything is genuinely sound, say so in review-notes.md, write an empty findings array, and change nothing.$PREPROD_POSTURE_REVIEW$REVIEW_PROMPT_EXTRA"
 
 # --- The refutation prompt ----------------------------------------------------
 # A fresh session, on the backend that reviewed, that has not seen the diff and
@@ -2602,6 +2648,12 @@ if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
   cp "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.md"
 elif [ "$GATE_STATUS" != "pass" ]; then
   STATUS="gate_failed"
+elif hook_claim outcome_status; then
+  # A profile stage ended the run on a status of its own — it sets STATUS and
+  # claims the decision. It sits below the two verdicts every run has and above
+  # review_failed, because a profile gate that rejected the work has already
+  # decided the outcome whatever the review then did with the diff.
+  echo "[harness] outcome claimed by a profile: $STATUS"
 elif [ "$REVIEW_OK" = 0 ]; then
   # The gate is green but nothing reviewed the diff — neither codex nor the
   # Claude fallback completed. This must never ship looking reviewed: no push,
@@ -2665,7 +2717,7 @@ else
     { echo "Ref: $TICKET"; echo
       if [ -f "$WORKTREE/.harness/implementer-notes.md" ]; then cat "$WORKTREE/.harness/implementer-notes.md"; fi
       if [ -f "$WORKTREE/.harness/review-notes.md" ]; then echo; echo "## Review notes"; cat "$WORKTREE/.harness/review-notes.md"; fi
-      verify_pr_section
+      hook_run pr_body_sections
     } > "$RUN_DIR/pr-body.md"
     # On re-dispatch a PR may already exist for this branch: reuse it (and do NOT
     # overwrite its body — the orchestrator may have rewritten it) instead of failing.

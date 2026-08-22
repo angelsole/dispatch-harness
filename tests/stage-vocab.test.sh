@@ -50,7 +50,11 @@ done
 # is the literal frame around it.
 echo "== the stage strings run-task.sh emits =="
 STAGES="$ROOT/stages.txt"
-grep -hoE 'stage "[^"]+"' "$SRC/run-task.sh" "$SRC/sync-pr.sh" \
+# profiles/*/profile.sh too: a profile moves the stage through the same stage()
+# the pipeline does, so its literals are as much part of the wire format as
+# run-task.sh's — and a row nothing but a profile reaches is not an inert row.
+# shellcheck disable=SC2046  # the glob is the point; profile paths hold no spaces
+grep -hoE 'stage "[^"]+"' "$SRC/run-task.sh" "$SRC/sync-pr.sh" $(echo "$SRC"/profiles/*/profile.sh) \
   | sed -e 's/^stage "//' -e 's/"$//' \
         -e 's/\$[A-Za-z_][A-Za-z0-9_]*/X/g' -e 's/\$[0-9]/X/g' \
   | sort -u > "$STAGES"
@@ -63,7 +67,8 @@ else bad "emissions: only $n stage literals found — extraction broken?"; fi
 # meaning. Expand them over the statuses run-task.sh can actually write, so the
 # table is judged on the real words and not on the placeholder.
 STATUSES="$ROOT/statuses.txt"
-grep -ohE '(^|[^_A-Za-z])STATUS="[a-z_]+"' "$SRC/run-task.sh" \
+# shellcheck disable=SC2046  # as above: a profile's outcome_status sets STATUS too
+grep -ohE '(^|[^_A-Za-z])STATUS="[a-z_]+"' "$SRC/run-task.sh" $(echo "$SRC"/profiles/*/profile.sh) \
   | tr -d ' \t' | sed -e 's/^STATUS="//' -e 's/"$//' | sort -u > "$STATUSES"
 n=$(grep -c '' < "$STATUSES" | tr -d ' ')
 if [ "$n" -ge 8 ]; then ok "emissions: found $n terminal statuses"
@@ -189,7 +194,7 @@ check "server: and stays a live panel rather than claiming an outcome" \
 # The creative harness's rows, live here ahead of re-unification. A visual gate
 # that gave up is a failure, and it burns out on the rung its live stage stands
 # on rather than on a roof the run never reached.
-echo "== the creative harness's visual rows =="
+echo "== the visual profile's rows =="
 for p in '^visual fix.*Claude' '^visual fix.*Codex' '^visual gate'; do
   if jq -e --arg p "$p" '[.stages[] | select(.pattern == $p)] | length == 1' "$VOCAB" >/dev/null; then
     ok "visual: the table carries $p"

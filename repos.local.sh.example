@@ -20,7 +20,21 @@
 #   BASE_BRANCH    base branch PRs target            (default: staging|main|master, detected)
 #   INSTALL_CMD    install deps in a fresh worktree  (default: from lockfile)
 #   GATE_CMD       the deterministic test gate       (default: from lockfile)
-#   MCP_CONFIG     path to an .mcp.json for the worker (default: none; skipped if missing)
+#   VISUAL_GATE_CMD  the visual profile's gate: render the app, check the frames,
+#                  ask the critic. One of the two ways a repo opts into the
+#                  profile — the other is carrying a .creative/ contract, which
+#                  is enough on its own. Set it only to point at a gate of your
+#                  own; the shipped one is
+#                  "bash $HARNESS_DIR/profiles/visual/creative/visual-gate.sh".
+#                  See profiles/visual/creative/README.md.
+#   MCP_CONFIG     path to an .mcp.json for the worker (default: none; skipped if missing).
+#                  For a repo with the visual profile this is the asset factories:
+#                  MCP_CONFIG="$HARNESS_DIR/profiles/visual/creative/factory.mcp.json"
+#                  gives the worker the PixelLab and Retro Diffusion MCP servers.
+#                  Setting it also makes the profile source
+#                  $HARNESS_DIR/factory.conf.sh (mode 600, the two API keys) into
+#                  the IMPLEMENTER's process and nothing else — no gate, reviewer
+#                  or PR stage ever sees a key. Missing conf = one SKIP line.
 #   ENV_SUBDIRS    extra dirs besides "." to copy .env* into
 #   DEV_CMD        dev server command for preview.sh
 #   PREFLIGHT_CMD  env check run before the implementer (e.g. test DB up + migrated)
@@ -77,6 +91,16 @@ repo_config_local() {
       INSTALL_CMD="uv sync"
       GATE_CMD="uv run ruff check . && uv run pytest"
       DEV_CMD="./dev.sh start"
+      ;;
+    # A repo whose work is judged by eye. Carrying .creative/ is already enough
+    # to activate the visual profile; this arm only adds the factories the
+    # worker draws its assets with. The keys come from
+    # $HARNESS_DIR/factory.conf.sh and reach the implementer only.
+    my-game|my-game-*)
+      BASE_BRANCH=main
+      INSTALL_CMD="npm ci"
+      GATE_CMD="npm test"
+      MCP_CONFIG="${HARNESS_DIR:-$HOME/.claude/harness}/profiles/visual/creative/factory.mcp.json"
       ;;
   esac
 }
