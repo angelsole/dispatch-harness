@@ -100,17 +100,19 @@ and [What the reviewer is allowed to reach](design-notes.md#what-the-reviewer-is
 
 ### Ablation knobs
 
-Two of these turn a normal run into a controlled **arm** — the same brief run
-*without* the review stage, or with a *different* implementer model — so you can
-measure what each stage buys. All are **pinned at first dispatch**: the chosen
-arm, models and efforts are written into the run dir on the first invocation and
-reused verbatim on resume, so a re-dispatch whose environment differs can't
-silently switch a run to a different condition. With **neither** knob set,
-control flow is identical to before — this is instrumentation, not a redesign.
+Three of these turn a normal run into a controlled **arm** — the same brief run
+*without* the review stage, or with a *different* implementer model, or with a
+*different implementer vendor* — so you can measure what each stage buys. All
+are **pinned at first dispatch**: the chosen arm, provider, models and efforts
+are written into the run dir on the first invocation and reused verbatim on
+resume, so a re-dispatch whose environment differs can't silently switch a run
+to a different condition. With **none** of them set, control flow is identical
+to before — this is instrumentation, not a redesign.
 
 | Env var | Effect | Default |
 | --- | --- | --- |
-| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5` |
+| `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
+| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. The default follows the provider. | `claude-opus-5`, or `glm-5.3` on `zai` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
@@ -121,6 +123,63 @@ control flow is identical to before — this is instrumentation, not a redesign.
 HARNESS_SKIP_REVIEW=1 IMPLEMENTER_MODEL=sonnet \
   ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
 ```
+
+### GLM as the implementer
+
+z.ai serves the GLM Coding Plan over an **Anthropic-compatible endpoint that
+officially supports the Claude Code CLI** — the same binary, the same
+`stream-json`, the same `--resume` — so the whole integration is a key file and
+four environment variables. Drop the credential and pin the provider:
+
+```bash
+(umask 077; printf '%s' '<your-z.ai-key>' > ~/.claude/harness/zai-api-key)
+IMPLEMENTER_PROVIDER=zai \
+  ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
+```
+
+Like `linear-api-key` and `verifier-api-key`, that file is **not seeded by the
+installer, because it is a credential** — you create it by hand, mode 600.
+`ZAI_API_KEY_FILE` moves it. Only the implementer's own subshell ever gets the
+token, and it is exported there rather than passed as an argument, so it appears
+in no `ps` listing, no log, no `result.json` and no PR body.
+
+**What moves, and what does not.** The provider is the *implementer's* alone.
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `API_TIMEOUT_MS` and the small
+model used for the CLI's background work and the worker's `Explore` subagents
+are applied at one place — the function that spawns an implementer segment — so
+every resume path (the turn ceiling, a mid-run capacity deferral, a scheduled
+re-dispatch) is billed to the account the run was pinned to. The reviewer, the
+Claude review tier, its fix rounds, the conflict resolver and `sync-pr.sh` are
+untouched and stay on Anthropic/Codex; the Claude tier spawns with
+`claude-opus-5` rather than the implementer's GLM id, which would be a usage
+error against Anthropic. One nice consequence: with a `zai` implementer even the
+*Claude* review tier is a cross-vendor read, so the fallback described in
+[the review guarantee](../README.md#why-its-built-this-way) loses nothing.
+
+**Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,
+and pinning it also sets the CLI's auto-compaction window to match. `glm-4.7` is
+the small/fast model. `IMPLEMENTER_EFFORT` is passed through unchanged and maps
+server-side: `xhigh`/`max` → max, `medium`/`high` → high, `low` → low.
+
+**Capacity.** The [preflight](operations.md#capacity-preflight-a-run-that-defers-itself)
+reads the station's own Claude logs, which say nothing about a z.ai window, so
+it is **skipped** — with the reason written to `capacity.log` — rather than
+deferring a run that had everything it needed to spend.
+
+**Failures.** z.ai's own vocabulary is classified alongside Claude's: an
+exhausted quota, and error `1113` / `Insufficient Balance`, defer the run the
+way a session limit does (ccusage is not consulted for the reset, so the wait
+falls back to the standing default). The one exception is the failure waiting
+cannot cure: `1113` is also what a **wrong base path** returns, so an attempt
+on a run that has *never streamed a single token* ends `setup_failed`, naming
+the credential and the endpoint to check, instead of re-arming itself in a
+circle. Once the run has streamed output, a later first-request rejection is a
+mid-run balance event and defers normally.
+
+**Attaching.** When a `zai` run's provider environment is absent, `attach.sh`
+prints the exports an interactive resume needs — the key's path, never the key
+— and asks you to rerun it after exporting them. It never opens the session
+against the wrong endpoint.
 
 ### Not a knob: HARNESS_GATE_STEP
 
@@ -140,24 +199,33 @@ trajectory to
 records what comes back. It is advisory, and it never gates; why it exists and
 what it costs are in [the design notes](design-notes.md#the-verifier-why-a-third-vendor).
 
-**What it reads.** The trajectory `verify.py` builds is the run, in order: every
-attempt's implementer stream (each assistant message a narration step, each tool
-call folded together with its observed output into one step), then the gate
-rounds, then the reviewer's notes or rejection and the commits it added, and
-finally the observed end state — the whole diff against base with lockfiles
-excluded, and the standing gate verdict. Nothing is invented: a run whose
-implementer left no stream is skipped, not scored.
+**What it reads.** Two bodies of evidence, and both are **anonymised** before
+either leaves the process: every vendor and model name (`opus`, `claude`,
+`sonnet`, `codex`, `gpt`, `anthropic`, `openai`, case-insensitive) becomes the
+`IMPLEMENTER`/`REVIEWER` role token that wore it, so the judge cannot tell whose
+work it is grading. The first is **the diff** — the whole change against base,
+lockfiles excluded — which is what four of the five rubric items are judged
+from. The second is **the trajectory** `verify.py` builds out of the run, in
+order: every attempt's implementer stream (each assistant message a narration
+step, each tool call folded together with its observed output into one step),
+then the gate rounds, then the reviewer's notes or rejection and the commits it
+added, and finally the observed end state. Nothing is invented: a run whose
+implementer left no stream, or that has no evidence any item can read, is
+skipped rather than scored.
 
-**What it returns.** A number in [0, 1]: the expectation over the **logprobs**
-of a 20-letter (A–T) score token, averaged over K repeats, answering one
-question per checkpoint — *given everything the agent has done up to here, would
-its current state satisfy the task's hidden grader?* The library is explicitly
-told to distrust the agent's narration and read the observed output instead. Two
-checkpoints are scored overall — the end of the implementer's work and the end
-of the run — so the pair says what the review stage was worth. Each acceptance
-criterion is then scored on its own, by re-asking with that one criterion
-written in as the hidden grader's single check (the library has no per-criterion
-absolute mode; pairwise `compare()`/`select()` is a different question).
+**What it returns.** A rubric vector, and the mean of it. Five fixed items —
+brief coverage, no unrequested scope, diff minimality and hygiene, test
+integrity, and (only for a run that actually resumed) resume coherence — are
+each scored on their **own** call, K independent samples each, against the
+acceptance criteria of `brief.md` as a spec stated before the work started.
+Every sample has to quote the diff hunk or trajectory line that decides it, and
+a quote the adapter cannot find verbatim in the evidence it sent scores that
+sample **0**, whatever number came with it. The K samples are aggregated by
+median; the headline `score` is the plain **mean** of the item scores, which is
+an aggregate no amount of trajectory length can inflate. A call that never
+returned is dropped rather than counted zero; if every sample for one item
+fails, the whole verifier attempt fails rather than publishing a partial vector
+or silently removing that item from the headline mean.
 
 **Turning it on.**
 
@@ -205,22 +273,23 @@ no config file. Only the path reaches the environment (as
 | `HARNESS_VERIFY_PYTHON` | Interpreter that runs the adapter. Must be executable, or the stage skips. | `$HARNESS_DIR/verifier-venv/bin/python` |
 | `VERIFIER_API_KEY_FILE` | The credential file — a one-line API key, or a service-account JSON. Must be readable, or the stage skips. | `$HARNESS_DIR/verifier-api-key` |
 | `HARNESS_VERIFY_PROVIDER` | `deepseek` \| `vertex` \| `openai`. **Unset infers it from the credential**: a service-account JSON means `vertex`, anything else `deepseek`. Exactly one backend env var is set from the key file; the others are cleared, so an ambient variable (or a stray `.env`) can never pick a backend the run did not ask for. | inferred |
-| `HARNESS_VERIFY_BASE_URL` | `OPENAI_BASE_URL` for the `openai` provider (any server that returns logprobs). | unset |
+| `HARNESS_VERIFY_BASE_URL` | `OPENAI_BASE_URL` for the `openai` provider (any OpenAI-compatible server). | unset |
 | `HARNESS_VERIFY_GCP_PROJECT` | Vertex project. | the JSON's `project_id` |
 | `HARNESS_VERIFY_GCP_LOCATION` | Vertex region — pin an EU one for data residency. Recorded in `verify.json` as `location`. | `global` |
 | `HARNESS_VERIFY_MODEL` | Model id; the library's own default for the chosen client when unset (`deepseek-v4-flash`, `gemini-2.5-flash`). | unset |
-| `HARNESS_VERIFY_EVALS` | K — how many times each checkpoint is scored before averaging. | `3` |
-| `HARNESS_VERIFY_MAX_CRITERIA` | Cap on acceptance criteria scored individually. `0` = the overall score only. | `8` |
+| `HARNESS_VERIFY_EVALS` | K — independent samples of each rubric item, aggregated by median. The whole bill is `items × K` calls: 15 by default, 12 for a run that never resumed. | `3` |
+| `HARNESS_VERIFY_MAX_CRITERIA` | Cap on the acceptance criteria quoted into the task spec every item is judged against. `0` = the `## Problem` section alone. | `8` |
 | `HARNESS_VERIFY_STEP_CHARS` | Per-step clip, marker included. | `2000` |
-| `HARNESS_VERIFY_MAX_CHARS` | Whole-trajectory clip. Over budget, the head and tail are kept and the middle becomes one `[N agent steps elided]` step, counted in `elided_steps`. | `400000` |
+| `HARNESS_VERIFY_MAX_CHARS` | Whole-trajectory clip. Over budget, the head and tail are kept and the middle becomes one `[N agent steps elided]` step, counted in `elided_steps`. The diff evidence gets a **quarter** of this, because it is sent once per diff item while the trajectory is sent at most K times. | `400000` |
 | `HARNESS_VERIFY_TIMEOUT` | Seconds the whole stage may take before it is killed (and recorded as a failure that changes nothing). | `900` |
-| `HARNESS_VERIFY_EFFORT` | Passed through as `DEEPSEEK_EFFORT` (`off` \| `low` \| `high` \| `max`). | the library's |
+| `HARNESS_VERIFY_EFFORT` | Passed through as `DEEPSEEK_EFFORT` (`off` \| `low` \| `high` \| `max`) and applied through the library's existing DeepSeek request configuration. | `high` |
 
-Two files per run: **`verify.json`** (the score, the per-criterion table, the
-model, the provider, K, the trajectory size, token usage, how long it took, and
-`location` on Vertex — copied verbatim into `result.json` as `metrics.verifier`)
-and **`verify.log`** (one line per attempt: the score, or `skipped (<reason>)`,
-or `failed (<reason>)`).
+Two files per run: **`verify.json`** (the score, the rubric vector in `items`
+with each item's citation and its K raw samples, the same vector by title in the
+legacy `criteria` table, the model, the provider, K, the trajectory size, token
+usage, how long it took, and `location` on Vertex — copied verbatim into
+`result.json` as `metrics.verifier`) and **`verify.log`** (one line per attempt:
+the score, or `skipped (<reason>)`, or `failed (<reason>)`).
 Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
 
 ## The gate integrity check
@@ -367,7 +436,7 @@ time and never overwrites an existing copy:
 - **`demo.conf.sh`** — object-storage remote (`R2_REMOTE`, `R2_PUBLIC`) for
   uploading PR demo videos.
 
-Two more files are **not** seeded, because they are credentials and you should
+Three more files are **not** seeded, because they are credentials and you should
 create them deliberately, mode 600:
 
 - **`linear-api-key`** (`LINEAR_API_KEY_FILE` to move it), read by
@@ -376,6 +445,9 @@ create them deliberately, mode 600:
   reports capacity and simply says the queue was unreadable.
 - **`verifier-api-key`** (`VERIFIER_API_KEY_FILE` to move it), read by
   [the verifier](#the-verifier).
+- **`zai-api-key`** (`ZAI_API_KEY_FILE` to move it), read only by runs pinned to
+  [GLM as the implementer](#glm-as-the-implementer). A run pinned to `zai`
+  without it ends `setup_failed` before it spawns anything.
 
 ## The run directory
 
@@ -399,6 +471,14 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds and final message, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
 | `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
+
+That table is the paper trail for a human. The same directory is also a **wire
+format**: [Ghost Shift](wall.md) reads it live over the shoulder of a running
+pipeline, so which of these files it opens, which `result.json` fields it takes
+out of them, and how much half-written-ness each one tolerates is written down
+and tested in [the wall's data contract](wall-contract.md) — along with the
+stage-text vocabulary (`wall/stage-vocab.json`) that `statusline.sh` and
+`status.sh` parse out of `status` too.
 
 ### Spec attachments
 
@@ -484,12 +564,18 @@ render with blanks, not errors.
 
 `--report` is the aggregate health picture across every `result.json`; how to
 read it, and what each of its labels means, is in
-[the design notes](design-notes.md#reading-the-pipelines-own-vitals).
+[the design notes](design-notes.md#reading-the-pipelines-own-vitals). Under
+`verify score` it indents one line per [rubric item](#the-verifier) the corpus
+carries, each counted over the runs that actually carry that item — the scalar
+says how good the corpus is, the vector says what it is bad at. A corpus of runs
+scored before the vector existed prints the scalar and nothing under it.
 
 ### Metrics schema
 
 Alongside the existing fields, each run records `arm`
-(`full` | `claude_only` | `no_review`), `implementer_model`,
+(`full` | `claude_only` | `no_review`), `implementer_provider`
+(`anthropic` | `zai` — see [GLM as the implementer](#glm-as-the-implementer)),
+`implementer_model`,
 `implementer_effort`, `reviewer_model`, `reviewer_effort` (the last two name
 whichever backend actually reviewed — see
 [Claude-only mode](operations.md#claude-only-mode)), and a `metrics`
@@ -515,4 +601,4 @@ fields are `null`/empty):
 | `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Per *segment*, not per attempt: a resumed attempt gets the whole ceiling again. Recorded beside `num_turns` because the two count different things — see [the turns caveat](design-notes.md#reading-the-pipelines-own-vitals). |
 | `metrics.implementer_usage` | Token `usage` summed field-wise over the same result events. Numeric keys (`input_tokens`, `output_tokens`, the cache counters) are added up; a non-numeric one (`service_tier`, the nested counters newer CLIs report) is taken from the last segment. |
 | `metrics.implementer_segments` | How many result events those two were summed over: `1` for an attempt that ran straight through, `2`+ for one that hit the turn ceiling and resumed. `0` when the implementer never got as far as a result event. |
-| `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], model, provider, evaluations, steps, segments, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier). |
+| `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], items[], model, provider, evaluations, steps, segments, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). `items[]` is the rubric vector, `{id, score, citation, samples[]}` per item; `criteria[]` carries the same vector by title, which is what the PR body's table renders; `at_implementer` belonged to the progress curve the rubric replaced and is now always `null`. Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier). |
