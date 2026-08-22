@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# >>> --help >>>
 # Fire a prepared dispatch at a set time — "start OLYX-1566 at 08:10 tomorrow".
 #
 # The brief must already exist at <HARNESS_DIR>/runs/<TICKET>/brief.md, exactly
@@ -13,6 +14,7 @@
 #
 # <when> is either HH:MM — the next occurrence: today if that is still ahead,
 # tomorrow otherwise — or an absolute "YYYY-MM-DD HH:MM". Both are local time.
+# <<< --help <<<
 #
 # macOS only. The mechanism is a per-user launchd LaunchAgent
 # (com.olyx.dispatch.<ticket>) holding a single StartCalendarInterval, and
@@ -27,13 +29,16 @@
 # mode 600 and lives in the run dir.
 set -u
 
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 RUNS="$HARNESS_DIR/runs"
 AGENTS_DIR="$HOME/Library/LaunchAgents"
 LABEL_PREFIX="com.olyx.dispatch"
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { harness_usage "$0" >&2; exit 2; }
 fail()  { echo "FATAL: $*" >&2; exit 1; }
 
 # The harness is macOS-first and this feature is launchd, not a portable timer:

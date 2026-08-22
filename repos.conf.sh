@@ -19,7 +19,11 @@
 # file — see repos.local.sh.example. It is gitignored, so your machine-specific
 # paths never ship, and it is sourced here if present.
 
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+# The shared helpers, read from beside this file — the checkout when it is
+# sourced from there, HARNESS_DIR once install.sh has shipped lib/ into it.
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside repos.conf.sh — re-run install.sh" >&2; exit 1; }
 
 # Load user pins, if any. repos.local.sh lives alongside this file (i.e. inside
 # HARNESS_DIR once installed) and defines repo_config_local().

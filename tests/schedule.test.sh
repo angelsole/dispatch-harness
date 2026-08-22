@@ -52,6 +52,8 @@ printf 'Darwin\n' > "$UNAME_STATE"
 # The script under test, installed the way install.sh installs it: beside the
 # run-task.sh it will hand the run to.
 cp "$SRC/schedule.sh" "$SRCDIR/schedule.sh"
+# ...and with the shared helpers beside it, the way install.sh ships lib/.
+cp -R "$SRC/lib" "$SRCDIR/lib"
 chmod +x "$SRCDIR/schedule.sh"
 
 cat > "$FAKES/uname" <<EOF

@@ -3,7 +3,9 @@
 # Usage: cleanup.sh <RUN-ID>
 set -u
 [ $# -eq 1 ] || { echo "usage: cleanup.sh <RUN-ID>" >&2; exit 2; }
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 RUN="$HARNESS_DIR/runs/$1"
 
 # A run dispatched with HARNESS_MIRROR left a copy of its run dir on another
@@ -21,7 +23,7 @@ if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
   fi
 fi
 
-WT=$(cat "$RUN/worktree" 2>/dev/null || jq -r '.worktree // empty' "$RUN/result.json" 2>/dev/null)
+WT=$(harness_worktree "$RUN")
 BRANCH=$(jq -r '.branch // empty' "$RUN/result.json" 2>/dev/null)
 [ -n "$WT" ] && [ -d "$WT" ] || { echo "nothing to clean for $1"; exit 0; }
 

@@ -11,7 +11,9 @@ set -u
 [ $# -ge 1 ] || { echo "usage: demo-auth.sh <repo-path>" >&2; exit 2; }
 REPO="${1%/}"
 [ -d "$REPO" ] || { echo "no such repo: $REPO" >&2; exit 1; }
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 SHOT_BIN="${SHOT_BIN:-$HOME/.local/bin/shot-scraper}"
 AUTH_DIR="$HARNESS_DIR/auth"; mkdir -p "$AUTH_DIR"
 OUT="$AUTH_DIR/$(basename "$REPO").json"

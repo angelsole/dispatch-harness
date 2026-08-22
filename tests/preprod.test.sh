@@ -75,6 +75,7 @@ run_pipeline() {  # $1 = ticket, $2 = 1 to pin PREPROD for the fixture repo
   local ticket="$1" h="$ROOT/harness-$1"
   mkdir -p "$h/runs/$ticket"
   cp "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$h/"
+  cp -R "$SRC/lib" "$h/lib"   # repos.conf.sh reads the shared helpers from beside itself
   if [ "$2" = 1 ]; then
     cat > "$h/repos.local.sh" <<'SH'
 repo_config_local() {

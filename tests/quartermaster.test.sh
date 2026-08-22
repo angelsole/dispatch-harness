@@ -65,6 +65,9 @@ cp "$SRC/quartermaster.sh" "$SRCDIR/quartermaster.sh"
 # the same path — so the file the real planner is confined by is the file this
 # suite asserts on.
 cp "$SRC/capacity.sh" "$SRCDIR/capacity.sh"
+# The shared helpers are read from beside the script too — the layout install.sh
+# produces, where lib/ sits next to every script it ships.
+cp -R "$SRC/lib" "$SRCDIR/lib"
 cp "$SRC/planner-settings.json" "$SRCDIR/planner-settings.json"
 chmod +x "$SRCDIR/quartermaster.sh"
 # What the script calls itself: it resolves its own directory with pwd, which

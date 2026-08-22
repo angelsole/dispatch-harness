@@ -22,7 +22,9 @@
 # hidden: the statusline shows what is live, nothing else.
 set -u
 
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 HARNESS_STALE_SECS="${HARNESS_STALE_SECS:-21600}"   # 6h — older status = dead run
 HARNESS_GIT_TIMEOUT_SECS=2                            # statusline git calls stay prompt-safe
 
@@ -35,7 +37,7 @@ else
   C_BLUE=$'\033[34m'; C_MAGENTA=$'\033[35m'; C_CYAN=$'\033[36m'
 fi
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { harness_usage "$0"; }
 
 # --- stage text -> actor -------------------------------------------------------
 # CONTRACT: this maps the stage strings written by run-task.sh's stage() (and
@@ -75,16 +77,10 @@ harness_actor() {  # $1 = stage text -> sets HARNESS_ACTOR + HARNESS_ACTOR_COLOR
 }
 
 # Cap a git call: the statusline reruns constantly, and a locked or huge repo
-# must never stall the prompt. macOS ships no timeout(1), so fall back to the
-# same perl alarm wrapper run-task.sh uses.
-harness_timeout() {  # $1 = seconds, rest = command + args
-  local secs="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$@"
-  else
-    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
-  fi
-}
+# must never stall the prompt. It is literally the wrapper run-task.sh uses, so
+# it is now that one — kept under this file's own name the way janitor.sh keeps
+# capped() over capacity.sh's capacity_capped().
+harness_timeout() { with_timeout "$@"; }  # $1 = seconds, rest = command + args
 
 harness_first_line() {  # $1 = file -> its first line, empty when absent
   local v=''

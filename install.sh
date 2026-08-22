@@ -24,7 +24,13 @@
 #   CLAUDE_SETTINGS_FILE  settings.json to wire  (default: ~/.claude/settings.json)
 set -eu
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+# The shared helpers, read from beside this script. install.sh always runs from
+# the checkout, so lib/ is right here — and shipping it is this script's job.
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — is the checkout complete?" >&2; exit 1; }
+
+usage() { harness_usage "$0"; }
 
 MODE=symlink
 STATUSLINE=ask
@@ -42,16 +48,16 @@ for arg in "$@"; do
 done
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 SKILLS_ROOT="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 SKILLS=(dispatch briefed-dispatch)
 SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 
-# Runtime files installed into HARNESS_DIR. `wall` is a directory: the wall's
-# page and server travel with wall.sh.
+# Runtime files installed into HARNESS_DIR. `wall` and `lib` are directories:
+# the wall's page and server travel with wall.sh, and every installed script
+# reads lib/common.sh from beside itself, so it has to travel with all of them.
 FILES=(
-  mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
+  lib mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
   metrics.sh attach.sh cleanup.sh janitor.sh preview.sh station.sh wall.sh wall demo-auth.sh
   auth-capture.py verify.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
   planner-settings.json brief-template.md

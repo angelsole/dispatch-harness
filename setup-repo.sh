@@ -31,7 +31,10 @@
 #   SETUP_VERIFY_TIMEOUT seconds cap on install+gate (default: 1200)
 set -u
 
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+
 SETUP_MODEL="${SETUP_MODEL:-sonnet}"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 SETUP_AI_TIMEOUT="${SETUP_AI_TIMEOUT:-180}"
@@ -50,19 +53,9 @@ MANAGED_END='# <<< setup-repo managed <<<'
 # runs); it is accepted from --ai only so the model can suggest it as a hint.
 KNOWN_FIELDS='BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUBDIRS DEV_CMD DEMO_DEV_CMD DEMO_PORT PREFLIGHT_CMD'
 
-usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { harness_usage "$0"; }
 warn()  { printf 'setup-repo: %s\n' "$*" >&2; }
 die()   { warn "$*"; exit 1; }
-
-# Cap a long-running child. macOS ships no timeout(1); fall back to a perl alarm.
-with_timeout() {  # $1 = seconds, rest = command + args
-  local secs="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$@"
-  else
-    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
-  fi
-}
 
 # Resolve the directory of this script, following symlinks (it is installed into
 # HARNESS_DIR as a symlink back to the source checkout, where the template lives).

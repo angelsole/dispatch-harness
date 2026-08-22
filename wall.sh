@@ -56,10 +56,13 @@
 # only what is already on this machine's disk. Do not port-forward it publicly.
 set -u
 
-usage() { sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; }
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+
+usage() { harness_usage "$0"; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 PORT=4711
 HOST=0.0.0.0
 RUNS="$HARNESS_DIR/runs"

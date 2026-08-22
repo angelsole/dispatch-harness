@@ -13,7 +13,9 @@
 # `metrics` object) or the model/effort knobs — render with blanks, never
 # errors: every field falls back with jq's //.
 set -u
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 RUNS="$HARNESS_DIR/runs"
 
 usage() { echo "usage: metrics.sh [--csv|--report]" >&2; }

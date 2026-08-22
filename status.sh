@@ -7,7 +7,9 @@
 #                             (HARNESS_WATCH_INTERVAL overrides). The zero-config
 #                             alternative to wiring statusline.sh.
 set -u
-HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+# shellcheck source=lib/common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" \
+  || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 RUNS="$HARNESS_DIR/runs"
 
 fmt() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }

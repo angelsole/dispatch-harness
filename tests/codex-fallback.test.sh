@@ -55,6 +55,10 @@ cp "$SRC/run-task.sh" "$SRCDIR/run-task.sh"
 cp "$SRC/sync-pr.sh"  "$SRCDIR/sync-pr.sh"
 chmod +x "$SRCDIR/run-task.sh" "$SRCDIR/sync-pr.sh"
 cp "$SRC/metrics.sh" "$SRC/repos.conf.sh" "$SRC/worker-settings.json" "$HARNESS/"
+# Every harness script reads lib/common.sh from beside itself, so the shared
+# helpers travel with both staged copies — the layout install.sh produces.
+cp -R "$SRC/lib" "$SRCDIR/lib"
+cp -R "$SRC/lib" "$HARNESS/lib"
 
 cat > "$HARNESS/repos.local.sh" <<'EOF'
 repo_config_local() {
