@@ -193,10 +193,12 @@ fi
 
 # Two normalisations, both of them the contract rather than taste: the question
 # budget is a budget whatever the schema let through, and a conflict whose
-# evidence is blank is the vibe this stage refuses to pass on.
+# evidence has no file:line citation is the vibe this stage refuses to pass on.
 VERDICT=$(printf '%s' "$VERDICT" | jq -c '
   .questions |= .[0:3]
-  | .conflicts_with_current_behavior |= map(select((.code_evidence // "") | test("[^[:space:]]")))')
+  | .conflicts_with_current_behavior |= map(select(
+      (.code_evidence // "")
+      | test("(^|[[:space:]`(])[^[:space:]:`]+:[1-9][0-9]*([^0-9]|$)")))')
 
 if [ -n "$OUT" ]; then printf '%s\n' "$VERDICT" > "$OUT"; else printf '%s\n' "$VERDICT"; fi
 printf 'spec-critic: %s contradiction(s), %s untested criteri(a), %s conflict(s), %s question(s)\n' \

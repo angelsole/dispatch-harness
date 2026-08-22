@@ -132,6 +132,7 @@ case "\$mode" in
                "criteria_not_testing_problem":["\"rounding feels right\" is settled by nobody"],
                "conflicts_with_current_behavior":[
                  {"claim":"applyTier already rounds half-up","code_evidence":"src/margin.ts:2 — Math.floor, not half-up"},
+                 {"claim":"applyTier uses bankers rounding","code_evidence":"the implementation uses floor"},
                  {"claim":"the module exports a default","code_evidence":"   "}],
                "questions":["Inclusive at the tier edge?","Backfill existing orders?",
                             "Which currency rounds first?","A fourth nobody asked for",
@@ -294,6 +295,8 @@ has "$(jq -r '.conflicts_with_current_behavior[0].code_evidence' "$OUT")" "src/m
   "loud: the surviving conflict cites the code, not a vibe"
 check "loud: a conflict whose evidence is blank is dropped, not passed on" \
   "$(jq -r '[.conflicts_with_current_behavior[] | select(.claim | test("default"))] | length' "$OUT")" "0"
+check "loud: nonblank prose without a file:line is dropped too" \
+  "$(jq -r '[.conflicts_with_current_behavior[] | select(.claim | test("bankers"))] | length' "$OUT")" "0"
 check "loud: the question budget is three, whatever the model returned" \
   "$(jq -r '.questions | length' "$OUT")" "3"
 has "$(jq -r '.questions | join("|")' "$OUT")" "Inclusive at the tier edge?" \
@@ -356,7 +359,8 @@ else
     "$(jq -r '.questions | length <= 3' "$LIVE" 2>/dev/null)" "true"
   check "live: every conflict it kept cites code" \
     "$(jq -r '[.conflicts_with_current_behavior[].code_evidence]
-              | map(test("[^[:space:]]")) | all' "$LIVE" 2>/dev/null)" "true"
+              | map(test("(^|[[:space:]`(])[^[:space:]:`]+:[1-9][0-9]*([^0-9]|$)"))
+              | all' "$LIVE" 2>/dev/null)" "true"
   if [ "$(jq -r '.contradictions | length' "$LIVE" 2>/dev/null)" -gt 0 ]; then
     ok "live: it found the contradiction the fixture brief was built around"
   else

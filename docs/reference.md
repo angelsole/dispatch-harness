@@ -317,7 +317,7 @@ CLI's `--json-schema` rather than asked for in prose:
 | --- | --- |
 | `contradictions` | Statements in the brief that cannot both hold: a criterion the Out of scope section forbids, a `Verify` command that contradicts what `Reproduction` says fails today. |
 | `criteria_not_testing_problem` | Acceptance criteria that could all pass with the Problem still there, and criteria no reading or command can settle. |
-| `conflicts_with_current_behavior` | `{claim, code_evidence}` — a claim the brief makes about how the repo works today that the code contradicts. `code_evidence` is a `file:line` and is **required**: a conflict without one is a vibe, and an entry whose evidence comes back blank is dropped rather than passed on. |
+| `conflicts_with_current_behavior` | `{claim, code_evidence}` — a claim the brief makes about how the repo works today that the code contradicts. `code_evidence` is a `file:line` and is **required**: a conflict without one is a vibe, and an entry without a valid citation is dropped rather than passed on. |
 | `questions` | At most 3, batched into one round, ordered by how much they change what gets built. |
 
 Every list may be empty, and an honest empty verdict is the common one. The
