@@ -955,10 +955,11 @@ mount_specs() {  # $1 = run dir, $2 = worktree
 mkdir -p "$WORKTREE/.harness"
 cp "$BRIEF" "$WORKTREE/.harness/brief.md"
 rm -f "$WORKTREE/.harness/QUESTIONS.md"   # stale questions would re-trigger needs_input
-# A rejection belongs to the dispatch that produced it. Clear it before this
-# dispatch starts work so the current implementer can still reject, while an
-# earlier verdict cannot veto escalation or survive a successful re-review.
-if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
+# A rejection belongs to the dispatch that produced it, but historically it is
+# also the no-review redispatch verdict. Archive it only for a run that can
+# actually escalate: every other arm must preserve the old pipeline's outcome.
+if [ "$ESCALATION" = on ] && [ "$IMPLEMENTER_PROVIDER" != anthropic ] \
+   && [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
   mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
 fi
 mount_specs "$RUN_DIR" "$WORKTREE" \

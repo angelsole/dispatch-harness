@@ -386,8 +386,9 @@ check "guard: an attempt with no diff does not escalate" "$(spawns_of implemente
 has "$OUT" "there is no patch to correct" "guard: saying so"
 check "guard: and the run ends on the gate's verdict" "$(result .status)" "gate_failed"
 
-# A rejection from an earlier dispatch judged an earlier brief and tree. It is
-# archived during setup, before it can veto a newly-earned escalation.
+# A rejection from an earlier dispatch judged an earlier brief and tree. An
+# escalation-enabled cheap run archives it during setup, before it can veto a
+# newly-earned escalation.
 STALE_TICKET=ESC-STALE-REJECTION
 STALE_WT="$ROOT/greenapp-$(printf '%s' "$STALE_TICKET" | tr '[:upper:]' '[:lower:]')"
 git -C "$REPO" worktree add -q -b "fix/$STALE_TICKET" "$STALE_WT" origin/main
@@ -399,6 +400,27 @@ check "guard: a stale rejection does not suppress escalation" \
 exists "guard: the stale rejection is archived" "$RUN/REJECTED.prev.md"
 absent "guard: the stale rejection is gone before the new attempt" \
   "$WT/.harness/REJECTED.md"
+
+# Outside that path, stale rejections retain their historical meaning. In
+# particular, a no-review redispatch must still end rejected even when its new
+# gate passes, whether escalation is explicitly off or has nowhere to go.
+for stale_case in \
+  'ESC-STALE-OFF|IMPLEMENTER_PROVIDER=zai HARNESS_ESCALATION=off HARNESS_SKIP_REVIEW=1' \
+  'ESC-STALE-ANTHROPIC|HARNESS_SKIP_REVIEW=1'; do
+  STALE_TICKET=${stale_case%%|*}
+  STALE_OVERRIDES=${stale_case#*|}
+  STALE_WT="$ROOT/greenapp-$(printf '%s' "$STALE_TICKET" | tr '[:upper:]' '[:lower:]')"
+  git -C "$REPO" worktree add -q -b "fix/$STALE_TICKET" "$STALE_WT" origin/main
+  mkdir -p "$STALE_WT/.harness"
+  printf '# prior dispatch rejection\n' > "$STALE_WT/.harness/REJECTED.md"
+  dispatch "$STALE_TICKET" commit pass "$STALE_OVERRIDES"
+  check "guard: $STALE_TICKET keeps the old rejected outcome" \
+    "$(result .status)" "rejected"
+  exists "guard: $STALE_TICKET leaves the rejection in the worktree" \
+    "$WT/.harness/REJECTED.md"
+  absent "guard: $STALE_TICKET does not archive the rejection" \
+    "$RUN/REJECTED.prev.md"
+done
 
 # The step classes: escalation-steps decides, and it is overridable.
 TEST_GATE_CMD='exit 7'
