@@ -19,8 +19,8 @@
 #    questions:                 ["..."]}          # at most 3, batched
 #
 # Exit 0 when a verdict was produced (read the JSON — an empty verdict is the
-# common and correct one), 1 when the critic could not produce one after a
-# retry, 2 on a usage error.
+# common and correct one), 1 when the critic could not produce one, 2 on a
+# usage error.
 # <<< --help <<<
 #
 # Env:
@@ -162,35 +162,33 @@ CHECK='(.contradictions | type == "array")
        and (.questions | type == "array")'
 
 VERDICT=""; why="the critic never ran"
-for attempt in 1 2; do
-  ENVELOPE="$TMP/attempt-$attempt.json"
-  run_once "$ENVELOPE" || true
-  out=$(jq -c 'select(.structured_output != null) | .structured_output' \
-    "$ENVELOPE" 2>/dev/null | head -1)
-  if [ -n "$out" ] && printf '%s' "$out" | jq -e "$CHECK" >/dev/null 2>&1; then
-    VERDICT="$out"
-    break
-  fi
-  if [ -n "$out" ]; then
-    why="the answer did not carry the four lists the schema requires"
-  else
-    why=$(jq -r 'if .is_error and ((.result // "") | length) > 0
-                 then "the CLI reported an error: \(.result)"
-                 elif .is_error
-                 then "the CLI reported an error (stop_reason \(.stop_reason // "?"), \(.num_turns // "?") turns — raise SPEC_CRITIC_MAX_TURNS if it ran out)"
-                 else "no structured_output in the envelope" end' \
-      "$ENVELOPE" 2>/dev/null) || why=""
-    [ -n "$why" ] && [ "$why" != null ] || why="the CLI wrote nothing"
-  fi
-  echo "spec-critic: attempt $attempt produced no verdict — $why$([ "$attempt" = 1 ] && echo ' — retrying once')" >&2
+ENVELOPE="$TMP/attempt-1.json"
+run_once "$ENVELOPE" || true
+out=$(jq -c 'select(.structured_output != null) | .structured_output' \
+  "$ENVELOPE" 2>/dev/null | head -1)
+if [ -n "$out" ] && printf '%s' "$out" | jq -e "$CHECK" >/dev/null 2>&1; then
+  VERDICT="$out"
+elif [ -n "$out" ]; then
+  why="the answer did not carry the four lists the schema requires"
+else
+  why=$(jq -r 'if .is_error and ((.result // "") | length) > 0
+               then "the CLI reported an error: \(.result)"
+               elif .is_error
+               then "the CLI reported an error (stop_reason \(.stop_reason // "?"), \(.num_turns // "?") turns — raise SPEC_CRITIC_MAX_TURNS if it ran out)"
+               else "no structured_output in the envelope" end' \
+    "$ENVELOPE" 2>/dev/null) || why=""
+  [ -n "$why" ] && [ "$why" != null ] || why="the CLI wrote nothing"
+fi
+if [ -z "$VERDICT" ]; then
+  echo "spec-critic: the pass produced no verdict — $why" >&2
   head -c 300 "$ENVELOPE.err" 2>/dev/null >&2 || true
   head -c 300 "$ENVELOPE" 2>/dev/null >&2 || true
   echo >&2
   [ -z "$OUT" ] || {
-    cp "$ENVELOPE" "$OUT.attempt-$attempt.log" 2>/dev/null || true
-    cp "$ENVELOPE.err" "$OUT.attempt-$attempt.err" 2>/dev/null || true
+    cp "$ENVELOPE" "$OUT.attempt-1.log" 2>/dev/null || true
+    cp "$ENVELOPE.err" "$OUT.attempt-1.err" 2>/dev/null || true
   }
-done
+fi
 [ -n "$VERDICT" ] || { echo "spec-critic: no verdict — $why" >&2; exit 1; }
 
 # Two normalisations, both of them the contract rather than taste: the question

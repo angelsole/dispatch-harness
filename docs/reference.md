@@ -346,7 +346,7 @@ so the write confinement holds whatever the policy file says.
 | `SPEC_CRITIC_MAX_BYTES` | Brief bytes quoted into the prompt | `60000` |
 
 Exit 0 means a verdict was produced (read the JSON — passing is the usual
-outcome), 1 means the critic could not produce one after a retry, 2 is a usage
+outcome), 1 means the single critic pass could not produce one, 2 is a usage
 error. A critic that cannot answer is never evidence against a brief.
 
 ## The gate integrity check

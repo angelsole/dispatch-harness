@@ -323,8 +323,8 @@ cannot_answer() {  # $1 = fake mode, $2 = expected reason, $3 = label
   has "$o" "$2" "noverdict: $3 says why"
   if [ -e "$OUT" ]; then bad "noverdict: $3 left the stale verdict behind"
   else ok "noverdict: $3 removes the stale verdict"; fi
-  check "noverdict: $3 is retried exactly once" "$(critic_calls)" "2"
-  exists "noverdict: $3 keeps the first envelope for the post-mortem" "$OUT.attempt-1.log"
+  check "noverdict: $3 still gets only the one permitted pass" "$(critic_calls)" "1"
+  exists "noverdict: $3 keeps its envelope for the post-mortem" "$OUT.attempt-1.log"
 }
 cannot_answer silent "the CLI wrote nothing"        "a CLI that printed nothing"
 cannot_answer prose  "no structured_output"          "prose instead of a verdict"
