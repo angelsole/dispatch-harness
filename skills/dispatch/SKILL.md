@@ -67,9 +67,9 @@ unmounts nothing.
 
 Write one brief per run to `~/.claude/harness/runs/<RUN-ID>/brief.md` following
 `~/.claude/harness/brief-template.md`. When runs span repos, the workers never
-meet — the briefs are their only handshake: decide the cross-repo interface
-yourself (routes, payload shapes, field names, error semantics) and write the
-*identical* contract section into every brief that touches it. All sections are mandatory except two
+meet — the briefs are their only handshake: write the **Interface contract**
+section (routes, payload shapes, field names, error semantics) *identically*
+into every brief that touches it. All sections are mandatory except two
 delete-if-unused ones: **Attached specs**, which you keep only when you
 converted document attachments above (one line per file in `.harness/specs/`
 saying what the implementer should take from it), and the **Demo storyboard**,
@@ -81,6 +81,41 @@ The first
 `# heading` becomes the PR title. Branch names follow the repo's convention
 (`<type>/<TICKET>-<slug>` when a ticket exists, `<type>/<slug>` for ad-hoc work;
 base per repo — usually `staging`).
+
+Four sections carry most of the brief's measured value, and all four reward an
+honest "unknown" over an invented answer:
+
+- **Reproduction** — the command or failing test that shows the problem today.
+  Run it yourself before you write it down; `none — greenfield feature` is a
+  real answer, a command that does not fail is not.
+- **Interface contract** — the names the diff must expose, verbatim.
+- **Edit locations** — the files and functions your research says will change.
+  This is also the implementer's blast-radius fence: what it deletes or
+  rewrites outside this list, it must stop and ask about.
+- **Decision points** — every fork you can see the implementer hitting, each
+  with your decision (which it will follow without asking) or `STOP and ask`
+  plus the blast radius. This section, not the worker's judgement, is what
+  decides whether a run stops: a fork you decide here never becomes a
+  `needs_input`, and one you leave out never becomes a question either.
+
+**Critique the brief before anyone acts on it.** Run the spec critic over each
+finished brief — a confined read-only pass that reads it against the repo:
+
+```bash
+~/.claude/harness/spec-critic.sh --brief ~/.claude/harness/runs/<RUN-ID>/brief.md \
+  --repo <repo-path> --out ~/.claude/harness/runs/<RUN-ID>/spec-critic.json
+```
+
+It returns `{contradictions, criteria_not_testing_problem,
+conflicts_with_current_behavior, questions}` and never edits anything. Fold the
+answers back into the brief before dispatch: `contradictions` and
+`criteria_not_testing_problem` are yours to fix by rewriting the section that
+caused them; each `conflicts_with_current_behavior` entry cites a `file:line` —
+open it, and either correct the brief or record why the claim stands. Its
+`questions` follow the same triage as a worker's: mechanical ones (conventions,
+which service, where it goes) you answer from the code; only a genuine
+product/priority fork reaches the user, folded into the approval question below.
+A clean verdict is the common one — say so in a line and move on.
 
 **Show the brief(s) to the user and get explicit approval before dispatching.**
 For a multi-repo ticket that is one approval covering the whole set — approved
@@ -165,8 +200,10 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   is missing and move the ticket BACK out of In Review if the pipeline's sync
   jumped early — In Review with half its PRs is a lie the reviewer discovers
   later.
-- **needs_input** — the implementer hit a fork the brief didn't cover and
-  stopped instead of guessing. Read `QUESTIONS.md` in the run dir. **Triage
+- **needs_input** — the implementer hit a fork the brief marked `STOP and ask`,
+  or an irreversible action its **Decision points** never declared. Either way
+  the brief is what was thin; a stop is not the worker second-guessing you.
+  Read `QUESTIONS.md` in the run dir. **Triage
   before involving the user**: questions your research already answers
   (architecture, conventions, which existing service to use) you answer
   yourself — that is your architect role. Only genuine product/priority forks
