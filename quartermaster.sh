@@ -80,7 +80,7 @@ AUTOBRIEF_MODEL="${QM_AUTOBRIEF_MODEL:-}"          # empty = the station's defau
 AUTOBRIEF_MAX_BODY="${QM_AUTOBRIEF_MAX_BODY:-60000}"  # description bytes fed to the planner
 # The spec critic reads every self-written brief before it can be published. It
 # only ever holds a brief back, never edits one, and a critic that cannot answer
-# does not hold anything: an outage must not stop the evening.
+# leaves the brief deferred because the required reading did not happen.
 SPEC_CRITIC="${QM_SPEC_CRITIC:-1}"
 # Where the planner may look for the repo a ticket names. Space-separated roots,
 # searched to REPO_DEPTH for .git — a planner cannot pick a repo this machine
@@ -536,13 +536,11 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
 # evening is the only stage that can act on the answer, because 02:00 has nobody
 # to ask.
 #
-# Only contradictions hold a brief back. The other three lists are advice for
-# whoever reads the run afterwards: an untested criterion still builds something,
-# and a question is a question. A critic that produced no verdict at all holds
-# nothing either — an unreachable model, a turn ceiling or a timeout is not
-# evidence against a brief, and letting one stop the night would hand every
-# outage a veto over work nobody has complained about. Both outcomes are written
-# into $WORK/criticnotes, which the Self-briefed section discloses per ticket.
+# Contradictions hold a brief back. The other three lists are advice for whoever
+# reads the run afterwards: an untested criterion still builds something, and a
+# question is a question. A critic that produced no verdict also leaves the brief
+# deferred — not as evidence against it, but because the required pre-dispatch
+# reading did not happen. Both outcomes are written into $WORK/criticnotes.
 #
 # Prints the reason on stderr and returns 1 when the brief must not be armed.
 spec_critic_pass() {  # $1 ticket, $2 candidate brief, $3 repo, $4 station, $5 station dir
@@ -562,7 +560,8 @@ spec_critic_pass() {  # $1 ticket, $2 candidate brief, $3 repo, $4 station, $5 s
   ) </dev/null >>"$run_dir/spec-critic.log" 2>&1 || {
     printf '%s\t%s\n' "$ticket" \
       "spec-critic: no verdict (see runs/$ticket/spec-critic.log)" >> "$WORK/criticnotes"
-    return 0
+    echo "the spec critic produced no verdict (see runs/$ticket/spec-critic.log)" >&2
+    return 1
   }
   n=$(jq -r '.contradictions | length' "$verdict" 2>/dev/null) || n=0
   case "$n" in ''|*[!0-9]*) n=0 ;; esac

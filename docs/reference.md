@@ -39,7 +39,7 @@ environment variable.
 | `QM_AUTOBRIEF_TIMEOUT` | Seconds allowed for each self-briefing planner call | `1200` |
 | `QM_AUTOBRIEF_MODEL` | Model for self-briefing | the station's default |
 | `QM_AUTOBRIEF_MAX_BODY` | Ticket-description bytes handed to the planner | `60000` |
-| `QM_SPEC_CRITIC` | `1` runs [the spec critic](#the-spec-critic) over every self-written brief and holds it back on a contradiction; `0` publishes unread | `1` |
+| `QM_SPEC_CRITIC` | `1` requires [the spec critic](#the-spec-critic) to return a verdict for every self-written brief and holds it back on a contradiction; `0` publishes unread | `1` |
 | `QM_REPO_ROOTS` | Space-separated roots searched for repos named by briefs | `~/Projects` |
 | `QM_REPO_DEPTH` | Maximum discovery depth below each repo root | `3` |
 | `LINEAR_API_KEY_FILE` | The Linear key (mode 600, never echoed anywhere) | `$HARNESS_DIR/linear-api-key` |
@@ -324,7 +324,7 @@ Every list may be empty, and an honest empty verdict is the common one. The
 critic **reports**; it never edits a brief and it never decides a run. What a
 finding is worth is the caller's call: the planner skills fold the answers back
 into the brief before dispatch, and the quartermaster holds a self-written brief
-back on a contradiction and on nothing else (see
+back on a contradiction or when the required verdict could not be produced (see
 [The Quartermaster](operations.md#the-quartermaster)).
 
 **Confinement.** `spec-critic-settings.json` allows `Read`, `Grep` and `Glob`
@@ -347,7 +347,8 @@ so the write confinement holds whatever the policy file says.
 
 Exit 0 means a verdict was produced (read the JSON — passing is the usual
 outcome), 1 means the single critic pass could not produce one, 2 is a usage
-error. A critic that cannot answer is never evidence against a brief.
+error. A critic that cannot answer is not evidence against a brief, but the
+quartermaster still defers because the required review is missing.
 
 ## The gate integrity check
 

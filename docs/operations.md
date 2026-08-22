@@ -361,9 +361,10 @@ self-brief* with the count and the path to `runs/<TICKET>/spec-critic.json`, and
 nothing is armed. The other three lists are advice for whoever reads the run
 afterwards — an untested criterion still builds something, and a question is a
 question. A critic that produced no verdict at all (unreachable model, timeout,
-turn ceiling) holds nothing back either: an outage is not evidence against a
-brief, and the *Self-briefed* line says `spec-critic: no verdict` so the gap is
-visible rather than assumed clean. `QM_SPEC_CRITIC=0` drops the pass entirely.
+turn ceiling) leaves the brief deferred too: not because the outage is evidence
+against the brief, but because the required pre-dispatch reading did not happen.
+The ticket stays under *Could not self-brief* and points to its critic log.
+`QM_SPEC_CRITIC=0` drops the pass entirely.
 
 **No brief arms unchecked.** Before a brief is handed to `schedule.sh` —
 self-written or hand-written, it makes no difference — its `Repo` must be one
