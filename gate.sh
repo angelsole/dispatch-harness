@@ -26,7 +26,8 @@ fi
 GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
           -u REVIEWER_MODEL -u REVIEWER_EFFORT -u HARNESS_OWNER
           -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES
-          -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH)
+          -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH
+          -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS)
 
 # Bash expands the glob in filename order and includes new suites before their
 # first commit. Only a failing suite prints its transcript; a green one is worth
