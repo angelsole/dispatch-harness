@@ -9,6 +9,32 @@
 What is broken or needed, with the concrete evidence found during research
 (error messages, Sentry links, code locations as file:line).
 
+## Reproduction
+The runnable command or failing test that demonstrates the problem — copy-pasteable,
+and expected to fail before the change. `none — greenfield feature` is a legitimate
+value and a better one than a command nobody ran.
+
+```bash
+npm test -- src/pricing/margin.test.ts   # fails: expects 1250, gets 1249
+```
+
+## Interface contract
+The names the change must expose, verbatim: signatures, routes, payload shapes,
+field names, error semantics, config keys. This is what makes a diff checkable
+against the brief instead of against taste, and when a ticket spans repos it is
+the workers' only handshake — the same section, word for word, in every brief
+that touches it. Write `none — internal change only` rather than inventing one.
+
+## Edit locations
+Where the change is expected to land, from the research already done: one line
+per file, with the function or symbol when it is known. The implementer may
+depart from this list — it is a starting point, not a fence — and anything it
+deletes or rewrites *outside* this list is an undeclared blast radius it must
+stop and ask about first.
+
+- `src/pricing/margin.ts` — `applyTier()`, the rounding step
+- `src/pricing/margin.test.ts` — new cases per the criteria below
+
 ## Attached specs
 (Only when the task ships source documents the planner converted to markdown —
 DELETE this section otherwise.) Everything in the run dir's `specs/` is mounted
@@ -22,6 +48,19 @@ line per file: what the implementer should take from it, and where.
 Architectural decisions already made by the planner — the implementer designs
 the rest. Relevant files/services. Repo invariants that apply (e.g. money in
 integer cents, services return {data, error}, DataLoaders use Map lookups).
+
+## Decision points
+The forks the implementer will actually hit, declared here so that stopping to
+ask is a rule rather than a judgement call. One line each: the fork, then either
+the decision — which the implementer follows without asking — or `STOP and ask`,
+plus the blast radius if it goes the wrong way. A fork you genuinely have not
+resolved is worth more here as `STOP and ask` than as a decision you guessed;
+one you have resolved costs the run a stop if you leave it out.
+
+- Tier boundaries inclusive or exclusive at the edge → **inclusive**; the spec's
+  §3 table settles it. Blast radius: one test, one line.
+- Backfilling existing orders → **STOP and ask**. Blast radius: a migration over
+  production rows, not reversible by revert.
 
 ## Acceptance criteria
 - [ ] Each criterion independently verifiable by reading code or running a command
