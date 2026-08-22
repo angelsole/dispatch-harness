@@ -145,8 +145,12 @@ yours to set.
 
 ## When the review stage does not happen
 
-A review that leaves *no* fix commits, *no* `review-notes.md` and *no*
-`REJECTED.md` has proven nothing about the diff. Evidence decides, never
+A review that leaves *no* fix commits, *no* `findings.json`, *no*
+`review-notes.md` and *no* `REJECTED.md` has proven nothing about the diff. The
+findings file counts for the same reason the notes do — since
+[find, refute, fix](reference.md#find-refute-fix) the review pass changes nothing
+by design, and a review that reported five defects and touched no code is the
+most engaged review there is. Evidence decides, never
 duration: a fast "everything is sound" review that writes its notes is a real
 review. Duration only decides whether a *Codex retry* is worth paying for — a
 stage that produced no evidence at all in less time than the diff takes to read

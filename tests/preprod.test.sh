@@ -86,6 +86,7 @@ repo_config_local() {
 SH
   fi
   printf '# fixture task\n' > "$h/runs/$ticket/brief.md"
+  env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
   CAPTURE_IMPL="$ROOT/impl-$ticket.txt" CAPTURE_REVIEW="$ROOT/review-$ticket.txt" \
   HOME="$FHOME" HARNESS_DIR="$h" \
   CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \

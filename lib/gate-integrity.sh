@@ -277,30 +277,37 @@ gate_integrity_replay() {  # $1 = worktree, $2 = base sha, $3 = test list, $4 = 
     rc=$?
     cat "$runner_out" >> "$log"
     printf '(exit %s)\n' "$rc" >> "$log"
-    if [ "$rc" -ne 0 ] && gate_integrity_runner_infra "$file_runner" "$rc" "$runner_out"; then
+    # Exit code first, output second. The infra classifier reads what the runner
+    # printed, so consulting it before the timeout and signal codes would make
+    # the reason a race against how far a killed runner got.
+    case "$rc" in
+      0)
+        printf '%s\n' "$f" >> "$out/non_discriminating"
+        continue ;;
+      124|142|137|143)
+        printf '%s\n' "$f" >> "$out/not_run"
+        [ -n "$first_fail" ] || first_fail="the runner outlived its ${cap}s cap"
+        continue ;;
+      *)
+        # Anything above 128 is a signal, not a verdict a test runner reached.
+        if [ "$rc" -gt 128 ]; then
+          printf '%s\n' "$f" >> "$out/not_run"
+          [ -n "$first_fail" ] || first_fail="the runner was killed (exit $rc)"
+          continue
+        fi ;;
+    esac
+    if gate_integrity_runner_infra "$file_runner" "$rc" "$runner_out"; then
       printf '%s\n' "$f" >> "$out/not_run"
       [ -n "$first_fail" ] \
         || first_fail="the runner exited without executing a test (exit $rc)"
       continue
     fi
     case "$rc" in
-      0)
-        printf '%s\n' "$f" >> "$out/non_discriminating" ;;
-      124|142|137|143)
-        printf '%s\n' "$f" >> "$out/not_run"
-        [ -n "$first_fail" ] \
-          || first_fail="the runner outlived its ${cap}s cap" ;;
       126|127)
         printf '%s\n' "$f" >> "$out/not_run"
         [ -n "$first_fail" ] || first_fail="the runner could not be executed (exit $rc)" ;;
       *)
-        # Anything above 128 is a signal, not a verdict a test runner reached.
-        if [ "$rc" -gt 128 ]; then
-          printf '%s\n' "$f" >> "$out/not_run"
-          [ -n "$first_fail" ] || first_fail="the runner was killed (exit $rc)"
-        else
-          printf '%s\n' "$f" >> "$out/discriminating"
-        fi ;;
+        printf '%s\n' "$f" >> "$out/discriminating" ;;
     esac
   done < "$list"
 

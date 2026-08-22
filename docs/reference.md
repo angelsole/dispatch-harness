@@ -62,6 +62,7 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | --- | --- | --- |
 | `HARNESS_MAX_TURNS` | Turn ceiling for the implementer's session; pinned at first dispatch | `200` |
 | `HARNESS_MAX_RESUMES` | Automatic resumes allowed on turn exhaustion before the run fails (`0` opts out) | `2` |
+| `HARNESS_RESUME_MODE` | What a turn-ceiling resume hands the next segment: `report` (fresh session + a written handover) or `transcript` (`--resume` into the exhausted session); pinned at first dispatch | `report` |
 
 ### Dispatch and identity
 
@@ -88,11 +89,14 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 
 ### The review stage
 
-See [When Codex dies mid-run](operations.md#when-codex-dies-mid-run-out-of-credits)
-and [What the reviewer is allowed to reach](design-notes.md#what-the-reviewer-is-allowed-to-reach).
+See [When Codex dies mid-run](operations.md#when-codex-dies-mid-run-out-of-credits),
+[Find, refute, fix](#find-refute-fix) and
+[What the reviewer is allowed to reach](design-notes.md#what-the-reviewer-is-allowed-to-reach).
 
 | Env var | Effect | Default |
 | --- | --- | --- |
+| `HARNESS_REVIEW_REFUTE` | `0` skips the refutation pass: every finding is promoted unchecked, which is the single-pass review this replaces. Recorded as `refute: "off"` in `review_findings`, and stated in `review-notes.md` — a run that skipped refutation never looks like one that passed it. | `1` |
+| `HARNESS_REFUTE_TIMEOUT` | Seconds the refutation pass may spend. It sits between a review that happened and the fixes that depend on it, so it is time-boxed harder than the review itself; on expiry it leaves no verdicts and every finding is promoted. | `900` |
 | `HARNESS_REVIEW_MIN_SECONDS` | Floor below which a review that produced no evidence is treated as a stage that never ran (and retried once on the Codex side). | `60` |
 | `HARNESS_REVIEW_TRIVIAL_LINES` | Changed lines vs. base at or below which the floor does not apply — a two-line diff genuinely can be reviewed in seconds. A diff whose size cannot be *read* (a base ref that is not there, a worktree that moved) is unknown rather than small, and gets the retry. | `20` |
 | `HARNESS_REVIEW_NETWORK` | `0` restores the old sandbox exactly: no loopback, no isolated config dir, and a `codex` command line and environment byte-identical to what they were before this existed. Anything else (or unset) enables both. | `1` |
@@ -328,7 +332,7 @@ as proof.
 | --- | --- | --- |
 | `HARNESS_GATE_INTEGRITY` | `0` disables the stage: no file, no `gate_integrity` field, and a review prompt byte-identical to what it was before this existed. | `1` |
 | `HARNESS_GATE_INTEGRITY_TIMEOUT` | Seconds the whole replay half may spend. Test files left over when it runs out are `not_run`, and the reason says so. | `300` |
-| `HARNESS_GATE_INTEGRITY_FILE_TIMEOUT` | Seconds one replayed test file may take. | `120` |
+| `HARNESS_GATE_INTEGRITY_FILE_TIMEOUT` | Seconds one replayed test file may take. Whichever cap bites first, a runner killed by one is always reported as a timeout, whatever it had printed by then. | `120` |
 | `HARNESS_GATE_INTEGRITY_MAX_FILES` | How many test files are replayed at most; the rest are `not_run` rather than silently dropped. | `10` |
 
 Both halves are heuristics, with false positives and false negatives, which is
@@ -386,6 +390,60 @@ checkout, move `~/.claude/creative-harness/champion/` to
 (or drop the pin — `.creative/` is enough), and the old directory can go. Runs
 already in `~/.claude/creative-harness/runs/` stay readable where they are
 (`wall.sh --runs`), and nothing moves them for you.
+
+## Find, refute, fix
+
+The review stage is three passes, not one. A reviewer that finds and fixes in
+the same breath turns every false positive into an edit to code that already
+passed the gate, and about half of what a review reports does not survive
+checking — so a finding earns an edit only by surviving a session whose only job
+is to disprove it.
+
+**Find.** The reviewer (Codex, or whichever [tier](operations.md#when-codex-dies-mid-run-out-of-credits)
+takes the review — unchanged) first writes `.harness/expected-properties.md`
+from the brief *before* it opens the diff, then reads the diff and writes
+`.harness/findings.json`: `[{file, line, claim, scenario}]`. It changes nothing.
+Its checklist keeps gate-gaming at the top and gains an explicit blind-spot item —
+concurrency and races, time-of-check-to-time-of-use and timing-dependent
+authorization, compositional authorization — because those are the classes a
+reviewer misses by waiting for them to catch its eye.
+
+**Refute.** A fresh session on the same backend, which has not seen the diff,
+reads each finding and tries to establish that it is **wrong**. It writes
+`.harness/refuted.json`: `[{id, refuted, reason}]`. `refuted: true` needs
+concrete evidence; a finding it merely doubts, cannot check, or leaves out is
+**promoted**. The burden sits on the refutation, because a wrong promotion costs
+one unnecessary edit and a wrong refutation ships a defect.
+
+**Fix.** Only promoted findings are edited, one commit per finding with the
+finding id in the message, and then the post-review gate runs exactly as it
+always did.
+
+Ids are the harness's, `F1..Fn` in the order the find pass wrote them; it
+rewrites `findings.json` with them so every later pass and the ledger name the
+same finding the same way. An entry with no claim is dropped and the drop is
+printed.
+
+**Degradation.** Each pass falls back to the one before it. A find pass that
+leaves no `findings.json` *is* the old single-pass review and nothing else runs.
+A refutation pass that leaves no usable verdicts — a crash, a timeout, an empty
+file, `HARNESS_REVIEW_REFUTE=0` — promotes **every** finding, which is again
+what a single pass would have done; `review_findings.refute` becomes `failed`
+(or `off`) and `review-notes.md` says in words that the promoted list is a
+reviewer's unchecked claims. Nothing here can hold a run or leave a diff
+unreviewed: [every arm reviews or holds](../README.md) is decided before this
+stage and untouched by it.
+
+**Where it goes.** `findings.json`, `refuted.json` and `promoted.json` in the run
+dir; the `{found, refuted, promoted, fixed}` counts in `result.json` as
+`review_findings`; and a `## Findings` section appended to `review-notes.md`
+listing both sides — promoted with what was fixed, refuted with the reason it was
+dropped — so the planner's verdict step sees what was thrown away and why.
+
+Not built here, and the obvious next step: chunked review of at most fifty lines
+at a time with the surrounding code retrieved per chunk. Reviewer recall
+collapses on diffs larger than that, and no amount of refutation recovers a
+finding nobody made.
 
 ## The repo pin
 
@@ -513,7 +571,10 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `specs/` | Converted spec attachments, when the task had any (below) |
 | `QUESTIONS.md` | The implementer's blocking questions — the run is `needs_input` while it exists |
 | `implementer-notes.md` | What the implementer changed and decided (it becomes the PR body) |
-| `review-notes.md` / `REJECTED.md` | The reviewer's findings, or its rejection |
+| `review-notes.md` / `REJECTED.md` | The reviewer's notes (with the promoted/refuted ledger appended), or its rejection |
+| `findings.json`, `refuted.json`, `promoted.json` | [Find, refute, fix](#find-refute-fix): what the review pass reported, what the refutation pass disproved, and what therefore earned an edit. Absent on a review that produced no structured findings |
+| `expected-properties.md` | What the review pass said a correct change must do, written from the brief *before* it opened the diff |
+| `review-findings.json` | The `{found, refuted, promoted, fixed, refute}` counts, copied into `result.json` as `review_findings` |
 | `feed.log` | Live transcript across both model stages |
 | `gate-*.log`, `gate-rounds.log` | Each gate round's output and its one-line verdict |
 | `gate-integrity.json`, `gate-integrity-replay.log` | The [integrity check's](#the-gate-integrity-check) findings (copied into `result.json` as `gate_integrity`), and the transcript of replaying this branch's tests against base |
@@ -522,7 +583,8 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
 | `verify.json`, `verify.log` | The [verifier's](#the-verifier) score, and why it did or did not produce one |
 | `visual/`, `visual-*.log`, `visual-rounds.log` | The [visual profile's](#profiles) frames, contact sheet and score, one log per round, and the round ledger. Only on a repo the profile applies to |
-| `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds and final message, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
+| `segment-report-<n>.md` | In `report` [resume mode](operations.md#turn-ceiling-a-run-that-resumes-itself), the handover the turn-ceiling resume gave segment `<n>+1` about segment `<n>` |
+| `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds, final message and segment reports, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
 | `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
 
@@ -641,6 +703,7 @@ fields are `null`/empty):
 | `review` | How the review stage actually went: `reviewed` \| `reviewed_claude` \| `failed_silent` \| `skipped`, empty when the run never reached it. Runs recorded before this ticket may also carry the retired `no_evidence` — an empty Codex review now falls through to the Claude tier instead of shipping. See [Reading the pipeline's own vitals](design-notes.md#reading-the-pipelines-own-vitals). |
 | `review_account` | Which backend the review attempt ran on: `primary` \| `fallback` \| `claude`. Absent (not empty) on the arm that never attempts a review. Set the moment a tier is entered, so it names the attempt, not the outcome — `review` is what says a diff was read. See [A second Codex account](operations.md#a-second-codex-account-for-a-dry-primary). |
 | `gate_integrity` | The [integrity check's](#the-gate-integrity-check) own `gate-integrity.json`, verbatim: `{base, head, replay: {status, reason, runner, discriminating, non_discriminating, not_run, files{}}, flags[], flag_count}`. Additive and optional — absent on a run that never reached the stage (or ran with it off), and `flags: []` on a branch it found nothing in. Advisory: nothing in the pipeline branches on it. |
+| `review_findings` | [Find, refute, fix](#find-refute-fix): `{found, refuted, promoted, fixed, refute}`. `fixed` is counted from the commit log (the fix pass names the finding id in its message), so a promoted finding nobody committed for reads as promoted-not-fixed rather than as fixed. `refute` is `ok` \| `failed` \| `off`, and on anything but `ok` every finding was promoted unchecked. Additive and optional — absent on a review that produced no structured findings, which is the single-pass review this replaced. |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
 | `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `result` is `pass` \| `fail` \| `skipped` (see [When the post-review gate is skipped](design-notes.md#when-the-post-review-gate-is-skipped)); a skipped round records `0` seconds. `failed_step` is the command a failing round died on, `null` on a passing or skipped round and on rounds recorded before this existed. |

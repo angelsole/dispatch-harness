@@ -150,8 +150,8 @@ re-pinned, so it says it once, not on every resume.
 
 When the implementer stops on turn exhaustion (the CLI's `error_max_turns`
 result — a structured outcome, not a message we parse), the run does **not**
-fail. It re-invokes the same pinned session, in the same worktree, with the same
-ceiling — byte for byte what a re-dispatch does — and says so:
+fail. It spawns the implementer again, in the same worktree, with the same
+ceiling, and says so:
 
 ```
 resuming: turn ceiling (1/2)
@@ -161,7 +161,37 @@ resuming: turn ceiling (1/2)
 `runs/<TICKET>/turn-resumes`. Only once that budget is spent does the run
 surface `implementer_failed`.
 
-**A resume appends to the stream; it does not replace it.** Each segment of a
+**What the next segment is handed: `HARNESS_RESUME_MODE`.** Pinned into
+`runs/<TICKET>/resume-mode` at first dispatch, like the model knobs, because it
+is an experimental condition and not a per-shell preference.
+
+- `report` (**default**) — the harness writes
+  `runs/<TICKET>/segment-report-<n>.md`: a fixed template (goal, decisions taken
+  and why, files touched, gate status, open questions, dead ends, and the
+  segment's tool trail) extracted mechanically from that segment's own
+  trajectory and from git. The next segment is then a **fresh session** whose
+  prompt is that report, explicitly labelled *a previous session's report* — an
+  external artifact to be checked against the repository, not a memory —
+  followed by the full task contract. Nothing is asked of the exhausted session:
+  it has no turns left to write a handover, so the report may not depend on its
+  cooperation.
+- `transcript` — the original behavior, kept as the comparison arm: `--resume`
+  back into the exhausted session with a short "you ran out of turns"
+  continuation, byte for byte what a human re-dispatch does.
+
+An agent re-reading its own prior reasoning as its own thoughts is the framing
+that suppresses self-correction, and long-horizon failures are overwhelmingly
+process-level, with history error accumulation among the named causes.
+Re-labelling the same content as somebody else's account is a prompt-level
+change with a large measured effect on whether a model corrects course — and a
+knob rather than a rewrite, so both arms stay measurable.
+
+**Only the turn ceiling.** A capacity deferral resumes a run whose *window*
+emptied, and there the intact context is exactly what you want back: that path
+stays on `--resume` whatever `resume-mode` says.
+
+**A resume appends to the stream; it does not replace it.** In both modes — a
+fresh session is still a segment of the same attempt. Each segment of a
 resumed attempt writes into the same `opus-stream.jsonl`, exhausted one first,
 and the file is truncated exactly once per *invocation* — up with the
 [attempt rotation](#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch), never
@@ -198,7 +228,7 @@ original tree object, so the diff, the working copy and the commit count are
 untouched, a genuine human `Co-Authored-By:` is left alone, and a range with
 nothing to strip keeps its shas.
 
-Both knobs are in
+The three knobs are in
 [the reference](reference.md#turn-ceiling-and-resumes).
 
 ## Attempts: a run is a ticket, an attempt is a dispatch
@@ -584,6 +614,10 @@ never durations:
 
 The pipeline never marks a PR ready and never merges, in any arm; opening a
 draft PR is as far as automation goes.
+
+The tiers decide *who* reviews. Whichever one takes it then runs the same three
+passes — find, refute, fix — so what it reports is disproved before it is
+edited; that half is [Find, refute, fix](reference.md#find-refute-fix).
 
 How an empty review is told apart from a fast, honest one — and what
 `HARNESS_REVIEW_MIN_SECONDS` and `HARNESS_REVIEW_TRIVIAL_LINES` are for — is in

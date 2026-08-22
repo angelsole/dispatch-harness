@@ -947,6 +947,7 @@ dispatch() {  # $1 = run id, $2 = VISUAL_GATE_CMD (may be empty), rest = env
   printf '# fixture task\n' > "$RUN/brief.md"
   : > "$PROMPTS"
   env -u HARNESS_MAX_TURNS -u HARNESS_REDISPATCH \
+      -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
       TEST_VISUAL_GATE_CMD="$vcmd" HARNESS_NOTIFY=0 \

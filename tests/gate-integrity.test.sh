@@ -35,6 +35,7 @@ ok()   { pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; fi; }
 has()     { if printf '%s' "$1" | grep -qF -- "$2"; then ok "$3"; else bad "$3 (missing [$2])"; fi; }
+has_re()  { if printf '%s' "$1" | grep -qE -- "$2"; then ok "$3"; else bad "$3 (no match [$2])"; fi; }
 has_not() { if printf '%s' "$1" | grep -qF -- "$2"; then bad "$3 (found [$2])"; else ok "$3"; fi; }
 file_has(){ if grep -qF -- "$2" "$1" 2>/dev/null; then ok "$3"; else bad "$3 (missing [$2] in $1)"; fi; }
 
@@ -43,7 +44,7 @@ FHOME="$ROOT/home"
 HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"
 SRCDIR="$ROOT/src"; FAKES="$ROOT/bin"
 IMPL_MODE="$ROOT/impl-mode"      # which diff the implementer fake produces
-NPM_MODE="$ROOT/npm-mode"        # ok | broken
+NPM_MODE="$ROOT/npm-mode"        # ok | broken | notests | slowquiet | slowloud
 PROMPT="$ROOT/review-prompt.txt" # the prompt the reviewer was handed
 
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$HARNESS/lib"
@@ -169,13 +170,16 @@ EOF
 
 # The replayed test runner. `npm test --silent -- <file>` runs that one file;
 # broken mode is the runner that cannot start at all, which is the whole point
-# of scenario 4.
+# of scenario 4. The two slow modes differ in one thing only: whether the cap
+# kills the runner before or after it has printed a line the infra classifier
+# recognises.
 cat > "$FAKES/npm" <<EOF
 #!/usr/bin/env bash
 [ "\${1:-}" = test ] || exit 0
 [ "\$(cat "$NPM_MODE")" = broken ] && exit 127
 [ "\$(cat "$NPM_MODE")" = notests ] && { echo 'Error: no test specified'; exit 1; }
-[ "\$(cat "$NPM_MODE")" = slow ] && sleep 4
+[ "\$(cat "$NPM_MODE")" = slowquiet ] && sleep 10
+[ "\$(cat "$NPM_MODE")" = slowloud ] && { echo 'npm ERR! missing script: "test"'; sleep 10; }
 last=""
 for a in "\$@"; do last="\$a"; done
 [ -f "\$last" ] || exit 1
@@ -218,6 +222,7 @@ dispatch() {  # $1 = run id, $2 = implementer mode, $3 = VAR=VAL overrides (may 
   : > "$PROMPT"
   # shellcheck disable=SC2086
   env -u CODEX_HOME -u HARNESS_CODEX_HOME_FALLBACK \
+      -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
       HARNESS_NOTIFY=0 HARNESS_VERIFY=0 \
@@ -379,15 +384,36 @@ has "$(integrity .replay.reason)" "without executing a test" \
 check "infra verdict: no false discriminating count is recorded" \
   "$(integrity .replay.discriminating)" "0"
 
+# A runner the cap killed is a timeout whatever it managed to print first. The
+# infra classifier reads npm's "missing script" wording out of the runner's
+# output, so the same kill used to be filed two different ways depending on how
+# far the runner got before it died — the reason was a race, not a reading.
+timeout_case() {  # $1 = run id, $2 = npm mode, $3 = when the kill landed
+  printf '%s\n' "$2" > "$NPM_MODE"
+  dispatch "$1" replay "HARNESS_GATE_INTEGRITY_FILE_TIMEOUT=1"
+  printf 'ok\n' > "$NPM_MODE"
+  check "timeout ($3): a capped runner is judged neither way" \
+    "$(integrity .replay.status)" "not_run"
+  has "$(integrity .replay.reason)" "outlived its 1s cap" \
+    "timeout ($3): and the reason names the cap"
+  has_not "$(integrity .replay.reason)" "without executing a test" \
+    "timeout ($3): not whatever it printed on the way out"
+  check "timeout ($3): the run still ships" "$(result .status)" "ready"
+}
+timeout_case GI-TIMEOUT-QUIET slowquiet "killed before printing"
+timeout_case GI-TIMEOUT-LOUD  slowloud  "killed after an infra-shaped line"
+
 # The whole-stage cap must shorten an otherwise longer per-file cap. Without
-# that, one test can overrun the advertised budget by almost two minutes.
-printf 'slow\n' > "$NPM_MODE"
+# that, one test can overrun the advertised budget by almost two minutes. The
+# budget is wide enough for the scratch worktree to be built inside it: a budget
+# the setup can exhaust records itself as the reason and never reaches the cap.
+printf 'slowquiet\n' > "$NPM_MODE"
 dispatch GI-TIMEOUT replay \
-  "HARNESS_GATE_INTEGRITY_TIMEOUT=1 HARNESS_GATE_INTEGRITY_FILE_TIMEOUT=10"
+  "HARNESS_GATE_INTEGRITY_TIMEOUT=5 HARNESS_GATE_INTEGRITY_FILE_TIMEOUT=60"
 printf 'ok\n' > "$NPM_MODE"
 check "timeout: an in-flight test obeys the whole replay budget" \
   "$(integrity .replay.status)" "not_run"
-has "$(integrity .replay.reason)" "outlived its 1s cap" \
+has_re "$(integrity .replay.reason)" 'outlived its [1-5]s cap' \
   "timeout: the shortened cap is explained"
 check "timeout: the run still ships" "$(result .status)" "ready"
 

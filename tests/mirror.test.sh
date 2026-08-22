@@ -128,6 +128,7 @@ mkharness() {  # $1 = ticket
 }
 
 dispatch() {  # $1 = ticket, $2 = repo — HARNESS_MIRROR & co. come from the caller
+  env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
   HOME="$FHOME" HARNESS_DIR="$ROOT/harness-$1" \
   CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$FAKES/codex" \
   HARNESS_REVIEW_NETWORK=0 \

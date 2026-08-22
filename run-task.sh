@@ -195,6 +195,19 @@ fi
 # experimental condition, and 0 switches the self-resume off.
 MAX_RESUMES="${HARNESS_MAX_RESUMES:-$DEFAULT_MAX_RESUMES}"
 case "$MAX_RESUMES" in ''|*[!0-9]*) MAX_RESUMES=$DEFAULT_MAX_RESUMES ;; esac
+# What a turn-ceiling resume hands the next segment. Pinning prevents an
+# experimental arm from changing across dispatches.
+DEFAULT_RESUME_MODE=report
+pin_knob resume-mode HARNESS_RESUME_MODE "$DEFAULT_RESUME_MODE"
+RESUME_MODE="$HARNESS_RESUME_MODE"
+case "$RESUME_MODE" in
+  transcript|report) ;;
+  *)
+    echo "[harness] HARNESS_RESUME_MODE='$RESUME_MODE' is not a known resume mode — using $DEFAULT_RESUME_MODE"
+    RESUME_MODE=$DEFAULT_RESUME_MODE
+    echo "$RESUME_MODE" > "$RUN_DIR/resume-mode"
+    ;;
+esac
 
 # A Claude-only run resumed after codex is installed may still need Codex for
 # base-sync conflicts. Use the normal defaults for that mechanical step while
@@ -434,7 +447,7 @@ record_attempt() {  # $1 = the status this attempt is ending on
 }
 
 write_result() {
-  local metrics integrity extra
+  local metrics integrity findings extra
   # Before the metrics, so this attempt's own row is in the ledger they read.
   record_attempt "$1"
   metrics=$(collect_metrics)
@@ -451,6 +464,13 @@ write_result() {
     integrity=$(jq -c . "$RUN_DIR/gate-integrity.json" 2>/dev/null) || integrity=null
     [ -n "$integrity" ] || integrity=null
   fi
+  # Same rule for the find/refute/fix ledger: absent on a review that produced no
+  # structured findings, which is the single-pass review this pipeline had.
+  findings=null
+  if [ -f "$RUN_DIR/review-findings.json" ]; then
+    findings=$(jq -c . "$RUN_DIR/review-findings.json" 2>/dev/null) || findings=null
+    [ -n "$findings" ] || findings=null
+  fi
   jq -n \
     --argjson attempt "${ATTEMPT:-1}" --argjson attempts_total "${ATTEMPT:-1}" \
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
@@ -462,12 +482,14 @@ write_result() {
     --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" --argjson integrity "$integrity" \
-    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_provider:$iprovider,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,attempt:$attempt,attempts_total:$attempts_total,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,gate_integrity:$integrity,metrics:$metrics,logs:$run_dir}
+    --argjson findings "$findings" \
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_provider:$iprovider,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,attempt:$attempt,attempts_total:$attempts_total,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,gate_integrity:$integrity,review_findings:$findings,metrics:$metrics,logs:$run_dir}
      # The account label belongs to a review that happened: the arms that never
      # attempt one carry no field at all rather than an empty string nobody can
      # tell apart from "primary".
      | if .review_account == "" then del(.review_account) else . end
-     | if .gate_integrity == null then del(.gate_integrity) else . end' \
+     | if .gate_integrity == null then del(.gate_integrity) else . end
+     | if .review_findings == null then del(.review_findings) else . end' \
     > "$RUN_DIR/result.json"
   if [ -n "$extra" ]; then
     jq --argjson extra "$extra" '. + $extra' "$RUN_DIR/result.json" > "$RUN_DIR/result.json.tmp" \
@@ -725,8 +747,9 @@ session_limit_reset() {  # prints the epoch the limit message names, or fails
 # the segment that just ended, and a first segment that hit the ceiling must not
 # keep re-arming the loop after a resume finished the work cleanly.
 max_turns_hit() {
-  jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
-    "$RUN_DIR/opus-stream.jsonl" >/dev/null 2>&1 && return 0
+  segment_stream \
+    | jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
+        >/dev/null 2>&1 && return 0
   grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
 }
 
@@ -790,14 +813,28 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
     echo "FATAL: cannot preserve attempt $PREV_ATTEMPT telemetry at $attempt_dir" >&2
     exit 1
   fi
+  attempt_files=()
   for f in $ATTEMPT_FILES; do
-    [ -f "$RUN_DIR/$f" ] || continue
-    if [ -e "$attempt_dir/$f" ]; then
-      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$f" >&2
+    [ ! -f "$RUN_DIR/$f" ] || attempt_files+=("$RUN_DIR/$f")
+  done
+  for f in "$RUN_DIR"/segment-report-*.md; do
+    [ ! -f "$f" ] || attempt_files+=("$f")
+  done
+  # Check every destination before moving any evidence, so a collision cannot
+  # leave a partially rotated attempt.
+  #
+  # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
+  # treats an empty array as unbound under `set -u`, and an attempt that left
+  # none of these files behind must rotate to nothing, not abort the run.
+  for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
+    if [ -e "$attempt_dir/$(basename "$f")" ]; then
+      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
       exit 1
     fi
-    if ! mv "$RUN_DIR/$f" "$attempt_dir/$f"; then
-      echo "FATAL: cannot preserve $f for attempt $PREV_ATTEMPT" >&2
+  done
+  for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
+    if ! mv "$f" "$attempt_dir/$(basename "$f")"; then
+      echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
       exit 1
     fi
   done
@@ -998,6 +1035,10 @@ OPUS_SESSION_FILE="$RUN_DIR/opus-session"
 CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns "$MAX_TURNS")
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
 
+segment_stream() {
+  tail -n "+${OPUS_STREAM_START_LINE:-1}" "$RUN_DIR/opus-stream.jsonl" 2>/dev/null
+}
+
 # One implementer segment: leaves OPUS_EXIT, the worker's final message and the
 # refreshed session id behind. Stream events go to the statusline and feed.log
 # so a run shows live what the worker is doing (tool by tool); the raw stream is
@@ -1020,6 +1061,11 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   OPUS_FEED_START_LINE=1
   if [ -f "$RUN_DIR/feed.log" ]; then
     OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
+  fi
+  # Mark where this segment begins in the append-only stream.
+  OPUS_STREAM_START_LINE=1
+  if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
+    OPUS_STREAM_START_LINE=$(( $(wc -l < "$RUN_DIR/opus-stream.jsonl") + 1 ))
   fi
   (cd "$WORKTREE" && hook_run implementer_env \
       && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL="$IMPLEMENTER_SUBAGENT_MODEL" \
@@ -1048,9 +1094,12 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   # every result event would concatenate one closing message per segment into
   # opus.log, and hand session_limit_hit an exhausted segment's prose as
   # evidence about this one.
-  jq -r -s 'map(select(.type == "result")) | (last // {}) | .result // empty' \
-    "$RUN_DIR/opus-stream.jsonl" > "$RUN_DIR/opus.log" 2>/dev/null || true
-  new_session=$(jq -r 'select(.type == "result") | .session_id // empty' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null | tail -1)
+  segment_stream \
+    | jq -r -s 'map(select(.type == "result")) | (last // {}) | .result // empty' \
+        > "$RUN_DIR/opus.log" 2>/dev/null || true
+  new_session=$(segment_stream \
+    | jq -r 'select(.type == "result") | .session_id // empty' 2>/dev/null \
+    | tail -1)
   if [ -n "$new_session" ]; then
     OPUS_SESSION="$new_session"
     echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
@@ -1083,17 +1132,88 @@ opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
 # --- 4b. Turn ceiling: resume rather than die at the finish line -------------
 # Turn exhaustion is a budget running out, not a task that failed, and it lands
 # almost exclusively during the wrap-up — so the recovery has always been the
-# same: re-dispatch, which resumes the pinned session and finishes in minutes.
-# Do that here instead of making a person notice. Same session, same worktree,
-# same pinned ceiling; MAX_RESUMES bounds it, and only then is the run failed.
+# same: re-dispatch, which puts the implementer back to work and finishes in
+# minutes. Do that here instead of making a person notice. Same worktree, same
+# pinned ceiling; MAX_RESUMES bounds it, and only then is the run failed.
 #
 # ORDERING: the capacity classifier owns any session-limit death — it is checked
 # FIRST, so an empty window defers (below) instead of spending a turn-resume on
 # a session that cannot spawn anyway. A pending QUESTIONS.md wins too: a worker
 # that stopped to ask must not be talked over.
+#
+# Both resume modes spend the same budget and append to the same stream.
 TURN_RESUME_PROMPT="You stopped because you ran out of turns, not because the work is done. This is the same session, resumed with a fresh turn budget. Check what is already committed (git log, git status) before redoing anything, then finish the task under the same rules as before: leave the tree passing the brief's verify commands and write .harness/implementer-notes.md.
 
 $RESUME_RULES"
+
+# Write the fixed handover template from the ending segment's trajectory.
+segment_report() {  # $1 = destination path, $2 = the ending segment's ordinal
+  local out="$1" n="$2" goal decisions notes committed dirty gate questions texts trail
+  local file_lines=100 text_items=3 text_chars=400 tool_items=40 tool_chars=100
+  goal=$(grep -m1 '^#[[:space:]]' "$WORKTREE/.harness/brief.md" 2>/dev/null \
+         | sed 's/^#[[:space:]]*//')
+  [ -n "$goal" ] || goal='(the brief carries no title line — read it in full)'
+
+  decisions=$(git -C "$WORKTREE" log --reverse --format='- %h %s%n%b' "$BASE_REF..HEAD" 2>/dev/null)
+  [ -n "$decisions" ] || decisions='No commits on the branch yet.'
+  notes='Not written yet.'
+  [ ! -s "$WORKTREE/.harness/implementer-notes.md" ] \
+    || notes=$(cat "$WORKTREE/.harness/implementer-notes.md")
+
+  # Keep untracked build output from crowding the brief out of the next prompt.
+  committed=$(git -C "$WORKTREE" diff --name-status "$BASE_REF...HEAD" 2>/dev/null \
+              | sed -n "1,${file_lines}p")
+  [ -n "$committed" ] || committed='(nothing committed)'
+  dirty=$(git -C "$WORKTREE" status --porcelain 2>/dev/null | sed -n "1,${file_lines}p")
+  [ -n "$dirty" ] || dirty='(clean)'
+
+  gate='The gate has not run in this attempt.'
+  [ ! -s "$RUN_DIR/gate-rounds.log" ] || gate=$(cat "$RUN_DIR/gate-rounds.log")
+
+  questions='None recorded.'
+  [ ! -s "$WORKTREE/.harness/QUESTIONS.md" ] || questions=$(cat "$WORKTREE/.harness/QUESTIONS.md")
+
+  texts=$(segment_stream | jq -r --argjson chars "$text_chars" \
+            'select(.type == "assistant") | .message.content[]?
+             | select(.type == "text") | (.text // "") | gsub("\\s+"; " ") | .[0:$chars]' \
+          2>/dev/null | tail -n "$text_items")
+  [ -n "$texts" ] || texts='(the segment sent no prose)'
+  trail=$(segment_stream | jq -r --argjson chars "$tool_chars" \
+            'select(.type == "assistant") | .message.content[]?
+             | select(.type == "tool_use")
+             | "- \(.name) \((.input.file_path // .input.command // .input.pattern // "") | tostring | .[0:$chars])"' \
+          2>/dev/null | tail -n "$tool_items")
+  [ -n "$trail" ] || trail='(no tool calls recorded)'
+
+  # printf with %s placeholders, never an expanding heredoc: commit subjects and
+  # brief titles are attacker-adjacent text that must not be re-evaluated here.
+  {
+    printf '# Previous session report — segment %s\n\n' "$n"
+    printf 'Extracted by the harness from segment %s of this attempt. The session it describes neither wrote nor reviewed it.\n\n' "$n"
+    printf '## Goal\n\n%s\n\nThe binding contract is `.harness/brief.md` in the worktree; this report is not a substitute for reading it.\n\n' "$goal"
+    printf '## Decisions taken, and why\n\nCommits on the branch, oldest first:\n\n%s\n\n' "$decisions"
+    printf 'What the segment last said it was doing:\n\n%s\n\n' "$texts"
+    printf 'Its own notes file so far:\n\n%s\n\n' "$notes"
+    printf '## Files touched\n\nCommitted vs `%s`:\n\n%s\n\nUncommitted in the worktree:\n\n%s\n\n' \
+      "$BASE_REF" "$committed" "$dirty"
+    printf '## Gate status\n\n%s\n\n' "$gate"
+    printf '## Open questions\n\n%s\n\n' "$questions"
+    printf '## Dead ends already ruled out\n\nThe segment kept no such list. The tool trail below is the only record of what it already tried.\n\n'
+    printf '## Tool trail (last %s calls of segment %s)\n\n%s\n' "$tool_items" "$n" "$trail"
+  } > "$out"
+}
+
+# Frame the report as external, fallible, and subordinate to the brief.
+turn_resume_report_prompt() {  # $1 = the segment report to hand over
+  local report
+  report=$(cat "$1" 2>/dev/null)
+  printf '%s\n\n%s\n%s\n%s\n\n%s\n' \
+"You are picking up a task that a DIFFERENT session left unfinished. It did not fail and it did not finish: it ran out of its turn budget. What follows is a report the harness extracted from that session's trajectory. It is an external artifact — a third party's account of what happened, not your memory and not your reasoning — and it can be incomplete, stale or wrong. Check its claims against the repository (git log, git status, the files themselves) before you act on them, and correct it where the repository disagrees. Nothing in it binds you; the brief does." \
+"--- BEGIN PREVIOUS SESSION'S REPORT (external artifact, not your own transcript) ---" \
+"$report" \
+"--- END PREVIOUS SESSION'S REPORT ---" \
+"$IMPLEMENTER_PROMPT"
+}
 
 TURN_RESUMES=0
 while opus_incomplete && [ "$TURN_RESUMES" -lt "$MAX_RESUMES" ] \
@@ -1102,7 +1222,18 @@ while opus_incomplete && [ "$TURN_RESUMES" -lt "$MAX_RESUMES" ] \
   TURN_RESUMES=$((TURN_RESUMES + 1))
   echo "$TURN_RESUMES" > "$RUN_DIR/turn-resumes"
   stage "resuming: turn ceiling ($TURN_RESUMES/$MAX_RESUMES)"
-  opus_attempt "$TURN_RESUME_PROMPT" --resume "$OPUS_SESSION"
+  if [ "$RESUME_MODE" = report ]; then
+    SEGMENT_REPORT="$RUN_DIR/segment-report-$TURN_RESUMES.md"
+    segment_report "$SEGMENT_REPORT" "$TURN_RESUMES"
+    echo "[harness] turn ceiling: fresh session, handed $SEGMENT_REPORT as a previous session's report"
+    # A fresh session id, pinned before the spawn for the same reason the first
+    # one is: attach.sh has to be able to find the live session at any moment.
+    OPUS_SESSION=$(uuidgen | tr '[:upper:]' '[:lower:]')
+    echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
+    opus_attempt "$(turn_resume_report_prompt "$SEGMENT_REPORT")" --session-id "$OPUS_SESSION"
+  else
+    opus_attempt "$TURN_RESUME_PROMPT" --resume "$OPUS_SESSION"
+  fi
 done
 
 if [ -f "$WORKTREE/.harness/QUESTIONS.md" ]; then
@@ -1705,6 +1836,42 @@ run_claude_worker() {  # $1 = round label, $2 = prompt
   return "${PIPESTATUS[0]}"
 }
 
+# Find and refute are read-only jobs, but both CLIs need normal worktree access
+# to inspect generated files and run the installed test tools. Start only from a
+# clean tree and restore it if either session changes code; ignored .harness
+# evidence is deliberately outside that check.
+run_readonly_review_pass() {  # $1 = round label, $2 = prompt, $3 = find|refute
+  local before rc changed=0
+  before=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null) || return 1
+  if [ -n "$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>/dev/null)" ]; then
+    echo "[harness] refusing a read-only review pass on a dirty worktree"
+    return 1
+  fi
+  if [ "$REVIEW_AGENT" = codex ]; then
+    run_codex "$1" "$2"; rc=$?
+  else
+    run_claude_worker "$1" "$2"; rc=$?
+  fi
+  [ "$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null)" = "$before" ] || changed=1
+  [ -z "$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>/dev/null)" ] \
+    || changed=1
+  if [ "$changed" = 1 ]; then
+    git -C "$WORKTREE" reset --hard "$before" >/dev/null 2>&1 || true
+    git -C "$WORKTREE" clean -fd >/dev/null 2>&1 || true
+    if [ "$3" = find ]; then
+      rm -f "$WORKTREE/.harness/expected-properties.md" \
+            "$WORKTREE/.harness/findings.json" \
+            "$WORKTREE/.harness/review-notes.md" \
+            "$WORKTREE/.harness/REJECTED.md"
+    else
+      rm -f "$WORKTREE/.harness/refuted.json"
+    fi
+    echo "[harness] read-only review pass changed the worktree — its code changes were discarded"
+    return 1
+  fi
+  return "$rc"
+}
+
 # Merge-conflict resolution is PR mechanics, not quality review, so it runs in
 # BOTH arms — on codex when it is installed (unchanged), on Claude otherwise.
 resolve_conflicts() {  # $1 = round label, $2 = prompt
@@ -1742,11 +1909,14 @@ REVIEW_TRIVIAL_LINES="${HARNESS_REVIEW_TRIVIAL_LINES:-$DEFAULT_REVIEW_TRIVIAL_LI
 case "$REVIEW_MIN_SECONDS"   in ''|*[!0-9]*) REVIEW_MIN_SECONDS=$DEFAULT_REVIEW_MIN_SECONDS ;; esac
 case "$REVIEW_TRIVIAL_LINES" in ''|*[!0-9]*) REVIEW_TRIVIAL_LINES=$DEFAULT_REVIEW_TRIVIAL_LINES ;; esac
 
-# Proof that a review happened: fix commits, notes, or a rejection. Any one of
-# them is enough — the reviewer is told to write notes even when it changes
-# nothing, and a REJECTED.md is the most engaged review there is.
+# Proof that a review happened: findings, fix commits, notes, or a rejection.
+# Any one of them is enough — the reviewer is told to write notes even when it
+# changes nothing, and a REJECTED.md is the most engaged review there is. The
+# find pass fixes nothing, so its findings file has to count too: a review that
+# reported five defects and touched no code is the most engaged review of all.
 review_evidence() {
   [ -f "$WORKTREE/.harness/review-notes.md" ] && return 0
+  [ -f "$WORKTREE/.harness/findings.json" ] && return 0
   [ -f "$WORKTREE/.harness/REJECTED.md" ] && return 0
   [ "$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null)" != "$OPUS_HEAD" ] && return 0
   return 1
@@ -1798,7 +1968,7 @@ claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcom
   CLAUDE_TIER_REASON="$1"
   REVIEWER_MODEL="$CLAUDE_WORKER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
   printf 'claude fallback: %s\n' "$1" >> "$RUN_DIR/review-fallback"
-  run_claude_worker 1-claude "$REVIEW_PROMPT" || true
+  run_readonly_review_pass 1-claude "$REVIEW_PROMPT" find || true
   if review_evidence; then
     REVIEW_CLASS="reviewed_claude"
   else
@@ -1815,6 +1985,202 @@ claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcom
 # Fix rounds go to whichever backend actually reviewed this run.
 run_fix_round() {  # $1 = round label, $2 = prompt
   if [ "$REVIEW_AGENT" = codex ]; then run_codex "$1" "$2"; else run_claude_worker "$1" "$2"; fi
+}
+
+# --- Find, refute, fix --------------------------------------------------------
+# The review stage used to find and fix in one breath. Measured reviewer
+# precision on real PRs is about one finding in two, so half of what a reviewer
+# reports is spurious — and here every spurious finding became an EDIT to a diff
+# the gate had already passed. So the stage is three passes: the find pass
+# reports and changes nothing, a session that never saw the diff tries to
+# DISPROVE each finding, and only what survives is fixed, one commit per finding.
+#
+# Every pass degrades to the pass before it. A find pass that leaves no
+# findings.json is exactly today's single-pass review and nothing below runs at
+# all; a refute pass that leaves no verdicts promotes everything, which is again
+# what a single pass would have done. The review-or-hold guarantee is untouched:
+# nothing here can turn a reviewed diff into an unreviewed one.
+REVIEW_REFUTE="${HARNESS_REVIEW_REFUTE:-1}"
+# The refute pass reads a finished list against code that already exists, so it
+# is bounded work — and it sits between a review that happened and the fixes
+# that depend on it, which is the worst place in the pipeline to hang.
+DEFAULT_REFUTE_TIMEOUT=900
+REFUTE_TIMEOUT="${HARNESS_REFUTE_TIMEOUT:-$DEFAULT_REFUTE_TIMEOUT}"
+case "$REFUTE_TIMEOUT" in ''|*[!0-9]*) REFUTE_TIMEOUT=$DEFAULT_REFUTE_TIMEOUT ;; esac
+case "$REFUTE_TIMEOUT" in *[1-9]*) ;; *) REFUTE_TIMEOUT=$DEFAULT_REFUTE_TIMEOUT ;; esac
+
+# What result.json reports as review_findings, and what the ledger below counts.
+REVIEW_FOUND=0; REVIEW_REFUTED=0; REVIEW_PROMOTED=0; REVIEW_FIXED=0
+# ok = a refute pass ran and left verdicts | failed = it left none, so every
+# finding was promoted (single-pass behaviour) | off = HARNESS_REVIEW_REFUTE=0.
+REVIEW_REFUTE_STATE="ok"
+
+# Findings in the ids the rest of the stage addresses them by: F1..Fn in the
+# order the reviewer wrote them. The worktree copy is REWRITTEN with them,
+# because the refute and fix passes read that file and their verdicts have to
+# name the same ids this run records. An entry with no claim is not a finding and
+# is dropped here rather than sent to a pass that cannot act on it.
+review_findings_normalize() {  # -> 1 when there is no readable findings file
+  local src="$WORKTREE/.harness/findings.json" raw
+  [ -f "$src" ] || return 1
+  jq '(if type == "object" then (.findings // []) else . end)
+      | (if type == "array" then . else [] end)
+      | map(select(type == "object"))
+      | map({file: ((.file // "") | tostring),
+             line: (if (.line | type) == "number" then .line else null end),
+             claim: ((.claim // "") | tostring),
+             scenario: ((.scenario // "") | tostring)})
+      | map(select(.claim != ""))
+      | to_entries | map({id: "F\(.key + 1)"} + .value)' \
+    "$src" > "$RUN_DIR/findings.json" 2>/dev/null || return 1
+  REVIEW_FOUND=$(jq 'length' "$RUN_DIR/findings.json" 2>/dev/null) || return 1
+  case "$REVIEW_FOUND" in ''|*[!0-9]*) REVIEW_FOUND=0; return 1 ;; esac
+  # A malformed entry that vanishes silently reads as a reviewer that found less
+  # than it did, so say how many and how much survived.
+  raw=$(jq '(if type == "object" then (.findings // []) else . end)
+            | if type == "array" then length else 0 end' "$src" 2>/dev/null || echo 0)
+  case "$raw" in ''|*[!0-9]*) raw=$REVIEW_FOUND ;; esac
+  [ "$raw" -eq "$REVIEW_FOUND" ] \
+    || echo "[harness] findings.json: $REVIEW_FOUND of $raw entries are usable findings — the rest name no claim"
+  # An empty array is a real answer — the reviewer read the diff and found
+  # nothing — and it is recorded as one rather than as a stage that never ran.
+  printf '[]\n' > "$RUN_DIR/refuted.json"
+  printf '[]\n' > "$RUN_DIR/promoted.json"
+  cp "$RUN_DIR/findings.json" "$src"
+}
+
+# The refute pass uses the read-only wrapper above. CODEX_TIMEOUT is local on
+# purpose: both worker functions read it through bash's dynamic scope.
+run_refute_pass() {  # $1 = prompt
+  local CODEX_TIMEOUT="$REFUTE_TIMEOUT"
+  if [ "$REVIEW_AGENT" = codex ]; then
+    stage "review refute — Codex (ChatGPT sub)"
+  else
+    stage "review refute — Claude reviewer (Claude sub)"
+  fi
+  run_readonly_review_pass 1-refute "$1" refute
+}
+
+# Verdicts, joined onto the findings they judge. `refuted` counts only when the
+# refuter said so in as many words: a finding it left out, could not check, or
+# merely doubted is promoted. The burden is on the refutation, because the cost
+# of a wrong promotion is one unnecessary edit and the cost of a wrong refutation
+# is a defect shipped.
+review_refute_verdicts() {  # -> writes refuted.json + promoted.json, or 1
+  local src="$WORKTREE/.harness/refuted.json" verdicts="$RUN_DIR/refute-verdicts.json"
+  [ -f "$src" ] || return 1
+  jq '(if type == "object" then (.verdicts // []) else . end)
+      | (if type == "array" then . else [] end)
+      | map(select(type == "object"))
+      | map({id: ((.id // "") | tostring),
+             refuted: (.refuted == true or .refuted == "true"),
+             reason: ((.reason // "") | tostring | gsub("^\\s+|\\s+$"; ""))})
+      | map(select(.id != "" and .refuted and .reason != ""))' \
+    "$src" > "$verdicts" 2>/dev/null || return 1
+  jq -s '.[0] as $found | .[1] as $dropped
+         | (reduce $dropped[] as $v ({}; .[$v.id] = $v)) as $by_id
+         | {refuted:  ($found | map(select($by_id[.id]))
+                              | map(. + {reason: $by_id[.id].reason})),
+            promoted: ($found | map(select($by_id[.id] | not)))}' \
+    "$RUN_DIR/findings.json" "$verdicts" > "$RUN_DIR/split.json" 2>/dev/null || return 1
+  jq '.refuted'  "$RUN_DIR/split.json" > "$RUN_DIR/refuted.json"  2>/dev/null || return 1
+  jq '.promoted' "$RUN_DIR/split.json" > "$RUN_DIR/promoted.json" 2>/dev/null || return 1
+  rm -f "$RUN_DIR/split.json" "$verdicts"
+}
+
+# How many promoted findings actually earned a commit. The fix pass is told to
+# name the id in the message, so this is counted from the log rather than taken
+# on trust: a promoted finding with no commit is one the fix pass argued its way
+# out of (or missed), and the ledger has to be able to say so.
+review_count_fixed() {  # $1 = HEAD before the fix pass
+  local log id n=0
+  log=$(git -C "$WORKTREE" log --format='%s%n%b' "$1..HEAD" 2>/dev/null) || return 0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    printf '%s\n' "$log" | grep -qw -- "$id" && n=$((n + 1))
+  done <<EOF
+$(jq -r '.[].id' "$RUN_DIR/promoted.json" 2>/dev/null)
+EOF
+  REVIEW_FIXED=$n
+}
+
+# The split, written where the planner's verdict step already looks. A run whose
+# reviewer found four things and shipped one edit has to be able to say which
+# three were dropped and on what evidence — otherwise refutation is
+# indistinguishable from a reviewer that lost interest.
+review_findings_ledger() {
+  local notes="$WORKTREE/.harness/review-notes.md"
+  {
+    printf '\n## Findings — found %s · refuted %s · promoted %s · fixed %s\n\n' \
+      "$REVIEW_FOUND" "$REVIEW_REFUTED" "$REVIEW_PROMOTED" "$REVIEW_FIXED"
+    printf '%s\n' "The review stage ran as three passes: a find pass that changed nothing, a refutation pass in a session that had not seen the diff, and a fix pass over what survived it. A finding earns an edit only by surviving refutation."
+    case "$REVIEW_REFUTE_STATE" in
+      failed) printf '\n%s\n' "The refutation pass left no usable verdicts, so this stage fell back to single-pass behaviour: EVERY finding was promoted and none was disproved. Read the promoted list as a reviewer's unchecked claims." ;;
+      off)    printf '\n%s\n' "Refutation was off for this run (HARNESS_REVIEW_REFUTE=0), so every finding was promoted unchecked — single-pass behaviour, on purpose." ;;
+    esac
+    printf '\n### Promoted\n\n'
+    jq -r 'if length == 0 then "None." else
+             .[] | "- **\(.id)** `\(.file)\(if .line then ":\(.line)" else "" end)` — \(.claim)"
+           end' "$RUN_DIR/promoted.json" 2>/dev/null
+    printf '\n### Refuted — dropped, no edit was made for these\n\n'
+    jq -r 'if length == 0 then "None." else
+             .[] | "- **\(.id)** `\(.file)\(if .line then ":\(.line)" else "" end)` — \(.claim)\n  - refuted: \(if .reason == "" then "no reason recorded" else .reason end)"
+           end' "$RUN_DIR/refuted.json" 2>/dev/null
+    printf '\n%s\n' "Not built here, and worth building: chunked review of at most fifty lines at a time with the surrounding code retrieved for each chunk — reviewer recall collapses on diffs larger than that."
+  } >> "$notes"
+  jq -n --arg refute "$REVIEW_REFUTE_STATE" \
+        --argjson found "$REVIEW_FOUND" --argjson refuted "$REVIEW_REFUTED" \
+        --argjson promoted "$REVIEW_PROMOTED" --argjson fixed "$REVIEW_FIXED" \
+    '{found:$found,refuted:$refuted,promoted:$promoted,fixed:$fixed,refute:$refute}' \
+    > "$RUN_DIR/review-findings.json"
+}
+
+# find -> refute -> fix, over whatever the find pass left behind. Returns 0 on
+# every path: a stage that cannot run its structured half is a single-pass
+# review, which is the behaviour this replaces and never a reason to hold a run.
+review_refute_and_fix() {
+  local before
+  # The spec the find pass wrote before it opened the diff. Kept beside the
+  # findings it judged them against, because a finding is only as good as the
+  # properties it was measured against and those are otherwise unrecoverable.
+  [ -f "$WORKTREE/.harness/expected-properties.md" ] \
+    && cp "$WORKTREE/.harness/expected-properties.md" "$RUN_DIR/expected-properties.md"
+  review_findings_normalize || return 0
+  if [ "$REVIEW_FOUND" -gt 0 ]; then
+    if [ "$REVIEW_REFUTE" = 0 ]; then
+      REVIEW_REFUTE_STATE="off"
+    else
+      rm -f "$WORKTREE/.harness/refuted.json"
+      if run_refute_pass "$REFUTE_PROMPT"; then
+        review_refute_verdicts || REVIEW_REFUTE_STATE="failed"
+      else
+        REVIEW_REFUTE_STATE="failed"
+      fi
+    fi
+    if [ "$REVIEW_REFUTE_STATE" != ok ]; then
+      cp "$RUN_DIR/findings.json" "$RUN_DIR/promoted.json"
+      printf '[]\n' > "$RUN_DIR/refuted.json"
+      [ "$REVIEW_REFUTE_STATE" = failed ] \
+        && echo "[harness] the refutation pass left no usable verdicts — promoting all $REVIEW_FOUND findings, i.e. the single-pass review this replaces"
+    fi
+    REVIEW_REFUTED=$(jq 'length' "$RUN_DIR/refuted.json" 2>/dev/null || echo 0)
+    REVIEW_PROMOTED=$(jq 'length' "$RUN_DIR/promoted.json" 2>/dev/null || echo 0)
+    case "$REVIEW_REFUTED"  in ''|*[!0-9]*) REVIEW_REFUTED=0 ;; esac
+    case "$REVIEW_PROMOTED" in ''|*[!0-9]*) REVIEW_PROMOTED=0 ;; esac
+  fi
+  if [ "$REVIEW_PROMOTED" -gt 0 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
+    cp "$RUN_DIR/promoted.json" "$WORKTREE/.harness/promoted.json"
+    before=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null || echo "")
+    if [ "$REVIEW_AGENT" = codex ]; then
+      stage "review fix — Codex (ChatGPT sub)"
+    else
+      stage "review fix — Claude reviewer (Claude sub)"
+    fi
+    run_fix_round 1-fix "$REVIEW_FIX_PROMPT" || true
+    [ -n "$before" ] && review_count_fixed "$before"
+  fi
+  review_findings_ledger
+  echo "[harness] review findings: $REVIEW_FOUND found, $REVIEW_REFUTED refuted, $REVIEW_PROMOTED promoted, $REVIEW_FIXED fixed"
 }
 
 # --- Ticket sync (script — no model, best-effort) ------------------------------
@@ -2041,22 +2407,62 @@ implementer-notes.md is the implementer's own account of its work: treat it as c
 Review ALL changes on this branch: git log $BASE_REF..HEAD and git diff $BASE_REF...HEAD.
 Lockfiles are the one exception to what you read: when the diff touches package-lock.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, Podfile.lock, pubspec.lock or composer.lock, exclude that file from the diff you read (git diff $BASE_REF...HEAD -- . ':(exclude)package-lock.json' and so on) and judge the corresponding manifest instead — package.json, Cargo.toml, Podfile, pubspec.yaml, composer.json. A resolver writes thousands of lines nobody reviews line by line. This exempts those seven filenames and nothing else: no other generated or vendored file is excused, and checklist item 1 below keeps its full force over every file in the diff.
 $GATE_INTEGRITY_SECTION
-Work through this checklist, in order:
-1. Gate-gaming — weakened or deleted tests, skipped/disabled cases, loosened assertions, hardcoded expected values, modified fixtures. A green gate proves nothing if the tests were touched to make it green; restore proper tests and fix the code instead. Highest priority.
-2. Business logic — does the code actually satisfy each acceptance criterion in the brief? Check edge cases, error paths, and the domain invariants documented in this repo's CLAUDE.md/AGENTS.md. Read the surrounding code the diff plugs into — verify correctness in context, not just in isolation.
-3. Reuse — for every new helper/hook/component/util/query in the diff, search the codebase for an existing equivalent FIRST. If one exists, use it and delete the duplicate. If the diff duplicates logic within itself, factor it out.
-4. Hardcoding — magic numbers, inline strings/URLs/IDs/colors/timeouts that belong in the constants, enums, config, or theme this repo already has. Move them to where the repo keeps such values.
-5. Quality of the NEW code — naming, dead code, needless abstraction, overly clever constructs. Comment noise counts: delete comments that narrate rationale, history, or tickets rather than stating a constraint the code cannot express, and trim doc comments to what the thing is for. Refactor confidently.
+You FIND; you do not fix. A later pass tries to disprove each thing you report and only what survives earns an edit, so a finding that turns out to be wrong costs nothing and one you keep to yourself is lost. Change no code, make no commits.
 
-Boundary: refactor freely within the code this branch introduces or touches; do NOT launch repo-wide refactors of untouched code — record those as suggestions in your notes instead.
-- Keep the gate green: re-run the relevant tests after your changes.
-- If the gate failed, make it pass (without violating check 1).
-- Commit your changes as separate conventional commits. Never mention AI or agents in commits.
+Before you open the diff, write .harness/expected-properties.md: from brief.md (and specs/ when present) alone, the properties a correct change MUST have — what each acceptance criterion implies about behaviour, the invariants it must not break, the error paths and edge cases it has to handle. Write it first and do not revise it afterwards; judging the diff against a spec you wrote before seeing it is what stops a plausible diff talking you into its own definition of correct.
+
+Then read the diff and work through this checklist, in order:
+1. Gate-gaming — weakened or deleted tests, skipped/disabled cases, loosened assertions, hardcoded expected values, modified fixtures. A green gate proves nothing if the tests were touched to make it green; the fix is a restored test and corrected code, never the reverse. Highest priority. Start from the gate integrity flags above and from any analyzer, linter or type-checker lines in gate-latest.log — those are evidence somebody already collected, not a verdict.
+2. Business logic — does the code actually satisfy every property you wrote down, and each acceptance criterion in the brief? Check edge cases, error paths, and the domain invariants documented in this repo's CLAUDE.md/AGENTS.md. Read the surrounding code the diff plugs into — verify correctness in context, not just in isolation.
+3. Blind spots — the defect classes reviewers reliably miss, so look for them on purpose rather than waiting for them to catch your eye: concurrency and races (shared state, unawaited work, non-atomic read-modify-write, ordering assumed between independent effects); time-of-check-to-time-of-use and any authorization that depends on timing (a permission read once and acted on later, a token or session checked before a step it is used after); and compositional authorization — each step permitted alone while the sequence of them is not, or a check enforced on one entry point and absent from another that reaches the same code.
+4. Reuse — for every new helper/hook/component/util/query in the diff, search the codebase for an existing equivalent FIRST. A duplicate of something the repo already has is a finding.
+5. Hardcoding — magic numbers, inline strings/URLs/IDs/colors/timeouts that belong in the constants, enums, config, or theme this repo already has.
+6. Quality of the NEW code — naming, dead code, needless abstraction, overly clever constructs. Comment noise counts: comments that narrate rationale, history, or tickets rather than stating a constraint the code cannot express, and doc comments longer than what the thing is for.
+
+Write .harness/findings.json — a JSON array, one object per finding, and nothing else in the file:
+[{\"file\": \"path/from/repo/root.ts\", \"line\": 42, \"claim\": \"one sentence: what is wrong\", \"scenario\": \"the concrete sequence of inputs or events that makes it go wrong, and what happens instead of what should\"}]
+- file and line must point at the code the finding is about — the next pass goes there and reads it.
+- scenario is what makes a finding refutable: name inputs, state and ordering concretely enough that someone can go and check whether it can actually happen. \"This could break\" is not a scenario.
+- One defect per entry. Do not write ids; they are assigned from this file's order.
+- Findings only: things you believe are wrong. Preferences and possible-follow-up work belong in review-notes.md, not here.
+- Nothing wrong? Write an empty array. That is a real answer and it is recorded as one.
+
+Boundary: report freely on the code this branch introduces or touches; do NOT report repo-wide refactors of untouched code — record those as suggestions in your notes instead.
 - Never git add or commit anything under .harness/ (orchestration metadata — your notes files live there UNCOMMITTED). If git refuses a path as ignored, leave it alone; never use git add -f.
 - Do NOT push or create PRs.
-- Write .harness/review-notes.md: what you fixed or refactored and why, plus anything you flagged but deliberately left alone.
-- If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: do not fix it — write your findings to .harness/REJECTED.md and stop.
-- If everything is genuinely sound, say so in review-notes.md and change nothing.$PREPROD_POSTURE_REVIEW$REVIEW_PROMPT_EXTRA"
+- Write .harness/review-notes.md: what you read, what you concluded, and anything you noticed but deliberately did not raise as a finding.
+- If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: write it to .harness/REJECTED.md and stop.
+- If everything is genuinely sound, say so in review-notes.md, write an empty findings array, and change nothing.$PREPROD_POSTURE_REVIEW$REVIEW_PROMPT_EXTRA"
+
+# --- The refutation prompt ----------------------------------------------------
+# A fresh session, on the backend that reviewed, that has not seen the diff and
+# is not asked to judge it: its whole job is to disprove somebody else's claims.
+# Asking one session to explain and correct in the same breath measurably
+# increases misjudgement, which is the shape the single-pass review had.
+REFUTE_PROMPT="You are the refutation stage of an automated pipeline. A reviewer has read a branch and written findings; your job is to DISPROVE them. You are not reviewing the branch and you are not looking for defects of your own — anything you notice that is not in the list is out of scope here.
+Why this exists: a reviewer that also fixes what it finds turns every false positive into an edit to code that already passed the test gate, and roughly one review finding in two does not survive checking. A finding earns an edit only by surviving you.
+Read .harness/findings.json. For each finding, go to the file and line it names and try to establish that it is WRONG — the failing scenario cannot actually occur, the code already handles it, the finding misreads the language or the framework, or the diff does not say what the finding says it says. Read the surrounding code, follow the callers, run the tests: whatever it takes to know.
+Change NOTHING. No edits, no commits, no files other than the one below.
+Write .harness/refuted.json — a JSON array, one verdict per finding id, and nothing else in the file:
+[{\"id\": \"F1\", \"refuted\": true, \"reason\": \"the specific evidence, citing file:line\"}]
+- refuted: true ONLY when you can point at concrete evidence that the finding is wrong. A finding you merely doubt, cannot check in the time you have, or find plausible is refuted: false. The burden is on the refutation: a wrong promotion costs one unnecessary edit, a wrong refutation ships a defect.
+- reason is required either way, and a human reads it: say what you actually checked, not that you disagree.
+- Use the ids exactly as findings.json carries them. A finding you leave out is treated as not refuted."
+
+# --- The fix prompt -----------------------------------------------------------
+# The only pass that edits, and it edits nothing that has not survived
+# refutation. One commit per finding, because a finding that was promoted in
+# error has to be revertible on its own.
+REVIEW_FIX_PROMPT="You are the fix stage of an automated pipeline. A reviewer found problems in this branch and a second, independent session failed to disprove the ones in .harness/promoted.json. Those are the only findings you may act on: everything else it found was disproved and is deliberately not here.
+Read .harness/promoted.json and fix each finding it lists.
+- ONE COMMIT PER FINDING, and its message must carry the finding's id: \`fix(<scope>): <what changed> [<id>]\`. Conventional commits, never mentioning AI or agents.
+- Fix the defect, not the test. Never weaken, skip or delete a test to make the gate green; if a test is genuinely wrong, say so in your notes rather than quietly changing it.
+- If a promoted finding turns out to be wrong after all, leave the code alone and say so in .harness/review-notes.md. No commit for it.
+- Boundary: stay within the code this branch introduces or touches; do NOT launch repo-wide refactors of untouched code.
+- Keep the gate green: re-run the relevant tests after your changes. Its current status is $GATE_STATUS$(gate_step_clause), and .harness/gate-latest.log is a clipped extract whose header says how much of the round it holds.
+- Never git add or commit anything under .harness/. Do NOT push or create PRs.
+- Append to .harness/review-notes.md what you changed for each finding, and what you left alone and why.
+- If a promoted finding reveals a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: do not paper over it — write .harness/REJECTED.md and stop.$PREPROD_POSTURE_REVIEW"
 
 if [ "$ARM" = "no_review" ]; then
   REVIEW_CLASS="skipped"   # the ablation arm (HARNESS_SKIP_REVIEW=1)
@@ -2077,6 +2483,19 @@ fi
 if [ -f "$WORKTREE/.harness/review-notes.md" ]; then
   mv "$WORKTREE/.harness/review-notes.md" "$RUN_DIR/review-notes.md"
 fi
+# And for the structured half, which is read as evidence the same way and would
+# otherwise send THIS run's refutation pass after a previous dispatch's findings.
+# The verdicts and the promoted list are derived files: they are rewritten from
+# the findings every time and nothing is lost by clearing them.
+if [ -f "$WORKTREE/.harness/findings.json" ]; then
+  mv "$WORKTREE/.harness/findings.json" "$RUN_DIR/findings.prev.json"
+fi
+if [ -f "$WORKTREE/.harness/expected-properties.md" ]; then
+  mv "$WORKTREE/.harness/expected-properties.md" "$RUN_DIR/expected-properties.prev.md"
+fi
+rm -f "$WORKTREE/.harness/refuted.json" "$WORKTREE/.harness/promoted.json" \
+      "$RUN_DIR/findings.json" "$RUN_DIR/refuted.json" "$RUN_DIR/promoted.json" \
+      "$RUN_DIR/review-findings.json" "$RUN_DIR/expected-properties.md"
 
 # The tree the review stage is handed, so the post-review gate below can prove
 # whether anything at all changed under it. Captured before the FIRST tier, so
@@ -2101,7 +2520,7 @@ REVIEW_STARTED=$(date +%s)
 # Read before the attempt, not after: run_codex may move the account for the
 # NEXT attempt, and this records the one that actually ran this review.
 REVIEW_ACCOUNT="$CODEX_ACCOUNT"
-run_codex 1 "$REVIEW_PROMPT" || true
+run_readonly_review_pass 1 "$REVIEW_PROMPT" find || true
 REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
 
 # --- 5b. Did the review actually happen? -------------------------------------
@@ -2161,7 +2580,7 @@ if [ -n "$REVIEW_RETRY_REASON" ]; then
   stage "review retry — Codex (ChatGPT sub)$REVIEW_RETRY_SUFFIX"
   REVIEW_STARTED=$(date +%s)
   REVIEW_ACCOUNT="$CODEX_ACCOUNT"
-  run_codex 1-retry "$REVIEW_PROMPT" || true
+  run_readonly_review_pass 1-retry "$REVIEW_PROMPT" find || true
   REVIEW_SECONDS=$(( $(date +%s) - REVIEW_STARTED ))
   if review_evidence; then
     REVIEW_CLASS="reviewed"
@@ -2174,6 +2593,14 @@ if [ -n "$REVIEW_RETRY_REASON" ]; then
   fi
 fi
 fi   # end: the Codex tiers
+
+# Whichever tier read the diff, it only FOUND. Refute what it found and fix what
+# survives, before the post-review gate below judges the tree those fixes land
+# in. A tier that produced no findings.json leaves this a no-op and the run is
+# byte-for-byte the single-pass run it always was.
+if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
+  review_refute_and_fix
+fi
 
 if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
   # The post-review gate re-ran the whole suite on a byte-identical tree in 16

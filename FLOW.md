@@ -38,7 +38,6 @@ sequenceDiagram
     end
 
     S->>S: test gate #1 (per-repo cmds)
-
     opt the visual profile applies (repos judged by eye)
         S->>S: visual gate: render fixed shots<br/>model-free checks · contact sheet
         S->>S: critic (fresh, no shell): rubric<br/>+ pairwise vs champion
@@ -49,13 +48,17 @@ sequenceDiagram
     end
 
     S->>C: diff + brief + gate log<br/>+ contact-sheet.png + visual-score.json
-    C->>C: checklist: gate-gaming · business logic<br/>reuse · hardcoding · quality
+    C->>C: find: expected properties before the diff, then<br/>gate-gaming · logic · blind spots<br/>reuse · hardcoding · quality — fixes nothing
 
     alt fundamental flaw
         C->>F: REJECTED.md
         F->>O: sharpened brief — re-dispatch
-    else fixes / refactors in branch footprint
-        C->>S: fix commits + review-notes.md<br/>(gate re-runs, max 2 rounds)
+    else findings
+        C->>S: findings.json
+        S->>C: refute — fresh session, disprove each
+        C->>S: refuted.json — only survivors are promoted
+        S->>C: fix — promoted findings only
+        C->>S: one commit per finding + review-notes.md<br/>(gate re-runs, max 2 rounds)
     end
 
     S->>S: verify — third-vendor trajectory score (best-effort)
