@@ -57,11 +57,15 @@ fi
 # (git-excluded) and harvested into the run dir afterwards, because cleanup.sh
 # deletes worktrees and a champion has to outlive the run that earned it.
 run_visual_gate() {  # $1 = round
-  local rc started secs step script f
+  local rc started secs step script f visual_trace_prelude
   stage "visual gate #$1 (deterministic + critic)"
   step="$RUN_DIR/visual-$1.step"
   : > "$step"
-  script="$GATE_TRACE_PRELUDE
+  # The visual gate writes its own human-readable failing step. The test gate's
+  # inherited ERR trap would run afterwards on Bash >= 4 and replace that step
+  # with the gate command, so this stage deliberately inherits DEBUG only.
+  visual_trace_prelude="trap '$GATE_TRACE_WRITE' DEBUG"
+  script="$visual_trace_prelude
 $VISUAL_GATE_CMD"
   started=$(date +%s)
   (cd "$WORKTREE" && HARNESS_GATE_STEP="$step" HARNESS_DIR="$HARNESS_DIR" \

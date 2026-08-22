@@ -45,7 +45,8 @@ assets.json is a list of {"id", "tool", ...params}. Tools:
 
 Endpoints and field names were re-verified against api.pixellab.ai/v2/openapi.json
 and the Retro Diffusion llms.txt at github.com/Retro-Diffusion/api-examples
-before this file was written; see creative/README.md for what each one is for.
+before this file was written; see profiles/visual/creative/README.md for what
+each one is for.
 
 Testing knobs: PIXELLAB_BASE_URL and RD_BASE_URL point the client at a stub.
 """
@@ -71,7 +72,7 @@ SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # browser-integrity check answers `Python-urllib/3.x` with a 403 (error 1010).
 # Sent on every request, not only those: a vendor edge that starts filtering
 # tomorrow should not take a whole run down with an unexplained Forbidden.
-USER_AGENT = "creative-harness-factory/1.0"
+USER_AGENT = "dispatch-harness-factory/1.0"
 MAX_RETRIES = 3
 POLL_INTERVAL_S = 3.0
 POLL_CEILING_S = 600.0

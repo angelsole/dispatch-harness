@@ -62,7 +62,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import factory  # noqa: E402
 import vcheck  # noqa: E402
 
-ATLAS_APP = "creative/postpass.py"
+ATLAS_APP = "profiles/visual/creative/postpass.py"
 ATLAS_VERSION = "1.0"
 
 

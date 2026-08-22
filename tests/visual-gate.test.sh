@@ -84,7 +84,7 @@ command -v magick >/dev/null 2>&1 && HAVE_MAGICK=1
 # --- the fake critic ---------------------------------------------------------
 # One `claude` stand-in for every model call in this suite, answering in the
 # CLI's own envelope shape (a parsed structured_output object beside the raw
-# result string), because that is what creative/critic.sh parses.
+# result string), because that is what critic.sh parses.
 #
 # It answers per the mode file, or — for the calibration cases, which have to
 # make the two presentation orders say different things — per an answer file
@@ -626,7 +626,7 @@ check "one order: with no concordance claimed for it" \
 check "one order: and no tiebreak" "$(cal .calibration.tiebreak.used)" "false"
 
 # --- the eval runner ----------------------------------------------------------
-# creative/critic-eval.sh is live-only for a reason — a fake critic scoring
+# critic-eval.sh is live-only for a reason — a fake critic scoring
 # 100 % on an eval set would be the most misleading artefact in this repo — but
 # its ARITHMETIC is not about the model at all, and shipping an unrun scorer
 # would be its own joke. So: the flag on, the CLI faked, and a critic with fixed
@@ -744,7 +744,7 @@ fi
 # PNG, that --add-dir makes the blinded copies readable where they actually
 # live, and that what comes back parses. VISUAL_LIVE=1 spends ~$1 and a few
 # minutes to check exactly that, and nothing else. It is not the eval set —
-# creative/critic-eval.sh is, and it measures whether the answers are any good.
+# critic-eval.sh is, and it measures whether the answers are any good.
 if [ "${VISUAL_LIVE:-0}" != 1 ]; then
   skip "live: the real critic is not exercised (VISUAL_LIVE=1 spends ~\$1 to check the CLI contract, both orders included)"
 elif [ "$HAVE_MAGICK" = 0 ]; then
@@ -799,6 +799,33 @@ check "profile: and may not Bash" "$(jq -r '.permissions.deny | index("Bash") !=
 check "profile: nor Write" "$(jq -r '.permissions.deny | index("Write") != null' "$SETTINGS")" "true"
 check "profile: no allow rule grants a shell" \
   "$(jq -r '[.permissions.allow[] | select(startswith("Bash"))] | length' "$SETTINGS")" "0"
+
+# The shipped eval set is a runnable contract, not just three valid PNGs. Its
+# paths moved two directories deeper with the profile and must still resolve
+# before a live run spends anything.
+EVAL_PAIRS="$CREATIVE/eval/pairs.json"
+EVAL_DIR="$(cd "$(dirname "$EVAL_PAIRS")" && pwd)"
+EVAL_RUBRIC=$(jq -r .rubric "$EVAL_PAIRS")
+EVAL_REFS=$(jq -r .refs "$EVAL_PAIRS")
+if [ -f "$EVAL_DIR/$EVAL_RUBRIC" ]; then
+  ok "eval fixture: the shipped rubric path resolves"
+else
+  bad "eval fixture: missing rubric at $EVAL_DIR/$EVAL_RUBRIC"
+fi
+if [ -d "$EVAL_DIR/$EVAL_REFS" ]; then
+  ok "eval fixture: the shipped reference-board path resolves"
+else
+  bad "eval fixture: missing reference board at $EVAL_DIR/$EVAL_REFS"
+fi
+
+# The visual gate names its own failing step. An inherited ERR trap overwrites
+# it on Bash >= 4, so the profile must build a DEBUG-only trace prelude rather
+# than reusing the ordinary test gate's prelude.
+PROFILE_IMPL="$PROFILE/profile.sh"
+file_has "$PROFILE_IMPL" 'visual_trace_prelude="trap '\''$GATE_TRACE_WRITE'\'' DEBUG"' \
+  "trace: the visual stage preserves the gate's own failing step"
+file_has "$PROFILE_IMPL" 'script="$visual_trace_prelude' \
+  "trace: the visual runner uses its DEBUG-only prelude"
 
 # ---------------------------------------------------------------------------
 echo "== part B: the stage inside run-task.sh =="

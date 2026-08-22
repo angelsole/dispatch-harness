@@ -383,6 +383,8 @@ auth_ok = all(r["authorization"] == "Bearer " + pl_key
 rd_ok = all(r["x_rd_token"] == rd_key for r in rows if "/v1/" in r["path"])
 print("PL_AUTH_OK=%s" % auth_ok)
 print("RD_AUTH_OK=%s" % rd_ok)
+print("USER_AGENT_OK=%s" % all(
+    r["user_agent"] == "dispatch-harness-factory/1.0" for r in rows))
 
 # A list, not a dict keyed on path: rd.image and rd.tile are both POSTs to
 # /v1/inferences, and keying on the path would quietly count them as one.
@@ -404,6 +406,7 @@ BODIES="$(cat "$ROOT/bodies.txt")"
 has "$BODIES" "PALETTE_MISSING=none" "gen: every generation request carries the palette"
 has "$BODIES" "PL_AUTH_OK=True"      "gen: every PixelLab request carries the bearer header"
 has "$BODIES" "RD_AUTH_OK=True"      "gen: every RD request carries the X-RD-Token header"
+has "$BODIES" "USER_AGENT_OK=True"   "gen: requests identify the unified harness"
 has "$BODIES" "ALL_SEEDED=True"      "gen: every generation request carries a seed"
 has "$BODIES" "FROZEN_VIEW=True"     "gen: the frozen style block is applied"
 has "$BODIES" "BYPASS=True"          "gen: RD calls bypass prompt expansion"
@@ -643,6 +646,7 @@ frames = atlas["frames"]
 print("ATLAS_FRAMES=%d" % len(frames))
 print("ATLAS_META=%s" % all(k in atlas["meta"] for k in
                             ("app", "version", "image", "format", "size", "scale")))
+print("ATLAS_APP=%s" % atlas["meta"].get("app"))
 print("ATLAS_SHAPE=%s" % all(
     set(f) >= {"frame", "rotated", "trimmed", "spriteSourceSize", "sourceSize"}
     and set(f["frame"]) == {"x", "y", "w", "h"}
@@ -677,6 +681,8 @@ has "$A1" "GRADIENT_AFTER_OFF=0"     "postpass: and a fully conformant output"
 has "$A1" "REPORT_PASS=True"         "postpass: the report's verdict is pass"
 has "$A1" "ATLAS_FRAMES=4"   "atlas: one frame per passing asset"
 has "$A1" "ATLAS_META=True"  "atlas: meta carries the Phaser 3 JSON-hash keys"
+has "$A1" "ATLAS_APP=profiles/visual/creative/postpass.py" \
+  "atlas: provenance names the unified profile path"
 has "$A1" "ATLAS_SHAPE=True" "atlas: every frame has the JSON-hash shape, unrotated and untrimmed"
 has "$A1" "ATLAS_OVERLAP=False" "atlas: no two frames overlap"
 has "$A1" "ATLAS_FITS=True"  "atlas: the PNG is the size meta claims"

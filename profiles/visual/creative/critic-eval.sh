@@ -22,8 +22,8 @@
 # here — and it costs roughly $0.5–1.5 and 3–6 minutes per pair-repeat.
 #
 # Usage:
-#   VISUAL_LIVE=1 creative/critic-eval.sh [--repeats N] [--jobs J]
-#                                         [--pairs FILE] [--out DIR] [--refs DIR]
+#   VISUAL_LIVE=1 critic-eval.sh [--repeats N] [--jobs J]
+#                                [--pairs FILE] [--out DIR] [--refs DIR]
 #
 # --refs DIR hands the critic a reference board, exactly as the gate does with
 # VISUAL_REFS; the pair set may name one too ("refs", relative to the pairs
@@ -44,6 +44,8 @@
 set -u -o pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../../../lib/common.sh
+. "$SELF_DIR/../../../lib/common.sh"
 REPEATS=1
 JOBS=2
 PAIRS="$SELF_DIR/eval/pairs.json"
@@ -51,7 +53,7 @@ OUT=".harness/critic-eval"
 REFS=""
 MAX_JOBS=3   # the CLI is on a subscription; three concurrent critics is polite
 
-usage() { sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+usage() { harness_usage "$0"; exit "${1:-2}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in

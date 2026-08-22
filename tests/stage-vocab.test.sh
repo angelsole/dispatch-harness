@@ -194,7 +194,7 @@ check "server: and stays a live panel rather than claiming an outcome" \
 # The creative harness's rows, live here ahead of re-unification. A visual gate
 # that gave up is a failure, and it burns out on the rung its live stage stands
 # on rather than on a roof the run never reached.
-echo "== the creative harness's visual rows =="
+echo "== the visual profile's rows =="
 for p in '^visual fix.*Claude' '^visual fix.*Codex' '^visual gate'; do
   if jq -e --arg p "$p" '[.stages[] | select(.pattern == $p)] | length == 1' "$VOCAB" >/dev/null; then
     ok "visual: the table carries $p"

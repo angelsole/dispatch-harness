@@ -8,10 +8,10 @@ visual gate's palette check reads it, and the bible links to it. If those four
 disagreed about what "the palette" is, none of them would mean anything.
 
 FORMAT — a PNG one row tall, one 1x1 swatch per colour, RGB, in index order.
-Deliberately the dumbest thing that works: `creative/vcheck.py` already reads a
-palette as `np.asarray(Image.open(p).convert("RGB")).reshape(-1, 3)`, so any
-shape would load, and a single row is the one shape a human can also open and
-read left to right. Index order is preserved on write and never re-sorted —
+Deliberately the dumbest thing that works: `vcheck.py` already reads a palette
+as `np.asarray(Image.open(p).convert("RGB")).reshape(-1, 3)`, so any shape
+would load, and a single row is the one shape a human can also open and read
+left to right. Index order is preserved on write and never re-sorted —
 Pillow's fixed-LUT quantisation keeps indices, and an index that moves between
 runs would silently rewrite every asset already on disk.
 

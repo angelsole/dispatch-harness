@@ -63,11 +63,11 @@ before anything else:
   `VISUAL_GATE_CMD` if the repo has a gate of its own, and, if the run may
   generate assets, `MCP_CONFIG="$HARNESS_DIR/profiles/visual/creative/factory.mcp.json"`
   with the keys in `~/.claude/harness/factory.conf.sh` (mode 600, never in git).
-  No `MCP_CONFIG` ⇒ no factories, and the run says `factory keys SKIP` if the
-  conf is missing. Add them yourself if the run needs them; they are local
-  config. Confirm the profile actually loaded: the run log's first lines carry
-  `[harness] profile: visual`, and its absence means neither `.creative/` nor a
-  pin was found and the run has no eyes.
+  No `MCP_CONFIG` ⇒ no factories; with one pinned, the run says `factory keys
+  SKIP` if the conf is missing. Add them yourself if the run needs them; they
+  are local config. Confirm the profile actually loaded: the run log's first
+  lines carry `[harness] profile: visual`, and its absence means neither
+  `.creative/` nor a pin was found and the run has no eyes.
 
 ## 2. Research
 
@@ -127,8 +127,8 @@ each — render ~30 s, critic ≈ 2 calls ≈ $1 and 3–6 min per round):
 
 Watch as with `/dispatch` — `~/.claude/harness/status.sh --watch`,
 `runs/<RUN-ID>/feed.log`, `attach.sh <RUN-ID>` — with one more file worth a
-glance when a stage flips: `runs/<RUN-ID>/visual-rounds.log` (one line per
-visual round: checks, `pairwise`, worst axis). One statusline covers both
+glance when a stage flips: `runs/<RUN-ID>/visual-rounds.log` (round, status,
+duration and the failing step). One statusline covers both
 skills — the visual stages have their own actors in it (`visual`, and the fix
 rounds by backend). Do not poll; you are notified when it exits.
 
@@ -158,7 +158,7 @@ addition:
   or stop. Respect the kill criterion you wrote — the day this harness was
   built for was six rounds of "one more try".
 - **Send the pictures.** On every terminal status, `SendUserFile` the run's
-  `.harness/contact-sheet.png` (and the champion sheet beside it when there is
+  `visual/contact-sheet.png` (and the champion sheet beside it when there is
   one) with the critic's `pairwise` + one line of its `evidence`. The user
   judges the picture, not your adjectives.
 - **Promotion is human.** When the user says the new render is the bar:

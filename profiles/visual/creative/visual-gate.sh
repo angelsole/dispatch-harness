@@ -9,10 +9,10 @@
 # what cannot, and fail the round into a fix.
 #
 # Two tiers, in this order and for this reason:
-#   1. Deterministic checks (creative/vcheck.py) — free, ~1 s, and calibrated by
+#   1. Deterministic checks (vcheck.py) — free, ~1 s, and calibrated by
 #      per-repo thresholds rather than by taste. A render that fails these is
 #      broken in a way no critic needs to be paid to notice.
-#   2. One VLM critic (creative/critic.sh) — fresh context, no shell, strict
+#   2. One VLM critic (critic.sh) — fresh context, no shell, strict
 #      JSON, and judged PAIRWISE against the reigning champion. A challenger the
 #      critic calls `worse` fails the gate however high its absolute scores are.
 #      That verdict is the one this whole stage exists to obtain — which is why
@@ -24,11 +24,11 @@
 #      and by the checks when there is not.
 #
 # Run by run-task.sh as VISUAL_GATE_CMD, inside the worktree; also runnable by
-# hand from a worktree (see the live-demo recipe in creative/README.md).
+# hand from a worktree (see the live-demo recipe in this directory's README.md).
 #
 # Usage:  visual-gate.sh            (cwd = the repo/worktree being judged)
 # Config: .creative/visual.conf.sh in that repo — see repos.local.sh.example
-#         and creative/README.md.
+#         and profiles/visual/creative/README.md.
 # Env:    VISUAL_CONF   config path        (default .creative/visual.conf.sh)
 #         VISUAL_OUT    artefact dir       (default .harness)
 #         VISUAL_REPO   champion key       (default the main checkout's name)
@@ -128,7 +128,7 @@ mkdir -p "$VISUAL_OUT" 2>/dev/null || true
 # as this one's.
 rm -f "$SCORE" "$CHECKS" "$CRITIC_OUT" "$SHEET"
 
-[ -f "$VISUAL_CONF" ] || die 2 "no visual contract at $VISUAL_CONF — a repo opts into the visual gate by writing one (see creative/README.md)"
+[ -f "$VISUAL_CONF" ] || die 2 "no visual contract at $VISUAL_CONF — a repo opts into the visual gate by writing one (see profiles/visual/creative/README.md)"
 
 # The scratch dir exists before the config is read: a server command needs
 # somewhere to put its own state, and $VISUAL_TMP is where.

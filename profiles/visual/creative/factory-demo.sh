@@ -7,7 +7,7 @@
 # of this script makes zero vendor calls and reproduces byte-identical output;
 # that is what makes it safe to put in a README and in a demo.
 #
-# Usage: creative/factory-demo.sh [options]
+# Usage: factory-demo.sh [options]
 #   --assets FILE   asset list           (default .creative/assets.json)
 #   --palette PNG   palette LUT          (default .creative/palette.png)
 #   --out DIR       working dir          (default .harness/factory)
@@ -19,6 +19,8 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../../../lib/common.sh
+. "$HERE/../../../lib/common.sh"
 ASSETS=".creative/assets.json"
 PALETTE=".creative/palette.png"
 OUT=".harness/factory"
@@ -38,7 +40,7 @@ while [ $# -gt 0 ]; do
     --publish) PUBLISH="$2"; shift 2 ;;
     --scale)   SCALE="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '1,22p' "$0"; exit 0 ;;
+    -h|--help) harness_usage "$0"; exit 0 ;;
     *) echo "factory-demo.sh: unknown option $1" >&2; exit 2 ;;
   esac
 done

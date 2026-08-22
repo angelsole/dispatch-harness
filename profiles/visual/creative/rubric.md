@@ -11,7 +11,7 @@ is noisy in absolute terms and calibrated by nothing.
 
 A rubric is pasted verbatim into a call that is shown two images, called A and
 B, and told nothing else about either one. So a rubric describes the target
-look and never the images being compared — see `creative/README.md`.
+look and never the images being compared — see this directory's `README.md`.
 
 | Axis | 1 | 3 | 5 |
 |---|---|---|---|

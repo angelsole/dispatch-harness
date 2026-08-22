@@ -58,6 +58,8 @@
 set -u
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../../../lib/common.sh
+. "$SELF_DIR/../../../lib/common.sh"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 CRITIC_MODEL="${CRITIC_MODEL:-claude-opus-5}"
 CRITIC_TIMEOUT="${CRITIC_TIMEOUT:-600}"
@@ -105,12 +107,6 @@ MARGIN=$(awk -v m="$CRITIC_TIEBREAK_MARGIN" \
 [ -n "$MARGIN" ] || {
   echo "critic.sh: CRITIC_TIEBREAK_MARGIN must be a non-negative number (got '$CRITIC_TIEBREAK_MARGIN')" >&2
   exit 2
-}
-
-with_timeout() {  # macOS ships no timeout(1); perl's alarm survives exec
-  local secs="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"
-  else perl -e 'alarm shift; exec @ARGV' "$secs" "$@"; fi
 }
 
 # The schema is stated to the CLI, which enforces it, AND summarised in the

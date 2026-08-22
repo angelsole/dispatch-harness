@@ -1,5 +1,5 @@
 <!-- Template. Copy to `.creative/rubric.md` in the target repo. Without one the
-     critic falls back to creative/rubric.md, which is deliberately generic —
+     critic falls back to the profile's `creative/rubric.md`, which is generic —
      and generic is the weakest form of this artefact. Rewrite every anchor in
      the language of THIS project: the critic can only name a fault it has been
      given words for. -->
