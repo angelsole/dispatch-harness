@@ -710,11 +710,18 @@ max_turns_hit() {
   grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
 }
 
-# Did this invocation's implementer get a single token out? The stream spans
-# every segment of the attempt, so one assistant event anywhere in it means the
-# endpoint answered at least once.
-opus_streamed_nothing() {
-  ! jq -e -s 'any(.[]; .type == "assistant")' "$RUN_DIR/opus-stream.jsonl" >/dev/null 2>&1
+# Has this run never received a single implementer token? A re-dispatch rotates
+# the previous invocation's stream into attempts/<n>, and that history matters:
+# a 1113 after an earlier response is a mid-run balance event, even when the
+# resumed request itself was rejected before producing another assistant event.
+run_streamed_nothing() {
+  local stream
+  for stream in "$RUN_DIR"/attempts/*/opus-stream.jsonl "$RUN_DIR/opus-stream.jsonl"; do
+    [ -f "$stream" ] || continue
+    jq -e -s 'any(.[]; .type == "assistant")' "$stream" >/dev/null 2>&1 \
+      && return 1
+  done
+  return 0
 }
 
 # The one z.ai failure that must NOT defer. Error 1113 is returned both for an
@@ -725,7 +732,7 @@ opus_streamed_nothing() {
 # wait for, so it fails fast and names what to check.
 zai_setup_rejected() {
   [ "$IMPLEMENTER_PROVIDER" = zai ] || return 1
-  opus_streamed_nothing || return 1
+  run_streamed_nothing || return 1
   grep -qiE "$ZAI_BALANCE_RE" "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null \
     && return 0
   tail -n "+${OPUS_FEED_START_LINE:-1}" "$RUN_DIR/feed.log" 2>/dev/null \

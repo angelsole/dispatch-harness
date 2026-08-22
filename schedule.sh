@@ -22,9 +22,9 @@
 #
 # The wrapper it arms carries a snapshot of THIS shell's harness environment
 # (every HARNESS_*, CLAUDE_CONFIG_DIR, CODEX_HOME, GH_CONFIG_DIR, GH_TOKEN, the
-# model/effort knobs and PATH), so the scheduled run dispatches with the
-# identity it was scheduled with. It can therefore hold a token: it is written
-# mode 600 and lives in the run dir.
+# model/provider knobs, provider key path and PATH), so the scheduled run
+# dispatches with the identity it was scheduled with. It can therefore hold a
+# token: it is written mode 600 and lives in the run dir.
 set -u
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -120,7 +120,7 @@ shquote() {  # $1 = value; prints it single-quoted for the wrapper
 env_names() {
   { compgen -e 2>/dev/null | grep -E '^HARNESS_[A-Za-z0-9_]+$'
     printf '%s\n' HARNESS_DIR CLAUDE_CONFIG_DIR CODEX_HOME GH_CONFIG_DIR GH_TOKEN \
-      IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL IMPLEMENTER_EFFORT \
+      IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL IMPLEMENTER_EFFORT ZAI_API_KEY_FILE \
       REVIEWER_MODEL REVIEWER_EFFORT PATH
   } | sort -u
 }

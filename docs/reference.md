@@ -171,12 +171,15 @@ exhausted quota, and error `1113` / `Insufficient Balance`, defer the run the
 way a session limit does (ccusage is not consulted for the reset, so the wait
 falls back to the standing default). The one exception is the failure waiting
 cannot cure: `1113` is also what a **wrong base path** returns, so an attempt
-that died on it *without streaming a single token* ends `setup_failed`, naming
+on a run that has *never streamed a single token* ends `setup_failed`, naming
 the credential and the endpoint to check, instead of re-arming itself in a
-circle.
+circle. Once the run has streamed output, a later first-request rejection is a
+mid-run balance event and defers normally.
 
-**Attaching.** `attach.sh` prints the exports an interactive resume needs when
-the run's pin says `zai` — the key's path, never the key.
+**Attaching.** When a `zai` run's provider environment is absent, `attach.sh`
+prints the exports an interactive resume needs — the key's path, never the key
+— and asks you to rerun it after exporting them. It never opens the session
+against the wrong endpoint.
 
 ### Not a knob: HARNESS_GATE_STEP
 

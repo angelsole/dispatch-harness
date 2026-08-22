@@ -357,6 +357,17 @@ check "1113: counted as a self-resume" "$(result .metrics.self_resumes)" "1"
 file_has "$RUN/capacity.log" "ccusage accounts for the Claude window and is not asked" \
   "1113: and the Claude accountant is not consulted about a z.ai window"
 
+# The stream is rotated between invocations, but it is still part of this run's
+# history. A first-request 1113 after earlier output is a balance event, not a
+# fresh setup failure.
+BEFORE_ARMS=$(arm_calls)
+dispatch PROV-1113-MID balance-first ""
+check "1113: a resumed first-request rejection still defers after earlier output" \
+  "$(result .status)" "deferred_capacity"
+check "1113: the resumed rejection exits 0" "$RC" "0"
+check "1113: the resumed rejection arms one more schedule" \
+  "$(arm_calls)" "$((BEFORE_ARMS + 1))"
+
 BEFORE_ARMS=$(arm_calls)
 dispatch PROV-QUOTA quota-midrun "IMPLEMENTER_PROVIDER=zai"
 check "quota: an exhausted quota defers too" "$(result .status)" "deferred_capacity"
@@ -403,6 +414,38 @@ has "$BASE_IMPL" "subagent=[sonnet]" "default: subagents stay on sonnet"
 has "$BASE_IMPL" "model=[claude-opus-5]" "default: and the implementer on Opus"
 has "$(env_of reviewer)" "model=[claude-opus-5]" \
   "default: the Claude review tier still mirrors the implementer's model"
+
+# ---------------------------------------------------------------------------
+echo "== attaching never opens a z.ai session against Anthropic =="
+# ---------------------------------------------------------------------------
+BEFORE_SPAWNS=$(grep -c '^role=implementer' "$ENVLOG" 2>/dev/null | tr -d ' ')
+ATTACH_OUT=$(env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+  HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" bash "$SRC/attach.sh" PROV-ENV 2>&1)
+ATTACH_RC=$?
+check "attach: missing provider env stops before resume" "$ATTACH_RC" "2"
+check "attach: no session was spawned against the wrong endpoint" \
+  "$(grep -c '^role=implementer' "$ENVLOG" 2>/dev/null | tr -d ' ')" "$BEFORE_SPAWNS"
+has "$ATTACH_OUT" 'ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic' \
+  "attach: the hint includes the endpoint"
+has "$ATTACH_OUT" 'ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.7' \
+  "attach: the hint includes the CLI small model"
+has "$ATTACH_OUT" 'CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7' \
+  "attach: the hint includes the subagent model"
+has "$ATTACH_OUT" "$HARNESS/zai-api-key" "attach: the hint names the key file"
+has_not "$ATTACH_OUT" "$ZAI_KEY" "attach: the hint never prints the credential"
+ATTACH_1M_OUT=$(env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+  HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" bash "$SRC/attach.sh" PROV-MODEL 2>&1)
+has "$ATTACH_1M_OUT" 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000' \
+  "attach: the 1M model hint includes its compaction window"
+
+printf 'commit\n' > "$CLAUDE_MODE"
+env HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  ANTHROPIC_BASE_URL="$ZAI_URL" ANTHROPIC_AUTH_TOKEN="$ZAI_KEY" \
+  API_TIMEOUT_MS=3000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.7 \
+  CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7 \
+  bash "$SRC/attach.sh" PROV-ENV >/dev/null 2>&1
+check "attach: a correctly configured shell resumes the session" \
+  "$(grep -c '^role=implementer' "$ENVLOG" 2>/dev/null | tr -d ' ')" "$((BEFORE_SPAWNS + 1))"
 
 # ---------------------------------------------------------------------------
 echo "== the injection has exactly one home =="
