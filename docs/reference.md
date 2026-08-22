@@ -62,6 +62,7 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | --- | --- | --- |
 | `HARNESS_MAX_TURNS` | Turn ceiling for the implementer's session; pinned at first dispatch | `200` |
 | `HARNESS_MAX_RESUMES` | Automatic resumes allowed on turn exhaustion before the run fails (`0` opts out) | `2` |
+| `HARNESS_RESUME_MODE` | What a turn-ceiling resume hands the next segment: `report` (fresh session + a written handover) or `transcript` (`--resume` into the exhausted session); pinned at first dispatch | `report` |
 
 ### Dispatch and identity
 
@@ -468,7 +469,8 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
 | `verify.json`, `verify.log` | The [verifier's](#the-verifier) score, and why it did or did not produce one |
-| `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds and final message, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
+| `segment-report-<n>.md` | In `report` [resume mode](operations.md#turn-ceiling-a-run-that-resumes-itself), the handover the turn-ceiling resume gave segment `<n>+1` about segment `<n>` |
+| `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds, final message and segment reports, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
 | `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
 
