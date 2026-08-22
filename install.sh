@@ -48,13 +48,15 @@ SKILLS=(dispatch briefed-dispatch)
 SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 
-# Runtime files installed into HARNESS_DIR. `wall` is a directory: the wall's
-# page and server travel with wall.sh.
+# Runtime files installed into HARNESS_DIR. `wall` and `lib` are directories:
+# the wall's page and server travel with wall.sh, and lib/ holds the pieces the
+# pipeline scripts source at runtime.
 FILES=(
   mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
   metrics.sh attach.sh cleanup.sh janitor.sh preview.sh station.sh wall.sh wall demo-auth.sh
   auth-capture.py verify.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
   planner-settings.json brief-template.md
+  lib
 )
 
 link_or_copy() {  # $1 = source path, $2 = dest path
