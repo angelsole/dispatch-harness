@@ -1102,7 +1102,8 @@ escalation_step_class() {  # $1 = the failing step
   s=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
   case "$s" in
     '')                                                        printf 'unknown' ;;
-    *tsc*|*typecheck*|*type-check*|*mypy*|*pyright*|*analyze*) printf 'type-check' ;;
+    *tsc*|*typecheck*|*type-check*|*type_check*|*check:types*|*check-types*|*check_types*|*types:check*|*cargo\ check*|*mypy*|*pyright*|*analyze*)
+                                                               printf 'type-check' ;;
     *lint*|*rubocop*|*shellcheck*|*ruff*|*flake8*|*clippy*)    printf 'lint' ;;
     *test*|*spec*|*jest*|*cypress*)                            printf 'test' ;;
     *build*|*compile*|*webpack*)                               printf 'build' ;;

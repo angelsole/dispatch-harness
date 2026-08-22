@@ -129,6 +129,11 @@ case "\$(cat "$GATE_MODE")" in
 esac
 EOF
 cp "$FAKES/run-tests" "$FAKES/run-lint"
+cat > "$FAKES/npm" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+cp "$FAKES/npm" "$FAKES/cargo"
 
 # Every model stage runs through this one binary: it works out which stage it is
 # from the prompt, records the environment it was spawned with, and — for the
@@ -193,7 +198,7 @@ printf '{"type":"result","subtype":"success","result":"segment %s finished","ses
 EOF
 
 chmod +x "$SRCDIR/schedule.sh" "$FAKES/npx" "$FAKES/gh" "$FAKES/claude" \
-         "$FAKES/run-tests" "$FAKES/run-lint"
+         "$FAKES/run-tests" "$FAKES/run-lint" "$FAKES/npm" "$FAKES/cargo"
 
 iso_utc() { perl -e 'use POSIX qw(strftime); print strftime("%Y-%m-%dT%H:%M:%S.000Z", gmtime($ARGV[0]))' -- "$1"; }
 RESET_EPOCH=$(( $(date +%s) + 900 ))
@@ -393,6 +398,17 @@ dispatch ESC-STEP-LINT commit fail "IMPLEMENTER_PROVIDER=zai"
 check "steps: a lint step is in the default set" "$(spawns_of implementer)" "2"
 check "steps: and the class it escalated on is recorded by its step" \
   "$(result .escalation.failed_step)" "run-lint"
+TEST_GATE_CMD=""
+
+for type_gate in 'npm run check:types' 'cargo check'; do
+  TEST_GATE_CMD="$type_gate"
+  dispatch "ESC-STEP-$(printf '%s' "$type_gate" | tr ' :' '--' | tr '[:lower:]' '[:upper:]')" \
+    commit fail "IMPLEMENTER_PROVIDER=zai"
+  check "steps: '$type_gate' is a type-check step in the default set" \
+    "$(spawns_of implementer)" "2"
+  check "steps: '$type_gate' is recorded as the failing step" \
+    "$(result .escalation.failed_step)" "$type_gate"
+done
 TEST_GATE_CMD=""
 
 # ---------------------------------------------------------------------------
