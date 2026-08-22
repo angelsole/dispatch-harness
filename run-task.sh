@@ -1254,6 +1254,7 @@ escalation_prompt() {  # $1 = the report to hand over
 OPUS_SESSION_FILE="$RUN_DIR/opus-session"
 CLAUDE_ARGS=(--model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits --max-turns "$MAX_TURNS")
 [ -n "$MCP_CONFIG" ] && CLAUDE_ARGS=("${CLAUDE_ARGS[@]}" --mcp-config "$MCP_CONFIG")
+OPUS_SESSION_ESTABLISHED=0
 
 segment_stream() {
   tail -n "+${OPUS_STREAM_START_LINE:-1}" "$RUN_DIR/opus-stream.jsonl" 2>/dev/null
@@ -1276,6 +1277,7 @@ segment_stream() {
 # is exactly this call's.
 opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   local prompt="$1" new_session; shift
+  OPUS_SESSION_ESTABLISHED=0
   # Remember where this attempt starts in the append-only live feed so an older
   # limit message cannot classify a later, unrelated failure as capacity.
   OPUS_FEED_START_LINE=1
@@ -1323,6 +1325,7 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   if [ -n "$new_session" ]; then
     OPUS_SESSION="$new_session"
     echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
+    OPUS_SESSION_ESTABLISHED=1
   fi
 }
 
@@ -1333,12 +1336,14 @@ opus_incomplete() {
   [ "$OPUS_EXIT" -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --oneline 2>/dev/null)" ]
 }
 
+ESCALATION_HANDOFF=0
 if [ -f "$ESCALATION_PENDING" ]; then
   # The handover an escalation armed. A FRESH session — the point of escalating
   # is a cold read by another model, not the cheap tier's context replayed on a
-  # dearer one. Cleared before the spawn: a segment that then dies is resumed
-  # like any other, and can never re-trigger the handover.
-  rm -f "$ESCALATION_PENDING"
+  # dearer one. The pending marker stays armed until the CLI returns a session
+  # id; if this process dies before then, the next dispatch still starts the
+  # fresh escalated session instead of resuming an old or never-started id.
+  ESCALATION_HANDOFF=1
   OPUS_SESSION=$(uuidgen | tr '[:upper:]' '[:lower:]')
   echo "$OPUS_SESSION" > "$OPUS_SESSION_FILE"
   OPUS_PROMPT="$(escalation_prompt "$ESCALATION_REPORT")"
@@ -1360,6 +1365,10 @@ else
   stage "implementing — Opus (Claude sub)"
 fi
 opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
+if [ "$ESCALATION_HANDOFF" = 1 ] && [ "$OPUS_SESSION_ESTABLISHED" = 1 ]; then
+  rm -f "$ESCALATION_PENDING"
+  ESCALATION_HANDOFF=0
+fi
 
 # --- 4b. Turn ceiling: resume rather than die at the finish line -------------
 # Turn exhaustion is a budget running out, not a task that failed, and it lands

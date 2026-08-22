@@ -178,6 +178,11 @@ n=\$(cat "$ATTEMPTS" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$ATTEM
 printf 'argv:%s\n' "\$flags" >> "$CLAUDE_CALLS"
 printf '%s' "\$prompt" > "$ROOT/impl-prompt-\$n.txt"
 
+if [ "\$n" = 2 ] && [ "\$(cat "$IMPL_MODE")" = escalation-start-fails ]; then
+  echo "session failed before establishment" >&2
+  exit 1
+fi
+
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"segment-%s"}]}}\n' "\$n"
 if [ "\$n" = 1 ]; then
   case "\$(cat "$IMPL_MODE")" in
@@ -474,6 +479,15 @@ check "defer: the re-dispatch runs the escalated session it owed" \
 has "$(env_of implementer 1)" "model=[claude-opus-5]" "defer: on the escalation target"
 has "$(prompt_of 1)" "left FAILING" "defer: with the handover it kept"
 absent "defer: and the marker is cleared once it is spent" "$RUN/escalation-pending"
+
+# A handoff is not spent merely because its session id was allocated. Without a
+# result event proving the CLI established that session, a later dispatch must
+# still see the obligation and start fresh.
+dispatch ESC-START-FAIL escalation-start-fails fail-once "IMPLEMENTER_PROVIDER=zai"
+check "handoff: a session that never establishes fails the escalated attempt" \
+  "$(result .status)" "implementer_failed"
+exists "handoff: the pending marker survives until a session is established" \
+  "$RUN/escalation-pending"
 
 echo
 printf 'escalation: %d passed, %d failed\n' "$pass" "$fail"
