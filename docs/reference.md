@@ -100,17 +100,19 @@ and [What the reviewer is allowed to reach](design-notes.md#what-the-reviewer-is
 
 ### Ablation knobs
 
-Two of these turn a normal run into a controlled **arm** — the same brief run
-*without* the review stage, or with a *different* implementer model — so you can
-measure what each stage buys. All are **pinned at first dispatch**: the chosen
-arm, models and efforts are written into the run dir on the first invocation and
-reused verbatim on resume, so a re-dispatch whose environment differs can't
-silently switch a run to a different condition. With **neither** knob set,
-control flow is identical to before — this is instrumentation, not a redesign.
+Three of these turn a normal run into a controlled **arm** — the same brief run
+*without* the review stage, or with a *different* implementer model, or with a
+*different implementer vendor* — so you can measure what each stage buys. All
+are **pinned at first dispatch**: the chosen arm, provider, models and efforts
+are written into the run dir on the first invocation and reused verbatim on
+resume, so a re-dispatch whose environment differs can't silently switch a run
+to a different condition. With **none** of them set, control flow is identical
+to before — this is instrumentation, not a redesign.
 
 | Env var | Effect | Default |
 | --- | --- | --- |
-| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5` |
+| `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
+| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. The default follows the provider. | `claude-opus-5`, or `glm-5.3` on `zai` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
@@ -121,6 +123,60 @@ control flow is identical to before — this is instrumentation, not a redesign.
 HARNESS_SKIP_REVIEW=1 IMPLEMENTER_MODEL=sonnet \
   ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
 ```
+
+### GLM as the implementer
+
+z.ai serves the GLM Coding Plan over an **Anthropic-compatible endpoint that
+officially supports the Claude Code CLI** — the same binary, the same
+`stream-json`, the same `--resume` — so the whole integration is a key file and
+four environment variables. Drop the credential and pin the provider:
+
+```bash
+(umask 077; printf '%s' '<your-z.ai-key>' > ~/.claude/harness/zai-api-key)
+IMPLEMENTER_PROVIDER=zai \
+  ~/.claude/harness/run-task.sh <TICKET> <repo-path> <branch-name>
+```
+
+Like `linear-api-key` and `verifier-api-key`, that file is **not seeded by the
+installer, because it is a credential** — you create it by hand, mode 600.
+`ZAI_API_KEY_FILE` moves it. Only the implementer's own subshell ever gets the
+token, and it is exported there rather than passed as an argument, so it appears
+in no `ps` listing, no log, no `result.json` and no PR body.
+
+**What moves, and what does not.** The provider is the *implementer's* alone.
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `API_TIMEOUT_MS` and the small
+model used for the CLI's background work and the worker's `Explore` subagents
+are applied at one place — the function that spawns an implementer segment — so
+every resume path (the turn ceiling, a mid-run capacity deferral, a scheduled
+re-dispatch) is billed to the account the run was pinned to. The reviewer, the
+Claude review tier, its fix rounds, the conflict resolver and `sync-pr.sh` are
+untouched and stay on Anthropic/Codex; the Claude tier spawns with
+`claude-opus-5` rather than the implementer's GLM id, which would be a usage
+error against Anthropic. One nice consequence: with a `zai` implementer even the
+*Claude* review tier is a cross-vendor read, so the fallback described in
+[the review guarantee](../README.md#why-its-built-this-way) loses nothing.
+
+**Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,
+and pinning it also sets the CLI's auto-compaction window to match. `glm-4.7` is
+the small/fast model. `IMPLEMENTER_EFFORT` is passed through unchanged and maps
+server-side: `xhigh`/`max` → max, `medium`/`high` → high, `low` → low.
+
+**Capacity.** The [preflight](operations.md#capacity-preflight-a-run-that-defers-itself)
+reads the station's own Claude logs, which say nothing about a z.ai window, so
+it is **skipped** — with the reason written to `capacity.log` — rather than
+deferring a run that had everything it needed to spend.
+
+**Failures.** z.ai's own vocabulary is classified alongside Claude's: an
+exhausted quota, and error `1113` / `Insufficient Balance`, defer the run the
+way a session limit does (ccusage is not consulted for the reset, so the wait
+falls back to the standing default). The one exception is the failure waiting
+cannot cure: `1113` is also what a **wrong base path** returns, so an attempt
+that died on it *without streaming a single token* ends `setup_failed`, naming
+the credential and the endpoint to check, instead of re-arming itself in a
+circle.
+
+**Attaching.** `attach.sh` prints the exports an interactive resume needs when
+the run's pin says `zai` — the key's path, never the key.
 
 ### Not a knob: HARNESS_GATE_STEP
 
@@ -324,7 +380,7 @@ time and never overwrites an existing copy:
 - **`demo.conf.sh`** — object-storage remote (`R2_REMOTE`, `R2_PUBLIC`) for
   uploading PR demo videos.
 
-Two more files are **not** seeded, because they are credentials and you should
+Three more files are **not** seeded, because they are credentials and you should
 create them deliberately, mode 600:
 
 - **`linear-api-key`** (`LINEAR_API_KEY_FILE` to move it), read by
@@ -333,6 +389,9 @@ create them deliberately, mode 600:
   reports capacity and simply says the queue was unreadable.
 - **`verifier-api-key`** (`VERIFIER_API_KEY_FILE` to move it), read by
   [the verifier](#the-verifier).
+- **`zai-api-key`** (`ZAI_API_KEY_FILE` to move it), read only by runs pinned to
+  [GLM as the implementer](#glm-as-the-implementer). A run pinned to `zai`
+  without it ends `setup_failed` before it spawns anything.
 
 ## The run directory
 
@@ -445,7 +504,9 @@ read it, and what each of its labels means, is in
 ### Metrics schema
 
 Alongside the existing fields, each run records `arm`
-(`full` | `claude_only` | `no_review`), `implementer_model`,
+(`full` | `claude_only` | `no_review`), `implementer_provider`
+(`anthropic` | `zai` — see [GLM as the implementer](#glm-as-the-implementer)),
+`implementer_model`,
 `implementer_effort`, `reviewer_model`, `reviewer_effort` (the last two name
 whichever backend actually reviewed — see
 [Claude-only mode](operations.md#claude-only-mode)), and a `metrics`

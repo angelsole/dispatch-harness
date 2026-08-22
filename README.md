@@ -33,7 +33,10 @@ under [`docs/`](docs/) — [Operations](docs/operations.md) ·
 `claude-opus-5` by default) writes and commits; the reviewer (OpenAI's Codex,
 `gpt-5.6-sol` by default) reads the diff cold and fixes what it finds. Neither
 sees the other's reasoning — only the committed result. A self-review by the
-same model rationalizes its own choices; a different lab's model does not.
+same model rationalizes its own choices; a different lab's model does not. Which
+vendor implements is itself a pinned knob: `IMPLEMENTER_PROVIDER=zai` runs the
+implementer on Zhipu's GLM Coding Plan and moves nothing else
+([GLM as the implementer](docs/reference.md#glm-as-the-implementer)).
 
 **A deterministic gate between the models.** Between implement and review runs a
 plain test gate — your repo's own `lint`/`type-check`/`test` commands, no model
@@ -50,7 +53,9 @@ nothing read. When Codex is out of credits, crashed or absent, the same review
 prompt falls through to a second Codex account and then to a fresh Claude
 session — never the implementer's own, so still a cold read — and the arm is
 recorded (`claude_only`, `reviewed_claude`) rather than dressed up as
-cross-vendor. If even that leaves no evidence the run ends `review_failed` with
+cross-vendor. That last tier is the honest label for an Anthropic implementer;
+behind a `zai` one it happens to be cross-vendor anyway. If even that leaves no
+evidence the run ends `review_failed` with
 `review: failed_silent` and pushes nothing. The one exception is an operator
 asking for the unreviewed baseline on purpose (`HARNESS_SKIP_REVIEW=1`) — see [When Codex dies mid-run](docs/operations.md#when-codex-dies-mid-run-out-of-credits).
 
