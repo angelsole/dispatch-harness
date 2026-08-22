@@ -138,8 +138,34 @@ positive_int() {
   case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
   [ "$1" -gt 0 ] 2>/dev/null
 }
-pin_knob implementer-model  IMPLEMENTER_MODEL  claude-opus-5
+# Which vendor the implementer bills to. `anthropic` is the Claude subscription
+# this pipeline was built around; `zai` is Zhipu's GLM Coding Plan, served over
+# an Anthropic-compatible endpoint the same `claude` binary speaks. It is the
+# implementer's alone: every other model stage stays where it is.
+DEFAULT_IMPLEMENTER_PROVIDER=anthropic
+DEFAULT_ANTHROPIC_MODEL=claude-opus-5
+DEFAULT_ZAI_MODEL=glm-5.3
+pin_knob implementer-provider IMPLEMENTER_PROVIDER "$DEFAULT_IMPLEMENTER_PROVIDER"
+# An unknown provider must neither reach the injection below nor become the
+# run's pinned condition: say so once, fall back, and re-pin what it used.
+case "$IMPLEMENTER_PROVIDER" in
+  anthropic|zai) ;;
+  *)
+    echo "[harness] IMPLEMENTER_PROVIDER='$IMPLEMENTER_PROVIDER' is not a known provider — using $DEFAULT_IMPLEMENTER_PROVIDER"
+    IMPLEMENTER_PROVIDER=$DEFAULT_IMPLEMENTER_PROVIDER
+    echo "$IMPLEMENTER_PROVIDER" > "$RUN_DIR/implementer-provider"
+    ;;
+esac
+DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
+[ "$IMPLEMENTER_PROVIDER" != zai ] || DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ZAI_MODEL"
+pin_knob implementer-model  IMPLEMENTER_MODEL  "$DEFAULT_IMPLEMENTER_MODEL"
 pin_knob implementer-effort IMPLEMENTER_EFFORT high
+# What every OTHER Claude-subscription stage spawns with: the Claude review
+# tier, its fix rounds and the conflict resolver. Normally the implementer's own
+# model — a cross-vendor implementer makes the two different things, and a GLM
+# model id handed to Anthropic is not a review, it is a usage error.
+CLAUDE_WORKER_MODEL="$IMPLEMENTER_MODEL"
+[ "$IMPLEMENTER_PROVIDER" = anthropic ] || CLAUDE_WORKER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 # A first dispatch without codex pins blank Codex reviewer knobs. The Claude
 # review tier fills the runtime/result fields from the implementer-model pins;
 # the blank files keep a resumed Claude-only run from silently acquiring Codex
@@ -415,12 +441,13 @@ write_result() {
     --arg ticket "$TICKET" --arg status "$1" --arg gate "$GATE_STATUS" \
     --arg arm "$ARM" --arg review "$REVIEW_CLASS" --arg raccount "$REVIEW_ACCOUNT" \
     --arg model "$IMPLEMENTER_MODEL" --arg ieffort "$IMPLEMENTER_EFFORT" \
+    --arg iprovider "$IMPLEMENTER_PROVIDER" \
     --arg rmodel "$REVIEWER_MODEL" --arg reffort "$REVIEWER_EFFORT" \
     --arg worktree "$WORKTREE" --arg branch "$BRANCH" --arg base "$BASE_BRANCH" \
     --arg owner "${HARNESS_OWNER:-}" \
     --arg pr "${2:-}" --arg run_dir "$RUN_DIR" --arg opus_head "$OPUS_HEAD" --arg session "$OPUS_SESSION" --arg demo "$DEMO_URL" \
     --argjson metrics "$metrics" \
-    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,attempt:$attempt,attempts_total:$attempts_total,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}
+    '{ticket:$ticket,status:$status,owner:$owner,arm:$arm,review:$review,review_account:$raccount,implementer_provider:$iprovider,implementer_model:$model,implementer_effort:$ieffort,reviewer_model:$rmodel,reviewer_effort:$reffort,gate:$gate,attempt:$attempt,attempts_total:$attempts_total,worktree:$worktree,branch:$branch,base:$base,pr_url:$pr,opus_head:$opus_head,opus_session:$session,demo_url:$demo,metrics:$metrics,logs:$run_dir}
      # The account label belongs to a review that happened: the arms that never
      # attempt one carry no field at all rather than an empty string nobody can
      # tell apart from "primary".
@@ -583,6 +610,13 @@ defer_for_capacity() {  # $1 = which path we came in on
 # proceed; never returns when it defers.
 capacity_preflight() {
   [ "${HARNESS_PREFLIGHT:-on}" != off ] || return 0
+  # ccusage accounts for the Claude subscription and nothing else. An
+  # implementer billed to another vendor has headroom this cannot see, so
+  # measuring it would defer a run that had everything it needed to spend.
+  if [ "$IMPLEMENTER_PROVIDER" != anthropic ]; then
+    capacity_note "preflight: skipped — the implementer bills to $IMPLEMENTER_PROVIDER, not the Claude subscription this measures"
+    return 0
+  fi
   declare -F capacity_for >/dev/null 2>&1 || return 0
   if ! capacity_for "$CLAUDE_LOGS"; then
     capacity_note "preflight: unknown — ccusage could not account for $CLAUDE_LOGS"
@@ -605,8 +639,17 @@ capacity_preflight() {
 # is the last segment's result text alone, and the feed is read from this
 # segment's first line — so an older segment's limit message cannot classify a
 # later, unrelated failure as capacity.
+#
+# z.ai says the same thing in its own words, so the provider decides which
+# vocabulary is evidence. Two shapes, because they need different answers: an
+# exhausted balance (error 1113, "Insufficient Balance" — also what a wrong base
+# path returns) and an exhausted quota window. Both defer here; only the first
+# can also be a configuration error, which zai_setup_rejected below separates.
+ZAI_BALANCE_RE='"code"[[:space:]]*:[[:space:]]*"?1113"?|insufficient balance'
+ZAI_QUOTA_RE='quota (exhausted|exceeded|used up)|exceeded your quota|insufficient quota|out of quota'
 session_limit_hit() {
   local pattern='(session|usage|[0-9]+-hour) limit reached|hit your (session|usage) limit'
+  [ "$IMPLEMENTER_PROVIDER" != zai ] || pattern="$pattern|$ZAI_BALANCE_RE|$ZAI_QUOTA_RE"
   grep -qiE "$pattern" "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null \
     && return 0
   # feed.log spans resumed invocations. Only the lines written by this
@@ -665,6 +708,35 @@ max_turns_hit() {
   jq -e -s 'map(select(.type == "result")) | (last // {}) | .subtype == "error_max_turns"' \
     "$RUN_DIR/opus-stream.jsonl" >/dev/null 2>&1 && return 0
   grep -qiE 'max(imum)? (number of )?turns' "$RUN_DIR/opus-stderr.log" 2>/dev/null
+}
+
+# Has this run never received a single implementer token? A re-dispatch rotates
+# the previous invocation's stream into attempts/<n>, and that history matters:
+# a 1113 after an earlier response is a mid-run balance event, even when the
+# resumed request itself was rejected before producing another assistant event.
+run_streamed_nothing() {
+  local stream
+  for stream in "$RUN_DIR"/attempts/*/opus-stream.jsonl "$RUN_DIR/opus-stream.jsonl"; do
+    [ -f "$stream" ] || continue
+    jq -e -s 'any(.[]; .type == "assistant")' "$stream" >/dev/null 2>&1 \
+      && return 1
+  done
+  return 0
+}
+
+# The one z.ai failure that must NOT defer. Error 1113 is returned both for an
+# empty balance and for a base URL that is not the Anthropic-compatible path, and
+# the second is a configuration error no amount of waiting fixes — deferring it
+# would put the run in a loop that re-arms itself until the cap. An attempt that
+# died on 1113 without streaming anything has not shown that a window exists to
+# wait for, so it fails fast and names what to check.
+zai_setup_rejected() {
+  [ "$IMPLEMENTER_PROVIDER" = zai ] || return 1
+  run_streamed_nothing || return 1
+  grep -qiE "$ZAI_BALANCE_RE" "$RUN_DIR/opus-stderr.log" "$RUN_DIR/opus.log" 2>/dev/null \
+    && return 0
+  tail -n "+${OPUS_FEED_START_LINE:-1}" "$RUN_DIR/feed.log" 2>/dev/null \
+    | grep -qiE "$ZAI_BALANCE_RE"
 }
 
 # --- Per-attempt telemetry ---------------------------------------------------
@@ -822,7 +894,49 @@ This repo is NOT in production yet. Work under this posture:
 - Judge the diff under this posture: do NOT request backward-compatibility shims, fallbacks, or migration paths for pre-production code."
 fi
 
-# --- 4. Opus implements (Claude subscription: ANTHROPIC_API_KEY unset) -------
+# --- 4. The implementer (Claude subscription: ANTHROPIC_API_KEY unset) -------
+# z.ai serves the GLM Coding Plan over an Anthropic-compatible endpoint that this
+# same binary speaks, so the whole integration is four environment variables and
+# a key file. They are applied by opus_attempt and nowhere else: one injection
+# point means every segment of an attempt — the first spawn, a turn-ceiling
+# resume, a capacity self-resume, a scheduled re-dispatch — is billed to the
+# account the run was pinned to, and no other stage can inherit them.
+ZAI_BASE_URL="https://api.z.ai/api/anthropic"
+ZAI_KEY_FILE="${ZAI_API_KEY_FILE:-$HARNESS_DIR/zai-api-key}"
+ZAI_TIMEOUT_MS=3000000
+ZAI_SMALL_MODEL=glm-4.7
+# The cheap model both the CLI's own background work and the worker's Explore
+# subagents run on. It has to move with the provider: a subagent left on
+# `sonnet` would be routed to the z.ai endpoint under a model id it does not
+# serve, and one left unset would silently bill somewhere the run did not ask for.
+IMPLEMENTER_SUBAGENT_MODEL=sonnet
+[ "$IMPLEMENTER_PROVIDER" != zai ] || IMPLEMENTER_SUBAGENT_MODEL="$ZAI_SMALL_MODEL"
+
+if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
+  [ -r "$ZAI_KEY_FILE" ] \
+    || fail setup_failed "implementer-provider is pinned to zai but there is no readable key file at $ZAI_KEY_FILE (create it mode 600)"
+fi
+
+# Applied INSIDE the implementer subshell, so the credential lives in that
+# process's environment and never in an argv `ps` would show — the same
+# discipline as the verifier and Linear keys, which travel as a path or a header
+# file. Nothing is exported for the default provider, which is what keeps an
+# anthropic run byte-identical to one from before this existed.
+apply_provider_env() {
+  [ "$IMPLEMENTER_PROVIDER" = zai ] || return 0
+  ANTHROPIC_AUTH_TOKEN=$(cat "$ZAI_KEY_FILE") || return 1
+  export ANTHROPIC_AUTH_TOKEN
+  export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
+  export API_TIMEOUT_MS="$ZAI_TIMEOUT_MS"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$ZAI_SMALL_MODEL"
+  # The 1M-context variant only behaves as one if the CLI is told where to
+  # compact; left at its default it would compact at 200k against a model
+  # pinned for five times that.
+  case "$IMPLEMENTER_MODEL" in
+    *'[1m]') export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ;;
+  esac
+}
+
 IMPLEMENTER_PROMPT="You are the implementer stage of an automated pipeline.
 Read .harness/brief.md first — it is your task contract — then follow this repo's CLAUDE.md conventions.
 If .harness/specs/ exists, it holds the task's source documents (office files the planner converted to markdown) — they are part of the contract too, so read them alongside the brief; the brief says what to take from each.
@@ -883,7 +997,8 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   if [ -f "$RUN_DIR/feed.log" ]; then
     OPUS_FEED_START_LINE=$(( $(wc -l < "$RUN_DIR/feed.log") + 1 ))
   fi
-  (cd "$WORKTREE" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+  (cd "$WORKTREE" && apply_provider_env \
+      && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL="$IMPLEMENTER_SUBAGENT_MODEL" \
       "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
       --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
     | tee -a "$RUN_DIR/opus-stream.jsonl" \
@@ -973,13 +1088,25 @@ if [ -f "$WORKTREE/.harness/QUESTIONS.md" ]; then
   exit 3
 fi
 if opus_incomplete; then
+  # Checked before the deferral below, because it is the one limit-shaped death
+  # that waiting cannot cure.
+  if zai_setup_rejected; then
+    fail setup_failed "z.ai rejected the implementer before it streamed anything (error 1113 / Insufficient Balance) — check the credential in $ZAI_KEY_FILE and that the endpoint is $ZAI_BASE_URL"
+  fi
   # A window that emptied mid-run is a capacity event, not a failed implementer.
   # The CLI's message is only the trigger; the reset time comes from ccusage, so
   # nothing here depends on parsing prose that Anthropic is free to reword.
   if [ "$OPUS_EXIT" -ne 0 ] && [ "${HARNESS_PREFLIGHT:-on}" != off ] \
      && declare -F capacity_for >/dev/null 2>&1 && session_limit_hit; then
     capacity_note "mid-run: the implementer stopped on a session limit"
-    capacity_for "$CLAUDE_LOGS" || true   # the headroom is moot; CAP_RESET is not
+    if [ "$IMPLEMENTER_PROVIDER" = anthropic ]; then
+      capacity_for "$CLAUDE_LOGS" || true  # the headroom is moot; CAP_RESET is not
+    else
+      # ccusage knows one subscription's window and this is not it, so the
+      # fallbacks below own the wait outright.
+      capacity_note "mid-run: the limit is $IMPLEMENTER_PROVIDER's — ccusage accounts for the Claude window and is not asked"
+      CAP_RESET=""
+    fi
     # A mid-run limit always knows roughly when it lifts, so it always defers:
     # ccusage first, then the time the message itself names, and failing both an
     # hour — the alternative is dying as implementer_failed and waiting for a
@@ -1537,10 +1664,12 @@ run_codex() {  # $1 = round label, $2 = prompt
 # session (no --resume/--session-id), ANTHROPIC_API_KEY unset so the run bills
 # to the subscription, same worker permissions and the same CODEX_TIMEOUT cap.
 # Logs are named after the model that produced them, like opus.log/codex-N.log.
+# It never sees the implementer's provider env — that is exported inside
+# opus_attempt's subshell alone — so this stays Anthropic whoever implemented.
 run_claude_worker() {  # $1 = round label, $2 = prompt
   (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
       env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
-      "$CLAUDE_BIN" -p "$2" --model "$IMPLEMENTER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
+      "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \
     | tee "$RUN_DIR/claude-$1.log" \
@@ -1640,7 +1769,7 @@ claude_review_tier() {  # $1 = why the Codex side is done; classifies the outcom
   REVIEW_AGENT="claude"
   REVIEW_ACCOUNT="claude"
   CLAUDE_TIER_REASON="$1"
-  REVIEWER_MODEL="$IMPLEMENTER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
+  REVIEWER_MODEL="$CLAUDE_WORKER_MODEL"; REVIEWER_EFFORT="$IMPLEMENTER_EFFORT"
   printf 'claude fallback: %s\n' "$1" >> "$RUN_DIR/review-fallback"
   run_claude_worker 1-claude "$REVIEW_PROMPT" || true
   if review_evidence; then

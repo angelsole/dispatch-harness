@@ -93,6 +93,8 @@ cat > "$SRCDIR/run-task.sh" <<EOF
   printf 'ghtoken:%s\n'    "\${GH_TOKEN-<unset>}"
   printf 'codexfb:%s\n'    "\${HARNESS_CODEX_HOME_FALLBACK-<unset>}"
   printf 'effort:%s\n'     "\${IMPLEMENTER_EFFORT-<unset>}"
+  printf 'provider:%s\n'   "\${IMPLEMENTER_PROVIDER-<unset>}"
+  printf 'zaikey:%s\n'     "\${ZAI_API_KEY_FILE-<unset>}"
   printf 'harnessdir:%s\n' "\${HARNESS_DIR-<unset>}"
   printf 'unrelated:%s\n'  "\${SCHEDULE_UNRELATED-<unset>}"
   lc=\$(printf '%s' "\$1" | tr '[:upper:]' '[:lower:]')
@@ -323,7 +325,8 @@ CANARY="it is 08:10 and Angel's shell said so"
 : > "$CALLS"
 (
   export HARNESS_CANARY="$CANARY" HARNESS_OWNER=angel TEST_GH_TOKEN=gho_fixture \
-         IMPLEMENTER_EFFORT=max SCHEDULE_UNRELATED=must-not-travel \
+         IMPLEMENTER_PROVIDER=zai IMPLEMENTER_EFFORT=max \
+         ZAI_API_KEY_FILE="$ROOT/custom-zai-key" SCHEDULE_UNRELATED=must-not-travel \
          HARNESS_CODEX_HOME_FALLBACK="$ROOT/codex-fallback"
   sched FIRE "$REPO" fix/fire "$AHEAD_HHMM" > /dev/null
 )
@@ -343,6 +346,10 @@ check "fire: HARNESS_* travelled verbatim (quotes and all)" \
 check "fire: the dispatching owner travelled"  "$(grep '^owner:' "$CALLS" | sed 's/^owner://')" "angel"
 check "fire: the gh token travelled"           "$(grep '^ghtoken:' "$CALLS" | sed 's/^ghtoken://')" "gho_fixture"
 check "fire: the effort knob travelled"        "$(grep '^effort:' "$CALLS" | sed 's/^effort://')" "max"
+check "fire: the implementer provider travelled" \
+  "$(grep '^provider:' "$CALLS" | sed 's/^provider://')" "zai"
+check "fire: the provider key path travelled" \
+  "$(grep '^zaikey:' "$CALLS" | sed 's/^zaikey://')" "$ROOT/custom-zai-key"
 # The HARNESS_* sweep is what makes new knobs compose for free: the second Codex
 # account has to reach the 02:00 run or a scheduled review still dies on a dry
 # primary. Asserted by name, because that is the promise a knob makes.
