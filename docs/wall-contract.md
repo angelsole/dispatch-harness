@@ -93,15 +93,20 @@ success. Consequences worth knowing, both deliberate:
   from `stages.log`, so the alarm stays where it happened instead of jumping to
   a rooftop it never reached.
 
-**The inert rows.** Three rows — `^visual fix.*Claude`, `^visual fix.*Codex` and
-`^visual gate` — belong to the creative harness's render-and-grade round.
-Nothing in this repo emits them, and the test asserts that ("coverage: the rows
-flagged inert really are inert in this repo"). They are here because a shared
-vocabulary is only shared if both copies already know the whole of it, and the
-sibling repo's stale wall exists for no other reason than those rows. `visual
-gate` borrows the test gate's neon and its rung rather than inventing a floor,
-and `done: visual_failed` therefore burns out on that same rung instead of on a
-roof the run never reached.
+**The visual rows.** Three rows — `^visual fix.*Claude`, `^visual fix.*Codex`
+and `^visual gate` — belong to the render-and-grade round of [the visual
+profile](../profiles/visual/creative/README.md). They arrived here inert, ahead
+of the profile itself; `profiles/visual/profile.sh` emits them now, and the
+`inert` flag is gone with the fork that made them necessary. The emission sweep
+reads `profiles/*/profile.sh` alongside `run-task.sh` for exactly that reason: a
+stage a profile moves is as much part of this wire format as one the pipeline
+moves. `visual gate` borrows the test gate's neon and its rung rather than
+inventing a floor, and `done: visual_failed` therefore burns out on that same
+rung instead of on a roof the run never reached.
+
+`inert` itself stays in the table's vocabulary: a row carried ahead of the code
+that emits it is a legitimate state, and the test still holds both directions of
+it ("coverage: the rows flagged inert really are inert in this repo").
 
 ## The run directory, as the wall reads it
 
@@ -227,7 +232,7 @@ any directory of run dirs written to this contract — which is how one screen
 serves a second harness on the same machine:
 
 ```bash
-wall.sh --runs ~/.claude/creative-harness/runs   # a sibling harness's runs
+wall.sh --runs ~/.claude/other-harness/runs      # a second harness's runs
 wall.sh --runs wall/fixtures/runs                # the repo's staged demo data
 ```
 
@@ -255,7 +260,6 @@ discovered:
   are drawn nowhere, so nothing would notice their absence.
 - The prose in this file about *why* each rule is the way it is. The rules are
   pinned; the reasoning is not, and cannot be.
-- The creative harness's own emission of the three inert stage rows. This repo
-  can only assert that it does *not* emit them; whether the sibling's
-  `run-task.sh` writes exactly those strings is that repo's test to own, and the
-  re-unification's job to prove.
+- Nothing here any more. The three visual rows used to be the entry: their
+  emitter lived in a fork this repo could not read. It is `profiles/visual/` now,
+  and the emission sweep covers it.

@@ -198,6 +198,19 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   deliberately — an unreviewed diff must never ship looking reviewed. Tell the
   user to top up credits (a browser login you cannot do) or fix whatever
   killed the Claude tier, then re-dispatch the same command.
+- **visual_failed** — only on a repo the visual profile applies to (it pins
+  `VISUAL_GATE_CMD` or carries `.creative/`). The tests pass and the *picture*
+  does not: the deterministic checks failed, or the critic judged the render
+  worse than the reigning champion, and the bounded fix rounds ran out. Nothing
+  was pushed. The evidence is in `runs/<RUN-ID>/visual/` (`contact-sheet.png`,
+  `frames/`, `visual-score.json` — `.failures` is the list of reasons in plain
+  words, `.one_fix` the change the critic asked for); `result.json.visual`
+  carries the pairwise verdict. Look at the sheet yourself before deciding:
+  either sharpen the brief around the critic's one fix and re-dispatch, or — if
+  the gate is measuring the wrong thing — tell the user, because only a human
+  may move a threshold or promote a new champion
+  (`profiles/visual/creative/champion.sh promote`). For visual work, prefer
+  `/dispatch-pixel`, which plans against the art-direction contract.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
   read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
   or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the
