@@ -68,6 +68,10 @@ has "$TPLTEXT" 'is worth more here as `STOP and ask` than as a decision you gues
 # to redo, and the fence its irreversible-action rule is measured against.
 has "$TPLTEXT" 'this list is an undeclared blast radius it must' \
   "template: Edit locations doubles as the blast-radius fence"
+has "$TPLTEXT" 'unknown — research did not identify the edit location' \
+  "template: Edit locations names an honest unknown value"
+has "$TPLTEXT" 'an honest unknown is better than an invented path' \
+  "template: Edit locations prefers missing research to an invented location"
 
 # ---------------------------------------------------------------------------
 echo "== the spec critic's confinement =="

@@ -30,7 +30,9 @@ Where the change is expected to land, from the research already done: one line
 per file, with the function or symbol when it is known. The implementer may
 depart from this list — it is a starting point, not a fence — and anything it
 deletes or rewrites *outside* this list is an undeclared blast radius it must
-stop and ask about first.
+stop and ask about first. When research cannot identify a target file, write
+`unknown — research did not identify the edit location` and say what remains
+to locate; an honest unknown is better than an invented path.
 
 - `src/pricing/margin.ts` — `applyTier()`, the rounding step
 - `src/pricing/margin.test.ts` — new cases per the criteria below
