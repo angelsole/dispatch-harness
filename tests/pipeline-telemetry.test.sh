@@ -111,6 +111,7 @@ n=\$(cat "$SPAWNS" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$SPAWNS"
 case "\$(cat "$CLAUDE_MODE")" in
   commit) seq 1 30 >> impl.txt ;;
   tiny)   printf 'one\ntwo\n' >> impl.txt ;;
+  fail)   exit 1 ;;
   # Same 30-line diff, but first lands an empty commit in the harness checkout
   # the symlinked entry runs from, before metrics are collected.
   bump-harness)
@@ -720,6 +721,18 @@ if [ "$(result .metrics.config_hash)" = "$CFG_A" ]; then
 else
   ok "config: one pin different and the hash moves"
 fi
+# Claude-only runs pin blank Codex reviewer knobs. Reaching the Claude review
+# tier fills the runtime reviewer labels, but must not relabel the run's pinned
+# condition compared with an otherwise identical early implementer failure.
+printf 'fail\n' > "$CLAUDE_MODE"
+dispatch CFG-CLAUDE-EARLY "CODEX_BIN=$ROOT/no-such-codex"
+CFG_CLAUDE=$(result .metrics.config_hash)
+check "config: the Claude-only reviewer model is pinned blank" \
+  "$(cat "$RUN/reviewer-model")" ""
+printf 'commit\n' > "$CLAUDE_MODE"
+dispatch CFG-CLAUDE-REVIEW "CODEX_BIN=$ROOT/no-such-codex"
+check "config: runtime fallback labels do not change identical pinned hashes" \
+  "$(result .metrics.config_hash)" "$CFG_CLAUDE"
 # A run with no cost events and the one-line fixture brief: nulls and false
 # detectors, never zeros that pretend something was measured.
 check "cost: no result event carrying it records null" \

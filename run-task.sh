@@ -261,6 +261,8 @@ collect_metrics() {
   local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
   local numstat files ins del impl attempts self_resumes verifier
   local config_hash harness_head entry_file entry_hops entry_link entry_source_dir
+  local p_provider p_impl_model p_impl_effort p_review_model p_review_effort
+  local p_max_turns p_resume_mode p_arm
   local brief b_lines b_acc b_repro b_iface b_eloc b_dpoints
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
@@ -432,11 +434,22 @@ EOF
   entry_source_dir=$(cd "$(dirname "$entry_file")" 2>/dev/null && pwd -P)
   [ -z "$entry_source_dir" ] \
     || harness_head=$(git -C "$entry_source_dir" rev-parse HEAD 2>/dev/null || echo '')
+  # Runtime reviewer labels change when the Claude fallback tier is entered;
+  # the experimental condition does not. Read every input from the files that
+  # pin that condition so an early exit and a fully reviewed run hash alike.
+  p_provider=$(cat "$RUN_DIR/implementer-provider" 2>/dev/null || printf '%s' "$IMPLEMENTER_PROVIDER")
+  p_impl_model=$(cat "$RUN_DIR/implementer-model" 2>/dev/null || printf '%s' "$IMPLEMENTER_MODEL")
+  p_impl_effort=$(cat "$RUN_DIR/implementer-effort" 2>/dev/null || printf '%s' "$IMPLEMENTER_EFFORT")
+  p_review_model=$(cat "$RUN_DIR/reviewer-model" 2>/dev/null || printf '%s' "$REVIEWER_MODEL")
+  p_review_effort=$(cat "$RUN_DIR/reviewer-effort" 2>/dev/null || printf '%s' "$REVIEWER_EFFORT")
+  p_max_turns=$(cat "$RUN_DIR/max-turns" 2>/dev/null || printf '%s' "$MAX_TURNS")
+  p_resume_mode=$(cat "$RUN_DIR/resume-mode" 2>/dev/null || printf '%s' "$RESUME_MODE")
+  p_arm=$(cat "$RUN_DIR/arm" 2>/dev/null || printf '%s' "$ARM")
   config_hash=''
   if command -v shasum >/dev/null 2>&1; then
     config_hash=$(printf 'harness=%s\nprovider=%s\nimplementer_model=%s\nimplementer_effort=%s\nreviewer_model=%s\nreviewer_effort=%s\nmax_turns=%s\nresume_mode=%s\narm=%s\n' \
-      "$harness_head" "$IMPLEMENTER_PROVIDER" "$IMPLEMENTER_MODEL" "$IMPLEMENTER_EFFORT" \
-      "$REVIEWER_MODEL" "$REVIEWER_EFFORT" "$MAX_TURNS" "$RESUME_MODE" "$ARM" \
+      "$harness_head" "$p_provider" "$p_impl_model" "$p_impl_effort" \
+      "$p_review_model" "$p_review_effort" "$p_max_turns" "$p_resume_mode" "$p_arm" \
       | shasum | cut -c1-12)
   fi
 
