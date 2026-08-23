@@ -743,6 +743,8 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `gate-*.log`, `gate-rounds.log` | Each gate round's output and its one-line verdict |
 | `gate-integrity.json`, `gate-integrity-replay.log` | The [integrity check's](#the-gate-integrity-check) findings (copied into `result.json` as `gate_integrity`), and the transcript of replaying this branch's tests against base |
 | `result.json` | The run's machine-readable outcome and metrics ([schema](#metrics-schema)) |
+| `outcome.json` | What the world did with the PR: `pr_url`, `pr_state`, `merged_at`, `time_to_merge_s`, `review_comment_count`, `follow_up_commits`, `reverted`, `checked_at` — written by the [janitor](operations.md#the-janitor) once the run has a PR. Absent until then, and absent for a PR the janitor could never read |
+| `repo` | The repo the janitor resolved the run's PR to, so later sweeps skip the re-derivation |
 | `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
 | `escalation.json`, `escalation-report.md` | [Escalation](#escalation): what the cheap tier failed on and where its commits end (copied into `result.json` as `escalation`), and the handover the escalated session was given. Only on a run that escalated |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
@@ -849,7 +851,12 @@ read it, and what each of its labels means, is in
 `verify score` it indents one line per [rubric item](#the-verifier) the corpus
 carries, each counted over the runs that actually carry that item — the scalar
 says how good the corpus is, the vector says what it is bad at. A corpus of runs
-scored before the vector existed prints the scalar and nothing under it.
+scored before the vector existed prints the scalar and nothing under it. Two
+later blocks read the same corpus: a `cost usd` line over the runs that recorded
+`metrics.total_cost_usd`, and an `OUTCOMES` block — merge rate, median minutes
+to merge, reverts — over the runs that have an [outcome.json](#the-run-directory)
+(the [janitor's](operations.md#the-janitor) ground truth, so a corpus it has not
+visited prints `(none captured yet)` and everything else is unchanged).
 
 ### Metrics schema
 
@@ -884,4 +891,7 @@ fields are `null`/empty):
 | `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Per *segment*, not per attempt: a resumed attempt gets the whole ceiling again. Recorded beside `num_turns` because the two count different things — see [the turns caveat](design-notes.md#reading-the-pipelines-own-vitals). |
 | `metrics.implementer_usage` | Token `usage` summed field-wise over the same result events. Numeric keys (`input_tokens`, `output_tokens`, the cache counters) are added up; a non-numeric one (`service_tier`, the nested counters newer CLIs report) is taken from the last segment. |
 | `metrics.implementer_segments` | How many result events those two were summed over: `1` for an attempt that ran straight through, `2`+ for one that hit the turn ceiling and resumed. `0` when the implementer never got as far as a result event. |
+| `metrics.total_cost_usd` | `total_cost_usd` summed over the same result events — a resumed attempt carries its whole cost, not just the last segment. `null` when no event reported a cost. |
+| `metrics.config_hash` | Short hash over the harness repo HEAD (an empty component when Git or a checkout is unavailable) plus the pinned run configuration (provider, both models and efforts, turn ceiling, resume mode, arm) — the fingerprint two runs must share before their metrics are comparable. `null` when `shasum` is unavailable. |
+| `metrics.brief` | The shape of the task contract: `{lines, acceptance_count, has_reproduction, has_interface, has_edit_locations, has_decision_points}`, grepped from `brief.md`'s section headers. An absent section is `false`, not an error; a run with no brief at all carries the all-zero object. |
 | `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], items[], model, provider, evaluations, steps, segments, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). `items[]` is the rubric vector, `{id, score, citation, samples[]}` per item; `criteria[]` carries the same vector by title, which is what the PR body's table renders; `at_implementer` belonged to the progress curve the rubric replaced and is now always `null`. Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier). |

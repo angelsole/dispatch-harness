@@ -323,6 +323,10 @@ REVIEW_OK=1  # 0 = the stage ran and NO backend left review evidence: review_fai
 collect_metrics() {
   local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
   local numstat files ins del impl attempts self_resumes verifier
+  local config_hash harness_head entry_file entry_hops entry_link entry_source_dir
+  local p_provider p_impl_model p_impl_effort p_review_model p_review_effort
+  local p_max_turns p_resume_mode p_arm
+  local brief b_lines b_acc b_repro b_iface b_eloc b_dpoints
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
   if [ -n "$started" ]; then wall=$((now - started)); else wall=null; fi
@@ -434,6 +438,9 @@ EOF
   # every unresumed run, and every run recorded before this — therefore yields
   # exactly the numbers it always did. Fields may be absent on older CLIs, so
   # every one of them survives being missing.
+  #
+  # total_cost_usd is a TOP-LEVEL key on the result event, not under .usage —
+  # summed over the same events so a resumed attempt carries its whole cost.
   impl='{}'
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     impl=$(jq -s '
@@ -452,7 +459,9 @@ EOF
                            | ($usage | sum_numeric_usage)
                              + (($usage | last)
                                 | with_entries(select(.value | type != "number")))
-                         end)
+                         end),
+            total_cost_usd: ($r | map(.total_cost_usd | numbers)
+                               | if length == 0 then null else add end)
           }
         end' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null || echo '{}')
     [ -n "$impl" ] || impl='{}'
@@ -468,6 +477,73 @@ EOF
     [ -n "$verifier" ] || verifier=null
   fi
 
+  # A 12-hex identity for the harness code plus the run's pinned condition, so
+  # two runs can be compared by configuration without diffing eight fields. A
+  # normal installation invokes a symlink into the harness checkout, so follow
+  # that entry here, within metrics collection, before asking git for its HEAD.
+  # Bounded link traversal keeps a cyclic installation from hanging the exit
+  # path; a detached copied install has no HEAD and hashes the knobs only.
+  harness_head=''
+  entry_file="${BASH_SOURCE[0]}"
+  entry_hops=0
+  while [ -L "$entry_file" ] && [ "$entry_hops" -lt 40 ]; do
+    entry_hops=$((entry_hops + 1))
+    entry_link=$(readlink "$entry_file") || break
+    case "$entry_link" in
+      /*) entry_file="$entry_link" ;;
+      *)  entry_file="$(dirname "$entry_file")/$entry_link" ;;
+    esac
+  done
+  entry_source_dir=$(cd "$(dirname "$entry_file")" 2>/dev/null && pwd -P)
+  [ -z "$entry_source_dir" ] \
+    || harness_head=$(git -C "$entry_source_dir" rev-parse HEAD 2>/dev/null || echo '')
+  # Runtime reviewer labels change when the Claude fallback tier is entered;
+  # the experimental condition does not. Read every input from the files that
+  # pin that condition so an early exit and a fully reviewed run hash alike.
+  p_provider=$(cat "$RUN_DIR/implementer-provider" 2>/dev/null || printf '%s' "$IMPLEMENTER_PROVIDER")
+  p_impl_model=$(cat "$RUN_DIR/implementer-model" 2>/dev/null || printf '%s' "$IMPLEMENTER_MODEL")
+  p_impl_effort=$(cat "$RUN_DIR/implementer-effort" 2>/dev/null || printf '%s' "$IMPLEMENTER_EFFORT")
+  p_review_model=$(cat "$RUN_DIR/reviewer-model" 2>/dev/null || printf '%s' "$REVIEWER_MODEL")
+  p_review_effort=$(cat "$RUN_DIR/reviewer-effort" 2>/dev/null || printf '%s' "$REVIEWER_EFFORT")
+  p_max_turns=$(cat "$RUN_DIR/max-turns" 2>/dev/null || printf '%s' "$MAX_TURNS")
+  p_resume_mode=$(cat "$RUN_DIR/resume-mode" 2>/dev/null || printf '%s' "$RESUME_MODE")
+  p_arm=$(cat "$RUN_DIR/arm" 2>/dev/null || printf '%s' "$ARM")
+  config_hash=''
+  if command -v shasum >/dev/null 2>&1; then
+    config_hash=$(printf 'harness=%s\nprovider=%s\nimplementer_model=%s\nimplementer_effort=%s\nreviewer_model=%s\nreviewer_effort=%s\nmax_turns=%s\nresume_mode=%s\narm=%s\n' \
+      "$harness_head" "$p_provider" "$p_impl_model" "$p_impl_effort" \
+      "$p_review_model" "$p_review_effort" "$p_max_turns" "$p_resume_mode" "$p_arm" \
+      | shasum | cut -c1-12)
+  fi
+
+  # The brief's shape: line count, how many acceptance checkboxes it lists, and
+  # which of the sections a good brief carries. Headers are matched by stem,
+  # case-insensitively, so a brief written before a section existed reads false
+  # rather than broken.
+  brief='{"lines":null,"acceptance_count":null,"has_reproduction":false,"has_interface":false,"has_edit_locations":false,"has_decision_points":false}'
+  if [ -f "$BRIEF" ]; then
+    read -r b_lines b_acc b_repro b_iface b_eloc b_dpoints <<EOF
+$(awk '
+  /^#/ { h = tolower($0)
+         in_acc = (h ~ /acceptance/)
+         if (h ~ /reproduc/)       repro = 1
+         if (h ~ /interface/)      iface = 1
+         if (h ~ /edit location/)  eloc = 1
+         if (h ~ /decision point/) dpts = 1 }
+  in_acc && /^[ \t]*[-*][ \t]+\[[ xX]\]/ { acc++ }
+  END { printf "%d %d %d %d %d %d\n", NR, acc + 0, repro + 0, iface + 0, eloc + 0, dpts + 0 }' \
+  "$BRIEF" 2>/dev/null)
+EOF
+    brief=$(jq -n --argjson lines "${b_lines:-0}" --argjson acc "${b_acc:-0}" \
+                   --argjson repro "${b_repro:-0}" --argjson iface "${b_iface:-0}" \
+                   --argjson eloc "${b_eloc:-0}" --argjson dpts "${b_dpoints:-0}" \
+      '{lines: $lines, acceptance_count: $acc,
+        has_reproduction: ($repro == 1), has_interface: ($iface == 1),
+        has_edit_locations: ($eloc == 1), has_decision_points: ($dpts == 1)}' \
+      2>/dev/null)
+    [ -n "$brief" ] || brief='{"lines":null,"acceptance_count":null,"has_reproduction":false,"has_interface":false,"has_edit_locations":false,"has_decision_points":false}'
+  fi
+
   jq -n \
     --argjson wall "$wall" \
     --argjson stage_durations "$stage_durations" \
@@ -481,6 +557,8 @@ EOF
     --argjson files "${files:-null}" --argjson ins "${ins:-null}" --argjson del "${del:-null}" \
     --argjson impl "$impl" \
     --argjson verifier "$verifier" \
+    --arg config_hash "$config_hash" \
+    --argjson brief "$brief" \
     '{
       wall_seconds: $wall,
       stage_durations: $stage_durations,
@@ -494,8 +572,11 @@ EOF
       implementer_max_turns: $max_turns,
       implementer_usage: ($impl.usage // null),
       implementer_segments: ($impl.segments // 0),
+      total_cost_usd: ($impl.total_cost_usd // null),
       diff: {files_changed: $files, insertions: $ins, deletions: $del},
-      verifier: $verifier
+      verifier: $verifier,
+      config_hash: (if $config_hash == "" then null else $config_hash end),
+      brief: $brief
     }'
 }
 

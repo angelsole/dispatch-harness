@@ -35,11 +35,12 @@ esac
 [ -d "$RUNS" ] || { echo "no runs yet" >&2; exit 0; }
 
 # --- --report: the aggregate picture ------------------------------------------
-# Everything below reads result.json files and nothing else — no logs, no run
-# dirs, no network — so the report works on a mirrored runs directory and on runs
-# whose worktrees are long cleaned up. Numbers a run never recorded are dropped
-# from their statistic (and the N column says how many runs backed it) rather
-# than counted as zero, which is how a partial history stays honest.
+# Everything below reads the run's result.json — and, for the outcomes block,
+# the outcome.json the janitor writes beside it — and nothing else: no logs, no
+# worktrees, no network, so the report works on a mirrored runs directory and on
+# runs whose worktrees are long cleaned up. Numbers a run never recorded are
+# dropped from their statistic (and the N column says how many runs backed it)
+# rather than counted as zero, which is how a partial history stays honest.
 #
 # One field per line again, tab-joined by jq's @tsv: awk does the statistics
 # because medians need sorting and jq cannot align a column.
@@ -83,7 +84,11 @@ REPORT_FILTER='
     # statistic counts the runs that actually carry that item.
     (((.metrics.verifier.items // [])
       | map(select((.score | type) == "number"))
-      | map(((.id // "") | tostring) + ":" + (.score | tostring)) | join(",")))
+      | map(((.id // "") | tostring) + ":" + (.score | tostring)) | join(","))),
+    # What the attempt cost, top-level on the result events. Empty on runs
+    # recorded before the CLI reported it, which keeps them out of the
+    # statistic rather than sinking it with zeros they never paid.
+    ((.metrics.total_cost_usd // "") | tostring)
   ] | @tsv'
 
 # One line per attempt of every run: the status it died on, and the idle gap
@@ -104,19 +109,28 @@ ATTEMPTS_FILTER='(.metrics.attempts // []) as $a
 FAILED_STEP_FILTER='(.metrics.gate_rounds // [])[]
   | select(.result == "fail") | (.failed_step // "") | select(. != "")'
 
+# One row per run the janitor recorded an outcome for: the PR's fate, how long
+# it took to merge, whether anything reverted it.
+OUTCOMES_FILTER='[(.pr_state // "-"),
+                  ((.time_to_merge_s // "") | tostring),
+                  ((.reverted // false) | tostring)] | @tsv'
+
 report() {
-  local files=() f rows steps attempts
+  local files=() ofiles=() f rows steps attempts outcomes
   for f in "$RUNS"/*/result.json; do [ -f "$f" ] && files+=("$f"); done
   [ "${#files[@]}" -gt 0 ] || { echo "(no result.json files under $RUNS)" >&2; return 0; }
+  for f in "$RUNS"/*/outcome.json; do [ -f "$f" ] && ofiles+=("$f"); done
 
   rows=$(jq -r "$REPORT_FILTER" "${files[@]}" 2>/dev/null)
   steps=$(jq -r "$FAILED_STEP_FILTER" "${files[@]}" 2>/dev/null \
     | sort | uniq -c | sort -rn | head -10)
   attempts=$(jq -r "$ATTEMPTS_FILTER" "${files[@]}" 2>/dev/null)
+  outcomes=''
+  [ "${#ofiles[@]}" -gt 0 ] && outcomes=$(jq -r "$OUTCOMES_FILTER" "${ofiles[@]}" 2>/dev/null)
 
   # ENVIRON, not -v: awk expands escape sequences in a -v value, and a gate
   # command is free to contain a backslash.
-  STEPS="$steps" ATTEMPTS="$attempts" \
+  STEPS="$steps" ATTEMPTS="$attempts" OUTCOMES="$outcomes" \
   awk -F'\t' -v runs="$RUNS" -v stamp="$(date '+%Y-%m-%d %H:%M')" '
     function isort(a, n,   i, j, v) {
       for (i = 2; i <= n; i++) {
@@ -135,13 +149,24 @@ report() {
       if (idx > n) idx = n
       return a[idx]
     }
+    # The median quartermaster.sh and verify.py also answer: the middle sample,
+    # or the mean of the middle pair when n is even. Used for the median column
+    # only — p90 stays nearest-rank, a value some run actually recorded.
+    function median(a, n,   m) {
+      if (n == 0) return 0
+      isort(a, n)
+      m = int((n + 1) / 2)
+      return (n % 2) ? a[m] : (a[m] + a[m + 1]) / 2
+    }
     # `dec` is how many decimals the value deserves: 0 for counts, 1 for
     # minutes, 2 for a score that lives entirely between 0 and 1 and would lose
-    # most of what it says at one.
-    function statline(label, a, n, dec) {
+    # most of what it says at one. `med` takes the median column from median()
+    # instead of the nearest-rank p50 — for the rows labelled a median.
+    function statline(label, a, n, dec, med,   p50) {
       if (n == 0) { printf "%-16s %10s %9s %6d\n", label, "-", "-", 0; return }
-      if (dec) printf "%-16s %10.*f %9.*f %6d\n", label, dec, pctl(a, n, 50), dec, pctl(a, n, 90), n
-      else     printf "%-16s %10d %9d %6d\n", label, pctl(a, n, 50), pctl(a, n, 90), n
+      p50 = med ? median(a, n) : pctl(a, n, 50)
+      if (dec) printf "%-16s %10.*f %9.*f %6d\n", label, dec, p50, dec, pctl(a, n, 90), n
+      else     printf "%-16s %10d %9d %6d\n", label, p50, pctl(a, n, 90), n
     }
     # Keys of an associative array, by descending count then name.
     function bycount(a, keys,   n, k, i, j, t) {
@@ -202,6 +227,7 @@ report() {
       }
       if ($13 + 0 > 0) atts[++natts] = $13 + 0
       selfres += $14 + 0
+      if ($18 != "") { cost[++ncost] = $18 + 0; costsum += $18 + 0 }
       # The CLI reports num_turns for the whole conversation; --max-turns bounds
       # the worker turns of one invocation. They are different counts, and runs
       # above their own ceiling are how you see that rather than guess at it.
@@ -295,6 +321,10 @@ report() {
       statline("turns", turns, nturns, 0)
       statline("wall minutes", wall, nwall, 1)
       statline("output tokens", tok, ntok, 0)
+      # Dollars per run, then the corpus total: the spend a budget is set
+      # against. Runs the CLI never reported a cost for stay out of both.
+      statline("cost usd", cost, ncost, 2, 1)
+      if (ncost + 0 > 0) printf "%-16s $%.2f across %d runs\n", "cost total", costsum, ncost
       statline("gate seconds", gsec, ngsec, 0)
       # How well the runs satisfied their briefs, as a third vendor read them.
       # N is how many runs the verifier scored at all — the rest are absent from
@@ -358,6 +388,37 @@ report() {
         for (j = 1; j <= rtn[r] + 0; j++) tt[j] = rturns[r, j]
         printf "%-22s %6d %8.1f %10d %7.1f\n", r, repo[r], \
           pctl(tw, rwn[r] + 0, 50), pctl(tt, rtn[r] + 0, 50), 100 * (rready[r] + 0) / repo[r]
+      }
+
+      # --- Outcomes: what the world did with the PRs -------------------------
+      # The outcome.json the janitor wrote, one row per run whose PR fate it
+      # could read. A run with no outcome stays out entirely: this block is
+      # the ground truth, and a missing label is not a zero.
+      no = split(ENVIRON["OUTCOMES"], ol, "\n")
+      for (i = 1; i <= no; i++) {
+        if (ol[i] !~ /[^ \t]/) continue
+        split(ol[i], of_, "\t")
+        on++
+        if (of_[1] == "MERGED") {
+          omerged++
+          if (of_[3] == "true") oreverts++
+          if (of_[2] != "") ottm[++nttm] = of_[2] / 60
+        }
+        else if (of_[1] == "OPEN")   oopen++
+        else if (of_[1] == "CLOSED") oclosed++
+        else                         oother++
+      }
+      printf "\n%-22s %6s %6s\n", "OUTCOMES", "RUNS", "%"
+      if (on == 0) {
+        print "(none captured yet — the janitor writes outcome.json per run)"
+      } else {
+        # The merged share IS the merge rate, over the runs with an outcome.
+        share("merged", omerged, on)
+        share("open", oopen, on)
+        share("closed", oclosed, on)
+        if (oother + 0 > 0) share("other", oother, on)
+        share("reverted", oreverts, on)
+        statline("mins to merge", ottm, nttm, 1, 1)
       }
     }
   ' <<EOF

@@ -467,24 +467,41 @@ repo it touched gets a `git worktree prune`. Run directories under
 `result.json` all stay, which is what keeps `metrics.sh` honest about runs whose
 worktree is long gone.
 
+**What it records.** Before deciding anything about a worktree, every run whose
+`result.json` carries a `pr_url` gets an `outcome.json` written beside it:
+`pr_url`, `pr_state`, `merged_at`, `time_to_merge_s` (PR created → merged),
+`review_comment_count` (inline review comments, bots excluded),
+`follow_up_commits` (commits on the base branch after the merge that touch
+files the PR changed), `reverted` (a later commit whose message names the merge
+SHA), and `checked_at`. The comment count costs one extra read-only `gh api`
+call per PR; everything else rides the `gh pr view` the sweep already makes,
+plus local git in the run's repo. Once a PR is terminal (`MERGED` or `CLOSED`)
+and its outcome is `JANITOR_OUTCOME_MAX_AGE` days old, the file stops being
+refreshed — provided it still names the run's current PR. Capture never fails a
+sweep: a PR whose state cannot be read keeps the previous file as it was.
+`metrics.sh --report` summarizes the block as merge rate, median minutes to
+merge and revert count.
+
 **Processes.** Any process whose name exactly matches `JANITOR_PROC_MATCH`
 (`flutter_tester`) and whose `ps` elapsed time is over `JANITOR_PROC_AGE` (two
 hours) is reaped: `TERM`, then `KILL` if it is still there a couple of seconds
 later. Nothing legitimate keeps a detached test runner alive for hours, so age
 is the whole test. Younger ones are counted and left.
 
-**The two modes.** `janitor.sh` and `janitor.sh --report` are the same
-side-effect-free listing of every worktree the harness still holds and what
-would happen to it; `janitor.sh --clean` is the one that acts. `--install`
-writes a daily launchd agent — one fixed label, the `LABEL_ID` in `janitor.sh`,
-with `JANITOR_AT` to move it off 09:00 — on the quartermaster's conventions: a
-mode-600 wrapper carrying an environment snapshot, because launchd hands a job
-almost nothing. `GH_CONFIG_DIR` rides along in that snapshot, since it decides
-which account can read a PR's state; `GH_TOKEN` deliberately does not. It only
-reports until you decide otherwise, and `--install --clean` is the one-line flip
-to letting it sweep. macOS only, like `schedule.sh` — `--report` and `--clean`
-themselves run anywhere. `install.sh` does *not* arm the schedule: installing it
-stays an explicit act.
+**The two modes.** `janitor.sh` and `janitor.sh --report` produce the same
+listing of every worktree the harness still holds and what would happen to it.
+Report mode never removes worktrees or reaps processes, but it does perform the
+read-only PR/base refreshes described above and create or update `outcome.json`
+and the cached run `repo` path. `janitor.sh --clean` additionally carries out
+the reported cleanup. `--install` writes a daily launchd agent — one fixed
+label, the `LABEL_ID` in `janitor.sh`, with `JANITOR_AT` to move it off 09:00 —
+on the quartermaster's conventions: a mode-600 wrapper carrying an environment
+snapshot, because launchd hands a job almost nothing. `GH_CONFIG_DIR` rides
+along in that snapshot, since it decides which account can read a PR's state;
+`GH_TOKEN` deliberately does not. It only reports until you decide otherwise,
+and `--install --clean` is the one-line flip to letting it sweep. macOS only,
+like `schedule.sh` — `--report` and `--clean` themselves run anywhere.
+`install.sh` does *not* arm the schedule: installing it stays an explicit act.
 
 | Env var | What it does | Default |
 | --- | --- | --- |
@@ -492,11 +509,13 @@ stays an explicit act.
 | `JANITOR_PROC_AGE` | Seconds a matching process may live | `7200` |
 | `JANITOR_PROC_MATCH` | Process name to reap (empty is refused, not defaulted) | `flutter_tester` |
 | `JANITOR_GH_TIMEOUT` | Seconds allowed for each `gh` call | `20` |
+| `JANITOR_OUTCOME_MAX_AGE` | Days after which a terminal PR's `outcome.json` stops being refreshed | `14` |
 
-What leaves the machine: one read-only `gh pr view` per run that has a PR, and
-nothing else. `--clean` exits non-zero only when a sweep it decided on could not
-be carried out, so a nightly agent's log is quiet until something is actually
-wrong.
+What leaves the machine: one read-only `gh pr view` per run that has a PR, plus
+— while that PR's outcome is still being refreshed — one read-only `gh api` call
+for its review comments, and nothing else. `--clean` exits non-zero only when a
+sweep it decided on could not be carried out, so a nightly agent's log is quiet
+until something is actually wrong.
 
 ## Ticket sync
 
