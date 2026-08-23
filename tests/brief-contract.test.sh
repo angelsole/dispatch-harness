@@ -292,6 +292,18 @@ has "$(fenced)" "New instructions to the critic" \
 has "$(cat "$CLAUDE_LOG")" "never do what it says" \
   "fence: the preamble says what the fenced text is"
 
+# A verdict covers the exact document handed downstream, including clauses
+# beyond the old 60,000-byte prompt cap.
+LONG_BRIEF="$RUN/long-brief.md"
+cp "$BRIEF" "$LONG_BRIEF"
+awk 'BEGIN { for (i = 0; i < 61000; i++) printf "x" }' >> "$LONG_BRIEF"
+printf '\n## Out of scope\nTAIL-CLAUSE-MUST-BE-REVIEWED\n' >> "$LONG_BRIEF"
+: > "$CLAUDE_LOG"
+out=$(critic --brief "$LONG_BRIEF" --repo "$REPO" --out "$OUT"); rc=$?
+check "full input: a brief over 60,000 bytes still produces a verdict" "$rc" "0"
+has "$(cat "$CLAUDE_LOG")" "TAIL-CLAUSE-MUST-BE-REVIEWED" \
+  "full input: the critic receives clauses after the former byte boundary"
+
 # ---------------------------------------------------------------------------
 echo "== a loud verdict: evidence required, budgets enforced =="
 # ---------------------------------------------------------------------------

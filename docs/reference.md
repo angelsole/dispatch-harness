@@ -343,7 +343,6 @@ so the write confinement holds whatever the policy file says.
 | `SPEC_CRITIC_TIMEOUT` | Seconds per call | `600` |
 | `SPEC_CRITIC_MAX_TURNS` | Turn ceiling — repo research is most of them | `40` |
 | `SPEC_CRITIC_SETTINGS` | The tool policy | `spec-critic-settings.json` beside the script |
-| `SPEC_CRITIC_MAX_BYTES` | Brief bytes quoted into the prompt | `60000` |
 
 Exit 0 means a verdict was produced (read the JSON — passing is the usual
 outcome), 1 means the single critic pass could not produce one, 2 is a usage
