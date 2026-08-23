@@ -1197,6 +1197,25 @@ has "$TOK" "anthropic O-1 20 2000000 4000 -" \
 has "$TOK" "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled" \
   "tokens: and the estimate says what it is and what it does not model"
 
+# Numeric zero is a measured z.ai estimate, while an absent field on Anthropic
+# means the estimate does not apply. Both aggregate and per-run rows preserve
+# that distinction.
+ZEROH="$ROOT/zero-token-harness"; ZERORUNS="$ZEROH/runs"
+mkdir -p "$ZERORUNS/Z-0" "$ZERORUNS/O-0"
+printf '%s\n' '{"ticket":"Z-0","implementer_provider":"zai","metrics":{"usage":{"turns":0,"cache_read_input_tokens":0,"output_tokens":0,"zai_credits_est":0}}}' \
+  > "$ZERORUNS/Z-0/result.json"
+printf '%s\n' '{"ticket":"O-0","implementer_provider":"anthropic","metrics":{"usage":{"turns":0,"cache_read_input_tokens":0,"output_tokens":0}}}' \
+  > "$ZERORUNS/O-0/result.json"
+ZERO_TOK="$(env HARNESS_DIR="$ZEROH" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
+has "$ZERO_TOK" "zai 1 0 0 0 0 0 0 0.00" \
+  "tokens: a provider aggregate renders a present zero estimate numerically"
+has "$ZERO_TOK" "anthropic 1 0 0 0 0 0 0 -" \
+  "tokens: an inapplicable provider estimate remains absent"
+has "$ZERO_TOK" "zai Z-0 0 0 0 0.00" \
+  "tokens: a per-run present zero estimate is numeric too"
+has "$ZERO_TOK" "anthropic O-0 0 0 0 -" \
+  "tokens: the per-run row also distinguishes absence from zero"
+
 # End to end: the report over the runs this suite actually dispatched must equal
 # the source result.json corpus exactly. Deriving the expected totals keeps this
 # assertion reorder-safe without weakening it to "at least one".

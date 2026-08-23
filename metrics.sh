@@ -270,6 +270,7 @@ report() {
         pcachesum[p] += $21 + 0
         poutsum[p]   += $22 + 0
         pcred[p]     += $23 + 0
+        if ($23 != "") { pcredseen[p] = 1; acredseen = 1 }
         aturns[++natn] = $20 + 0
         aturnsum += $20 + 0
         acache[++nacn] = $21 + 0
@@ -405,12 +406,12 @@ report() {
           printf "%-12s %5d %8d %8d %8d %14d %14d %13d %11s\n", pk, pruns[pk], \
             median(tt, ptn[pk] + 0), pctl(tt, ptn[pk] + 0, 90), \
             pturnsum[pk] + 0, median(tc, pcn[pk] + 0), pcachesum[pk] + 0, poutsum[pk] + 0, \
-            (pcred[pk] + 0 > 0 ? sprintf("%.2f", pcred[pk]) : "-")
+            (pcredseen[pk] ? sprintf("%.2f", pcred[pk]) : "-")
         }
         printf "%-12s %5d %8d %8d %8d %14d %14d %13d %11s\n", "all", natn, \
           median(aturns, natn), pctl(aturns, natn, 90), \
           aturnsum + 0, median(acache, nacn), acachesum + 0, aoutsum + 0, \
-          (acred + 0 > 0 ? sprintf("%.2f", acred) : "-")
+          (acredseen ? sprintf("%.2f", acred) : "-")
         printf "\n%-12s %-20s %8s %14s %13s %11s\n", \
           "PROVIDER", "RUN", "TURNS", "CACHE_RD", "OUTPUT", "CREDITS"
         for (i = 1; i <= n; i++) {
@@ -418,7 +419,7 @@ report() {
           for (j = 1; j <= pruns[pk]; j++)
             printf "%-12s %-20s %8d %14d %13d %11s\n", \
               pk, prun[pk, j], prunturn[pk, j], pruncache[pk, j], prunout[pk, j], \
-              (pruncred[pk, j] + 0 > 0 ? sprintf("%.2f", pruncred[pk, j]) : "-")
+              (pruncred[pk, j] != "" ? sprintf("%.2f", pruncred[pk, j]) : "-")
         }
         delete k
         print "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled"
