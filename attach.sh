@@ -28,7 +28,8 @@ fi
 # A z.ai session cannot be resumed before this process starts with the provider
 # environment. Stop with an actionable command instead of immediately opening
 # the session against Anthropic. Only the key's path is printed.
-if [ "$(cat "$RUN/implementer-provider" 2>/dev/null || echo anthropic)" = zai ]; then
+IMPLEMENTER_PROVIDER="$(cat "$RUN/implementer-provider" 2>/dev/null || echo anthropic)"
+if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
   zai_env_missing=0
   [ "${ANTHROPIC_BASE_URL:-}" = https://api.z.ai/api/anthropic ] \
     && [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] \
@@ -50,4 +51,14 @@ if [ "$(cat "$RUN/implementer-provider" 2>/dev/null || echo anthropic)" = zai ];
   fi
 fi
 
-cd "$WT" && exec env -u ANTHROPIC_API_KEY claude --resume "$(cat "$RUN/opus-session")"
+cd "$WT" || exit 1
+if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
+  exec env -u ANTHROPIC_API_KEY claude --resume "$(cat "$RUN/opus-session")"
+fi
+
+# An Anthropic-pinned session must not inherit a station's z.ai defaults. The
+# run pin is the policy boundary here just as it is on first dispatch.
+exec env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+  -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
+  -u CLAUDE_CODE_SUBAGENT_MODEL -u CLAUDE_CODE_AUTO_COMPACT_WINDOW \
+  claude --resume "$(cat "$RUN/opus-session")"

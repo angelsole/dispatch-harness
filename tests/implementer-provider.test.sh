@@ -458,6 +458,25 @@ env HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
 check "attach: a correctly configured shell resumes the session" \
   "$(grep -c '^role=implementer' "$ENVLOG" 2>/dev/null | tr -d ' ')" "$((BEFORE_SPAWNS + 1))"
 
+env HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+  ANTHROPIC_BASE_URL="$ZAI_URL" ANTHROPIC_AUTH_TOKEN="$ZAI_KEY" \
+  API_TIMEOUT_MS=3000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.7 \
+  CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 \
+  bash "$SRC/attach.sh" PROV-BASELINE >/dev/null 2>&1
+ANTHROPIC_ATTACH="$(env_of implementer 3)"
+has "$ANTHROPIC_ATTACH" "base=[]" \
+  "attach: an anthropic pin removes an ambient zai endpoint"
+has "$ANTHROPIC_ATTACH" "token=[]" \
+  "attach: an anthropic pin removes the ambient zai credential"
+has "$ANTHROPIC_ATTACH" "timeout=[]" \
+  "attach: an anthropic pin removes the ambient zai timeout"
+has "$ANTHROPIC_ATTACH" "haiku=[]" \
+  "attach: an anthropic pin removes the ambient zai small model"
+has "$ANTHROPIC_ATTACH" "subagent=[]" \
+  "attach: an anthropic pin removes the ambient zai subagent model"
+has "$ANTHROPIC_ATTACH" "compact=[]" \
+  "attach: an anthropic pin removes the ambient zai compaction window"
+
 # ---------------------------------------------------------------------------
 echo "== the repo decides its implementer provider, not the machine =="
 # ---------------------------------------------------------------------------
