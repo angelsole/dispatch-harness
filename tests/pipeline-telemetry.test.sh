@@ -111,17 +111,26 @@ n=\$(cat "$SPAWNS" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$SPAWNS"
 case "\$(cat "$CLAUDE_MODE")" in
   commit) seq 1 30 >> impl.txt ;;
   tiny)   printf 'one\ntwo\n' >> impl.txt ;;
+  # Same 30-line diff, but first lands an empty commit in the harness checkout
+  # the symlinked entry runs from — after run-task.sh has started and pinned,
+  # before metrics are collected.
+  bump-harness)
+    seq 1 30 >> impl.txt
+    git -C "$ROOT/harness-checkout" -c user.email=t@t -c user.name=t \
+      commit -q --allow-empty -m bump
+    ;;
   # One turn-ceiling resume inside a single dispatch: the first spawn commits
   # nothing and dies on the ceiling, the second finishes. Both write a stream
-  # event naming their segment, so the rotation can be asserted on content.
+  # event naming their segment, so the rotation can be asserted on content —
+  # and each carries a top-level cost, so the sum across segments is testable.
   ceiling-once)
     printf '{"type":"assistant","message":{"content":[{"type":"text","text":"segment-%s"}]}}\n' "\$n"
     if [ "\$n" -lt 2 ]; then
-      printf '{"type":"result","subtype":"error_max_turns","session_id":"fork-%s"}\n' "\$n"
+      printf '{"type":"result","subtype":"error_max_turns","session_id":"fork-%s","total_cost_usd":1.25}\n' "\$n"
       exit 1
     fi
     seq 1 30 >> impl.txt
-    printf '{"type":"result","subtype":"success","session_id":"fork-%s"}\n' "\$n"
+    printf '{"type":"result","subtype":"success","session_id":"fork-%s","total_cost_usd":2.50}\n' "\$n"
     ;;
 esac
 # git(1) writes to stdout, and stdout is the stream-json the harness parses.
@@ -232,11 +241,14 @@ codex_calls() { grep -c '^codex ' "$CODEX_CALLS" 2>/dev/null | tr -d ' '; }
 RC=0; OUT=""; RUN=""
 TEST_GATE_CMD=true    # repos.local.sh reads this; a gate command has spaces in
                       # it, so it travels as its own variable, not an override
-dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empty)
-  local ticket="$1" overrides="$2"
+dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empty),
+              # $3 = run-task.sh entry to invoke (default: the staged copy)
+  local ticket="$1" overrides="$2" entry="${3:-$SRCDIR/run-task.sh}"
   RUN="$RUNS/$ticket"
   mkdir -p "$RUN"
   printf '# fixture task\n' > "$RUN/brief.md"
+  # BRIEF_TEXT, when set, replaces the one-line default for this dispatch.
+  [ -n "${BRIEF_TEXT:-}" ] && printf '%s' "$BRIEF_TEXT" > "$RUN/brief.md"
   : > "$PROMPTS"; echo 0 > "$SPAWNS"
   # shellcheck disable=SC2086
   env -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
@@ -248,7 +260,7 @@ dispatch() {  # $1 = run id, $2 = space-separated VAR=VAL overrides (may be empt
       HARNESS_REVIEW_NETWORK=0 \
       HARNESS_NOTIFY=0 HARNESS_NTFY_TOPIC=telemetry-test \
       $overrides \
-      bash "$SRCDIR/run-task.sh" "$ticket" "$REPO" "fix/$ticket" \
+      bash "$entry" "$ticket" "$REPO" "fix/$ticket" \
       > "$ROOT/run-$ticket.log" 2>&1
   RC=$?
   OUT=$(cat "$ROOT/run-$ticket.log")
@@ -677,6 +689,123 @@ has "$OUT" "refusing to overwrite preserved attempt telemetry" \
 TEST_GATE_CMD=true
 
 # ---------------------------------------------------------------------------
+echo "== cost, configuration and brief shape ride along in metrics =="
+# ---------------------------------------------------------------------------
+# The CLI reports cost as a top-level key on each result event, never under
+# .usage; a resumed attempt's cost is the sum over both segments, not the last
+# segment's number — the same rule the usage counters already follow.
+printf 'ceiling-once\n' > "$CLAUDE_MODE"
+dispatch COST-SEGMENTS ""
+printf 'commit\n' > "$CLAUDE_MODE"
+check "cost: both segments of the resumed attempt are summed" \
+  "$(result .metrics.total_cost_usd)" "3.75"
+check "cost: and the segments they came from are counted" \
+  "$(result .metrics.implementer_segments)" "2"
+
+# Two dispatches of the same pinned condition must hash identically; one pin
+# moved must move the hash. The staged run-task.sh is not a checkout, so the
+# harness HEAD component is empty here and cannot mask a pin difference.
+dispatch CFG-SAME-A ""
+dispatch CFG-SAME-B ""
+CFG_A=$(jq -r '.metrics.config_hash' "$RUNS/CFG-SAME-A/result.json")
+check "config: two dispatches with the same pins hash identically" \
+  "$(result .metrics.config_hash)" "$CFG_A"
+if [ "${#CFG_A}" -eq 12 ] && ! printf '%s' "$CFG_A" | grep -q '[^0-9a-f]'; then
+  ok "config: the hash is 12 hex characters"
+else
+  bad "config: the hash is not 12 hex characters ($CFG_A)"
+fi
+dispatch CFG-OTHER-CEILING "HARNESS_MAX_TURNS=111"
+if [ "$(result .metrics.config_hash)" = "$CFG_A" ]; then
+  bad "config: one pin different and the hash did not move"
+else
+  ok "config: one pin different and the hash moves"
+fi
+# A run with no cost events and the one-line fixture brief: nulls and false
+# detectors, never zeros that pretend something was measured.
+check "cost: no result event carrying it records null" \
+  "$(result .metrics.total_cost_usd)" ""
+check "brief: a brief with none of the sections reads false" \
+  "$(jq -r '.metrics.brief.has_reproduction' "$RUNS/CFG-SAME-A/result.json")" "false"
+check "brief: and counts no acceptance items" \
+  "$(jq -r '.metrics.brief.acceptance_count' "$RUNS/CFG-SAME-A/result.json")" "0"
+check "brief: the one fixture line is one line" \
+  "$(jq -r '.metrics.brief.lines' "$RUNS/CFG-SAME-A/result.json")" "1"
+
+# The sections a good brief carries, detected by header stem — the acceptance
+# count comes from the checkboxes under the acceptance heading, and a checked
+# box counts the same as an open one.
+BRIEF_TEXT='# Task
+## Problem
+The widget breaks.
+
+## Reproduction
+Run the fixture.
+
+## Interface
+None.
+
+## Edit locations
+src/impl.txt
+
+## Decision points
+Whether to fix it here.
+
+## Acceptance criteria
+- [ ] it works
+- [x] it is tested
+'
+dispatch BRIEF-SHAPE ""
+BRIEF_TEXT=""
+check "brief: the line count is recorded"        "$(result .metrics.brief.lines)" "19"
+check "brief: both acceptance checkboxes count"  "$(result .metrics.brief.acceptance_count)" "2"
+check "brief: reproduction section detected"     "$(result .metrics.brief.has_reproduction)" "true"
+check "brief: interface section detected"        "$(result .metrics.brief.has_interface)" "true"
+check "brief: edit locations detected"           "$(result .metrics.brief.has_edit_locations)" "true"
+check "brief: decision points detected"          "$(result .metrics.brief.has_decision_points)" "true"
+
+# ---------------------------------------------------------------------------
+echo "== the config hash follows the code that ran, not the code there at metrics time =="
+# ---------------------------------------------------------------------------
+# The installed layout: a station dir whose run-task.sh is a symlink into a
+# harness checkout. The staged copies above are not a git repo, so every hash
+# in this file so far has an empty HEAD component — the checkout's HEAD is the
+# first input that can tell symlinks and pinning apart.
+CHECKOUT="$ROOT/harness-checkout"; STATION="$ROOT/station"
+mkdir -p "$CHECKOUT" "$STATION"
+cp "$SRC/run-task.sh" "$CHECKOUT/run-task.sh"
+cp -R "$SRC/lib" "$CHECKOUT/lib"
+git -C "$CHECKOUT" init -q
+git -C "$CHECKOUT" add -A
+git -C "$CHECKOUT" -c user.email=t@t -c user.name=t commit -q -m "harness a"
+ln -s "$CHECKOUT/run-task.sh" "$STATION/run-task.sh"
+# The lib is read from beside the entry as invoked — the station, not the
+# checkout — which is exactly the layout install.sh leaves behind.
+cp -R "$SRC/lib" "$STATION/lib"
+
+dispatch LINK-PLAIN "" "$STATION/run-task.sh"
+LINK_A=$(jq -r '.metrics.config_hash // ""' "$RUNS/LINK-PLAIN/result.json")
+if [ -n "$LINK_A" ] && [ "$LINK_A" != "$CFG_A" ]; then
+  ok "link: the symlinked entry hashes the checkout HEAD it resolves to"
+else
+  bad "link: the symlinked entry hashed like the HEAD-less staged copy ($LINK_A)"
+fi
+
+printf 'bump-harness\n' > "$CLAUDE_MODE"
+dispatch LINK-BUMPED "" "$STATION/run-task.sh"
+printf 'commit\n' > "$CLAUDE_MODE"
+check "pin: a checkout bumped mid-run still hashes the HEAD the run started at" \
+  "$(jq -r '.metrics.config_hash // ""' "$RUNS/LINK-BUMPED/result.json")" "$LINK_A"
+
+dispatch LINK-AFTER "" "$STATION/run-task.sh"
+if [ -n "$LINK_A" ] && \
+   [ "$(jq -r '.metrics.config_hash // ""' "$RUNS/LINK-AFTER/result.json")" != "$LINK_A" ]; then
+  ok "pin: and the next run does pick the bumped HEAD up"
+else
+  bad "pin: a later run from the bumped checkout hashed the same ($LINK_A)"
+fi
+
+# ---------------------------------------------------------------------------
 echo "== a run that already shipped is not dispatched again =="
 # ---------------------------------------------------------------------------
 dispatch READY-GUARD ""
@@ -709,10 +838,14 @@ mkrun() {  # $1 = run id, $2 = the whole result.json
   mkdir -p "$RRUNS/$1"
   printf '%s\n' "$2" > "$RRUNS/$1/result.json"
 }
+mkoutcome() {  # $1 = run id, $2 = the whole outcome.json
+  mkdir -p "$RRUNS/$1"
+  printf '%s\n' "$2" > "$RRUNS/$1/outcome.json"
+}
 mkrun A-1 '{"ticket":"A-1","status":"ready","arm":"full","review":"reviewed",
   "worktree":"/w/myapp-a-1",
   "metrics":{"wall_seconds":600,"implementer_num_turns":10,"turn_resumes":0,
-    "implementer_max_turns":200,
+    "implementer_max_turns":200,"total_cost_usd":1.5,
     "implementer_usage":{"output_tokens":1000},
     "gate_rounds":[{"round":"1","result":"fail","seconds":30,"failed_step":"npm run lint"},
                    {"round":"2","result":"pass","seconds":40,"failed_step":null}]}}'
@@ -722,6 +855,7 @@ mkrun A-2 '{"ticket":"A-2","status":"ready","arm":"full","review":"reviewed",
   "attempt":2,"attempts_total":2,
   "worktree":"/w/myapp-a-2",
   "metrics":{"wall_seconds":1200,"implementer_num_turns":20,"turn_resumes":1,
+    "total_cost_usd":2.5,
     "implementer_usage":{"output_tokens":3000},
     "attempts":[{"n":1,"status":"needs_input","started":100,"ended":700},
                 {"n":2,"status":"ready","started":1000,"ended":2200}],
@@ -732,7 +866,7 @@ mkrun A-3 '{"ticket":"A-3","status":"gate_failed","arm":"full","review":"failed_
   "attempt":3,"attempts_total":3,
   "worktree":"/w/myapp-a-3",
   "metrics":{"wall_seconds":1800,"implementer_num_turns":30,"turn_resumes":2,
-    "implementer_max_turns":20,"self_resumes":1,
+    "implementer_max_turns":20,"self_resumes":1,"total_cost_usd":4.0,
     "implementer_usage":{"output_tokens":5000},
     "attempts":[{"n":1,"status":"implementer_failed","started":1000,"ended":1600},
                 {"n":2,"status":"deferred_capacity","started":1700,"ended":1760},
@@ -748,6 +882,7 @@ mkrun B-1 '{"ticket":"B-1","status":"ready","arm":"no_review","review":"skipped"
 mkrun B-2 '{"ticket":"B-2","status":"rejected","arm":"full","review":"no_evidence",
   "worktree":"/w/myapi-b-2",
   "metrics":{"wall_seconds":3000,"implementer_num_turns":50,"turn_resumes":0,
+    "total_cost_usd":8.0,
     "implementer_usage":{"output_tokens":9000},
     "gate_rounds":[{"round":"1","result":"pass","seconds":60,"failed_step":null}]}}'
 # A run from before any of this existed: no review field, no gate seconds, no
@@ -757,6 +892,21 @@ mkrun LEGACY-1 '{"ticket":"LEGACY-1","status":"ready","arm":"full",
   "metrics":{"wall_seconds":3600,
     "stage_durations":{"resuming — Opus (Claude sub)":42,"test gate #1 (deterministic — no model)":10},
     "gate_rounds":[{"round":"1","result":"fail"},{"round":"2","result":"pass"}]}}'
+# What the janitor later wrote beside four of them: two merges (one reverted,
+# one hour and two hours to merge), one PR still open, one closed unmerged.
+# LEGACY-1 and B-2 have none — an old corpus renders exactly as before.
+mkoutcome A-1 '{"pr_state":"MERGED","merged_at":"2026-08-20T10:00:00Z",
+  "time_to_merge_s":3600,"review_comment_count":1,"follow_up_commits":0,
+  "reverted":false,"checked_at":"2026-08-21T00:00:00Z"}'
+mkoutcome A-2 '{"pr_state":"MERGED","merged_at":"2026-08-21T10:00:00Z",
+  "time_to_merge_s":7200,"review_comment_count":3,"follow_up_commits":2,
+  "reverted":true,"checked_at":"2026-08-21T00:00:00Z"}'
+mkoutcome A-3 '{"pr_state":"CLOSED","merged_at":null,"time_to_merge_s":null,
+  "review_comment_count":0,"follow_up_commits":null,"reverted":null,
+  "checked_at":"2026-08-21T00:00:00Z"}'
+mkoutcome B-1 '{"pr_state":"OPEN","merged_at":null,"time_to_merge_s":null,
+  "review_comment_count":0,"follow_up_commits":null,"reverted":null,
+  "checked_at":"2026-08-21T00:00:00Z"}'
 
 REPORT="$(env HARNESS_DIR="$REPORTH" bash "$HARNESS/metrics.sh" --report)"
 FLAT="$(printf '%s' "$REPORT" | tr -s ' ')"
@@ -810,6 +960,19 @@ has "$FLAT" "RESUMES 3 of 6 runs resumed (50.0%) · 4 resumes total" \
 has "$FLAT" "myapp 3 20.0 20 66.7"     "report: per-repo runs, median minutes/turns and ready share"
 has "$FLAT" "myapi 3 50.0 50 66.7"     "report: for every repo, derived from the worktree path"
 
+# Cost and outcomes: only four runs recorded a cost, only four have an
+# outcome.json — the other two must not drag either block's numbers down.
+has "$FLAT" "cost usd 3.25 8.00 4"     "report: median/p90 cost over the runs that recorded one"
+has "$FLAT" "cost total \$16.00 across 4 runs" \
+  "report: and their sum, with the runs without a cost left out"
+has "$FLAT" "OUTCOMES RUNS %"          "report: the outcomes the janitor captured, as a block"
+has "$FLAT" "merged 2 50.0"            "report: merge rate over the runs with an outcome"
+has "$FLAT" "open 1 25.0"              "report: PRs still open when last checked"
+has "$FLAT" "closed 1 25.0"            "report: closed unmerged"
+has "$FLAT" "reverted 1 25.0"          "report: reverts, out of all captured outcomes"
+has "$FLAT" "mins to merge 90.0 120.0 2" \
+  "report: median/p90 minutes from PR to merge, merged runs only"
+
 # The report has to survive a runs dir that has nothing to report on.
 EMPTY="$ROOT/empty-harness"; mkdir -p "$EMPTY/runs"
 OUT2="$(env HARNESS_DIR="$EMPTY" bash "$HARNESS/metrics.sh" --report 2>&1)"
@@ -846,6 +1009,8 @@ has "$TIER" "held: review_failed 1 <- no PR opened" \
   "counters: and the attempt that produced nothing is counted as the hold it is"
 has "$TIER" "silent review failures 1" "counters: beside the class it was recorded under"
 has "$TIER" "claude_only 1" "counters: the Claude-only machine's arm is reported under its own name"
+has "$TIER" "(none captured yet" \
+  "counters: a corpus with no outcome.json says so instead of dividing by zero"
 
 # End to end: the report over the runs this suite actually dispatched must equal
 # the source result.json corpus exactly. Deriving the expected totals keeps this

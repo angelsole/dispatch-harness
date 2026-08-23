@@ -29,6 +29,25 @@ unset _LIB_DIR
 main() {
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"   # where schedule.sh lives, for deferrals
+# The default installation is a file symlink into a checkout. Keep runtime
+# neighbours rooted at SELF_DIR, but follow that link when identifying the
+# harness repository whose code this process is executing. Bounded: a cyclic
+# link must not hang the run.
+ENTRY_FILE="${BASH_SOURCE[0]}"
+ENTRY_HOPS=0
+while [ -L "$ENTRY_FILE" ] && [ "$ENTRY_HOPS" -lt 40 ]; do
+  ENTRY_HOPS=$((ENTRY_HOPS + 1))
+  ENTRY_LINK=$(readlink "$ENTRY_FILE") || break
+  case "$ENTRY_LINK" in
+    /*) ENTRY_FILE="$ENTRY_LINK" ;;
+    *)  ENTRY_FILE="$(dirname "$ENTRY_FILE")/$ENTRY_LINK" ;;
+  esac
+done
+ENTRY_SOURCE_DIR="$(cd "$(dirname "$ENTRY_FILE")" 2>/dev/null && pwd -P)"
+# Pinned here rather than read back at metrics time: this process executes the
+# checkout as it stands now, and a checkout pulled forward while the worker
+# runs must not relabel the code afterwards.
+PINNED_HEAD=$(git -C "$ENTRY_SOURCE_DIR" rev-parse HEAD 2>/dev/null || echo '')
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 harness_codex_preamble   # CODEX_BIN CODEX_AVAILABLE CONFLICT_AGENT CONFLICT_MODEL
 
@@ -260,6 +279,7 @@ REVIEW_OK=1  # 0 = the stage ran and NO backend left review evidence: review_fai
 collect_metrics() {
   local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
   local numstat files ins del impl attempts self_resumes verifier
+  local config_hash brief b_lines b_acc b_repro b_iface b_eloc b_dpoints
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
   if [ -n "$started" ]; then wall=$((now - started)); else wall=null; fi
@@ -371,6 +391,9 @@ EOF
   # every unresumed run, and every run recorded before this — therefore yields
   # exactly the numbers it always did. Fields may be absent on older CLIs, so
   # every one of them survives being missing.
+  #
+  # total_cost_usd is a TOP-LEVEL key on the result event, not under .usage —
+  # summed over the same events so a resumed attempt carries its whole cost.
   impl='{}'
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     impl=$(jq -s '
@@ -389,7 +412,9 @@ EOF
                            | ($usage | sum_numeric_usage)
                              + (($usage | last)
                                 | with_entries(select(.value | type != "number")))
-                         end)
+                         end),
+            total_cost_usd: ($r | map(.total_cost_usd | numbers)
+                               | if length == 0 then null else add end)
           }
         end' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null || echo '{}')
     [ -n "$impl" ] || impl='{}'
@@ -405,6 +430,46 @@ EOF
     [ -n "$verifier" ] || verifier=null
   fi
 
+  # A 12-hex identity for the harness code plus the run's pinned condition, so
+  # two runs can be compared by configuration without diffing eight fields. The
+  # HEAD is the one pinned at start (symlink installation included); a detached
+  # copied install has none and hashes the pinned knobs only.
+  config_hash=''
+  if command -v shasum >/dev/null 2>&1; then
+    config_hash=$(printf 'harness=%s\nprovider=%s\nimplementer_model=%s\nimplementer_effort=%s\nreviewer_model=%s\nreviewer_effort=%s\nmax_turns=%s\nresume_mode=%s\narm=%s\n' \
+      "$PINNED_HEAD" "$IMPLEMENTER_PROVIDER" "$IMPLEMENTER_MODEL" "$IMPLEMENTER_EFFORT" \
+      "$REVIEWER_MODEL" "$REVIEWER_EFFORT" "$MAX_TURNS" "$RESUME_MODE" "$ARM" \
+      | shasum | cut -c1-12)
+  fi
+
+  # The brief's shape: line count, how many acceptance checkboxes it lists, and
+  # which of the sections a good brief carries. Headers are matched by stem,
+  # case-insensitively, so a brief written before a section existed reads false
+  # rather than broken.
+  brief='{"lines":null,"acceptance_count":null,"has_reproduction":false,"has_interface":false,"has_edit_locations":false,"has_decision_points":false}'
+  if [ -f "$BRIEF" ]; then
+    read -r b_lines b_acc b_repro b_iface b_eloc b_dpoints <<EOF
+$(awk '
+  /^#/ { h = tolower($0)
+         in_acc = (h ~ /acceptance/)
+         if (h ~ /reproduc/)       repro = 1
+         if (h ~ /interface/)      iface = 1
+         if (h ~ /edit location/)  eloc = 1
+         if (h ~ /decision point/) dpts = 1 }
+  in_acc && /^[ \t]*[-*][ \t]+\[[ xX]\]/ { acc++ }
+  END { printf "%d %d %d %d %d %d\n", NR, acc + 0, repro + 0, iface + 0, eloc + 0, dpts + 0 }' \
+  "$BRIEF" 2>/dev/null)
+EOF
+    brief=$(jq -n --argjson lines "${b_lines:-0}" --argjson acc "${b_acc:-0}" \
+                   --argjson repro "${b_repro:-0}" --argjson iface "${b_iface:-0}" \
+                   --argjson eloc "${b_eloc:-0}" --argjson dpts "${b_dpoints:-0}" \
+      '{lines: $lines, acceptance_count: $acc,
+        has_reproduction: ($repro == 1), has_interface: ($iface == 1),
+        has_edit_locations: ($eloc == 1), has_decision_points: ($dpts == 1)}' \
+      2>/dev/null)
+    [ -n "$brief" ] || brief='{"lines":null,"acceptance_count":null,"has_reproduction":false,"has_interface":false,"has_edit_locations":false,"has_decision_points":false}'
+  fi
+
   jq -n \
     --argjson wall "$wall" \
     --argjson stage_durations "$stage_durations" \
@@ -418,6 +483,8 @@ EOF
     --argjson files "${files:-null}" --argjson ins "${ins:-null}" --argjson del "${del:-null}" \
     --argjson impl "$impl" \
     --argjson verifier "$verifier" \
+    --arg config_hash "$config_hash" \
+    --argjson brief "$brief" \
     '{
       wall_seconds: $wall,
       stage_durations: $stage_durations,
@@ -431,8 +498,11 @@ EOF
       implementer_max_turns: $max_turns,
       implementer_usage: ($impl.usage // null),
       implementer_segments: ($impl.segments // 0),
+      total_cost_usd: ($impl.total_cost_usd // null),
       diff: {files_changed: $files, insertions: $ins, deletions: $del},
-      verifier: $verifier
+      verifier: $verifier,
+      config_hash: (if $config_hash == "" then null else $config_hash end),
+      brief: $brief
     }'
 }
 
