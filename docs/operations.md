@@ -466,18 +466,20 @@ hours) is reaped: `TERM`, then `KILL` if it is still there a couple of seconds
 later. Nothing legitimate keeps a detached test runner alive for hours, so age
 is the whole test. Younger ones are counted and left.
 
-**The two modes.** `janitor.sh` and `janitor.sh --report` are the same
-side-effect-free listing of every worktree the harness still holds and what
-would happen to it; `janitor.sh --clean` is the one that acts. `--install`
-writes a daily launchd agent — one fixed label, the `LABEL_ID` in `janitor.sh`,
-with `JANITOR_AT` to move it off 09:00 — on the quartermaster's conventions: a
-mode-600 wrapper carrying an environment snapshot, because launchd hands a job
-almost nothing. `GH_CONFIG_DIR` rides along in that snapshot, since it decides
-which account can read a PR's state; `GH_TOKEN` deliberately does not. It only
-reports until you decide otherwise, and `--install --clean` is the one-line flip
-to letting it sweep. macOS only, like `schedule.sh` — `--report` and `--clean`
-themselves run anywhere. `install.sh` does *not* arm the schedule: installing it
-stays an explicit act.
+**The two modes.** `janitor.sh` and `janitor.sh --report` produce the same
+listing of every worktree the harness still holds and what would happen to it.
+Report mode never removes worktrees or reaps processes, but it does perform the
+read-only PR/base refreshes described above and create or update `outcome.json`
+and the cached run `repo` path. `janitor.sh --clean` additionally carries out
+the reported cleanup. `--install` writes a daily launchd agent — one fixed
+label, the `LABEL_ID` in `janitor.sh`, with `JANITOR_AT` to move it off 09:00 —
+on the quartermaster's conventions: a mode-600 wrapper carrying an environment
+snapshot, because launchd hands a job almost nothing. `GH_CONFIG_DIR` rides
+along in that snapshot, since it decides which account can read a PR's state;
+`GH_TOKEN` deliberately does not. It only reports until you decide otherwise,
+and `--install --clean` is the one-line flip to letting it sweep. macOS only,
+like `schedule.sh` — `--report` and `--clean` themselves run anywhere.
+`install.sh` does *not* arm the schedule: installing it stays an explicit act.
 
 | Env var | What it does | Default |
 | --- | --- | --- |
