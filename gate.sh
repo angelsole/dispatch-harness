@@ -23,11 +23,18 @@ fi
 # never asked for. Eleven suites failed that way, all of them reporting
 # setup_failed for reasons nothing in their own fixture explains. A suite that
 # wants one of these sets it itself; none of them may inherit one.
+#
+# The provider env attach.sh tells a z.ai operator to export belongs here for
+# the same reason: it rides into every fixture spawn, and a suite asserting the
+# non-zai stages see the CLI's own defaults reads the operator's shell instead.
 GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
           -u REVIEWER_MODEL -u REVIEWER_EFFORT -u HARNESS_OWNER
           -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES
           -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH
-          -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS)
+          -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS
+          -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY
+          -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL
+          -u CLAUDE_CODE_SUBAGENT_MODEL -u CLAUDE_CODE_AUTO_COMPACT_WINDOW)
 
 # Bash expands the glob in filename order and includes new suites before their
 # first commit. Only a failing suite prints its transcript; a green one is worth
