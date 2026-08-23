@@ -21,6 +21,7 @@
     ],
     "opus_commits": 2,
     "codex_commits": 0,
+    "implementer_num_turns": 37,
     "diff": {
       "files_changed": 5,
       "insertions": 131,

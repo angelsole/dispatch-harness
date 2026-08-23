@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPS CONSOLE — dispatch harness</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0d10'/><rect x='2' y='3' width='12' height='2' fill='%23d34b4b'/><rect x='2' y='7' width='12' height='2' fill='%2352c07a'/><rect x='2' y='11' width='8' height='2' fill='%23e0a23c'/></svg>">
+<link rel="stylesheet" href="/console/console.css">
+</head>
+<body>
+
+<header class="bar">
+  <h1>OPS CONSOLE</h1>
+  <div class="counts">
+    <span class="count alarm" id="n-alarm" hidden><b>0</b> needs input</span>
+    <span class="count active"><b id="n-active">0</b> running</span>
+    <span class="count done"><b id="n-done">0</b> recent</span>
+  </div>
+  <div class="where"><span id="runs-dir" class="mono">—</span></div>
+  <div class="link" id="link" data-state="connecting"><i></i><span id="link-text">connecting</span></div>
+</header>
+
+<main>
+  <section id="alarms" class="board loud" hidden>
+    <h2>Needs input</h2>
+    <div class="rows" id="alarm-rows"></div>
+  </section>
+
+  <section id="active" class="board">
+    <h2>Active</h2>
+    <div class="rows" id="active-rows"></div>
+    <p class="empty" id="active-empty">Nothing running on this machine.</p>
+  </section>
+
+  <section id="recent" class="board muted">
+    <h2>Recent</h2>
+    <div class="rows" id="recent-rows"></div>
+  </section>
+</main>
+
+<p class="foot">
+  Read-only. This machine's runs only. The ambient wall is at <a href="/">/</a>.
+</p>
+
+<script src="/console/console.js"></script>
+</body>
+</html>

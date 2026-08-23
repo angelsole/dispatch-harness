@@ -44,6 +44,10 @@
 #   WALL_CREW       default roster       (same list as --crew)
 #   WALL_POLL_MS    disk re-read cadence (default: 1000)
 #
+# The same server also serves /console — the functional ops board over the same
+# run data: what each agent is doing right now, what is blocked, and the attach
+# command to step into it. Not a city; a flight board.
+#
 # Query string:
 #   ?world=canvas   draw the city with the vendored Phaser 4 in wall/vendor/
 #                   rather than in CSS. Same city, same street; the DOM world is

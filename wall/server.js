@@ -16,6 +16,8 @@
 // by ../wall.sh, which owns the flags and computes the defaults below.
 //
 //   GET /              the page (index.html, wall.css, wall.js)
+//   GET /console       the ops console (wall/console/), a second frontend over
+//                      the same two endpoints — see docs/wall.md
 //   GET /api/runs      one snapshot of every run, as JSON
 //   GET /api/stream    the same snapshot pushed over SSE whenever it changes
 //
@@ -357,6 +359,48 @@ function ownerKindOf(owner) {
   return SYNTHETIC.has(owner) ? 'synthetic' : 'human';
 }
 
+// Count completed segments by the CLI's own result value and the currently open
+// segment by assistant events. This is the same fallback telemetry uses when a
+// result omits num_turns, but it remains useful before result.json exists.
+function liveTurnsOf(dir) {
+  const stream = head(path.join(dir, 'opus-stream.jsonl'), 32 << 20);
+  if (!stream) return null;
+  let turns = 0;
+  let segment = 0;
+  let seen = false;
+  for (const line of stream.split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event || typeof event !== 'object') continue;
+    if (event.type === 'assistant') {
+      segment += 1;
+      seen = true;
+    } else if (event.type === 'result') {
+      const reported = event.num_turns;
+      turns += typeof reported === 'number' && Number.isFinite(reported) && reported >= 0
+        ? reported : segment;
+      segment = 0;
+      seen = true;
+    }
+  }
+  return seen ? turns + segment : null;
+}
+
+// The invocation's final count wins once result.json exists; while it is still
+// running, the append-only stream above supplies the count in progress.
+function turnsOf(metrics, dir) {
+  for (const n of [metrics.usage && metrics.usage.turns, metrics.implementer_num_turns]) {
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return n;
+  }
+  return liveTurnsOf(dir);
+}
+
+function providerOf(dir, result) {
+  const pin = readChunk(path.join(dir, 'implementer-provider'), 4096, false);
+  if (pin) return pin.text.split('\n')[0].trim();
+  return result.implementer_provider || '';
+}
+
 function readRun(id, current) {
   const dir = path.join(RUNS, id);
   const { since, stage } = current || currentStage(dir);
@@ -405,6 +449,12 @@ function readRun(id, current) {
     branch: result.branch || '',
     implementer: result.implementer_model || '',
     reviewer: result.reviewer_model || '',
+    // The pin file, not the stage text: `implementing — Opus (Claude sub)` is
+    // written verbatim on a zai run too, so the words on the wall cannot tell an
+    // operator which subscription is being spent. The file exists from the first
+    // stage and is rewritten when an escalation changes the answer.
+    provider: providerOf(dir, result),
+    turns: turnsOf(metrics, dir),
     diff: metrics.diff || null,
     verifier: metrics.verifier || null,
     blocked: state === 'alarm' ? firstProse(path.join(dir, 'QUESTIONS.md')) : '',
@@ -941,6 +991,15 @@ const STATIC = {
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
   '/room.js': ['room.js', 'text/javascript; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
+  // The ops console: a second, functional frontend over /api/runs and
+  // /api/stream, sharing nothing with the city above it. Named rows for the
+  // same reason /vendor/ has one — a directory route is a path traversal this
+  // server has never had, and three files do not need one.
+  '/console': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
+  '/console/': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
+  '/console/console.html': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
+  '/console/console.css': [path.join('console', 'console.css'), 'text/css; charset=utf-8'],
+  '/console/console.js': [path.join('console', 'console.js'), 'text/javascript; charset=utf-8'],
 };
 
 // The room's sprites. A directory rather than a named row per file, because the
@@ -1049,9 +1108,10 @@ function serveAsset(res, file, type) {
   });
 }
 
-const clients = new Set();
+const clients = new Map();
 let poller = null;
 let lastBody = '';
+let lastConsoleBody = '';
 
 // Towers carry ids, not copies: every run travels once, and the page looks the
 // run up by id. `runs` is the honest snapshot of the disk (live work plus a
@@ -1089,6 +1149,16 @@ function payload() {
   };
 }
 
+// The city API predates the ops console and its run-object schema is a public
+// contract. Console-only telemetry is available only when that frontend opts
+// into the enriched representation; plain requests retain the original shape.
+function publicPayload(frame) {
+  return {
+    ...frame,
+    runs: frame.runs.map(({ provider: _provider, turns: _turns, ...run }) => run),
+  };
+}
+
 // Everything a viewer can see, and nothing that ticks on its own: `at` moves
 // every second, and pushing a frame for it would repaint an idle wall forever.
 // The skyline is in here because a completion moment ending is a real change
@@ -1105,11 +1175,25 @@ function fingerprint(frame) {
 function tick() {
   let body;
   try { body = payload(); } catch { return; }
-  const fp = fingerprint(body);
-  if (fp === lastBody) return;
-  lastBody = fp;
-  const frame = `event: snapshot\ndata: ${JSON.stringify(body)}\n\n`;
-  for (const res of clients) { try { res.write(frame); } catch { /* dropped */ } }
+  const publicBody = publicPayload(body);
+  const publicFp = fingerprint(publicBody);
+  const consoleFp = fingerprint(body);
+  const publicChanged = publicFp !== lastBody;
+  const consoleChanged = consoleFp !== lastConsoleBody;
+  if (!publicChanged && !consoleChanged) return;
+  lastBody = publicFp;
+  lastConsoleBody = consoleFp;
+  const frames = new Map();
+  for (const [res, enriched] of clients) {
+    if (enriched ? !consoleChanged : !publicChanged) continue;
+    try {
+      if (!frames.has(enriched)) {
+        const view = enriched ? body : publicBody;
+        frames.set(enriched, `event: snapshot\ndata: ${JSON.stringify(view)}\n\n`);
+      }
+      res.write(frames.get(enriched));
+    } catch { /* dropped */ }
+  }
 }
 
 function startPolling() {
@@ -1122,14 +1206,15 @@ function stopPolling() {
   if (poller && clients.size === 0) { clearInterval(poller); poller = null; }
 }
 
-function stream(req, res) {
+function stream(req, res, enriched) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
   });
-  res.write(`retry: 2000\nevent: snapshot\ndata: ${JSON.stringify(payload())}\n\n`);
-  clients.add(res);
+  const body = payload();
+  res.write(`retry: 2000\nevent: snapshot\ndata: ${JSON.stringify(enriched ? body : publicPayload(body))}\n\n`);
+  clients.set(res, enriched);
   startPolling();
   // A comment frame every 15s: proxies keep the socket, and the page can tell a
   // dead link from a quiet one.
@@ -1150,11 +1235,14 @@ function serveStatic(res, entry) {
 
 const server = http.createServer((req, res) => {
   try {
-    const url = (req.url || '/').split('?')[0];
-    if (url === '/api/stream') return stream(req, res);
+    const requestUrl = new URL(req.url || '/', 'http://wall.local');
+    const url = requestUrl.pathname;
+    const consoleView = requestUrl.searchParams.get('view') === 'console';
+    if (url === '/api/stream') return stream(req, res, consoleView);
     if (url === '/api/runs') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-      return res.end(JSON.stringify(payload()));
+      const body = payload();
+      return res.end(JSON.stringify(consoleView ? body : publicPayload(body)));
     }
     // Computed rather than a static row: the roster is crew.json filtered by
     // what is on this disk, and the disk can change under a wall that is up.
