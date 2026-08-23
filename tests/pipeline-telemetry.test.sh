@@ -112,8 +112,7 @@ case "\$(cat "$CLAUDE_MODE")" in
   commit) seq 1 30 >> impl.txt ;;
   tiny)   printf 'one\ntwo\n' >> impl.txt ;;
   # Same 30-line diff, but first lands an empty commit in the harness checkout
-  # the symlinked entry runs from — after run-task.sh has started and pinned,
-  # before metrics are collected.
+  # the symlinked entry runs from, before metrics are collected.
   bump-harness)
     seq 1 30 >> impl.txt
     git -C "$ROOT/harness-checkout" -c user.email=t@t -c user.name=t \
@@ -765,12 +764,12 @@ check "brief: edit locations detected"           "$(result .metrics.brief.has_ed
 check "brief: decision points detected"          "$(result .metrics.brief.has_decision_points)" "true"
 
 # ---------------------------------------------------------------------------
-echo "== the config hash follows the code that ran, not the code there at metrics time =="
+echo "== the config hash resolves the harness checkout from the installed entry =="
 # ---------------------------------------------------------------------------
 # The installed layout: a station dir whose run-task.sh is a symlink into a
 # harness checkout. The staged copies above are not a git repo, so every hash
 # in this file so far has an empty HEAD component — the checkout's HEAD is the
-# first input that can tell symlinks and pinning apart.
+# first input that can tell symlinks and HEAD-less copies apart.
 CHECKOUT="$ROOT/harness-checkout"; STATION="$ROOT/station"
 mkdir -p "$CHECKOUT" "$STATION"
 cp "$SRC/run-task.sh" "$CHECKOUT/run-task.sh"
@@ -794,16 +793,16 @@ fi
 printf 'bump-harness\n' > "$CLAUDE_MODE"
 dispatch LINK-BUMPED "" "$STATION/run-task.sh"
 printf 'commit\n' > "$CLAUDE_MODE"
-check "pin: a checkout bumped mid-run still hashes the HEAD the run started at" \
-  "$(jq -r '.metrics.config_hash // ""' "$RUNS/LINK-BUMPED/result.json")" "$LINK_A"
+LINK_B=$(jq -r '.metrics.config_hash // ""' "$RUNS/LINK-BUMPED/result.json")
+if [ -n "$LINK_B" ] && [ "$LINK_B" != "$LINK_A" ]; then
+  ok "link: metrics collection sees the checkout's current HEAD"
+else
+  bad "link: a checkout change was absent from the collected hash ($LINK_B)"
+fi
 
 dispatch LINK-AFTER "" "$STATION/run-task.sh"
-if [ -n "$LINK_A" ] && \
-   [ "$(jq -r '.metrics.config_hash // ""' "$RUNS/LINK-AFTER/result.json")" != "$LINK_A" ]; then
-  ok "pin: and the next run does pick the bumped HEAD up"
-else
-  bad "pin: a later run from the bumped checkout hashed the same ($LINK_A)"
-fi
+check "link: a later run at the same checkout HEAD hashes identically" \
+  "$(jq -r '.metrics.config_hash // ""' "$RUNS/LINK-AFTER/result.json")" "$LINK_B"
 
 # ---------------------------------------------------------------------------
 echo "== a run that already shipped is not dispatched again =="

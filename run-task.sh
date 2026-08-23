@@ -29,25 +29,6 @@ unset _LIB_DIR
 main() {
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"   # where schedule.sh lives, for deferrals
-# The default installation is a file symlink into a checkout. Keep runtime
-# neighbours rooted at SELF_DIR, but follow that link when identifying the
-# harness repository whose code this process is executing. Bounded: a cyclic
-# link must not hang the run.
-ENTRY_FILE="${BASH_SOURCE[0]}"
-ENTRY_HOPS=0
-while [ -L "$ENTRY_FILE" ] && [ "$ENTRY_HOPS" -lt 40 ]; do
-  ENTRY_HOPS=$((ENTRY_HOPS + 1))
-  ENTRY_LINK=$(readlink "$ENTRY_FILE") || break
-  case "$ENTRY_LINK" in
-    /*) ENTRY_FILE="$ENTRY_LINK" ;;
-    *)  ENTRY_FILE="$(dirname "$ENTRY_FILE")/$ENTRY_LINK" ;;
-  esac
-done
-ENTRY_SOURCE_DIR="$(cd "$(dirname "$ENTRY_FILE")" 2>/dev/null && pwd -P)"
-# Pinned here rather than read back at metrics time: this process executes the
-# checkout as it stands now, and a checkout pulled forward while the worker
-# runs must not relabel the code afterwards.
-PINNED_HEAD=$(git -C "$ENTRY_SOURCE_DIR" rev-parse HEAD 2>/dev/null || echo '')
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 harness_codex_preamble   # CODEX_BIN CODEX_AVAILABLE CONFLICT_AGENT CONFLICT_MODEL
 
@@ -279,7 +260,8 @@ REVIEW_OK=1  # 0 = the stage ran and NO backend left review evidence: review_fai
 collect_metrics() {
   local now started wall stage_durations gate_rounds turn_resumes opus_c codex_c
   local numstat files ins del impl attempts self_resumes verifier
-  local config_hash brief b_lines b_acc b_repro b_iface b_eloc b_dpoints
+  local config_hash harness_head entry_file entry_hops entry_link entry_source_dir
+  local brief b_lines b_acc b_repro b_iface b_eloc b_dpoints
   now=$(date +%s)
   started=$(cat "$RUN_DIR/started" 2>/dev/null || echo "")
   if [ -n "$started" ]; then wall=$((now - started)); else wall=null; fi
@@ -431,13 +413,29 @@ EOF
   fi
 
   # A 12-hex identity for the harness code plus the run's pinned condition, so
-  # two runs can be compared by configuration without diffing eight fields. The
-  # HEAD is the one pinned at start (symlink installation included); a detached
-  # copied install has none and hashes the pinned knobs only.
+  # two runs can be compared by configuration without diffing eight fields. A
+  # normal installation invokes a symlink into the harness checkout, so follow
+  # that entry here, within metrics collection, before asking git for its HEAD.
+  # Bounded link traversal keeps a cyclic installation from hanging the exit
+  # path; a detached copied install has no HEAD and hashes the knobs only.
+  harness_head=''
+  entry_file="${BASH_SOURCE[0]}"
+  entry_hops=0
+  while [ -L "$entry_file" ] && [ "$entry_hops" -lt 40 ]; do
+    entry_hops=$((entry_hops + 1))
+    entry_link=$(readlink "$entry_file") || break
+    case "$entry_link" in
+      /*) entry_file="$entry_link" ;;
+      *)  entry_file="$(dirname "$entry_file")/$entry_link" ;;
+    esac
+  done
+  entry_source_dir=$(cd "$(dirname "$entry_file")" 2>/dev/null && pwd -P)
+  [ -z "$entry_source_dir" ] \
+    || harness_head=$(git -C "$entry_source_dir" rev-parse HEAD 2>/dev/null || echo '')
   config_hash=''
   if command -v shasum >/dev/null 2>&1; then
     config_hash=$(printf 'harness=%s\nprovider=%s\nimplementer_model=%s\nimplementer_effort=%s\nreviewer_model=%s\nreviewer_effort=%s\nmax_turns=%s\nresume_mode=%s\narm=%s\n' \
-      "$PINNED_HEAD" "$IMPLEMENTER_PROVIDER" "$IMPLEMENTER_MODEL" "$IMPLEMENTER_EFFORT" \
+      "$harness_head" "$IMPLEMENTER_PROVIDER" "$IMPLEMENTER_MODEL" "$IMPLEMENTER_EFFORT" \
       "$REVIEWER_MODEL" "$REVIEWER_EFFORT" "$MAX_TURNS" "$RESUME_MODE" "$ARM" \
       | shasum | cut -c1-12)
   fi
