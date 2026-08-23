@@ -222,9 +222,13 @@ brief coverage, no unrequested scope, diff minimality and hygiene, test
 integrity, and (only for a run that actually resumed) resume coherence — are
 each scored on their **own** call, K independent samples each, against the
 acceptance criteria of `brief.md` as a spec stated before the work started.
-Every sample has to quote the diff hunk or trajectory line that decides it, and
-a quote the adapter cannot find verbatim in the evidence it sent scores that
-sample **0**, whatever number came with it. The K samples are aggregated by
+Every sample has to quote the requirement, diff hunk or trajectory line that
+decides it, and a quote the adapter cannot find verbatim in the task spec or
+the evidence it sent scores that sample **0**, whatever number came with it.
+One known limitation: evidence beyond the per-step, whole-trajectory or diff
+budget is clipped, and a genuine citation from past a cut scores 0 —
+`verify.json` carries an `evidence_truncated` boolean per item for those cases.
+The K samples are aggregated by
 median; the headline `score` is the plain **mean** of the item scores, which is
 an aggregate no amount of trajectory length can inflate. A call that never
 returned is dropped rather than counted zero; if every sample for one item
