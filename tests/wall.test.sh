@@ -1502,10 +1502,13 @@ stream.emit('snapshot', { data: '{"ok": true}' });
 stream.emit('snapshot', { data: 'not json at all' });
 say('survives', rows('active-rows').length === before ? 'board stands' : 'board lost');
 const frame = JSON.parse(API);
-frame.runs = [null, 'nonsense', { id: 'HALF-1', state: 'active' }, ...frame.runs];
+frame.runs = [null, 'nonsense', { id: 'HALF-1', state: 'active' },
+  { id: 'OPS-1; printf PWNED', state: 'active' }, ...frame.runs];
 stream.emit('snapshot', { data: JSON.stringify(frame) });
 say('half-run', cell('HALF-1', '.activity'));
 say('half-stage', cell('HALF-1', '.actor'));
+row('OPS-1; printf PWNED').querySelector('.line').fire('click');
+say('quoted-attach', row('OPS-1; printf PWNED').querySelector('code').textContent);
 
 // The initial fetch began before this newer stream frame. Resolving that fetch
 // afterward must not roll the board back to the older activity in API.
@@ -1552,8 +1555,10 @@ check "draws: a pip per gate round" "$(probe pips)" "2"
 check "draws: the actor takes its hue from the stage vocabulary" \
   "$(probe hue)" "color: var(--a-opus)"
 check "draws: the clocks are counting" "$(probe elapsed)" "counting"
+# shellcheck disable=SC2088  # Expected command text; expansion happens when the operator pastes it.
+ATTACH_SCRIPT='~/.claude/harness/attach.sh'
 check "draws: expanding offers the attach command" \
-  "$(probe attach)" "~/.claude/harness/attach.sh OLYX-1642"
+  "$(probe attach)" "$ATTACH_SCRIPT 'OLYX-1642'"
 check "draws: and the feed tail beside it" "$(probe feed)" \
   "$(printf '%s' "$API" | jq '[.runs[] | select(.id=="OLYX-1642")][0].feed | length')"
 check "draws: with the blocking question above both" "$(probe why)" "shown"
@@ -1561,6 +1566,8 @@ check "draws: a later frame does not close it" "$(probe stays-open)" "open"
 check "draws: a malformed frame leaves the board standing" "$(probe survives)" "board stands"
 check "draws: a half-written run renders as much as it has" "$(probe half-run)" "idle"
 check "draws: and admits it does not know who is working" "$(probe half-stage)" "?"
+check "draws: attach treats the complete run id as one shell argument" \
+  "$(probe quoted-attach)" "$ATTACH_SCRIPT 'OPS-1; printf PWNED'"
 check "draws: an older fetch cannot overwrite a newer stream frame" \
   "$(probe race)" "⏺ Edit src/invoices/newer.ts"
 check "draws: a dropped stream falls back to polling" "$(probe link)" "polling/polling"
