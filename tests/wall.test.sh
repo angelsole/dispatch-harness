@@ -1441,7 +1441,8 @@ Object.defineProperty(global, 'navigator', { value: {}, configurable: true });
 global.setInterval = () => ({});
 global.clearInterval = () => {};
 const API = fs.readFileSync(API_FILE, 'utf8');
-global.fetch = () => Promise.resolve({ text: () => Promise.resolve(API) });
+let resolveFetch = null;
+global.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
 let stream = null;
 global.EventSource = class {
   constructor(url) { this.url = url; this.handlers = {}; stream = this; }
@@ -1506,11 +1507,21 @@ stream.emit('snapshot', { data: JSON.stringify(frame) });
 say('half-run', cell('HALF-1', '.activity'));
 say('half-stage', cell('HALF-1', '.actor'));
 
+// The initial fetch began before this newer stream frame. Resolving that fetch
+// afterward must not roll the board back to the older activity in API.
+const newer = JSON.parse(API);
+newer.runs.find((run) => run.id === 'OLYX-1631').activity = '⏺ Edit src/invoices/newer.ts';
+stream.emit('snapshot', { data: JSON.stringify(newer) });
+resolveFetch({ text: () => Promise.resolve(API) });
+
 // And the stream dropping is a fallback, not a dead page.
 stream.emit('error', {});
 say('link', ids.get('link').getAttribute('data-state') + '/' + ids.get('link-text').textContent);
 
-process.stdout.write(out.join('\n'));
+setImmediate(() => {
+  say('race', cell('OLYX-1631', '.activity'));
+  process.stdout.write(out.join('\n'));
+});
 JS
 printf '%s' "$CONSOLE_API" > "$ROOT/console-api.json"
 CONSOLE_OUT="$(node "$CONSOLE_PROBE" "$SRC/wall/console/console.js" "$ROOT/console-api.json" 2>&1)"
@@ -1550,6 +1561,8 @@ check "draws: a later frame does not close it" "$(probe stays-open)" "open"
 check "draws: a malformed frame leaves the board standing" "$(probe survives)" "board stands"
 check "draws: a half-written run renders as much as it has" "$(probe half-run)" "idle"
 check "draws: and admits it does not know who is working" "$(probe half-stage)" "?"
+check "draws: an older fetch cannot overwrite a newer stream frame" \
+  "$(probe race)" "⏺ Edit src/invoices/newer.ts"
 check "draws: a dropped stream falls back to polling" "$(probe link)" "polling/polling"
 
 echo "== wall: ordering =="
