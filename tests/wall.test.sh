@@ -1307,7 +1307,7 @@ check "detail: and neither has a live run finished counting" \
 # up. The file wins, for the same reason the `owner` pin does.
 PROVIDER_WALL="$ROOT/provider-wall"
 PROVIDER_NOW=$(date +%s)
-for id in FALLBACK-1 ESCALATED-1 GIBBERISH-1; do
+for id in FALLBACK-1 ESCALATED-1 GIBBERISH-1 EMPTY-PIN-1; do
   mkdir -p "$PROVIDER_WALL/$id"
   printf '%s implementing — Opus (Claude sub)\n' "$PROVIDER_NOW" > "$PROVIDER_WALL/$id/status"
   printf '%s\n' "$((PROVIDER_NOW - 300))" > "$PROVIDER_WALL/$id/started"
@@ -1318,6 +1318,8 @@ printf 'anthropic\n' > "$PROVIDER_WALL/ESCALATED-1/implementer-provider"
 printf '{"implementer_provider":"zai"}\n' > "$PROVIDER_WALL/ESCALATED-1/result.json"
 printf '{"metrics":{"usage":{"turns":"lots"},"implementer_num_turns":-4}}\n' \
   > "$PROVIDER_WALL/GIBBERISH-1/result.json"
+: > "$PROVIDER_WALL/EMPTY-PIN-1/implementer-provider"
+printf '{"implementer_provider":"zai"}\n' > "$PROVIDER_WALL/EMPTY-PIN-1/result.json"
 serve "$PROVIDER_WALL" "$ROOT/provider-wall.log"; PROVIDER_PORT="$PORT_OUT"
 PROVIDER_API="$(get "$PROVIDER_PORT" /api/runs)"
 provider_of() {
@@ -1327,6 +1329,8 @@ check "detail: the provider falls back to result.json" \
   "$(provider_of FALLBACK-1 provider)" "zai"
 check "detail: an escalated run reports the provider it escalated to" \
   "$(provider_of ESCALATED-1 provider)" "anthropic"
+check "detail: an empty in-progress pin does not revive stale result metadata" \
+  "$(provider_of EMPTY-PIN-1 provider)" ""
 check "detail: turns come off result.json without a pin file" \
   "$(provider_of FALLBACK-1 turns)" "12"
 check "detail: a turn count that is not a count is null, not a rendered lie" \

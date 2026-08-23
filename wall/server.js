@@ -369,6 +369,12 @@ function turnsOf(metrics) {
   return null;
 }
 
+function providerOf(dir, result) {
+  const pin = readChunk(path.join(dir, 'implementer-provider'), 4096, false);
+  if (pin) return pin.text.split('\n')[0].trim();
+  return result.implementer_provider || '';
+}
+
 function readRun(id, current) {
   const dir = path.join(RUNS, id);
   const { since, stage } = current || currentStage(dir);
@@ -421,8 +427,7 @@ function readRun(id, current) {
     // written verbatim on a zai run too, so the words on the wall cannot tell an
     // operator which subscription is being spent. The file exists from the first
     // stage and is rewritten when an escalation changes the answer.
-    provider: firstLine(path.join(dir, 'implementer-provider')) ||
-      result.implementer_provider || '',
+    provider: providerOf(dir, result),
     turns: turnsOf(metrics),
     diff: metrics.diff || null,
     verifier: metrics.verifier || null,
