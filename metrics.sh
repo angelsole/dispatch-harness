@@ -88,7 +88,20 @@ REPORT_FILTER='
     # What the attempt cost, top-level on the result events. Empty on runs
     # recorded before the CLI reported it, which keeps them out of the
     # statistic rather than sinking it with zeros they never paid.
-    ((.metrics.total_cost_usd // "") | tostring)
+    ((.metrics.total_cost_usd // "") | tostring),
+    # The token telemetry: which vendor billed the implementer, then turns,
+    # cache-read tokens, output tokens and the z.ai credit estimate. A run
+    # recorded before `metrics.usage` existed emits four empty fields and stays
+    # out of the block entirely rather than reporting zeros it never measured;
+    # the credit estimate is empty on every non-zai run.
+    (.implementer_provider // ""),
+    ((.metrics.usage // {})
+     | if length == 0 then ("", "", "", "")
+       else (((.turns // 0) | tostring),
+             ((.cache_read_input_tokens // 0) | tostring),
+             ((.output_tokens // 0) | tostring),
+             ((.zai_credits_est // "") | tostring))
+       end)
   ] | @tsv'
 
 # One line per attempt of every run: the status it died on, and the idle gap
@@ -236,6 +249,23 @@ report() {
         if ($6 + 0 > $15 + 0) overceil++
       }
       if ($16 != "") vscore[++nvs] = $16 + 0
+      # The token telemetry, bucketed by the vendor that billed the implementer:
+      # turns and cache-read volume are what a spiral shows up in, and they are
+      # only comparable within a provider. $20 is empty on every run recorded
+      # before metrics.usage existed, which keeps it out of the block.
+      if ($20 != "") {
+        p = ($19 == "" ? "-" : $19)
+        if (!(p in pseen)) { pseen[p] = 1; porder[++nprov] = p }
+        pruns[p]++
+        pturns[p, ++ptn[p]] = $20 + 0
+        pcache[p, ++pcn[p]] = $21 + 0
+        pcachesum[p] += $21 + 0
+        poutsum[p]   += $22 + 0
+        pcred[p]     += $23 + 0
+        aturns[++natn] = $20 + 0
+        acache[++nacn] = $21 + 0
+        acachesum += $21 + 0; aoutsum += $22 + 0; acred += $23 + 0
+      }
       # The rubric items behind that score. Each item keeps its own sample, so a
       # corpus that spans a schema change reports every item over the runs that
       # actually carry it rather than over the runs that carry any of them.
@@ -347,6 +377,34 @@ report() {
       if (nceil + 0 > 0)
         printf "%-16s %d of %d runs report more CLI turns than their pinned ceiling\n", \
           "turns vs cap", overceil + 0, nceil
+
+      # --- Tokens: what the window and the credits actually went on ----------
+      # Cache-read dominates the bill on both vendors and scales with turns, so
+      # turns beside cache-read is what says whether a run spiralled — and the
+      # two are only comparable within one vendor, hence a row each. MED/P90 are
+      # per run; the SUM columns and CREDITS are the corpus totals.
+      if (nprov > 0) {
+        printf "\n%-12s %5s %8s %8s %14s %14s %13s %11s\n", \
+          "TOKENS", "RUNS", "MED_TRN", "P90_TRN", "MED_CACHE_RD", "SUM_CACHE_RD", \
+          "SUM_OUTPUT", "CREDITS"
+        n = bycount(pruns, k)
+        for (i = 1; i <= n; i++) {
+          pk = k[i]
+          delete tt; delete tc
+          for (j = 1; j <= ptn[pk] + 0; j++) tt[j] = pturns[pk, j]
+          for (j = 1; j <= pcn[pk] + 0; j++) tc[j] = pcache[pk, j]
+          printf "%-12s %5d %8d %8d %14d %14d %13d %11s\n", pk, pruns[pk], \
+            median(tt, ptn[pk] + 0), pctl(tt, ptn[pk] + 0, 90), \
+            median(tc, pcn[pk] + 0), pcachesum[pk] + 0, poutsum[pk] + 0, \
+            (pcred[pk] + 0 > 0 ? sprintf("%.2f", pcred[pk]) : "-")
+        }
+        delete k
+        printf "%-12s %5d %8d %8d %14d %14d %13d %11s\n", "all", natn, \
+          median(aturns, natn), pctl(aturns, natn, 90), \
+          median(acache, nacn), acachesum + 0, aoutsum + 0, \
+          (acred + 0 > 0 ? sprintf("%.2f", acred) : "-")
+        print "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled"
+      }
 
       # Numbered rounds only — base-sync re-gates are recorded in result.json but
       # are not part of the review loop. A second round is the design (review,
