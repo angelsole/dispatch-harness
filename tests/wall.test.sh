@@ -1503,12 +1503,17 @@ stream.emit('snapshot', { data: 'not json at all' });
 say('survives', rows('active-rows').length === before ? 'board stands' : 'board lost');
 const frame = JSON.parse(API);
 frame.runs = [null, 'nonsense', { id: 'HALF-1', state: 'active' },
-  { id: 'OPS-1; printf PWNED', state: 'active' }, ...frame.runs];
+  { id: 'OPS-1; printf PWNED', state: 'active' },
+  { id: 'BAD-LINK-1', state: 'active', prUrl: 'javascript:alert(document.domain)',
+    demoUrl: 'https://demo.example.net/safe' }, ...frame.runs];
 stream.emit('snapshot', { data: JSON.stringify(frame) });
 say('half-run', cell('HALF-1', '.activity'));
 say('half-stage', cell('HALF-1', '.actor'));
 row('OPS-1; printf PWNED').querySelector('.line').fire('click');
 say('quoted-attach', row('OPS-1; printf PWNED').querySelector('code').textContent);
+row('BAD-LINK-1').querySelector('.line').fire('click');
+say('safe-links', row('BAD-LINK-1').querySelectorAll('a').length);
+say('safe-href', row('BAD-LINK-1').querySelector('a').getAttribute('href'));
 
 // The initial fetch began before this newer stream frame. Resolving that fetch
 // afterward must not roll the board back to the older activity in API.
@@ -1568,6 +1573,9 @@ check "draws: a half-written run renders as much as it has" "$(probe half-run)" 
 check "draws: and admits it does not know who is working" "$(probe half-stage)" "?"
 check "draws: attach treats the complete run id as one shell argument" \
   "$(probe quoted-attach)" "$ATTACH_SCRIPT 'OPS-1; printf PWNED'"
+check "draws: unsafe result URLs do not become links" "$(probe safe-links)" "1"
+check "draws: HTTP result URLs remain available" \
+  "$(probe safe-href)" "https://demo.example.net/safe"
 check "draws: an older fetch cannot overwrite a newer stream frame" \
   "$(probe race)" "⏺ Edit src/invoices/newer.ts"
 check "draws: a dropped stream falls back to polling" "$(probe link)" "polling/polling"
