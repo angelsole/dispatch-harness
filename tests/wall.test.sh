@@ -1121,11 +1121,16 @@ grep_ok "$(get "$PORT" /)" "GHOST SHIFT" "console: and still renders it"
 check "console: /api/runs is untouched" "$(code_of /api/runs)" "200"
 
 API="$(get "$PORT" /api/runs)"
+CONSOLE_API="$(get "$PORT" '/api/runs?view=console')"
 # Kept on disk as well: the room probe further down runs the real renderer's
 # arithmetic over this exact payload rather than a restatement of it.
 printf '%s' "$API" > "$ROOT/api.json"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
 check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "12"
+check "api: plain run objects retain the pre-console schema" \
+  "$(printf '%s' "$API" | jq '[.runs[] | has("provider") or has("turns")] | any')" "false"
+check "console: its opted-in snapshot carries console telemetry" \
+  "$(printf '%s' "$CONSOLE_API" | jq '[.runs[] | has("provider") and has("turns")] | all')" "true"
 for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1667 OLYX-1673 OLYX-1598 \
           BOT-2291 BOT-2287 adhoc-kpi-sparklines LEGACY-0042; do
   grep_ok "$API" "\"$id\"" "api: lists $id"
@@ -1284,22 +1289,22 @@ check "detail: and so does a live run nobody has scored yet" \
 # only honest source, and it is there from the first stage rather than only once
 # result.json exists.
 check "detail: the implementer provider surfaces from its pin" \
-  "$(state_of OLYX-1631 provider)" "anthropic"
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1631") | .provider')" "anthropic"
 check "detail: and a GLM run says so while it is still running" \
-  "$(state_of OLYX-1648 provider)" "zai"
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1648") | .provider')" "zai"
 check "detail: a run from before the pin claims no provider, rather than guessing one" \
-  "$(state_of LEGACY-0042 provider)" ""
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="LEGACY-0042") | .provider')" ""
 # TURNS. The whole invocation's count when there is one, the implementer's own
 # when there is not, and null — never a zero somebody could read as "no work" —
 # for a run still in flight or one recorded before either field existed.
 check "detail: turns surface from the invocation's usage" \
-  "$(state_of OLYX-1598 turns)" "64"
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1598") | .turns')" "64"
 check "detail: turns fall back to the implementer's own count" \
-  "$(state_of BOT-2287 turns)" "37"
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="BOT-2287") | .turns')" "37"
 check "detail: a run with no countable turns carries null, not zero" \
-  "$(state_of OLYX-1642 turns)" "null"
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1642") | .turns')" "null"
 check "detail: and neither has a live run finished counting" \
-  "$(state_of OLYX-1631 turns)" "null"
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1631") | .turns')" "null"
 
 # The two cases the fixtures cannot show: a run whose only record of the
 # provider is result.json, and one an escalation moved to another provider
@@ -1321,7 +1326,7 @@ printf '{"metrics":{"usage":{"turns":"lots"},"implementer_num_turns":-4}}\n' \
 : > "$PROVIDER_WALL/EMPTY-PIN-1/implementer-provider"
 printf '{"implementer_provider":"zai"}\n' > "$PROVIDER_WALL/EMPTY-PIN-1/result.json"
 serve "$PROVIDER_WALL" "$ROOT/provider-wall.log"; PROVIDER_PORT="$PORT_OUT"
-PROVIDER_API="$(get "$PROVIDER_PORT" /api/runs)"
+PROVIDER_API="$(get "$PROVIDER_PORT" '/api/runs?view=console')"
 provider_of() {
   printf '%s' "$PROVIDER_API" | jq -r --arg id "$1" '.runs[] | select(.id==$id) | .'"$2"
 }
@@ -1497,14 +1502,15 @@ say('link', ids.get('link').getAttribute('data-state') + '/' + ids.get('link-tex
 
 process.stdout.write(out.join('\n'));
 JS
-CONSOLE_OUT="$(node "$CONSOLE_PROBE" "$SRC/wall/console/console.js" "$ROOT/api.json" 2>&1)"
+printf '%s' "$CONSOLE_API" > "$ROOT/console-api.json"
+CONSOLE_OUT="$(node "$CONSOLE_PROBE" "$SRC/wall/console/console.js" "$ROOT/console-api.json" 2>&1)"
 probe() { printf '%s' "$CONSOLE_OUT" | sed -n "s/^$1=//p"; }
 if printf '%s' "$CONSOLE_OUT" | grep -q '^stream='; then
   ok "draws: the real console.js runs against the real snapshot"
 else
   bad "draws: the console threw on the real snapshot ($CONSOLE_OUT)"
 fi
-check "draws: it subscribes to the stream"  "$(probe stream)" "/api/stream"
+check "draws: it subscribes to the console stream"  "$(probe stream)" "/api/stream?view=console"
 check "draws: one row per live run"         "$(probe active)" \
   "$(printf '%s' "$API" | jq '[.runs[] | select(.state=="active")] | length')"
 check "draws: needs_input is pinned in its own board" "$(probe alarms)" "1"
