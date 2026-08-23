@@ -774,15 +774,23 @@ ANGEL=$(section angel)
 check "critic: a contradicted brief arms nothing" "$(arm_calls)" "$before_arms"
 absent "critic: and never reaches the armable path" "$RUNS/OLYX-CR1/brief.md"
 exists "critic: it is quarantined, not deleted"     "$RUNS/OLYX-CR1/brief.rejected.md"
-exists "critic: with the verdict beside it"         "$RUNS/OLYX-CR1/spec-critic.json"
+CR1_VERDICT=$(find "$RUNS/OLYX-CR1" -maxdepth 1 -name 'spec-critic.TICKET-DATA-*.json' | head -1)
+exists "critic: with its candidate-specific verdict beside it" "$CR1_VERDICT"
 has "$ANGEL" "the spec critic found 1 contradiction(s) in the brief" \
   "critic: the report says what held the brief back"
-has "$ANGEL" "runs/OLYX-CR1/spec-critic.json" \
+has "$ANGEL" "runs/OLYX-CR1/${CR1_VERDICT##*/}" \
   "critic: and where to read the evidence"
 has "$ANGEL" "### Could not self-brief" \
   "critic: a held brief lands in the honest section, not under Self-briefed"
 has_not "$ANGEL" "### Self-briefed" \
   "critic: a brief nobody may arm is not reported as a brief that was written"
+
+# A second candidate for the same ticket gets a different verdict path. This is
+# the property that keeps overlapping quartermasters from reading each other's
+# critic result before either candidate wins publication.
+qm "" --arm >/dev/null
+check "critic: same-ticket candidates never share a verdict path" \
+  "$(find "$RUNS/OLYX-CR1" -maxdepth 1 -name 'spec-critic.TICKET-DATA-*.json' | grep -c '' | tr -d ' ')" "2"
 
 # The critic is a second confined session on the owning station's subscription,
 # and the brief it reads is quoted data — the same contract the planner runs
@@ -791,6 +799,8 @@ before_arms=$(arm_calls)
 critic_scenario OLYX-CR2 clean
 ANGEL=$(section angel)
 check "critic: a clean verdict arms the run" "$(arm_calls)" "$((before_arms + 1))"
+exists "critic: the winning candidate promotes its matching verdict" \
+  "$RUNS/OLYX-CR2/spec-critic.json"
 check "critic: exactly one critic pass" "$(critic_calls)" "1"
 file_has "$CLAUDE_LOG" "config:$ACCOUNTS/angel/claude" \
   "critic: the pass runs as the owning station"

@@ -357,12 +357,15 @@ criteria_not_testing_problem, conflicts_with_current_behavior, questions}`; the
 full contract is in [The spec critic](reference.md#the-spec-critic). Only
 `contradictions` hold a brief back: it is quarantined to `brief.rejected.md`
 like every other rejected brief, the ticket is listed under *Could not
-self-brief* with the count and the path to `runs/<TICKET>/spec-critic.json`, and
-nothing is armed. The other three lists are advice for whoever reads the run
-afterwards — an untested criterion still builds something, and a question is a
-question. A critic that produced no verdict at all (unreachable model, timeout,
-turn ceiling) leaves the brief deferred too: not because the outage is evidence
-against the brief, but because the required pre-dispatch reading did not happen.
+self-brief* with the count and the path to its candidate-specific
+`runs/<TICKET>/spec-critic.<FENCE>.json`, and nothing is armed. A candidate that
+wins publication promotes its matching clean verdict to
+`runs/<TICKET>/spec-critic.json`. The other three lists are advice for whoever
+reads the run afterwards — an untested criterion still builds something, and a
+question is a question. A critic that produced no verdict at all (unreachable
+model, timeout, turn ceiling) leaves the brief deferred too: not because the
+outage is evidence against the brief, but because the required pre-dispatch
+reading did not happen.
 The ticket stays under *Could not self-brief* and points to its critic log.
 `QM_SPEC_CRITIC=0` drops the pass entirely.
 

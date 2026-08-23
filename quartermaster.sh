@@ -566,15 +566,10 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
 # deferred — not as evidence against it, but because the required pre-dispatch
 # reading did not happen.
 #
-# $WORK/criticnotes carries the one outcome that still reaches a report line: a
-# brief the critic cleared and the evening went on to publish. Every other
-# outcome returns 1, and a held brief is never listed under Self-briefed — its
-# reason travels on stderr into "Could not self-brief" instead.
-#
 # Prints the reason on stderr and returns 1 when the brief must not be armed.
-spec_critic_pass() {  # $1 ticket, $2 candidate brief, $3 repo, $4 station, $5 station dir
-  local ticket="$1" candidate="$2" repo="$3" station="$4" dir="$5"
-  local run_dir="$RUNS/$1" verdict="$RUNS/$1/spec-critic.json" n
+spec_critic_pass() {  # $1 ticket, $2 candidate, $3 repo, $4 station, $5 station dir, $6 verdict
+  local ticket="$1" candidate="$2" repo="$3" station="$4" dir="$5" verdict="$6"
+  local run_dir="$RUNS/$1" verdict_rel="runs/$1/${6##*/}" n
   [ "$SPEC_CRITIC" = 1 ] || return 0
   (
     unset GH_TOKEN ANTHROPIC_API_KEY
@@ -593,11 +588,9 @@ spec_critic_pass() {  # $1 ticket, $2 candidate brief, $3 repo, $4 station, $5 s
   n=$(jq -r '.contradictions | length' "$verdict" 2>/dev/null) || n=0
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
   if [ "$n" -gt 0 ]; then
-    echo "the spec critic found $n contradiction(s) in the brief (see runs/$ticket/spec-critic.json)" >&2
+    echo "the spec critic found $n contradiction(s) in the brief (see $verdict_rel)" >&2
     return 1
   fi
-  printf '%s\t%s\n' "$ticket" \
-    "spec-critic: no contradictions (runs/$ticket/spec-critic.json)" >> "$WORK/criticnotes"
   return 0
 }
 
@@ -606,7 +599,7 @@ spec_critic_pass() {  # $1 ticket, $2 candidate brief, $3 repo, $4 station, $5 s
 autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 station dir
   local ticket="$1" title="$2" bodyfile="$3" station="$4" dir="$5"
   local run_dir="$RUNS/$1" brief="$RUNS/$1/brief.md"
-  local repos prompt fence candidate stage planned copyfail snap stray reason r b rc=0
+  local repos prompt fence candidate verdict stage planned copyfail snap stray reason r b rc=0
   repos=$(repo_candidates)
   if [ -z "$repos" ]; then
     echo "no git repo found under QM_REPO_ROOTS ($REPO_ROOTS)" >&2
@@ -623,6 +616,9 @@ autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 statio
   fi
   fence=$(fence_tag)
   candidate="$run_dir/brief.candidate.$fence.md"
+  # The verdict belongs to this candidate until that candidate wins publication.
+  # Concurrent quartermasters therefore never read or clear one another's result.
+  verdict="$run_dir/spec-critic.$fence.json"
   if [ -e "$candidate" ] || [ -L "$candidate" ]; then
     echo "cannot reserve a unique candidate path under runs/$ticket" >&2
     return 1
@@ -793,7 +789,7 @@ to the path and under the rules given above the fence."
   fi
   # Before publication, not after: a brief that contradicts itself must never sit
   # at the armable path, where tomorrow's pass would read it as approved.
-  if ! reason=$(spec_critic_pass "$ticket" "$candidate" "$r" "$station" "$dir" 2>&1 >/dev/null); then
+  if ! reason=$(spec_critic_pass "$ticket" "$candidate" "$r" "$station" "$dir" "$verdict" 2>&1 >/dev/null); then
     reject_brief "$candidate" "${brief%.md}.rejected.md"
     printf '%s\n' "$reason" >&2
     return 1
@@ -806,7 +802,19 @@ to the path and under the rules given above the fence."
     echo "runs/$ticket/brief.md appeared while planning — the candidate was quarantined, not published" >&2
     return 1
   fi
+  # Only the process whose candidate became brief.md may publish the canonical
+  # verdict. Until this point every process has read only its private result.
+  if [ "$SPEC_CRITIC" = 1 ] && ! mv -f "$verdict" "$run_dir/spec-critic.json"; then
+    reject_brief "$brief" "${brief%.md}.rejected.md"
+    rm -f "$candidate"
+    echo "the matching spec-critic verdict could not be published for runs/$ticket/brief.md" >&2
+    return 1
+  fi
   rm -f "$candidate"
+  if [ "$SPEC_CRITIC" = 1 ]; then
+    printf '%s\t%s\n' "$ticket" \
+      "spec-critic: no contradictions (runs/$ticket/spec-critic.json)" >> "$WORK/criticnotes"
+  fi
   printf '%s\n' "$ticket" >> "$WORK/autobriefed"
   return 0
 }
