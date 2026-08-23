@@ -869,7 +869,7 @@ to merge, reverts — over the runs that have an [outcome.json](#the-run-directo
 visited prints `(none captured yet)` and everything else is unchanged).
 
 A `TOKENS` block sits between them, one row per `implementer_provider` plus an
-`all` row: median and p90 turns, median and total cache-read tokens, total output
+`all` row: median, p90 and total turns, median and total cache-read tokens, total output
 tokens, and — for `zai` rows — the summed
 [credit estimate](#metrics-schema). Turns and cache-read are the pair a runaway
 run shows up in, and they are only comparable within one vendor, which is what

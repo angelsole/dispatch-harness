@@ -1178,13 +1178,13 @@ tokrun OLD-1 '{"ticket":"OLD-1","status":"ready","arm":"full","review":"reviewed
 TOK="$(env HARNESS_DIR="$TOKH" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
 
 has "$TOK" "pipeline vitals · 4 runs" "tokens: the corpus is four runs"
-has "$TOK" "TOKENS RUNS MED_TRN P90_TRN MED_CACHE_RD SUM_CACHE_RD SUM_OUTPUT CREDITS" \
+has "$TOK" "TOKENS RUNS MED_TRN P90_TRN SUM_TRN MED_CACHE_RD SUM_CACHE_RD SUM_OUTPUT CREDITS" \
   "tokens: turns and cache-read are reported side by side, per run and summed"
-has "$TOK" "zai 2 60 90 2500000 5000000 15000 1103.38" \
+has "$TOK" "zai 2 60 90 120 2500000 5000000 15000 1103.38" \
   "tokens: the GLM runs' turns, cache-read and summed credit estimate"
-has "$TOK" "anthropic 1 20 20 2000000 2000000 4000 -" \
+has "$TOK" "anthropic 1 20 20 20 2000000 2000000 4000 -" \
   "tokens: the flat-billed vendor reports the same counters and no credit figure"
-has "$TOK" "all 3 30 90 2000000 7000000 19000 1103.38" \
+has "$TOK" "all 3 30 90 140 2000000 7000000 19000 1103.38" \
   "tokens: with the whole corpus underneath, the pre-usage run left out of it"
 has "$TOK" "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled" \
   "tokens: and the estimate says what it is and what it does not model"
@@ -1207,7 +1207,7 @@ LIVE_RUNS=$(printf '%s\n' "$LIVE" | awk '/^pipeline vitals/ { print $4 }')
 LIVE_ATTEMPTS=$(printf '%s\n' "$LIVE" | awk '/^attempts total/ { print $3 }')
 # End to end for the token telemetry too: the one zai run this suite dispatched
 # reaches the report as its own vendor row, counters and credit estimate intact.
-has "$LIVE" "zai 1 92 92 3000000 3000000 7000 527.84" \
+has "$LIVE" "zai 1 92 92 92 3000000 3000000 7000 527.84" \
   "live: the dispatched zai run reports its turns, cache-read and credits"
 if [ "${LIVE_ATTEMPTS:-0}" -gt "${LIVE_RUNS:-0}" ]; then
   ok "live: the re-dispatched runs make attempts outnumber runs ($LIVE_ATTEMPTS vs $LIVE_RUNS)"

@@ -258,11 +258,13 @@ report() {
         if (!(p in pseen)) { pseen[p] = 1; porder[++nprov] = p }
         pruns[p]++
         pturns[p, ++ptn[p]] = $20 + 0
+        pturnsum[p] += $20 + 0
         pcache[p, ++pcn[p]] = $21 + 0
         pcachesum[p] += $21 + 0
         poutsum[p]   += $22 + 0
         pcred[p]     += $23 + 0
         aturns[++natn] = $20 + 0
+        aturnsum += $20 + 0
         acache[++nacn] = $21 + 0
         acachesum += $21 + 0; aoutsum += $22 + 0; acred += $23 + 0
       }
@@ -384,8 +386,8 @@ report() {
       # two are only comparable within one vendor, hence a row each. MED/P90 are
       # per run; the SUM columns and CREDITS are the corpus totals.
       if (nprov > 0) {
-        printf "\n%-12s %5s %8s %8s %14s %14s %13s %11s\n", \
-          "TOKENS", "RUNS", "MED_TRN", "P90_TRN", "MED_CACHE_RD", "SUM_CACHE_RD", \
+        printf "\n%-12s %5s %8s %8s %8s %14s %14s %13s %11s\n", \
+          "TOKENS", "RUNS", "MED_TRN", "P90_TRN", "SUM_TRN", "MED_CACHE_RD", "SUM_CACHE_RD", \
           "SUM_OUTPUT", "CREDITS"
         n = bycount(pruns, k)
         for (i = 1; i <= n; i++) {
@@ -393,15 +395,15 @@ report() {
           delete tt; delete tc
           for (j = 1; j <= ptn[pk] + 0; j++) tt[j] = pturns[pk, j]
           for (j = 1; j <= pcn[pk] + 0; j++) tc[j] = pcache[pk, j]
-          printf "%-12s %5d %8d %8d %14d %14d %13d %11s\n", pk, pruns[pk], \
+          printf "%-12s %5d %8d %8d %8d %14d %14d %13d %11s\n", pk, pruns[pk], \
             median(tt, ptn[pk] + 0), pctl(tt, ptn[pk] + 0, 90), \
-            median(tc, pcn[pk] + 0), pcachesum[pk] + 0, poutsum[pk] + 0, \
+            pturnsum[pk] + 0, median(tc, pcn[pk] + 0), pcachesum[pk] + 0, poutsum[pk] + 0, \
             (pcred[pk] + 0 > 0 ? sprintf("%.2f", pcred[pk]) : "-")
         }
         delete k
-        printf "%-12s %5d %8d %8d %14d %14d %13d %11s\n", "all", natn, \
+        printf "%-12s %5d %8d %8d %8d %14d %14d %13d %11s\n", "all", natn, \
           median(aturns, natn), pctl(aturns, natn, 90), \
-          median(acache, nacn), acachesum + 0, aoutsum + 0, \
+          aturnsum + 0, median(acache, nacn), acachesum + 0, aoutsum + 0, \
           (acred + 0 > 0 ? sprintf("%.2f", acred) : "-")
         print "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled"
       }
