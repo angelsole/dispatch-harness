@@ -27,6 +27,13 @@
 #                  own; the shipped one is
 #                  "bash $HARNESS_DIR/profiles/visual/creative/visual-gate.sh".
 #                  See profiles/visual/creative/README.md.
+#   VISUAL_SCOPE_GLOBS  space-separated git pathspec globs naming the paths this
+#                  repo's picture is made of. A branch that touches none of them
+#                  skips the visual gate rather than grading a code-only diff
+#                  against the reigning champion. Unset = the profile's defaults
+#                  ("wall/** .creative/** assets/**"); a value REPLACES them, so
+#                  list every path including .creative/**, e.g.
+#                  VISUAL_SCOPE_GLOBS="src/render/** public/sprites/** .creative/**"
 #   MCP_CONFIG     path to an .mcp.json for the worker (default: none; skipped if missing).
 #                  For a repo with the visual profile this is the asset factories:
 #                  MCP_CONFIG="$HARNESS_DIR/profiles/visual/creative/factory.mcp.json"

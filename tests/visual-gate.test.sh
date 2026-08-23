@@ -441,6 +441,63 @@ has "$(jq -r '.advisory[0]' "$SCORE")" "raise the hero tower" \
   "advisory: with the one fix a human can act on"
 fi
 
+# --- infrastructure is not taste ---------------------------------------------
+# The incident this half exists for: Chromium was never installed, the render
+# produced zero frames, the gate scored that FAIL and a fix round was spent
+# telling a model to improve a picture that does not exist. Faked at the python
+# rather than by uninstalling a browser — importable Playwright, a launch that
+# fails the way an uninstalled one fails — so it runs on any machine, browser
+# or no browser, which is exactly the machine this bug lives on.
+mkdir -p "$ROOT/infra/.creative"
+cat > "$ROOT/infra/.creative/visual.conf.sh" <<EOF
+VISUAL_URL="file://$FX"
+VISUAL_SHOTS=("scene|/good.html|100")
+VISUAL_CRITIC=0
+EOF
+cat > "$FAKES/fake-python" <<'EOF'
+#!/usr/bin/env bash
+# `-c 'import playwright'` always succeeds — importable is the premise. What
+# FAKE_PY_MODE decides is what happens after that: `-` is the launch probe,
+# anything else is frames.py.
+[ "${1:-}" = -c ] && exit 0
+case "$FAKE_PY_MODE" in
+  no-browser)
+    echo "Executable doesn't exist at ~/.cache/ms-playwright/chromium_headless_shell/headless_shell" >&2
+    exit 1 ;;
+  no-frames)
+    [ "${1:-}" = - ] && exit 0
+    echo "frames.py: scene failed on file:///x/good.html: Timeout 20000ms exceeded." >&2
+    exit 1 ;;
+esac
+exit 0
+EOF
+chmod +x "$FAKES/fake-python"
+run_infra_gate() {  # $1 = FAKE_PY_MODE
+  ( cd "$ROOT/infra" && env -u VISUAL_LIVE PATH="$FAKES:$PATH" HARNESS_DIR="$HARNESS" \
+      VISUAL_REPO=infra VISUAL_PY="$FAKES/fake-python" VCHECK_PY=true \
+      FAKE_PY_MODE="$1" bash "$CREATIVE/visual-gate.sh" ) > "$ROOT/infra-$1.log" 2>&1
+}
+INFRA="$ROOT/infra/.harness/visual-score.json"
+
+run_infra_gate no-browser
+check "infra: a browser that will not launch is not a failed render" "$?" "3"
+check "infra: the verdict is not_run" "$(jq -r .status "$INFRA")" "not_run"
+file_has "$INFRA" "could not be launched" "infra: with the reason in one sentence"
+check "infra: and the one command that makes the stage possible" \
+  "$(jq -r .remedy "$INFRA")" "npx playwright install chromium"
+check "infra: nothing is claimed as a failure of the render" \
+  "$(jq -r '.failures | length' "$INFRA")" "0"
+absent "infra: and nothing was rendered" "$ROOT/infra/.harness/frames/scene-f00.png"
+file_has "$ROOT/infra-no-browser.log" "NOT RUN" "infra: the log says so in its verdict line"
+
+run_infra_gate no-frames
+check "infra: a render that produced no frames is not_run too" "$?" "3"
+check "infra: recorded as not_run" "$(jq -r .status "$INFRA")" "not_run"
+file_has "$INFRA" "produced no frames" "infra: naming the shot that never came up"
+check "infra: still nothing the fix round could act on" \
+  "$(jq -r '.failures | length' "$INFRA")" "0"
+
+
 # ---------------------------------------------------------------------------
 echo "== the critic protocol =="
 # ---------------------------------------------------------------------------
@@ -485,6 +542,7 @@ EOF
 check "champion: frames without a pairwise sheet fail closed" "$?" "2"
 file_has "$ROOT/broken-champion.log" "no champion-sheet.png" \
   "champion: the log explains how to repair the state"
+
 script_calls
 printf 'garbage\n' > "$CRITIC_MODE"
 env CLAUDE_BIN="$FAKES/claude" bash "$CREATIVE/critic.sh" \
@@ -837,6 +895,10 @@ FIX_PROMPTS="$ROOT/fix-prompts.log"; : > "$FIX_PROMPTS"
 STUB_MODE="$ROOT/stub-mode"; printf 'pass\n' > "$STUB_MODE"
 STUB_CALLS="$ROOT/stub-calls.log"; : > "$STUB_CALLS"
 FIX_BEHAVIOUR="$ROOT/fix-behaviour"; printf 'noop\n' > "$FIX_BEHAVIOUR"
+# Which file the fake implementer writes. The visual gate is scoped to the paths
+# a picture is made of, so what the branch touches now decides whether the stage
+# happens at all — and every case below that wants a render has to earn one.
+IMPL_PATH="$ROOT/impl-path"; printf 'assets/scene.txt\n' > "$IMPL_PATH"
 
 # run-task.sh reads lib/ and profiles/ from beside itself, so the copy has to
 # take them along: a $SRCDIR holding the script alone would load no profile and
@@ -853,6 +915,7 @@ repo_config_local() {
       INSTALL_CMD=''
       GATE_CMD='true'
       VISUAL_GATE_CMD="${TEST_VISUAL_GATE_CMD:-}"
+      VISUAL_SCOPE_GLOBS="${TEST_VISUAL_SCOPE_GLOBS:-}"
       ;;
   esac
 }
@@ -890,6 +953,22 @@ exit 1
 EOF
 chmod +x "$ROOT/visual-stub.sh"
 
+# A second stub for the other half: a gate that could not run at all. Exit 3 is
+# the contract between any visual gate and this pipeline, so the stub asserts it
+# for a pinned gate nobody in this repo wrote as much as for the shipped one.
+cat > "$ROOT/visual-notrun.sh" <<EOF
+#!/usr/bin/env bash
+printf 'stub round %s\n' "\${VISUAL_ROUND:-?}" >> "$STUB_CALLS"
+mkdir -p .harness
+jq -n '{status:"not_run", round:1, failures:[], advisory:[], pairwise:"none",
+        reason:"the headless browser at /x/python could not be launched",
+        remedy:"npx playwright install chromium"}' > .harness/visual-score.json
+printf 'the headless browser could not be launched\n' > "\${HARNESS_GATE_STEP:-/dev/null}"
+echo "=== visual gate (round \${VISUAL_ROUND:-1}): NOT RUN ==="
+exit 3
+EOF
+chmod +x "$ROOT/visual-notrun.sh"
+
 # Implementer, reviewer and visual fixer in one stand-in, told apart by prompt.
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
@@ -902,7 +981,8 @@ case "\$prompt" in
     printf '%s\n' "\$prompt" >> "$FIX_PROMPTS"
     if [ "\$(cat "$FIX_BEHAVIOUR")" = fix ]; then
       printf 'pass\n' > "$STUB_MODE"
-      printf 'the fixer touched this\n' >> render.txt
+      mkdir -p assets
+      printf 'the fixer touched this\n' >> assets/render.txt
       git add -A && git commit -q -m "fix: lift the hero tower"
     fi
     exit 0 ;;
@@ -910,7 +990,9 @@ case "\$prompt" in
     printf '# review\n\nEverything is sound.\n' > .harness/review-notes.md
     exit 0 ;;
 esac
-seq 1 30 >> impl.txt
+target=\$(cat "$IMPL_PATH")
+mkdir -p "\$(dirname "\$target")"
+seq 1 30 >> "\$target"
 git add -A
 git commit -q -m "feat: fixture change"
 EOF
@@ -1078,6 +1160,70 @@ printf 'fail\n' > "$STUB_MODE"
 dispatch VIS-ZERO "bash $ROOT/visual-stub.sh" HARNESS_VISUAL_ROUNDS=0
 check "budget: zero falls back to the two-round default" \
   "$(grep -c 'stub round' "$STUB_CALLS" | tr -d ' ')" "2"
+
+# --- a diff with no visual surface -------------------------------------------
+# Activation is repo-level: a repo that carries .creative/ gets this profile for
+# every run it dispatches, docs and shell scripts included. Grading those
+# against the reigning champion is a paid coin-flip that reads as a red, so the
+# gate answers the cheaper question first — did this branch touch the picture?
+printf 'docs/notes.md\n' > "$IMPL_PATH"
+printf 'pass\n' > "$STUB_MODE"
+: > "$STUB_CALLS"; : > "$FIX_PROMPTS"
+dispatch VIS-SKIP "bash $ROOT/visual-stub.sh"
+check "skip: a code-only diff is never rendered" \
+  "$(grep -c 'stub round' "$STUB_CALLS" | tr -d ' ')" "0"
+check "skip: so no fix round is spent on it either" \
+  "$(grep -c 'The visual gate is failing' "$FIX_PROMPTS" | tr -d ' ')" "0"
+has "$OUT" "visual gate SKIP" "skip: the reason is logged rather than swallowed"
+file_has "$RUN/timeline" "visual gate skipped" "skip: with a stage line the wall can read"
+check "skip: result.json says what happened" "$(result '.visual.status')" "skip"
+has "$(result '.visual.reason')" "visual scope" "skip: and why"
+check "skip: the run ships" "$(result .status)" "ready"
+absent "skip: nothing was harvested out of the worktree" "$RUN/visual"
+has_not "$(cat "$PROMPTS")" "cannot render this yourself" \
+  "skip: the reviewer is not sent to look at frames that do not exist"
+has_not "$(cat "$RUN/pr-body.md")" "## Visual gate" \
+  "skip: and the PR body carries no render section"
+
+# The knob that makes the default safe to have: a repo whose picture lives
+# somewhere else says so, and the same code-only diff renders.
+: > "$STUB_CALLS"
+dispatch VIS-SCOPE "bash $ROOT/visual-stub.sh" TEST_VISUAL_SCOPE_GLOBS='docs/**'
+check "scope: a repo that names its own visual paths is obeyed" \
+  "$(grep -c 'stub round' "$STUB_CALLS" | tr -d ' ')" "1"
+check "scope: and the gate decides the round again" "$(result '.visual.status')" "pass"
+
+# The globs belong to git, not to the shell that assembles them. This checkout
+# has a wall/ of its own, and an unquoted expansion replaced the default
+# `wall/**` with the harness's own file list — matching nothing in the repo
+# under test and skipping every visual run on a repo whose picture IS wall/.
+printf 'wall/city.txt\n' > "$IMPL_PATH"
+: > "$STUB_CALLS"
+dispatch VIS-WALL "bash $ROOT/visual-stub.sh"
+check "scope: a default glob is matched against the branch, not the harness checkout" \
+  "$(grep -c 'stub round' "$STUB_CALLS" | tr -d ' ')" "1"
+
+# --- a gate that could not run -----------------------------------------------
+# The other half of the incident: no browser, zero frames, and a fix round spent
+# on an environment no model can reach. Exit 3 is not a verdict.
+printf 'assets/scene.txt\n' > "$IMPL_PATH"
+: > "$STUB_CALLS"; : > "$FIX_PROMPTS"
+dispatch VIS-NOTRUN "bash $ROOT/visual-notrun.sh"
+check "not_run: the gate ran once and gave up on the machine" \
+  "$(grep -c 'stub round' "$STUB_CALLS" | tr -d ' ')" "1"
+check "not_run: no fix round is aimed at a missing browser" \
+  "$(grep -c 'The visual gate is failing' "$FIX_PROMPTS" | tr -d ' ')" "0"
+check "not_run: no outcome is claimed, so the run ships" "$(result .status)" "ready"
+check "not_run: the verdict is on the record" "$(result '.visual.status')" "not_run"
+has "$(result '.visual.reason')" "could not be launched" "not_run: with the reason"
+check "not_run: and the remedy a human can run" \
+  "$(result '.visual.remedy')" "npx playwright install chromium"
+file_has "$RUN/pr-body.md" "**not run**" \
+  "not_run: the PR says plainly that nothing looked at the picture"
+file_has "$RUN/pr-body.md" "npx playwright install chromium" \
+  "not_run: and how to make the next run look"
+has_not "$(cat "$PROMPTS")" "cannot render this yourself" \
+  "not_run: the reviewer is handed no frames, because there are none"
 
 echo
 printf 'visual gate: %d passed, %d failed%s\n' "$pass" "$fail" \

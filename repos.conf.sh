@@ -4,13 +4,20 @@
 # shellcheck disable=SC2034
 # Per-repo pipeline config, sourced by run-task.sh / sync-pr.sh / preview.sh.
 # repo_config <repo-or-worktree-path> sets:
-#   BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD MCP_CONFIG ENV_SUBDIRS \
-#   DEV_CMD PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD
+#   BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD VISUAL_SCOPE_GLOBS \
+#   MCP_CONFIG ENV_SUBDIRS DEV_CMD PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD
 #
 # VISUAL_GATE_CMD is the visual profile's gate — the stage that renders the app
 # and judges the picture. Never auto-detected here: the profile supplies its own
 # default for a repo that carries a .creative/ contract, and a repo that carries
 # neither has no visual stage at all.
+#
+# VISUAL_SCOPE_GLOBS says which of that repo's paths the picture is made of:
+# space-separated git pathspec globs, and a branch touching none of them skips
+# the gate instead of grading a code-only diff against the reigning champion.
+# Unset, the profile's own defaults apply (wall/** .creative/** assets/**); a
+# value here REPLACES them, so a repo whose render lives elsewhere must list
+# every path, .creative/** included.
 #
 # PREPROD=1 marks a repo that has not shipped yet: run-task.sh then states the
 # pre-production posture (delete obsolete paths, no compatibility layers, no
@@ -44,6 +51,7 @@ repo_config() {
   local repo="$1"
   local name; name=$(basename "$repo")
   BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
+  VISUAL_SCOPE_GLOBS=""
   ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
 
   # User pins first (if repos.local.sh defined the hook); auto-detection then
