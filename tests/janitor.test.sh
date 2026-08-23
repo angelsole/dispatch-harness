@@ -61,6 +61,7 @@ UNAME_STATE="$ROOT/fake-uname"
 LC_LOG="$ROOT/launchctl.log"
 GH_MODE="$ROOT/gh-mode"
 GH_LOG="$ROOT/gh.log"
+REAL_JQ=$(command -v jq)
 
 mkdir -p "$AGENTS" "$RUNS" "$FAKES"
 : > "$PS_FIXTURE"; : > "$LC_LOG"; : > "$GH_LOG"
@@ -110,7 +111,41 @@ fi
 url=""
 for a in "\$@"; do case "\$a" in http*) url="\$a" ;; esac; done
 # the API said nothing this script may act on
+[ "\${JANITOR_TEST_PR_VARIANT:-}" != closed ] \
+  || { cat "$ROOT/pr-7.json" 2>/dev/null; exit; }
 cat "$ROOT/pr-\${url##*/}.json" 2>/dev/null || exit 1
+EOF
+
+# The outcome-writing jq can be synchronized in the concurrency regression
+# below. Both shells have already opened their output file when this wrapper
+# starts: the long writer lands first, then the shorter writer completes.
+cat > "$FAKES/jq" <<EOF
+#!/usr/bin/env bash
+sync="\${JANITOR_TEST_JQ_SYNC:-}"
+is_outcome=0
+prev=""
+for a in "\$@"; do
+  [ "\$prev" = --arg ] && [ "\$a" = checked ] && is_outcome=1
+  prev="\$a"
+done
+if [ -n "\$sync" ] && [ "\$is_outcome" = 1 ]; then
+  case "\${JANITOR_TEST_PR_VARIANT:-}" in
+    merged)
+      touch "\$sync.long-open"
+      while [ ! -e "\$sync.short-open" ]; do sleep 0.01; done
+      "$REAL_JQ" "\$@"
+      rc=\$?
+      touch "\$sync.long-output"
+      exit \$rc
+      ;;
+    closed)
+      touch "\$sync.short-open"
+      while [ ! -e "\$sync.long-output" ] || [ ! -e "\${JANITOR_TEST_OUTCOME:-}" ]; do sleep 0.01; done
+      exec "$REAL_JQ" "\$@"
+      ;;
+  esac
+fi
+exec "$REAL_JQ" "\$@"
 EOF
 
 # ps is faked for every invocation in this suite, not just the reaping cases:
@@ -131,7 +166,7 @@ cat > "$FAKES/launchctl" <<EOF
 printf '%s\n' "\$*" >> "$LC_LOG"
 EOF
 
-chmod +x "$FAKES/gh" "$FAKES/ps" "$FAKES/uname" "$FAKES/launchctl"
+chmod +x "$FAKES/gh" "$FAKES/jq" "$FAKES/ps" "$FAKES/uname" "$FAKES/launchctl"
 
 jan() {  # $1 = space-separated VAR=VAL overrides (may be empty), rest = argv
   local overrides="$1"; shift
@@ -449,6 +484,40 @@ check "outcome: an old merged PR cannot authorize cleanup of the new one" \
   "$(verb "$out" redispatched-open)" "keep"
 check "outcome: exactly one api call per refreshed run" \
   "$(grep -c "pulls/2/comments" "$GH_LOG" | tr -d ' ')" "2"
+
+# Two independent sweeps may refresh the same run at once (for example, the
+# scheduled pass and an operator's manual report). The synchronized jq wrapper
+# makes the shorter CLOSED write finish after the longer MERGED write. A shared
+# temp inode leaves trailing bytes; unique same-directory temps leave one whole
+# atomic result.
+RACE_HARNESS="$ROOT/race-harness"
+RACE_RUN="$RACE_HARNESS/runs/race"
+RACE_OUTCOME="$RACE_RUN/outcome.json"
+RACE_SYNC="$ROOT/outcome-race"
+mkdir -p "$RACE_RUN"
+printf '%s %s\n' "$(date +%s)" "done: ready" > "$RACE_RUN/status"
+printf '{"ticket":"race","status":"ready","worktree":"%s","branch":"feat/race","base":"main","pr_url":"%s"}\n' \
+  "$WT_OPEN" "$PR/1" > "$RACE_RUN/result.json"
+jan "HARNESS_DIR=$RACE_HARNESS JANITOR_TEST_JQ_SYNC=$RACE_SYNC JANITOR_TEST_OUTCOME=$RACE_OUTCOME JANITOR_TEST_PR_VARIANT=merged" \
+  --report > "$ROOT/race-merged.log" &
+RACE_MERGED_PID=$!
+jan "HARNESS_DIR=$RACE_HARNESS JANITOR_TEST_JQ_SYNC=$RACE_SYNC JANITOR_TEST_OUTCOME=$RACE_OUTCOME JANITOR_TEST_PR_VARIANT=closed" \
+  --report > "$ROOT/race-closed.log" &
+RACE_CLOSED_PID=$!
+wait "$RACE_MERGED_PID"; RACE_MERGED_RC=$?
+wait "$RACE_CLOSED_PID"; RACE_CLOSED_RC=$?
+check "outcome concurrency: both overlapping reports complete" \
+  "$RACE_MERGED_RC,$RACE_CLOSED_RC" "0,0"
+if jq -e . "$RACE_OUTCOME" >/dev/null 2>&1; then
+  ok "outcome concurrency: the final outcome is valid JSON"
+else
+  bad "outcome concurrency: overlapping writers corrupted outcome.json"
+fi
+check "outcome concurrency: the later complete write wins atomically" \
+  "$(jq -r '.pr_state // ""' "$RACE_OUTCOME" 2>/dev/null)" "CLOSED"
+RACE_TEMPS=0
+for f in "$RACE_OUTCOME".tmp.*; do [ ! -e "$f" ] || RACE_TEMPS=$((RACE_TEMPS + 1)); done
+check "outcome concurrency: no writer leaves a temp file" "$RACE_TEMPS" "0"
 
 # ---------------------------------------------------------------------------
 echo "== --clean: merged clean worktrees, including settled ones =="

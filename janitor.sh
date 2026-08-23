@@ -251,7 +251,7 @@ outcome_settled() {  # $1 = run dir, $2 = current PR url; succeeds when refresh 
 # Prints written | unreadable.
 capture_outcome() {  # $1 = run dir, $2 = PR url, $3 = the poll's JSON ('' = unreadable), $4 = worktree
   local d="$1" url="$2" view="$3" wt="${4:-}"
-  local out="$d/outcome.json"
+  local out="$d/outcome.json" tmp
   local state merged_at merge_oid files_tsv ttm ids rcc=''
   local repo base base_ref tip_ct merged_ct follow='' reverted=''
   local candidates candidate
@@ -329,6 +329,8 @@ capture_outcome() {  # $1 = run dir, $2 = PR url, $3 = the poll's JSON ('' = unr
   local prev='{}'
   [ -s "$out" ] && prev=$(jq -c . "$out" 2>/dev/null)
   [ -n "$prev" ] || prev='{}'
+  tmp=$(mktemp "$out.tmp.XXXXXX" 2>/dev/null) \
+    || { printf 'unreadable'; return 0; }
   if jq -n --arg url "$url" --arg state "$state" --arg merged_at "$merged_at" --arg ttm "$ttm" \
         --arg rcc "$rcc" --arg follow "$follow" --arg reverted "$reverted" \
         --arg checked "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prev "$prev" '
@@ -340,10 +342,10 @@ capture_outcome() {  # $1 = run dir, $2 = PR url, $3 = the poll's JSON ('' = unr
        follow_up_commits: (if $follow == "" then ($prev.follow_up_commits // null) else ($follow | tonumber) end),
        reverted: (if $reverted == "" then ($prev.reverted // null) else ($reverted == "true") end),
        checked_at: $checked}
-    ' > "$out.tmp" 2>/dev/null && mv "$out.tmp" "$out"; then
+    ' > "$tmp" 2>/dev/null && mv "$tmp" "$out"; then
     printf 'written'
   else
-    rm -f "$out.tmp"
+    rm -f "$tmp"
     printf 'unreadable'
   fi
   return 0
