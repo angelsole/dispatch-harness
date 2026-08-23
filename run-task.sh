@@ -78,11 +78,7 @@ AMBIENT_PROVIDER="${IMPLEMENTER_PROVIDER:-}"
 AMBIENT_MODEL="${IMPLEMENTER_MODEL:-}"
 repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL
 [ -n "${IMPLEMENTER_PROVIDER:-}" ] || IMPLEMENTER_PROVIDER="$AMBIENT_PROVIDER"
-# An ambient model belongs to the ambient provider: a glm id must not survive
-# a repo pin that moved the run to anthropic.
-[ -n "${IMPLEMENTER_MODEL:-}" ] \
-  || [ "${IMPLEMENTER_PROVIDER:-$DEFAULT_IMPLEMENTER_PROVIDER}" != "${AMBIENT_PROVIDER:-$DEFAULT_IMPLEMENTER_PROVIDER}" ] \
-  || IMPLEMENTER_MODEL="$AMBIENT_MODEL"
+[ -n "${IMPLEMENTER_MODEL:-}" ] || IMPLEMENTER_MODEL="$AMBIENT_MODEL"
 # Keep the unset path independent of the optional library, including on an old
 # install that predates mirror.sh.
 if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then

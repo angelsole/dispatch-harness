@@ -117,7 +117,7 @@ to before — this is instrumentation, not a redesign.
 | Env var | Effect | Default |
 | --- | --- | --- |
 | `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Resolved **repo pin → ambient env → default**: a [repo pin](#the-repo-pin) outranks the value this shell exports. Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
-| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. The default follows the provider. | `claude-opus-5`, or `glm-5.3` on `zai` |
+| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Resolved **repo pin → ambient env → provider default**, independently of the provider setting. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5`, or `glm-5.3` on `zai` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
@@ -643,8 +643,8 @@ types, lint, and tests.
 `IMPLEMENTER_PROVIDER` is the compliance pin: a station whose ambient default
 is `zai` pins `anthropic` on the repos it dispatches that are not approved for
 third-party model providers, so an exported machine default can never route
-that code to one. `IMPLEMENTER_MODEL` follows the same precedence when pinned;
-unpinned it stays provider-derived.
+that code to one. `IMPLEMENTER_MODEL` independently follows repo pin, ambient
+environment, then the selected provider's default.
 
 `PREFLIGHT_CMD` fails a run fast on a broken environment *before* burning an
 implementer pass. See

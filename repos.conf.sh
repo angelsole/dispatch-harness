@@ -12,8 +12,8 @@
 # for which vendors may see its code, so a pin here outranks the machine's
 # ambient IMPLEMENTER_PROVIDER (an exported default in the dispatching shell).
 # Pin `anthropic` on a repo that is not approved for third-party model
-# providers. IMPLEMENTER_MODEL follows the same rule when pinned; unpinned it
-# stays provider-derived.
+# providers. IMPLEMENTER_MODEL independently follows repo pin, ambient env,
+# then the selected provider's builtin default.
 #
 # VISUAL_GATE_CMD is the visual profile's gate — the stage that renders the app
 # and judges the picture. Never auto-detected here: the profile supplies its own

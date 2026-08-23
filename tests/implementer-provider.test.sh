@@ -498,13 +498,13 @@ repo_pin anthropic
 dispatch PROV-REPO-ANTHROPIC commit "IMPLEMENTER_PROVIDER=zai IMPLEMENTER_MODEL=glm-5.3"
 check "repo pin: anthropic outranks the ambient zai" "$(pin implementer-provider)" "anthropic"
 check "repo pin: result.json records it" "$(result .implementer_provider)" "anthropic"
-check "repo pin: the ambient glm model does not survive the pin" \
-  "$(pin implementer-model)" "claude-opus-5"
+check "repo pin: the model keeps its own repo-ambient-default precedence" \
+  "$(pin implementer-model)" "glm-5.3"
 IMPL="$(env_of implementer)"
 has "$IMPL" "base=[]"              "repo pin: no zai endpoint reaches the implementer"
 has "$IMPL" "token=[]"             "repo pin: nor the credential"
 has "$IMPL" "subagent=[sonnet]"    "repo pin: subagents stay on the provider's own"
-has "$IMPL" "model=[claude-opus-5]" "repo pin: the implementer runs the Anthropic model"
+has "$IMPL" "model=[glm-5.3]" "repo pin: the ambient model reaches the implementer"
 check "repo pin: nothing to escalate to, so escalation is off" "$(pin escalation)" "off"
 check "repo pin: the Claude window is measured again" \
   "$([ "$(npx_calls)" -ge 1 ] && echo yes || echo no)" "yes"
@@ -524,11 +524,13 @@ dispatch PROV-REPO-ZAI commit "ZAI_API_KEY_FILE=$ROOT/no-such-key"
 check "repo pin: the key-file requirement is intact" "$(result .status)" "setup_failed"
 check "repo pin: nothing was spawned" "$(spawns_of implementer)" "0"
 
-dispatch PROV-REPO-ZAI2 commit "IMPLEMENTER_PROVIDER=anthropic IMPLEMENTER_MODEL=claude-opus-5"
+dispatch PROV-REPO-ZAI2 commit "IMPLEMENTER_PROVIDER=anthropic IMPLEMENTER_MODEL=glm-5.3[1m]"
 check "repo pin: a zai pin outranks an ambient anthropic" \
   "$(pin implementer-provider)" "zai"
-check "repo pin: the ambient anthropic model does not survive either" \
-  "$(pin implementer-model)" "glm-5.3"
+check "repo pin: changing only the provider retains the ambient model" \
+  "$(pin implementer-model)" "glm-5.3[1m]"
+has "$(env_of implementer)" "compact=[1000000]" \
+  "repo pin: the retained ambient 1M model keeps its compaction window"
 
 repo_pin ""
 

@@ -26,8 +26,8 @@
 #                  providers: the pin outranks an exported IMPLEMENTER_PROVIDER,
 #                  so the dispatching machine's default cannot route that repo's
 #                  code to a third party.
-#   IMPLEMENTER_MODEL  a specific implementer model for this repo
-#                  (default: the provider's own)
+#   IMPLEMENTER_MODEL  a specific implementer model for this repo. Resolution is
+#                  repo pin, then ambient env, then the provider's own default.
 #   VISUAL_GATE_CMD  the visual profile's gate: render the app, check the frames,
 #                  ask the critic. One of the two ways a repo opts into the
 #                  profile — the other is carrying a .creative/ contract, which
