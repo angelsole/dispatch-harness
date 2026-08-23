@@ -625,7 +625,7 @@ EOF
       then .usage.zai_credits_est =
         (((.usage.input_tokens * 6.9)
           + (.usage.cache_read_input_tokens * 1.7)
-          + (.usage.output_tokens * 24)) / 10000 * 100 | round / 100)
+          + (.usage.output_tokens * 24)) / 10000)
       else . end'
 }
 

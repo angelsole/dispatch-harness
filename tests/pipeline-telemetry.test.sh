@@ -847,7 +847,7 @@ printf 'commit\n' > "$CLAUDE_MODE"
 check "credits: the run really did bill the other vendor" \
   "$(result .implementer_provider)" "zai"
 check "credits: a zai run prices its own tokens in Coding-Plan credits" \
-  "$(result .metrics.usage.zai_credits_est)" "527.84"
+  "$(result .metrics.usage.zai_credits_est)" "527.835"
 check "credits: over the same summed counters" \
   "$(result .metrics.usage.cache_read_input_tokens)" "3000000"
 
