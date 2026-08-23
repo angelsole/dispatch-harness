@@ -122,6 +122,15 @@ printf 'role=%s model=[%s] base=[%s] token=[%s] timeout=[%s] haiku=[%s] subagent
   "\${CLAUDE_CODE_SUBAGENT_MODEL:-}" "\${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" \\
   "\${ANTHROPIC_API_KEY:-}" >> "$ENVLOG"
 
+# sync-pr's conflict resolver: conclude the merge the harness stopped.
+case "\$prompt" in
+  *"stopped on conflicts"*)
+    git add -A >/dev/null 2>&1
+    git commit -q --no-edit >/dev/null 2>&1
+    echo "conflicts resolved"
+    exit 0 ;;
+esac
+
 if [ "\$role" != implementer ]; then
   # The Claude review tier and the fix round that follows it. Leaving notes is
   # what buys the fix round, so one fake covers both invocations.
@@ -448,6 +457,110 @@ env HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
   bash "$SRC/attach.sh" PROV-ENV >/dev/null 2>&1
 check "attach: a correctly configured shell resumes the session" \
   "$(grep -c '^role=implementer' "$ENVLOG" 2>/dev/null | tr -d ' ')" "$((BEFORE_SPAWNS + 1))"
+
+# ---------------------------------------------------------------------------
+echo "== the repo decides its implementer provider, not the machine =="
+# ---------------------------------------------------------------------------
+# A station may carry an ambient provider default (an exported IMPLEMENTER_
+# PROVIDER in the login shell). The repo's repos.local.sh arm outranks it, so a
+# repo whose code is not approved for third-party providers pins anthropic and
+# no exported machine default can route its dispatches elsewhere.
+repo_pin() {  # $1 = provider to pin for greenapp, "" for none
+  cat > "$HARNESS/repos.local.sh" <<EOF
+repo_config_local() {
+  case "\$2" in
+    greenapp|greenapp-*) INSTALL_CMD=''; GATE_CMD='exit 1'${1:+ IMPLEMENTER_PROVIDER='$1'} ;;
+  esac
+}
+EOF
+}
+
+repo_pin anthropic
+dispatch PROV-REPO-ANTHROPIC commit "IMPLEMENTER_PROVIDER=zai IMPLEMENTER_MODEL=glm-5.3"
+check "repo pin: anthropic outranks the ambient zai" "$(pin implementer-provider)" "anthropic"
+check "repo pin: result.json records it" "$(result .implementer_provider)" "anthropic"
+check "repo pin: the ambient glm model does not survive the pin" \
+  "$(pin implementer-model)" "claude-opus-5"
+IMPL="$(env_of implementer)"
+has "$IMPL" "base=[]"              "repo pin: no zai endpoint reaches the implementer"
+has "$IMPL" "token=[]"             "repo pin: nor the credential"
+has "$IMPL" "subagent=[sonnet]"    "repo pin: subagents stay on the provider's own"
+has "$IMPL" "model=[claude-opus-5]" "repo pin: the implementer runs the Anthropic model"
+check "repo pin: nothing to escalate to, so escalation is off" "$(pin escalation)" "off"
+check "repo pin: the Claude window is measured again" \
+  "$([ "$(npx_calls)" -ge 1 ] && echo yes || echo no)" "yes"
+
+dispatch PROV-REPO-ANTHROPIC commit "IMPLEMENTER_PROVIDER=zai"
+check "repo pin: a resume keeps the run-dir pin whatever the ambient says" \
+  "$(pin implementer-provider)" "anthropic"
+
+repo_pin zai
+dispatch PROV-REPO-ZAI commit ""
+check "repo pin: zai with no ambient default" "$(pin implementer-provider)" "zai"
+check "repo pin: the provider's own model default applies" "$(pin implementer-model)" "glm-5.3"
+has "$(env_of implementer)" "base=[$ZAI_URL]" "repo pin: the endpoint comes from the pin alone"
+has "$(env_of implementer)" "token=[$ZAI_KEY]" "repo pin: with the key file's credential"
+
+dispatch PROV-REPO-ZAI commit "ZAI_API_KEY_FILE=$ROOT/no-such-key"
+check "repo pin: the key-file requirement is intact" "$(result .status)" "setup_failed"
+check "repo pin: nothing was spawned" "$(spawns_of implementer)" "0"
+
+dispatch PROV-REPO-ZAI2 commit "IMPLEMENTER_PROVIDER=anthropic IMPLEMENTER_MODEL=claude-opus-5"
+check "repo pin: a zai pin outranks an ambient anthropic" \
+  "$(pin implementer-provider)" "zai"
+check "repo pin: the ambient anthropic model does not survive either" \
+  "$(pin implementer-model)" "glm-5.3"
+
+repo_pin ""
+
+# ---------------------------------------------------------------------------
+echo "== a synced run keeps the provider its dispatch pinned =="
+# ---------------------------------------------------------------------------
+# sync-pr re-runs the Claude tier of an existing run, so the run-dir pin is the
+# authority there — including for a run whose repo was pinned anthropic only
+# after it shipped on zai: the sync neither re-decides the provider nor lets
+# the zai model id reach its Anthropic-billed fallback.
+SYNC="PROV-SYNC"
+git -C "$REPO" checkout -q -b "fix/$SYNC" main
+printf 'branch side\n' > "$REPO/f.txt"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "feat: branch side"
+git -C "$REPO" push -q -u origin "fix/$SYNC"
+git -C "$REPO" checkout -q main
+printf 'base side\n' > "$REPO/f.txt"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "feat: base side"
+git -C "$REPO" push -q origin main
+git -C "$REPO" branch -q -D "fix/$SYNC"
+
+RUN="$RUNS/$SYNC"; WT="$ROOT/greenapp-prov-sync"
+mkdir -p "$RUN"
+printf '# fixture task\n' > "$RUN/brief.md"
+printf 'zai\n' > "$RUN/implementer-provider"
+printf 'glm-5.3\n' > "$RUN/implementer-model"
+jq -n --arg wt "$WT" --arg b "fix/$SYNC" \
+  '{ticket:"PROV-SYNC",status:"ready",worktree:$wt,branch:$b,base:"main"}' > "$RUN/result.json"
+cat > "$HARNESS/repos.local.sh" <<'EOF'
+repo_config_local() {
+  case "$2" in
+    greenapp|greenapp-*) INSTALL_CMD=''; GATE_CMD='true' IMPLEMENTER_PROVIDER='anthropic' ;;
+  esac
+}
+EOF
+: > "$ENVLOG"
+env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+    HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+    CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" HARNESS_NOTIFY=0 \
+    bash "$SRC/sync-pr.sh" "$SYNC" > "$ROOT/sync.log" 2>&1
+SYNC_RC=$?
+check "sync: the conflicted sync completes" "$SYNC_RC" "0"
+check "sync: the run-dir provider pin is untouched" "$(pin implementer-provider)" "zai"
+check "sync: and so is the model pin" "$(pin implementer-model)" "glm-5.3"
+SYNC_IMPL="$(env_of implementer)"
+has "$SYNC_IMPL" "model=[claude-opus-5]" \
+  "sync: the Anthropic-billed resolver runs the Anthropic model"
+has_not "$SYNC_IMPL" "glm-5.3" "sync: the zai model id never reaches it"
+has_not "$SYNC_IMPL" "base=[$ZAI_URL]" "sync: nor the zai endpoint"
 
 # ---------------------------------------------------------------------------
 echo "== the injection has exactly one home =="

@@ -20,6 +20,14 @@
 #   BASE_BRANCH    base branch PRs target            (default: staging|main|master, detected)
 #   INSTALL_CMD    install deps in a fresh worktree  (default: from lockfile)
 #   GATE_CMD       the deterministic test gate       (default: from lockfile)
+#   IMPLEMENTER_PROVIDER  which vendor the implementer bills to (anthropic | zai),
+#                  overriding the machine's ambient default. Pin `anthropic` for
+#                  a repo whose code is not approved for third-party model
+#                  providers: the pin outranks an exported IMPLEMENTER_PROVIDER,
+#                  so the dispatching machine's default cannot route that repo's
+#                  code to a third party.
+#   IMPLEMENTER_MODEL  a specific implementer model for this repo
+#                  (default: the provider's own)
 #   VISUAL_GATE_CMD  the visual profile's gate: render the app, check the frames,
 #                  ask the critic. One of the two ways a repo opts into the
 #                  profile — the other is carrying a .creative/ contract, which
