@@ -132,6 +132,23 @@ case "\$(cat "$CLAUDE_MODE")" in
     seq 1 30 >> impl.txt
     printf '{"type":"result","subtype":"success","session_id":"fork-%s","total_cost_usd":2.50}\n' "\$n"
     ;;
+  # The same two segments, each reporting the turn and token counters the CLI
+  # puts on its result event — the only place the real usage is ever reported.
+  usage-segments)
+    if [ "\$n" -lt 2 ]; then
+      printf '{"type":"result","subtype":"error_max_turns","session_id":"fork-%s","num_turns":40,"usage":{"input_tokens":1000,"cache_read_input_tokens":2000000,"cache_creation_input_tokens":30000,"output_tokens":5000,"service_tier":"standard"}}\n' "\$n"
+      exit 1
+    fi
+    seq 1 30 >> impl.txt
+    printf '{"type":"result","subtype":"success","session_id":"fork-%s","num_turns":52,"usage":{"input_tokens":500,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":10000,"output_tokens":2000,"service_tier":"standard"}}\n' "\$n"
+    ;;
+  # A stream cut mid-line, the shape a killed process leaves behind: one whole
+  # result event, then half of the next event and no newline at all.
+  usage-truncated)
+    seq 1 30 >> impl.txt
+    printf '{"type":"result","subtype":"success","session_id":"fork-%s","num_turns":7,"usage":{"input_tokens":100,"cache_read_input_tokens":200,"cache_creation_input_tokens":0,"output_tokens":300}}\n' "\$n"
+    printf '{"type":"assistant","message":{"content":[{"typ'
+    ;;
 esac
 # git(1) writes to stdout, and stdout is the stream-json the harness parses.
 git add -A >/dev/null
@@ -777,6 +794,76 @@ check "brief: edit locations detected"           "$(result .metrics.brief.has_ed
 check "brief: decision points detected"          "$(result .metrics.brief.has_decision_points)" "true"
 
 # ---------------------------------------------------------------------------
+echo "== what the run actually spent: window tokens and z.ai credits =="
+# ---------------------------------------------------------------------------
+# Per-`assistant`-event usage is zeros on zai and unreliable everywhere, so the
+# result event is the only source — and an attempt that resumed off the turn
+# ceiling has one per segment, whose SUM is what the attempt cost.
+has_key() {  # $1 = jq path to an object, $2 = key
+  jq -r "$1 | has(\"$2\")" "$RUN/result.json" 2>/dev/null
+}
+
+printf 'usage-segments\n' > "$CLAUDE_MODE"
+dispatch USAGE-SUM ""
+check "usage: two result events, and both are counted" \
+  "$(result .metrics.implementer_segments)" "2"
+check "usage: input tokens are summed across the segments" \
+  "$(result .metrics.usage.input_tokens)" "1500"
+check "usage: and so is the cache-read volume that dominates the bill" \
+  "$(result .metrics.usage.cache_read_input_tokens)" "3000000"
+check "usage: cache creation too" \
+  "$(result .metrics.usage.cache_creation_input_tokens)" "40000"
+check "usage: and output" "$(result .metrics.usage.output_tokens)" "7000"
+check "usage: turns are the CLI's own count, summed the same way" \
+  "$(result .metrics.usage.turns)" "92"
+check "usage: an anthropic run is billed flat, so it carries no credit estimate" \
+  "$(has_key .metrics.usage zai_credits_est)" "false"
+
+# The same stream on the other vendor: identical counters, plus the credit
+# estimate the Coding-Plan formula makes of them.
+#   (1500*6.9 + 3000000*1.7 + 7000*24) / 10000 = 527.835
+( umask 077; printf 'zai-not-a-real-key-0123456789\n' > "$HARNESS/zai-api-key" )
+dispatch USAGE-ZAI "IMPLEMENTER_PROVIDER=zai"
+printf 'commit\n' > "$CLAUDE_MODE"
+check "credits: the run really did bill the other vendor" \
+  "$(result .implementer_provider)" "zai"
+check "credits: a zai run prices its own tokens in Coding-Plan credits" \
+  "$(result .metrics.usage.zai_credits_est)" "527.84"
+check "credits: over the same summed counters" \
+  "$(result .metrics.usage.cache_read_input_tokens)" "3000000"
+
+# A stream cut mid-line by a killed process. Slurping the file failed on the
+# whole thing; every complete event before the cut still has to count.
+printf 'usage-truncated\n' > "$CLAUDE_MODE"
+dispatch USAGE-TRUNC ""
+printf 'commit\n' > "$CLAUDE_MODE"
+check "truncated: the stream really does end mid-line" \
+  "$(tail -c 1 "$RUN/opus-stream.jsonl")" 'p'
+check "truncated: the complete result event before the cut still counts" \
+  "$(result .metrics.usage.output_tokens)" "300"
+check "truncated: turns included" "$(result .metrics.usage.turns)" "7"
+check "truncated: and the run still reaches ready" "$(result .status)" "ready"
+
+# No result event at all — an implementer that died before reporting anything.
+# Zeros, never nulls, and metrics still get written.
+dispatch USAGE-NONE ""
+check "empty: every counter reads zero rather than null" \
+  "$(result '[.metrics.usage.input_tokens, .metrics.usage.cache_read_input_tokens,
+              .metrics.usage.cache_creation_input_tokens, .metrics.usage.output_tokens,
+              .metrics.usage.turns] | join(",")')" "0,0,0,0,0"
+exists "empty: and the run still writes its result" "$RUN/result.json"
+
+# Result events that report no num_turns at all: the turn count falls back to
+# the assistant events the stream does carry, rather than reporting nothing.
+printf 'ceiling-once\n' > "$CLAUDE_MODE"
+dispatch USAGE-NOTURNS ""
+printf 'commit\n' > "$CLAUDE_MODE"
+check "fallback: the CLI's own turn count is genuinely absent here" \
+  "$(result .metrics.implementer_num_turns)" ""
+check "fallback: so turns are counted from the assistant events instead" \
+  "$(result .metrics.usage.turns)" "2"
+
+# ---------------------------------------------------------------------------
 echo "== the config hash resolves the harness checkout from the installed entry =="
 # ---------------------------------------------------------------------------
 # The installed layout: a station dir whose run-task.sh is a symlink into a
@@ -1024,6 +1111,52 @@ has "$TIER" "claude_only 1" "counters: the Claude-only machine's arm is reported
 has "$TIER" "(none captured yet" \
   "counters: a corpus with no outcome.json says so instead of dividing by zero"
 
+# --- the token block, on a corpus that separates the two vendors -------------
+# The point of the block: GLM's turn and cache-read distribution beside Opus's,
+# so a spiral is visible rather than inferred. Its own runs dir again, so every
+# median is hand-computable.
+has_not "$FLAT" "MED_CACHE_RD" \
+  "tokens: a corpus that never recorded usage prints no token block at all"
+
+TOKH="$ROOT/token-harness"; TKRUNS="$TOKH/runs"
+mkdir -p "$TKRUNS"
+tokrun() { mkdir -p "$TKRUNS/$1"; printf '%s\n' "$2" > "$TKRUNS/$1/result.json"; }
+tokrun Z-1 '{"ticket":"Z-1","status":"ready","arm":"full","review":"reviewed",
+  "implementer_provider":"zai","worktree":"/w/myapp-z-1",
+  "metrics":{"wall_seconds":600,
+    "usage":{"input_tokens":1000,"cache_read_input_tokens":4000000,
+             "cache_creation_input_tokens":0,"output_tokens":10000,
+             "turns":90,"zai_credits_est":920.69}}}'
+tokrun Z-2 '{"ticket":"Z-2","status":"ready","arm":"full","review":"reviewed",
+  "implementer_provider":"zai","worktree":"/w/myapp-z-2",
+  "metrics":{"wall_seconds":600,
+    "usage":{"input_tokens":500,"cache_read_input_tokens":1000000,
+             "cache_creation_input_tokens":0,"output_tokens":5000,
+             "turns":30,"zai_credits_est":182.69}}}'
+tokrun O-1 '{"ticket":"O-1","status":"ready","arm":"full","review":"reviewed",
+  "implementer_provider":"anthropic","worktree":"/w/myapp-o-1",
+  "metrics":{"wall_seconds":600,
+    "usage":{"input_tokens":800,"cache_read_input_tokens":2000000,
+             "cache_creation_input_tokens":0,"output_tokens":4000,
+             "turns":20}}}'
+# A run from before any of this: no usage object, so no row and no zeros.
+tokrun OLD-1 '{"ticket":"OLD-1","status":"ready","arm":"full","review":"reviewed",
+  "implementer_provider":"anthropic","worktree":"/w/myapp-old-1",
+  "metrics":{"wall_seconds":600}}'
+TOK="$(env HARNESS_DIR="$TOKH" bash "$HARNESS/metrics.sh" --report | tr -s ' ')"
+
+has "$TOK" "pipeline vitals · 4 runs" "tokens: the corpus is four runs"
+has "$TOK" "TOKENS RUNS MED_TRN P90_TRN MED_CACHE_RD SUM_CACHE_RD SUM_OUTPUT CREDITS" \
+  "tokens: turns and cache-read are reported side by side, per run and summed"
+has "$TOK" "zai 2 60 90 2500000 5000000 15000 1103.38" \
+  "tokens: the GLM runs' turns, cache-read and summed credit estimate"
+has "$TOK" "anthropic 1 20 20 2000000 2000000 4000 -" \
+  "tokens: the flat-billed vendor reports the same counters and no credit figure"
+has "$TOK" "all 3 30 90 2000000 7000000 19000 1103.38" \
+  "tokens: with the whole corpus underneath, the pre-usage run left out of it"
+has "$TOK" "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled" \
+  "tokens: and the estimate says what it is and what it does not model"
+
 # End to end: the report over the runs this suite actually dispatched must equal
 # the source result.json corpus exactly. Deriving the expected totals keeps this
 # assertion reorder-safe without weakening it to "at least one".
@@ -1040,6 +1173,10 @@ check "live: and exactly the runs they held before the PR" \
   "${LIVE_HELD:-0}" "$EXPECTED_LIVE_HELD"
 LIVE_RUNS=$(printf '%s\n' "$LIVE" | awk '/^pipeline vitals/ { print $4 }')
 LIVE_ATTEMPTS=$(printf '%s\n' "$LIVE" | awk '/^attempts total/ { print $3 }')
+# End to end for the token telemetry too: the one zai run this suite dispatched
+# reaches the report as its own vendor row, counters and credit estimate intact.
+has "$LIVE" "zai 1 92 92 3000000 3000000 7000 527.84" \
+  "live: the dispatched zai run reports its turns, cache-read and credits"
 if [ "${LIVE_ATTEMPTS:-0}" -gt "${LIVE_RUNS:-0}" ]; then
   ok "live: the re-dispatched runs make attempts outnumber runs ($LIVE_ATTEMPTS vs $LIVE_RUNS)"
 else
