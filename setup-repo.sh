@@ -116,6 +116,7 @@ F_IMPLEMENTER_PROVIDER=""
 W_BASE_BRANCH=""; W_INSTALL_CMD=""; W_GATE_CMD=""; W_MCP_CONFIG=""
 W_ENV_SUBDIRS=""; W_DEV_CMD=""; W_DEMO_DEV_CMD=""; W_DEMO_PORT=""
 W_IMPLEMENTER_PROVIDER=""
+HANDWRITTEN_MATCH=0
 HINTS=""
 
 add_hint() { HINTS="${HINTS}  - $1"$'\n'; }
@@ -573,6 +574,12 @@ write_entry() {
     return 3
   fi
 
+  if [ "$HANDWRITTEN_MATCH" = 1 ]; then
+    warn "$LOCAL_FILE already has a hand-written arm that configures \"$NAME\"."
+    warn "Refusing to insert an earlier managed arm that would shadow it; edit the hand-written arm directly."
+    return 3
+  fi
+
   local armfile tmp
   armfile="$(mktemp "${TMPDIR:-/tmp}/setup-arm.XXXXXX")" || return 1
   tmp="$(mktemp "${TMPDIR:-/tmp}/setup-local.XXXXXX")" || { rm -f "$armfile"; return 1; }
@@ -612,17 +619,16 @@ write_entry() {
 # --- main --------------------------------------------------------------------
 detect_all
 [ "$DO_AI" = 1 ] && run_ai
-F_IMPLEMENTER_PROVIDER="$PROVIDER_ARG"
-[ -z "$PROVIDER_ARG" ] || W_IMPLEMENTER_PROVIDER="from --provider"
-
-# An arm that already pins a provider keeps it: the pin says which vendors may
-# see this repo's code, so an update that does not pass --provider must not
-# silently drop it. Asked of the file's own hook rather than parsed out of it.
-if [ -z "$F_IMPLEMENTER_PROVIDER" ] && [ -f "$LOCAL_FILE" ]; then
-  F_IMPLEMENTER_PROVIDER="$(
+# Ask the file's own hook whether it already configures this repo. A matching
+# hand-written arm must never be shadowed by a newly inserted managed arm: it
+# may carry custom or dynamic behavior that setup-repo cannot safely reproduce.
+# The hook's provider is also retained when refreshing an existing managed arm.
+EXISTING_IMPLEMENTER_PROVIDER=""
+if [ -f "$LOCAL_FILE" ]; then
+  EXISTING_IMPLEMENTER_PROVIDER="$(
     (
       # shellcheck disable=SC1090
-      . "$LOCAL_FILE" 2>/dev/null
+      . "$LOCAL_FILE" >/dev/null 2>&1 || exit 1
       # Match repo_config's initialized-output contract before invoking the
       # user's hook; hand-written arms may safely read any field under set -u.
       # shellcheck disable=SC2034
@@ -631,11 +637,28 @@ if [ -z "$F_IMPLEMENTER_PROVIDER" ] && [ -f "$LOCAL_FILE" ]; then
         VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
         ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
       }
+      command -v repo_config_local >/dev/null 2>&1 || exit 1
       repo_config_local "$REPO" "$NAME" >/dev/null 2>&1
       printf '%s' "${IMPLEMENTER_PROVIDER:-}"
+
+      [ -n "$BASE_BRANCH" ] || [ -n "$INSTALL_CMD" ] || [ -n "$GATE_CMD" ] ||
+        [ -n "$VISUAL_GATE_CMD" ] || [ -n "$VISUAL_SCOPE_GLOBS" ] ||
+        [ -n "$MCP_CONFIG" ] || [ -n "$ENV_SUBDIRS" ] || [ -n "$DEV_CMD" ] ||
+        [ -n "$PREFLIGHT_CMD" ] || [ -n "$DEMO_DEV_CMD" ] || [ -n "$DEMO_PORT" ] ||
+        [ -n "$PREPROD" ] || [ -n "$IMPLEMENTER_PROVIDER" ] || [ -n "$IMPLEMENTER_MODEL" ]
     )
   )"
-  [ -z "$F_IMPLEMENTER_PROVIDER" ] || W_IMPLEMENTER_PROVIDER="kept from the existing pin"
+  existing_config_status=$?
+  if [ "$existing_config_status" = 0 ] && ! arm_exists "$LOCAL_FILE"; then
+    HANDWRITTEN_MATCH=1
+  fi
+fi
+
+F_IMPLEMENTER_PROVIDER="$PROVIDER_ARG"
+[ -z "$PROVIDER_ARG" ] || W_IMPLEMENTER_PROVIDER="from --provider"
+if [ -z "$F_IMPLEMENTER_PROVIDER" ] && [ -n "$EXISTING_IMPLEMENTER_PROVIDER" ]; then
+  F_IMPLEMENTER_PROVIDER="$EXISTING_IMPLEMENTER_PROVIDER"
+  W_IMPLEMENTER_PROVIDER="kept from the existing pin"
 fi
 
 # PREFLIGHT_CMD is never auto-written (an untested path would break runs); if the

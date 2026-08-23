@@ -167,22 +167,43 @@ repo_config_local() {
     webapp|webapp-*)
       [ -n "$BASE_BRANCH" ] || BASE_BRANCH=main
       IMPLEMENTER_PROVIDER=anthropic
+      GATE_CMD='bash custom-compliance-gate.sh'
       ;;
   esac
 }
 SH
-HARNESS_DIR="$HC" bash "$SETUP" "$NPM" --write >/dev/null
+contract_before="$(cat "$HC/repos.local.sh")"
+if HARNESS_DIR="$HC" bash "$SETUP" "$NPM" --write >/dev/null 2>&1; then
+  bad "provider: a matching hand-written arm blocks managed insertion"
+else
+  ok "provider: a matching hand-written arm blocks managed insertion"
+fi
+check "provider: refused insertion leaves the hand-written arm untouched" \
+  "$(cat "$HC/repos.local.sh")" "$contract_before"
 contract_provider_pin() {
   (
     # shellcheck disable=SC1090
     . "$HC/repos.local.sh"
-    BASE_BRANCH=""; IMPLEMENTER_PROVIDER=""
+    # shellcheck disable=SC2034
+    BASE_BRANCH=""; GATE_CMD=""; IMPLEMENTER_PROVIDER=""
     repo_config_local "/x/webapp" webapp
     printf '%s' "${IMPLEMENTER_PROVIDER:-}"
   )
 }
 check "provider: carry-forward honors the initialized hook contract" \
   "$(contract_provider_pin)" "anthropic"
+contract_gate_pin() {
+  (
+    # shellcheck disable=SC1090
+    . "$HC/repos.local.sh"
+    # shellcheck disable=SC2034
+    BASE_BRANCH=""; GATE_CMD=""; IMPLEMENTER_PROVIDER=""
+    repo_config_local "/x/webapp" webapp
+    printf '%s' "${GATE_CMD:-}"
+  )
+}
+check "provider: refused insertion preserves the hand-written custom gate" \
+  "$(contract_gate_pin)" "bash custom-compliance-gate.sh"
 
 # Generated shell must be literal: repo names/paths can contain shell syntax and
 # --ai output is untrusted model text. Sourcing repos.local.sh must not execute
