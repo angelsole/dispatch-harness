@@ -38,8 +38,9 @@
 #                       (default ~/.local/share/uv/tools/shot-scraper/bin/python)
 #
 # Exit 0 = pass, 1 = the render failed the gate, 2 = the gate could not run at
-# all. Both non-zero codes are a failed round to the harness; the difference is
-# for the human reading the log.
+# all because this repo's contract is broken, 3 = the MACHINE could not render
+# (no browser, no server). 1 and 2 are a failed round to the harness; 3 is
+# `not_run` — no fix round, no outcome, because no model can install Chromium.
 set -u -o pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -82,6 +83,26 @@ die() {  # $1 = exit code, $2 = the one-line reason
   fi
   echo "=== visual gate (round $VISUAL_ROUND): FAIL ==="
   exit "$1"
+}
+
+# The gate could not run and the render is not why. A machine with no browser
+# scored `fail` once and cost a fix round aimed at an environment no model can
+# reach; the score file says `not_run` instead, and carries the one command a
+# human runs to make the stage possible. Never reachable once frames exist:
+# anything measured is a verdict, and a verdict is die()'s.
+not_run_die() {  # $1 = the one-line reason, $2 = the remedy command
+  step "$1"
+  echo "visual gate: $1" >&2
+  echo "visual gate: remedy: $2" >&2
+  if [ -d "$VISUAL_OUT" ]; then
+    jq -n --arg r "$1" --arg m "$2" --argjson round "${VISUAL_ROUND:-1}" \
+      '{status:"not_run", round:$round, reason:$r, remedy:$m, failures:[],
+        advisory:[], pairwise:"none", worst_axis:"", one_fix:"", critic:null,
+        critic_ran:false}' > "$SCORE" 2>/dev/null || true
+  fi
+  echo "=== visual gate (round $VISUAL_ROUND): NOT RUN — $1 ==="
+  echo "=== remedy: $2 ==="
+  exit 3
 }
 
 # --- config ------------------------------------------------------------------
@@ -173,43 +194,9 @@ mkdir -p "$FRAMES_DIR" || die 2 "cannot write frames into $FRAMES_DIR"
 echo "=== visual gate (round $VISUAL_ROUND) ==="
 echo "repo: $VISUAL_REPO   config: $VISUAL_CONF"
 
-# --- the renderer, and the one dependency it needs ---------------------------
-# Playwright comes from the venv shot-scraper already installed. Assert it here
-# rather than discovering it three steps later: a gate that cannot render must
-# say so in one line, and must never pass by default.
-"$VISUAL_PY" -c 'import playwright' >/dev/null 2>&1 \
-  || die 2 "no Playwright at $VISUAL_PY — install it with 'uv tool install shot-scraper' (it bundles Playwright 1.61) or point VISUAL_PY at a python that has it"
-"$VCHECK_PY" -c 'import numpy, PIL' >/dev/null 2>&1 \
-  || die 2 "$VCHECK_PY has no numpy/Pillow — the deterministic checks cannot run"
-
-# --- the page under judgement ------------------------------------------------
-if [ -n "$VISUAL_SERVER_CMD" ]; then
-  SRV_LOG="$VISUAL_TMP/server.log"
-  bash -c "$VISUAL_SERVER_CMD" > "$SRV_LOG" 2>&1 &
-  SERVER_PID=$!
-  # A server on --port 0 tells us its port and nothing else can: wait for the
-  # line, never guess, never sleep a fixed amount.
-  PORT=""
-  i=0
-  while [ "$i" -lt $((VISUAL_SERVER_TIMEOUT * 10)) ]; do
-    PORT=$(sed -nE "s|.*${VISUAL_SERVER_PORT_RE}.*|\1|p" "$SRV_LOG" 2>/dev/null | head -1)
-    [ -n "$PORT" ] && break
-    kill -0 "$SERVER_PID" 2>/dev/null || break
-    sleep 0.1
-    i=$((i + 1))
-  done
-  if [ -z "$PORT" ]; then
-    tail -20 "$SRV_LOG" 2>/dev/null | sed 's/^/  server: /'
-    die 2 "the server named by VISUAL_SERVER_CMD never printed a port matching $VISUAL_SERVER_PORT_RE"
-  fi
-  VISUAL_URL="${VISUAL_URL//\{port\}/$PORT}"
-  echo "server: pid $SERVER_PID on port $PORT"
-fi
-[ -n "$VISUAL_URL" ] \
-  || die 2 "$VISUAL_CONF sets neither VISUAL_URL nor a VISUAL_SERVER_CMD that yields one"
-echo "url: $VISUAL_URL"
-
 # --- the champion, copied in so the critic can Read it ------------------------
+# Before the machine is asked for anything: this is the repo's own state, so a
+# broken champion has to fail closed whether or not a browser exists here.
 CHAMPION_SHEET=""
 CHAMPION_COUNT=0
 if [ -d "$CHAMPION_DIR" ]; then
@@ -236,6 +223,61 @@ else
   echo "champion: none for $VISUAL_REPO — pairwise is 'none' this round, and the gate decides on the deterministic checks alone (the critic still grades, advisory)"
 fi
 
+# --- the renderer, and the one dependency it needs ---------------------------
+# Playwright comes from the venv shot-scraper already installed. Assert it here
+# rather than discovering it three steps later: a gate that cannot render must
+# say so in one line, and must never pass by default.
+"$VISUAL_PY" -c 'import playwright' >/dev/null 2>&1 \
+  || not_run_die "no Playwright at $VISUAL_PY — this machine cannot render" \
+       "uv tool install shot-scraper && npx playwright install chromium"
+"$VCHECK_PY" -c 'import numpy, PIL' >/dev/null 2>&1 \
+  || not_run_die "$VCHECK_PY has no numpy/Pillow — the deterministic checks cannot run" \
+       "$VCHECK_PY -m pip install numpy pillow"
+
+# Importable is not launchable: the browser binaries are a second install step,
+# and skipping it renders zero frames with nothing in the log that says why.
+# One launch, once, before a server is started or a shot is taken.
+step "probe: the headless browser"
+if ! "$VISUAL_PY" - > "$VISUAL_TMP/launch-probe.log" 2>&1 <<'PY'
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    p.chromium.launch(headless=True, args=[
+        "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]).close()
+PY
+then
+  tail -5 "$VISUAL_TMP/launch-probe.log" 2>/dev/null | sed 's/^/  probe: /'
+  not_run_die "the headless browser at $VISUAL_PY could not be launched" \
+    "npx playwright install chromium"
+fi
+
+# --- the page under judgement ------------------------------------------------
+if [ -n "$VISUAL_SERVER_CMD" ]; then
+  SRV_LOG="$VISUAL_TMP/server.log"
+  bash -c "$VISUAL_SERVER_CMD" > "$SRV_LOG" 2>&1 &
+  SERVER_PID=$!
+  # A server on --port 0 tells us its port and nothing else can: wait for the
+  # line, never guess, never sleep a fixed amount.
+  PORT=""
+  i=0
+  while [ "$i" -lt $((VISUAL_SERVER_TIMEOUT * 10)) ]; do
+    PORT=$(sed -nE "s|.*${VISUAL_SERVER_PORT_RE}.*|\1|p" "$SRV_LOG" 2>/dev/null | head -1)
+    [ -n "$PORT" ] && break
+    kill -0 "$SERVER_PID" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if [ -z "$PORT" ]; then
+    tail -20 "$SRV_LOG" 2>/dev/null | sed 's/^/  server: /'
+    not_run_die "the server named by VISUAL_SERVER_CMD never printed a port matching $VISUAL_SERVER_PORT_RE — there was no page to judge" \
+      "run VISUAL_SERVER_CMD by hand in the worktree and see what it prints"
+  fi
+  VISUAL_URL="${VISUAL_URL//\{port\}/$PORT}"
+  echo "server: pid $SERVER_PID on port $PORT"
+fi
+[ -n "$VISUAL_URL" ] \
+  || die 2 "$VISUAL_CONF sets neither VISUAL_URL nor a VISUAL_SERVER_CMD that yields one"
+echo "url: $VISUAL_URL"
+
 # --- render -------------------------------------------------------------------
 RENDER_STARTED=$(date +%s)
 SHOT_NAMES=""
@@ -259,7 +301,11 @@ for entry in "${VISUAL_SHOTS[@]}"; do
         --ready-js "$VISUAL_READY_JS" --reduced-motion "$VISUAL_REDUCED_MOTION" \
         --color-scheme "$VISUAL_COLOR_SCHEME" --animations "$VISUAL_ANIMATIONS" \
         --real-wait-ms "$VISUAL_REAL_WAIT_MS" > "$VISUAL_TMP/render-$name.json"; then
-    die 1 "render: shot '$name' produced no frames at $VISUAL_URL$suffix — the page did not come up, or the ready predicate never fired"
+    # Zero frames is an absence, not a picture: there is nothing for the checks
+    # to measure and nothing for the critic to look at, so it cannot be a taste
+    # verdict and a fix round aimed at it is aimed at nothing.
+    not_run_die "render: shot '$name' produced no frames at $VISUAL_URL$suffix — the page did not come up, or the ready predicate never fired" \
+      "open $VISUAL_URL$suffix by hand and check the app boots; if the browser is the problem, npx playwright install chromium"
   fi
   echo "render: $name -> $(jq -r '.frames | length' "$VISUAL_TMP/render-$name.json") frames in $(jq -r .seconds "$VISUAL_TMP/render-$name.json")s"
   jq -r '.page_errors[]? | "  page error: " + .' "$VISUAL_TMP/render-$name.json"
