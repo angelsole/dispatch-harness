@@ -663,6 +663,7 @@ setup-repo.sh <repo-path>            # print the proposed entry + a rationale
 setup-repo.sh <repo-path> --write    # save it into repos.local.sh
 setup-repo.sh <repo-path> --verify   # prove INSTALL_CMD + GATE_CMD pass first
 setup-repo.sh <repo-path> --ai       # let a model refine the proposal
+setup-repo.sh <repo-path> --provider anthropic --write   # pin the implementer's vendor too
 ```
 
 It reads `package.json` scripts, `pyproject.toml` / `uv.lock`,
@@ -685,7 +686,9 @@ determine is left blank (honestly reported) for runtime auto-detection.
   `repos.local.sh.example`; existing ones keep working unchanged.
 
 `setup-repo.sh` only *suggests* a `PREFLIGHT_CMD` (e.g. when it spots a
-docker-compose DB) — it never writes an untested preflight path.
+docker-compose DB) — it never writes an untested preflight path. Nor does it
+ever detect an `IMPLEMENTER_PROVIDER`: that field reaches the arm only through
+`--provider`, and an arm that already pins one keeps it through an update.
 
 ### PREPROD: the pre-production posture
 

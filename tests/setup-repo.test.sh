@@ -118,6 +118,42 @@ HARNESS_DIR="$H" bash "$SETUP" "$NPM" --write >/dev/null
 check "write: still one arm after change" "$(count)" "1"
 if verify_pins "npm run lint && npm test"; then ok "write: arm updated in place"; else bad "write: arm updated in place"; fi
 
+# --- --provider: written only when asked for, kept once pinned ----------------
+echo "== --provider =="
+HP="$ROOT/hp"; mkdir -p "$HP"
+cp "$SRC/repos.local.sh.example" "$HP/repos.local.sh"
+hp_count() { grep -cE '^[[:space:]]*# repo:webapp[[:space:]]*$' "$HP/repos.local.sh"; }
+provider_pin() {
+  (
+    # shellcheck disable=SC1090
+    . "$HP/repos.local.sh"
+    IMPLEMENTER_PROVIDER=""
+    repo_config_local "/x/webapp" webapp
+    printf '%s' "${IMPLEMENTER_PROVIDER:-}"
+  )
+}
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --write >/dev/null
+check "provider: not detected into a fresh arm" "$(provider_pin)" ""
+
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --provider anthropic --write >/dev/null
+check "provider: --provider anthropic lands in the arm" "$(provider_pin)" "anthropic"
+check "provider: one arm, not two" "$(hp_count)" "1"
+
+# The pin is policy, not detection: an update without --provider keeps it.
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --write >/dev/null
+check "provider: a re-run without --provider keeps the pin" "$(provider_pin)" "anthropic"
+check "provider: still one arm" "$(hp_count)" "1"
+
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --provider zai --write >/dev/null
+check "provider: --provider zai updates the pin in place" "$(provider_pin)" "zai"
+
+if HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --provider openai --write >/dev/null 2>&1; then
+  bad "provider: an unknown provider is refused"
+else
+  ok "provider: an unknown provider is refused"
+fi
+check "provider: the refused run wrote nothing" "$(provider_pin)" "zai"
+
 # Generated shell must be literal: repo names/paths can contain shell syntax and
 # --ai output is untrusted model text. Sourcing repos.local.sh must not execute
 # command substitutions embedded in values.
