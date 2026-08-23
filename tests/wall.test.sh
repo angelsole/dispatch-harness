@@ -44,6 +44,9 @@ for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/roo
          wall/console/console.js wall/fixtures/seed.js wall/fixtures/city.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
+check "console: JavaScript source contains no binary NUL byte" \
+  "$(node -e 'process.stdout.write(String(require("fs").readFileSync(process.argv[1]).includes(0)))' \
+    "$SRC/wall/console/console.js")" "false"
 # The fixture generator accepts a target for hermetic tests, but must never
 # treat an arbitrary existing directory as disposable fixture output.
 UNMARKED="$ROOT/not-fixtures"
