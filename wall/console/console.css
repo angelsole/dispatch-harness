@@ -304,6 +304,8 @@ main { padding: 14px 16px 4px; }
   }
 
   .detail { padding: 6px 12px 12px; }
+  .detail .title,
+  .detail .why { overflow-wrap: anywhere; }
   .attach button { min-height: 44px; }
   .feed .t { flex: none; }
   .feed .text { min-width: 0; }
