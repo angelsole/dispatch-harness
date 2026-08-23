@@ -97,7 +97,7 @@ visual_diff_in_scope() {
 # (git-excluded) and harvested into the run dir afterwards, because cleanup.sh
 # deletes worktrees and a champion has to outlive the run that earned it.
 run_visual_gate() {  # $1 = round
-  local rc started secs step script f visual_trace_prelude
+  local rc started secs step script f visual_trace_prelude reported_status
   stage "visual gate #$1 (deterministic + critic)"
   step="$RUN_DIR/visual-$1.step"
   : > "$step"
@@ -107,6 +107,9 @@ run_visual_gate() {  # $1 = round
   visual_trace_prelude="trap '$GATE_TRACE_WRITE' DEBUG"
   script="$visual_trace_prelude
 $VISUAL_GATE_CMD"
+  # Classification must use this invocation's score. A custom gate that writes
+  # no score must not inherit a previous round's not_run declaration.
+  rm -f "$WORKTREE/.harness/visual-score.json"
   started=$(date +%s)
   (cd "$WORKTREE" && HARNESS_GATE_STEP="$step" HARNESS_DIR="$HARNESS_DIR" \
      VISUAL_ROUND="$1" VISUAL_REPO="$(basename "$REPO")" \
@@ -114,10 +117,15 @@ $VISUAL_GATE_CMD"
   rc=$?
   secs=$(( $(date +%s) - started ))
   VISUAL_ROUNDS=$((VISUAL_ROUNDS + 1))
+  reported_status=$(jq -r '.status // ""' \
+    "$WORKTREE/.harness/visual-score.json" 2>/dev/null || echo "")
   case $rc in
-    0)                    VISUAL_STATUS="pass" ;;
-    "$VISUAL_RC_NOT_RUN") VISUAL_STATUS="not_run" ;;
-    *)                    VISUAL_STATUS="fail" ;;
+    0) VISUAL_STATUS="pass" ;;
+    "$VISUAL_RC_NOT_RUN")
+      if [ "$reported_status" = not_run ]; then VISUAL_STATUS="not_run"
+      else VISUAL_STATUS="fail"
+      fi ;;
+    *) VISUAL_STATUS="fail" ;;
   esac
   VISUAL_FAILED_STEP=""
   if [ "$VISUAL_STATUS" != pass ]; then
@@ -141,8 +149,8 @@ $VISUAL_GATE_CMD"
   if [ "$VISUAL_STATUS" = not_run ]; then
     VISUAL_REASON=$(jq -r '.reason // ""' "$RUN_DIR/visual/visual-score.json" 2>/dev/null || echo "")
     VISUAL_REMEDY=$(jq -r '.remedy // ""' "$RUN_DIR/visual/visual-score.json" 2>/dev/null || echo "")
-    # A pinned gate is free to exit 3 without writing a score file. It still has
-    # to be distinguishable from a stage that never ran at all.
+    # Keep a sparse custom not_run score useful without making its reason field
+    # mandatory; the status field and exit code are the protocol boundary.
     [ -n "$VISUAL_REASON" ] \
       || VISUAL_REASON="${VISUAL_FAILED_STEP:-the visual gate reported it could not run on this machine (exit $rc)}"
     echo "[harness] visual gate NOT RUN — $VISUAL_REASON${VISUAL_REMEDY:+ (remedy: $VISUAL_REMEDY)}"

@@ -380,7 +380,10 @@ before it renders anything, and each has its own non-verdict:
   browser that will not launch. That is not a taste verdict and no fix round
   can install Chromium, so the run ships and says so — `{status: "not_run",
   rounds, reason, remedy}` in `result.json` and a two-line note in the PR body.
-  Any gate pinned through `VISUAL_GATE_CMD` opts in by exiting **3**.
+  A gate pinned through `VISUAL_GATE_CMD` opts in by both exiting **3** and
+  writing `status: "not_run"` in `.harness/visual-score.json`; requiring both
+  preserves nonzero exit meanings used by custom gates that predate this
+  protocol.
 
 | Env var | Effect | Default |
 | --- | --- | --- |

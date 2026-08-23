@@ -994,6 +994,18 @@ exit 3
 EOF
 chmod +x "$ROOT/visual-notrun.sh"
 
+# Exit 3 had no reserved meaning in the old custom-gate contract. This fixture
+# is deliberately not updated to write the new score protocol: it represents a
+# pinned gate whose rejected-render exit code must remain a failure.
+cat > "$ROOT/visual-legacy-three.sh" <<EOF
+#!/usr/bin/env bash
+printf 'stub round %s\n' "\${VISUAL_ROUND:-?}" >> "$STUB_CALLS"
+printf 'custom gate rejected the render\n' > "\${HARNESS_GATE_STEP:-/dev/null}"
+echo "=== custom visual gate: REJECTED ==="
+exit 3
+EOF
+chmod +x "$ROOT/visual-legacy-three.sh"
+
 # Implementer, reviewer and visual fixer in one stand-in, told apart by prompt.
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
@@ -1249,6 +1261,20 @@ file_has "$RUN/pr-body.md" "npx playwright install chromium" \
   "not_run: and how to make the next run look"
 has_not "$(cat "$PROMPTS")" "cannot render this yourself" \
   "not_run: the reviewer is handed no frames, because there are none"
+
+# --- a legacy custom gate whose exit 3 means failure ------------------------
+: > "$STUB_CALLS"; : > "$FIX_PROMPTS"
+dispatch VIS-LEGACY-THREE "bash $ROOT/visual-legacy-three.sh"
+check "legacy exit 3: the gate still gets the bounded failure rounds" \
+  "$(grep -c 'stub round' "$STUB_CALLS" | tr -d ' ')" "2"
+check "legacy exit 3: still starts a fix round" \
+  "$(grep -c 'The visual gate is failing' "$FIX_PROMPTS" | tr -d ' ')" "1"
+check "legacy exit 3: remains a failed visual verdict" \
+  "$(result '.visual.status')" "fail"
+check "legacy exit 3: cannot ship a rejected render" \
+  "$(result .status)" "visual_failed"
+check "legacy exit 3: every round is recorded as fail" \
+  "$(awk '{print $2}' "$RUN/visual-rounds.log" | sort -u)" "fail"
 
 echo
 printf 'visual gate: %d passed, %d failed%s\n' "$pass" "$fail" \
