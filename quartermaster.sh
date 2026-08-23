@@ -465,6 +465,30 @@ validate_brief() {  # $1 = repo, $2 = branch
   return 0
 }
 
+# The unattended planner has no human approval step to catch a template-shaped
+# header with none of the contract the implementer needs. A section counts only
+# when its exact template heading is followed by some non-blank content before
+# the next top-level section; the documented "none" and "unknown" answers both
+# satisfy that rule without inviting the validator to invent semantics.
+validate_autobrief_contract() {  # $1 = candidate brief
+  local brief="$1" section missing=""
+  for section in "Reproduction" "Interface contract" "Edit locations" "Decision points"; do
+    if ! awk -v heading="## $section" '
+      $0 == heading { seen = 1; inside = 1; next }
+      inside && /^## / { exit }
+      inside && /[^[:space:]]/ { content = 1 }
+      END { exit !(seen && content) }
+    ' "$brief"; then
+      missing="${missing}${missing:+, }## $section"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    echo "the generated brief is missing or leaves empty required section(s): $missing" >&2
+    return 1
+  fi
+  return 0
+}
+
 # The marker that opens and closes the quoted ticket text. Minted per call so
 # that no description — which is written long before this runs — can contain it
 # and close the fence early.
@@ -759,6 +783,11 @@ to the path and under the rules given above the fence."
   reason=$(validate_brief "$r" "$b" 2>&1 >/dev/null); rc=$?
   if [ "$rc" -ne 0 ]; then
     [ "$rc" -eq 2 ] || reject_brief "$candidate" "${brief%.md}.rejected.md"
+    printf '%s\n' "$reason" >&2
+    return 1
+  fi
+  if ! reason=$(validate_autobrief_contract "$candidate" 2>&1 >/dev/null); then
+    reject_brief "$candidate" "${brief%.md}.rejected.md"
     printf '%s\n' "$reason" >&2
     return 1
   fi

@@ -215,11 +215,16 @@ brief=\$(printf '%s\n' "\$2" | sed -n 's/^  \\(.*\/[^/]*\\.md\\)\$/\\1/p' | head
 repo=\$(printf '%s\n' "\$2" | grep '/greenapp\$' | head -1)
 mode=\$(cat "$CLAUDE_MODE" 2>/dev/null || echo good)
 [ -n "\$brief" ] && mkdir -p "\$(dirname "\$brief")"
-header() {  # \$1 = path, \$2 = branch
+headers() {  # \$1 = path, \$2 = branch
   printf -- '# Auto\n\n- **Repo**: %s\n- **Branch**: %s\n- **Base**: main\n' "\$repo" "\$2" > "\$1"
+}
+header() {  # \$1 = path, \$2 = branch
+  headers "\$1" "\$2"
+  printf '\n## Reproduction\nnone — greenfield feature\n\n## Interface contract\nnone — internal change only\n\n## Edit locations\nunknown — research did not identify the edit location\n\n## Decision points\nnone — no implementation forks identified\n' >> "\$1"
 }
 case "\$mode" in
   good)       header "\$brief" auto/n1 ;;
+  incomplete) headers "\$brief" auto/n1 ;;
   exit-fail)  header "\$brief" auto/n1; exit 1 ;;
   prose)      printf 'This ticket seems to be about boilers.\n' > "\$brief" ;;
   alien-repo) printf -- '- **Repo**: /somewhere/else\n- **Branch**: auto/n1\n' > "\$brief" ;;
@@ -724,6 +729,8 @@ exists "autobrief: the quarantined brief is kept for the post-mortem" \
 autobrief_fails prose      "no **Repo** / **Branch** header"        "prose instead of a brief"
 autobrief_fails alien-repo "names a repo not on this machine"       "an invented repo"
 autobrief_fails bad-branch "not a valid git ref"                    "an unusable branch name"
+autobrief_fails incomplete "missing or leaves empty required section(s)" \
+                            "a header-only document"
 autobrief_fails silent     "planner wrote no brief"                 "a planner that wrote nothing"
 
 # Briefing stops at the last remaining fire slot, not just at capacity.
