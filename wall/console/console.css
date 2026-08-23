@@ -122,7 +122,7 @@ main { padding: 14px 16px 4px; }
     52px                  /* provider */
     minmax(150px, 1.1fr)  /* stage */
     minmax(180px, 2.4fr)  /* activity */
-    62px 62px             /* in-stage, total */
+    86px 86px             /* labelled in-stage, total */
     92px                  /* diff */
     46px                  /* turns */
     minmax(48px, auto);   /* gate */
@@ -171,7 +171,16 @@ main { padding: 14px 16px 4px; }
 .actor { font-weight: 600; white-space: nowrap; }
 .stage-label { color: var(--dim); font-size: 12px; }
 
-.elapsed { color: var(--dim); text-align: right; }
+.elapsed { color: var(--dim); text-align: right; white-space: nowrap; }
+.elapsed::before {
+  margin-right: 4px;
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.elapsed.in-stage::before { content: 'stage'; }
+.elapsed.total::before { content: 'total'; }
 
 .diff { text-align: right; white-space: nowrap; }
 .plus { color: var(--ok); }

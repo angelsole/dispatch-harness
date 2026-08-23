@@ -144,6 +144,10 @@ if [ -z "$ACTOR_GAP" ]; then
 else
   bad "console: stage-vocab actors the console cannot draw ($ACTOR_GAP)"
 fi
+grep_ok "$CONSOLE_SRC" ".elapsed.in-stage::before { content: 'stage'; }" \
+  "console: stage elapsed has a visible label"
+grep_ok "$CONSOLE_SRC" ".elapsed.total::before { content: 'total'; }" \
+  "console: total elapsed has a visible label"
 # Everything under wall/vendor/ that is not documentation is third-party code,
 # and the manifest is the pin: a swapped bundle fails here rather than shipping.
 VENDOR_CHECK="$(node -e '
