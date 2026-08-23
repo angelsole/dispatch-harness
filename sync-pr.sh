@@ -39,7 +39,11 @@ REPO="${WORKTREE%-$TICKET_LC}"
 
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
+AMBIENT_IMPLEMENTER_PROVIDER="${IMPLEMENTER_PROVIDER:-}"
+AMBIENT_IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-}"
 repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD ENV_SUBDIRS ...
+[ -n "${IMPLEMENTER_PROVIDER:-}" ] || IMPLEMENTER_PROVIDER="$AMBIENT_IMPLEMENTER_PROVIDER"
+[ -n "${IMPLEMENTER_MODEL:-}" ] || IMPLEMENTER_MODEL="$AMBIENT_IMPLEMENTER_MODEL"
 BASE_REF="origin/$BASE_BRANCH"
 
 # This script writes the same status/timeline/activity files a run does, so a
@@ -256,19 +260,25 @@ run_codex() {  # $1 = label, $2 = prompt
 }
 
 # Claude fallback, mirroring run-task.sh: fresh session, ANTHROPIC_API_KEY unset
-# (subscription billing), worker permissions, same timeout cap. Provider,
-# model, and effort come from the run's pinned implementer knobs, falling back
-# to the same defaults run-task.sh pins them with — one definition, in
-# lib/common.sh. A cross-vendor implementer's model never leaks into this
-# Anthropic-billed fallback.
-IMPLEMENTER_PROVIDER="${IMPLEMENTER_PROVIDER:-$(harness_knob "$RUN_DIR" implementer-provider "$DEFAULT_IMPLEMENTER_PROVIDER")}"
-IMPLEMENTER_MODEL="${IMPLEMENTER_MODEL:-$(harness_knob "$RUN_DIR" implementer-model "$DEFAULT_IMPLEMENTER_MODEL")}"
-IMPLEMENTER_EFFORT="${IMPLEMENTER_EFFORT:-$(harness_knob "$RUN_DIR" implementer-effort "$DEFAULT_IMPLEMENTER_EFFORT")}"
+# (subscription billing), worker permissions, same timeout cap. A sync is a
+# resume of an existing run, so its pinned implementer knobs are authoritative:
+# the first dispatch froze provider, model and effort, and neither the repo's
+# pin nor this shell's environment re-decides them here. The value around each
+# knob call covers a run dir that predates the pin files; the defaults are the
+# same ones run-task.sh pins with — one definition, in lib/common.sh. A
+# cross-vendor implementer's model never leaks into this Anthropic-billed
+# fallback.
+IMPLEMENTER_PROVIDER="$(harness_knob "$RUN_DIR" implementer-provider "${IMPLEMENTER_PROVIDER:-$DEFAULT_IMPLEMENTER_PROVIDER}")"
+IMPLEMENTER_MODEL="$(harness_knob "$RUN_DIR" implementer-model "${IMPLEMENTER_MODEL:-$DEFAULT_IMPLEMENTER_MODEL}")"
+IMPLEMENTER_EFFORT="$(harness_knob "$RUN_DIR" implementer-effort "${IMPLEMENTER_EFFORT:-$DEFAULT_IMPLEMENTER_EFFORT}")"
 CLAUDE_WORKER_MODEL="$IMPLEMENTER_MODEL"
 [ "$IMPLEMENTER_PROVIDER" = anthropic ] || CLAUDE_WORKER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 run_claude_worker() {  # $1 = label, $2 = prompt
   (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
-      env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+      env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+          -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
+          -u CLAUDE_CODE_AUTO_COMPACT_WINDOW \
+          CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
       "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \

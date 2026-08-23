@@ -118,6 +118,93 @@ HARNESS_DIR="$H" bash "$SETUP" "$NPM" --write >/dev/null
 check "write: still one arm after change" "$(count)" "1"
 if verify_pins "npm run lint && npm test"; then ok "write: arm updated in place"; else bad "write: arm updated in place"; fi
 
+# --- --provider: written only when asked for, kept once pinned ----------------
+echo "== --provider =="
+HP="$ROOT/hp"; mkdir -p "$HP"
+cp "$SRC/repos.local.sh.example" "$HP/repos.local.sh"
+hp_count() { grep -cE '^[[:space:]]*# repo:webapp[[:space:]]*$' "$HP/repos.local.sh"; }
+provider_pin() {
+  (
+    # shellcheck disable=SC1090
+    . "$HP/repos.local.sh"
+    IMPLEMENTER_PROVIDER=""
+    repo_config_local "/x/webapp" webapp
+    printf '%s' "${IMPLEMENTER_PROVIDER:-}"
+  )
+}
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --write >/dev/null
+check "provider: not detected into a fresh arm" "$(provider_pin)" ""
+
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --provider anthropic --write >/dev/null
+check "provider: --provider anthropic lands in the arm" "$(provider_pin)" "anthropic"
+check "provider: one arm, not two" "$(hp_count)" "1"
+
+# The pin is policy, not detection: an update without --provider keeps it.
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --write >/dev/null
+check "provider: a re-run without --provider keeps the pin" "$(provider_pin)" "anthropic"
+check "provider: still one arm" "$(hp_count)" "1"
+
+HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --provider zai --write >/dev/null
+check "provider: --provider zai updates the pin in place" "$(provider_pin)" "zai"
+
+if HARNESS_DIR="$HP" bash "$SETUP" "$NPM" --provider openai --write >/dev/null 2>&1; then
+  bad "provider: an unknown provider is refused"
+else
+  ok "provider: an unknown provider is refused"
+fi
+check "provider: the refused run wrote nothing" "$(provider_pin)" "zai"
+
+# Carry-forward calls the same hook as repo_config, so it must provide the full
+# initialized-output contract. A valid hand-written arm can read another field
+# under set -u before assigning the provider.
+HC="$ROOT/hc"; mkdir -p "$HC"
+cat > "$HC/repos.local.sh" <<'SH'
+repo_config_local() {
+  local name="$2"
+  case "$name" in
+    # >>> setup-repo managed >>>
+    # <<< setup-repo managed <<<
+    webapp|webapp-*)
+      [ -n "$BASE_BRANCH" ] || BASE_BRANCH=main
+      IMPLEMENTER_PROVIDER=anthropic
+      GATE_CMD='bash custom-compliance-gate.sh'
+      ;;
+  esac
+}
+SH
+contract_before="$(cat "$HC/repos.local.sh")"
+if HARNESS_DIR="$HC" bash "$SETUP" "$NPM" --write >/dev/null 2>&1; then
+  bad "provider: a matching hand-written arm blocks managed insertion"
+else
+  ok "provider: a matching hand-written arm blocks managed insertion"
+fi
+check "provider: refused insertion leaves the hand-written arm untouched" \
+  "$(cat "$HC/repos.local.sh")" "$contract_before"
+contract_provider_pin() {
+  (
+    # shellcheck disable=SC1090
+    . "$HC/repos.local.sh"
+    # shellcheck disable=SC2034
+    BASE_BRANCH=""; GATE_CMD=""; IMPLEMENTER_PROVIDER=""
+    repo_config_local "/x/webapp" webapp
+    printf '%s' "${IMPLEMENTER_PROVIDER:-}"
+  )
+}
+check "provider: carry-forward honors the initialized hook contract" \
+  "$(contract_provider_pin)" "anthropic"
+contract_gate_pin() {
+  (
+    # shellcheck disable=SC1090
+    . "$HC/repos.local.sh"
+    # shellcheck disable=SC2034
+    BASE_BRANCH=""; GATE_CMD=""; IMPLEMENTER_PROVIDER=""
+    repo_config_local "/x/webapp" webapp
+    printf '%s' "${GATE_CMD:-}"
+  )
+}
+check "provider: refused insertion preserves the hand-written custom gate" \
+  "$(contract_gate_pin)" "bash custom-compliance-gate.sh"
+
 # Generated shell must be literal: repo names/paths can contain shell syntax and
 # --ai output is untrusted model text. Sourcing repos.local.sh must not execute
 # command substitutions embedded in values.

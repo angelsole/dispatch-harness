@@ -5,7 +5,15 @@
 # Per-repo pipeline config, sourced by run-task.sh / sync-pr.sh / preview.sh.
 # repo_config <repo-or-worktree-path> sets:
 #   BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD VISUAL_SCOPE_GLOBS \
-#   MCP_CONFIG ENV_SUBDIRS DEV_CMD PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD
+#   MCP_CONFIG ENV_SUBDIRS DEV_CMD PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD \
+#   IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL
+#
+# IMPLEMENTER_PROVIDER is the policy knob of the three: a repo is the boundary
+# for which vendors may see its code, so a pin here outranks the machine's
+# ambient IMPLEMENTER_PROVIDER (an exported default in the dispatching shell).
+# Pin `anthropic` on a repo that is not approved for third-party model
+# providers. IMPLEMENTER_MODEL independently follows repo pin, ambient env,
+# then the selected provider's builtin default.
 #
 # VISUAL_GATE_CMD is the visual profile's gate — the stage that renders the app
 # and judges the picture. Never auto-detected here: the profile supplies its own
@@ -51,7 +59,7 @@ repo_config() {
   local repo="$1"
   local name; name=$(basename "$repo")
   BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
-  VISUAL_SCOPE_GLOBS=""
+  VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
   ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
 
   # User pins first (if repos.local.sh defined the hook); auto-detection then

@@ -69,7 +69,16 @@ fi
 
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
-repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD
+# The implementer knobs resolve repo pin > ambient env > builtin default. The
+# pin comes from repo_config below, which blanks both knobs on the way in, so
+# the shell's own values are held here and restored only where no pin took the
+# field — a repo pinned `anthropic` keeps an exported zai default from routing
+# its code to a third-party provider.
+AMBIENT_PROVIDER="${IMPLEMENTER_PROVIDER:-}"
+AMBIENT_MODEL="${IMPLEMENTER_MODEL:-}"
+repo_config "$REPO"   # sets BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD MCP_CONFIG ENV_SUBDIRS PREFLIGHT_CMD IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL
+[ -n "${IMPLEMENTER_PROVIDER:-}" ] || IMPLEMENTER_PROVIDER="$AMBIENT_PROVIDER"
+[ -n "${IMPLEMENTER_MODEL:-}" ] || IMPLEMENTER_MODEL="$AMBIENT_MODEL"
 # Keep the unset path independent of the optional library, including on an old
 # install that predates mirror.sh.
 if [ -n "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/mirror.sh" ]; then
@@ -2168,9 +2177,15 @@ run_codex() {  # $1 = round label, $2 = prompt
 # Logs are named after the model that produced them, like opus.log/codex-N.log.
 # It never sees the implementer's provider env — that is exported inside
 # opus_attempt's subshell alone — so this stays Anthropic whoever implemented.
+# The z.ai-only variables are unset rather than merely never set: on a station
+# whose ambient shell points the CLI at the compatible endpoint, an inherited
+# ANTHROPIC_BASE_URL would silently route this stage there too.
 run_claude_worker() {  # $1 = round label, $2 = prompt
   (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
-      env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+      env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+          -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
+          -u CLAUDE_CODE_AUTO_COMPACT_WINDOW \
+          CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
       "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \

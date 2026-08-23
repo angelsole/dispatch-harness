@@ -116,8 +116,8 @@ to before — this is instrumentation, not a redesign.
 
 | Env var | Effect | Default |
 | --- | --- | --- |
-| `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
-| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. The default follows the provider. | `claude-opus-5`, or `glm-5.3` on `zai` |
+| `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Resolved **repo pin → ambient env → default**: a [repo pin](#the-repo-pin) outranks the value this shell exports. Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
+| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Resolved **repo pin → ambient env → provider default**, independently of the provider setting. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5`, or `glm-5.3` on `zai` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
@@ -625,6 +625,7 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 | `BASE_BRANCH` | Base branch PRs target | detected: `staging` → `main` → `master` |
 | `INSTALL_CMD` | Install deps in a fresh worktree | from lockfile (`npm ci` / `yarn install` / `uv sync`) |
 | `GATE_CMD` | The deterministic test gate | from lockfile (`npm test` / `yarn test` / `uv run pytest`) |
+| `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to (`anthropic` \| `zai`). The pin outranks the machine's ambient `IMPLEMENTER_PROVIDER` | the ambient value, else `anthropic` |
 | `VISUAL_GATE_CMD` | The [visual profile's](#profiles) gate. Setting it is one of the two ways a repo opts in | none; the shipped gate once the profile applies |
 | `VISUAL_SCOPE_GLOBS` | Git pathspec globs naming the paths that repo's picture is made of; a branch touching none of them skips the [visual gate](#profiles) | none; the profile's `wall/** .creative/** assets/**` |
 | `MCP_CONFIG` | Path to an `.mcp.json` the worker loads | none (skipped if the path is missing) |
@@ -638,6 +639,12 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 `GATE_CMD` is the heart of it: it is the objective checkpoint both models are
 measured against. Point it at the strictest fast feedback your repo has —
 types, lint, and tests.
+
+`IMPLEMENTER_PROVIDER` is the compliance pin: a station whose ambient default
+is `zai` pins `anthropic` on the repos it dispatches that are not approved for
+third-party model providers, so an exported machine default can never route
+that code to one. `IMPLEMENTER_MODEL` independently follows repo pin, ambient
+environment, then the selected provider's default.
 
 `PREFLIGHT_CMD` fails a run fast on a broken environment *before* burning an
 implementer pass. See
@@ -656,6 +663,7 @@ setup-repo.sh <repo-path>            # print the proposed entry + a rationale
 setup-repo.sh <repo-path> --write    # save it into repos.local.sh
 setup-repo.sh <repo-path> --verify   # prove INSTALL_CMD + GATE_CMD pass first
 setup-repo.sh <repo-path> --ai       # let a model refine the proposal
+setup-repo.sh <repo-path> --provider anthropic --write   # pin the implementer's vendor too
 ```
 
 It reads `package.json` scripts, `pyproject.toml` / `uv.lock`,
@@ -678,7 +686,9 @@ determine is left blank (honestly reported) for runtime auto-detection.
   `repos.local.sh.example`; existing ones keep working unchanged.
 
 `setup-repo.sh` only *suggests* a `PREFLIGHT_CMD` (e.g. when it spots a
-docker-compose DB) — it never writes an untested preflight path.
+docker-compose DB) — it never writes an untested preflight path. Nor does it
+ever detect an `IMPLEMENTER_PROVIDER`: that field reaches the arm only through
+`--provider`, and an arm that already pins one keeps it through an update.
 
 ### PREPROD: the pre-production posture
 

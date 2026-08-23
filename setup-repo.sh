@@ -19,8 +19,12 @@
 # writes nothing. --write appends/updates the entry in your repos.local.sh
 # (idempotently — re-running a repo updates its managed arm, never duplicates).
 #
+# IMPLEMENTER_PROVIDER is the one field never detected: it says which vendors
+# may see a repo's code, so it is written only when you pass --provider, and an
+# arm that already pins one keeps it through an update.
+#
 # Usage:
-#   setup-repo.sh <repo-path> [--ai] [--verify] [--write]
+#   setup-repo.sh <repo-path> [--provider anthropic|zai] [--ai] [--verify] [--write]
 #   setup-repo.sh -h | --help
 #
 # Env overrides:
@@ -54,7 +58,10 @@ MANAGED_END='# <<< setup-repo managed <<<'
 # Fields we know how to pin. PREFLIGHT_CMD is deliberately absent from what we
 # WRITE (auto-writing a preflight is out of scope — an untested path would break
 # runs); it is accepted from --ai only so the model can suggest it as a hint.
+# IMPLEMENTER_PROVIDER is absent from BOTH lists: --ai must not pick a vendor
+# for a repo's code, and it reaches the arm only through --provider below.
 KNOWN_FIELDS='BASE_BRANCH INSTALL_CMD GATE_CMD MCP_CONFIG ENV_SUBDIRS DEV_CMD DEMO_DEV_CMD DEMO_PORT PREFLIGHT_CMD'
+KNOWN_PROVIDERS='anthropic zai'
 
 usage() { harness_usage "$0"; }
 warn()  { printf 'setup-repo: %s\n' "$*" >&2; }
@@ -73,12 +80,14 @@ self_dir() {
 }
 
 # --- args --------------------------------------------------------------------
-DO_AI=0; DO_VERIFY=0; DO_WRITE=0; REPO=""
+DO_AI=0; DO_VERIFY=0; DO_WRITE=0; REPO=""; PROVIDER_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --ai)       DO_AI=1 ;;
     --verify)   DO_VERIFY=1 ;;
     --write)    DO_WRITE=1 ;;
+    --provider) [ $# -ge 2 ] || { warn "--provider needs a value (one of: $KNOWN_PROVIDERS)"; exit 2; }
+                PROVIDER_ARG="$2"; shift ;;
     -h|--help)  usage; exit 0 ;;
     -*)         warn "unknown option: $1"; usage >&2; exit 2 ;;
     *)          [ -z "$REPO" ] || { warn "unexpected argument: $1"; exit 2; }
@@ -92,13 +101,22 @@ REPO="$(cd "$REPO" 2>/dev/null && pwd)" || die "no such directory: $REPO"
 [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "$REPO is not a git repo"
 NAME="$(basename "$REPO")"
 
+case "$PROVIDER_ARG" in
+  '') ;;
+  anthropic|zai) ;;
+  *) die "--provider: '$PROVIDER_ARG' is not a known provider (one of: $KNOWN_PROVIDERS)" ;;
+esac
+
 # --- field + rationale state -------------------------------------------------
 # One F_<field> value var and one W_<field> rationale var per field. Initialised
 # empty so `set -u` is safe even for fields we never touch.
 F_BASE_BRANCH=""; F_INSTALL_CMD=""; F_GATE_CMD=""; F_MCP_CONFIG=""
 F_ENV_SUBDIRS=""; F_DEV_CMD=""; F_DEMO_DEV_CMD=""; F_DEMO_PORT=""; F_PREFLIGHT_CMD=""
+F_IMPLEMENTER_PROVIDER=""
 W_BASE_BRANCH=""; W_INSTALL_CMD=""; W_GATE_CMD=""; W_MCP_CONFIG=""
 W_ENV_SUBDIRS=""; W_DEV_CMD=""; W_DEMO_DEV_CMD=""; W_DEMO_PORT=""
+W_IMPLEMENTER_PROVIDER=""
+HANDWRITTEN_MATCH=0
 HINTS=""
 
 add_hint() { HINTS="${HINTS}  - $1"$'\n'; }
@@ -484,6 +502,7 @@ build_arm() {
   [ -n "$F_BASE_BRANCH" ]  && render_assignment BASE_BRANCH "$F_BASE_BRANCH"
   [ -n "$F_INSTALL_CMD" ]  && render_assignment INSTALL_CMD "$F_INSTALL_CMD"
   [ -n "$F_GATE_CMD" ]     && render_assignment GATE_CMD "$F_GATE_CMD"
+  [ -n "$F_IMPLEMENTER_PROVIDER" ] && render_assignment IMPLEMENTER_PROVIDER "$F_IMPLEMENTER_PROVIDER"
   [ -n "$F_MCP_CONFIG" ]   && render_assignment MCP_CONFIG "$F_MCP_CONFIG"
   [ -n "$F_ENV_SUBDIRS" ]  && render_assignment ENV_SUBDIRS "$F_ENV_SUBDIRS"
   [ -n "$F_DEV_CMD" ]      && render_assignment DEV_CMD "$F_DEV_CMD"
@@ -509,6 +528,8 @@ print_proposal() {
   rationale_line BASE_BRANCH   "$F_BASE_BRANCH"  "$W_BASE_BRANCH"
   rationale_line INSTALL_CMD   "$F_INSTALL_CMD"  "$W_INSTALL_CMD"
   rationale_line GATE_CMD      "$F_GATE_CMD"     "$W_GATE_CMD"
+  [ -n "$F_IMPLEMENTER_PROVIDER" ] \
+    && rationale_line IMPLEMENTER_PROVIDER "$F_IMPLEMENTER_PROVIDER" "$W_IMPLEMENTER_PROVIDER"
   rationale_line MCP_CONFIG    "$F_MCP_CONFIG"   "$W_MCP_CONFIG"
   rationale_line ENV_SUBDIRS   "$F_ENV_SUBDIRS"  "$W_ENV_SUBDIRS"
   rationale_line DEV_CMD       "$F_DEV_CMD"      "$W_DEV_CMD"
@@ -553,6 +574,12 @@ write_entry() {
     return 3
   fi
 
+  if [ "$HANDWRITTEN_MATCH" = 1 ]; then
+    warn "$LOCAL_FILE already has a hand-written arm that configures \"$NAME\"."
+    warn "Refusing to insert an earlier managed arm that would shadow it; edit the hand-written arm directly."
+    return 3
+  fi
+
   local armfile tmp
   armfile="$(mktemp "${TMPDIR:-/tmp}/setup-arm.XXXXXX")" || return 1
   tmp="$(mktemp "${TMPDIR:-/tmp}/setup-local.XXXXXX")" || { rm -f "$armfile"; return 1; }
@@ -592,6 +619,47 @@ write_entry() {
 # --- main --------------------------------------------------------------------
 detect_all
 [ "$DO_AI" = 1 ] && run_ai
+# Ask the file's own hook whether it already configures this repo. A matching
+# hand-written arm must never be shadowed by a newly inserted managed arm: it
+# may carry custom or dynamic behavior that setup-repo cannot safely reproduce.
+# The hook's provider is also retained when refreshing an existing managed arm.
+EXISTING_IMPLEMENTER_PROVIDER=""
+if [ -f "$LOCAL_FILE" ]; then
+  EXISTING_IMPLEMENTER_PROVIDER="$(
+    (
+      # shellcheck disable=SC1090
+      . "$LOCAL_FILE" >/dev/null 2>&1 || exit 1
+      # Match repo_config's initialized-output contract before invoking the
+      # user's hook; hand-written arms may safely read any field under set -u.
+      # shellcheck disable=SC2034
+      {
+        BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
+        VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
+        ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
+      }
+      command -v repo_config_local >/dev/null 2>&1 || exit 1
+      repo_config_local "$REPO" "$NAME" >/dev/null 2>&1
+      printf '%s' "${IMPLEMENTER_PROVIDER:-}"
+
+      [ -n "$BASE_BRANCH" ] || [ -n "$INSTALL_CMD" ] || [ -n "$GATE_CMD" ] ||
+        [ -n "$VISUAL_GATE_CMD" ] || [ -n "$VISUAL_SCOPE_GLOBS" ] ||
+        [ -n "$MCP_CONFIG" ] || [ -n "$ENV_SUBDIRS" ] || [ -n "$DEV_CMD" ] ||
+        [ -n "$PREFLIGHT_CMD" ] || [ -n "$DEMO_DEV_CMD" ] || [ -n "$DEMO_PORT" ] ||
+        [ -n "$PREPROD" ] || [ -n "$IMPLEMENTER_PROVIDER" ] || [ -n "$IMPLEMENTER_MODEL" ]
+    )
+  )"
+  existing_config_status=$?
+  if [ "$existing_config_status" = 0 ] && ! arm_exists "$LOCAL_FILE"; then
+    HANDWRITTEN_MATCH=1
+  fi
+fi
+
+F_IMPLEMENTER_PROVIDER="$PROVIDER_ARG"
+[ -z "$PROVIDER_ARG" ] || W_IMPLEMENTER_PROVIDER="from --provider"
+if [ -z "$F_IMPLEMENTER_PROVIDER" ] && [ -n "$EXISTING_IMPLEMENTER_PROVIDER" ]; then
+  F_IMPLEMENTER_PROVIDER="$EXISTING_IMPLEMENTER_PROVIDER"
+  W_IMPLEMENTER_PROVIDER="kept from the existing pin"
+fi
 
 # PREFLIGHT_CMD is never auto-written (an untested path would break runs); if the
 # model suggested one, surface it as a hint the user can act on deliberately.
