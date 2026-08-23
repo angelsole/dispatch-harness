@@ -1186,6 +1186,14 @@ has "$TOK" "anthropic 1 20 20 20 2000000 2000000 4000 -" \
   "tokens: the flat-billed vendor reports the same counters and no credit figure"
 has "$TOK" "all 3 30 90 140 2000000 7000000 19000 1103.38" \
   "tokens: with the whole corpus underneath, the pre-usage run left out of it"
+has "$TOK" "PROVIDER RUN TURNS CACHE_RD OUTPUT CREDITS" \
+  "tokens: the aggregate table is followed by per-run telemetry"
+has "$TOK" "zai Z-1 90 4000000 10000 920.69" \
+  "tokens: the first GLM run retains its own output and credit values"
+has "$TOK" "zai Z-2 30 1000000 5000 182.69" \
+  "tokens: the second GLM run is separately visible in the provider group"
+has "$TOK" "anthropic O-1 20 2000000 4000 -" \
+  "tokens: the Anthropic run is grouped separately without a z.ai estimate"
 has "$TOK" "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled" \
   "tokens: and the estimate says what it is and what it does not model"
 

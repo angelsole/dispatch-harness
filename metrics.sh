@@ -101,7 +101,9 @@ REPORT_FILTER='
              ((.cache_read_input_tokens // 0) | tostring),
              ((.output_tokens // 0) | tostring),
              ((.zai_credits_est // "") | tostring))
-       end)
+       end),
+    # Stable label for the per-run telemetry rows in the report block.
+    (.ticket // "-")
   ] | @tsv'
 
 # One line per attempt of every run: the status it died on, and the idle gap
@@ -257,6 +259,11 @@ report() {
         p = ($19 == "" ? "-" : $19)
         if (!(p in pseen)) { pseen[p] = 1; porder[++nprov] = p }
         pruns[p]++
+        prun[p, pruns[p]] = $24
+        prunturn[p, pruns[p]] = $20 + 0
+        pruncache[p, pruns[p]] = $21 + 0
+        prunout[p, pruns[p]] = $22 + 0
+        pruncred[p, pruns[p]] = $23
         pturns[p, ++ptn[p]] = $20 + 0
         pturnsum[p] += $20 + 0
         pcache[p, ++pcn[p]] = $21 + 0
@@ -400,11 +407,20 @@ report() {
             pturnsum[pk] + 0, median(tc, pcn[pk] + 0), pcachesum[pk] + 0, poutsum[pk] + 0, \
             (pcred[pk] + 0 > 0 ? sprintf("%.2f", pcred[pk]) : "-")
         }
-        delete k
         printf "%-12s %5d %8d %8d %8d %14d %14d %13d %11s\n", "all", natn, \
           median(aturns, natn), pctl(aturns, natn, 90), \
           aturnsum + 0, median(acache, nacn), acachesum + 0, aoutsum + 0, \
           (acred + 0 > 0 ? sprintf("%.2f", acred) : "-")
+        printf "\n%-12s %-20s %8s %14s %13s %11s\n", \
+          "PROVIDER", "RUN", "TURNS", "CACHE_RD", "OUTPUT", "CREDITS"
+        for (i = 1; i <= n; i++) {
+          pk = k[i]
+          for (j = 1; j <= pruns[pk]; j++)
+            printf "%-12s %-20s %8d %14d %13d %11s\n", \
+              pk, prun[pk, j], prunturn[pk, j], pruncache[pk, j], prunout[pk, j], \
+              (pruncred[pk, j] + 0 > 0 ? sprintf("%.2f", pruncred[pk, j]) : "-")
+        }
+        delete k
         print "credits: z.ai Coding-Plan estimate, (input*6.9 + cache_read*1.7 + output*24)/10000 — off-peak discount not modelled"
       }
 

@@ -868,12 +868,14 @@ to merge, reverts — over the runs that have an [outcome.json](#the-run-directo
 (the [janitor's](operations.md#the-janitor) ground truth, so a corpus it has not
 visited prints `(none captured yet)` and everything else is unchanged).
 
-A `TOKENS` block sits between them, one row per `implementer_provider` plus an
-`all` row: median, p90 and total turns, median and total cache-read tokens, total output
-tokens, and — for `zai` rows — the summed
+A `TOKENS` block sits between them: aggregate rows per `implementer_provider`
+plus an `all` row show median, p90 and total turns, median and total cache-read
+tokens, total output tokens, and — for `zai` rows — the summed
 [credit estimate](#metrics-schema). Turns and cache-read are the pair a runaway
 run shows up in, and they are only comparable within one vendor, which is what
-the grouping is for. Runs recorded before `metrics.usage` existed carry no row.
+the grouping is for. A second table keeps each recorded run's turns, cache-read,
+output and estimate visible within those provider groups. Runs recorded before
+`metrics.usage` existed carry no row.
 
 ### Metrics schema
 
