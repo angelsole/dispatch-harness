@@ -44,6 +44,12 @@ verb() {  # $1 = captured output, $2 = run id or pid
 verbs() {  # $1 = captured output, $2 = verb -> how many lines carry it
   printf '%s\n' "$1" | awk -v v="$2" '$1 == "[janitor]" && $2 == v { n++ } END { print n+0 }'
 }
+# One field of a fixture run's outcome, or `no-outcome-file` when none was
+# written. The null test is explicit — jq's `//` folds false into it.
+oc() {  # $1 = jq path, $2 = run id
+  jq -r "$1 as \$v | if \$v == null then \"null\" else (\$v | tostring) end" \
+    "$RUNS/$2/outcome.json" 2>/dev/null || printf 'no-outcome-file'
+}
 
 # --- fixture: a repo with a real (local) origin -------------------------------
 FHOME="$ROOT/home"; AGENTS="$FHOME/Library/LaunchAgents"
@@ -70,26 +76,37 @@ git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
 
 # --- fakes -------------------------------------------------------------------
-# gh answers a PR's state from the number at the end of its url, so each fixture
-# run picks its verdict by picking a url. Mode `denied` is an install that was
-# never logged in: `auth status` fails and no state can be read at all.
+# gh answers a PR from the number at the end of its url, so each fixture run
+# picks its verdict by picking a url: the state, the dates and the squash commit
+# come out of $ROOT/pr-<n>.json (written below, once the fixture repo has real
+# commits to name), the review-comment count out of the api branch. Modes:
+# `denied` is an install that was never logged in (nothing can be read at all);
+# `api-down` is a working install whose api endpoint errors — the outcome has to
+# degrade to a null field, not fail the sweep.
 cat > "$FAKES/gh" <<EOF
 #!/usr/bin/env bash
 printf 'cwd:%s argv:%s\n' "\$PWD" "\$*" >> "$GH_LOG"
 mode=\$(cat "$GH_MODE" 2>/dev/null || echo authed)
 case "\${1:-}" in
-  auth) [ "\$mode" = authed ] || exit 1; exit 0 ;;
-  pr)   [ "\$mode" = authed ] || exit 1 ;;
+  auth) [ "\$mode" = denied ] && exit 1; exit 0 ;;
+  pr|api) [ "\$mode" = denied ] && exit 1 ;;
   *)    exit 1 ;;
 esac
+if [ "\${1:-}" = api ]; then
+  [ "\$mode" = api-down ] && exit 1
+  # Trailing *: the path is not the last word of the argv (--jq follows it).
+  # The arms exit: the pr-view tail below would otherwise cat a pr-.json that
+  # does not exist and turn a answered page into a failed call.
+  case "\$*" in
+    *"/pulls/1/comments"*) printf '201\n'; exit 0 ;;
+    *"/pulls/2/comments"*) printf '101\n102\n103\n'; exit 0 ;;
+    *) exit 0 ;;
+  esac
+fi
 url=""
 for a in "\$@"; do case "\$a" in http*) url="\$a" ;; esac; done
-case "\${url##*/}" in
-  1|3|6) printf 'MERGED\n' ;;
-  2)     printf 'OPEN\n' ;;
-  7)     printf 'CLOSED\n' ;;
-  *)     exit 1 ;;          # the API said nothing this script may act on
-esac
+# the API said nothing this script may act on
+cat "$ROOT/pr-\${url##*/}.json" 2>/dev/null || exit 1
 EOF
 
 # ps is faked for every invocation in this suite, not just the reaping cases:
@@ -126,13 +143,64 @@ mkrun() {  # $1 = id, $2 = stage text, $3 = worktree ('' = none), $4 = pr url
   mkdir -p "$d"
   printf '%s %s\n' "$(date +%s)" "$2" > "$d/status"
   [ -n "$3" ] && printf '%s\n' "$3" > "$d/worktree"
-  printf '{"ticket":"%s","status":"ready","worktree":"%s","branch":"feat/%s","pr_url":"%s"}\n' \
+  printf '{"ticket":"%s","status":"ready","worktree":"%s","branch":"feat/%s","base":"main","pr_url":"%s"}\n' \
     "$1" "$3" "$1" "$4" > "$d/result.json"
   printf 'the log that is never deleted\n' > "$d/feed.log"
 }
 mkwt() {  # $1 = branch, $2 = path
   git -C "$REPO" worktree add -q -b "$1" "$2" >/dev/null 2>&1
 }
+
+# The base branch a merged PR leaves behind: the landing itself ($M1), a
+# follow-up touching one of its files, one touching nothing it changed ($F2),
+# and a revert of the landing. The outcome's follow-up and revert counts are
+# computed against exactly this history, so they are asserted on real git, not
+# on a canned number.
+printf 'landed\n'         > "$REPO/impl.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "feat: PR 1 lands"
+M1=$(git -C "$REPO" rev-parse HEAD)
+printf 'elsewhere\n'      > "$REPO/other.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "chore: touches nothing PR 1 changed"
+F2=$(git -C "$REPO" rev-parse HEAD)
+printf 'landed, then fixed\n' > "$REPO/impl.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "fix: follow-up on the PR's file"
+rm "$REPO/impl.txt"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "Revert \"feat: PR 1 lands\"" -m "This reverts commit $M1."
+git -C "$REPO" push -q origin main
+# Advance the remote from another clone. The run repository's origin/main is
+# now stale until the janitor refreshes it, exactly as after a GitHub-side merge
+# or a later base-branch push from another machine.
+REMOTE_WRITER="$ROOT/remote-writer"
+git clone -q "$BARE" "$REMOTE_WRITER" 2>/dev/null
+git -C "$REMOTE_WRITER" config user.email t@t
+git -C "$REMOTE_WRITER" config user.name t
+printf 'remote follow-up\n' > "$REMOTE_WRITER/impl.txt"
+git -C "$REMOTE_WRITER" add -A
+git -C "$REMOTE_WRITER" commit -q \
+  -m "docs: document the regression introduced by $F2"
+REMOTE_FOLLOW=$(git -C "$REMOTE_WRITER" rev-parse HEAD)
+git -C "$REMOTE_WRITER" push -q origin main
+
+# What `gh pr view` answers per PR number: state, both dates, the squash commit
+# and the files it changed — as objects with a path, the shape gh itself answers
+# with, which is what the outcome's file list is read out of. Merged PRs share
+# $M1 except PR 3, whose landing is the unrelated $F2 — so its follow-up count
+# is zero against the same history. PR 5 gets no fixture: its poll has no
+# answer at all.
+mkpr() {  # $1 = number, $2 = state, $3 = createdAt, $4 = mergedAt|'', $5 = oid|'', $6 = files (json array)
+  jq -n --arg state "$2" --arg created "$3" --arg merged "$4" --arg oid "$5" \
+     --argjson files "$6" '{state:$state, createdAt:$created,
+       mergedAt: (if $merged == "" then null else $merged end),
+       mergeCommit: (if $oid == "" then null else {oid:$oid} end),
+       files: $files}' > "$ROOT/pr-$1.json"
+}
+mkpr 1 MERGED 2026-08-20T09:00:00Z 2026-08-20T10:00:00Z "$M1" '[{"path":"impl.txt"}]'
+mkpr 2 OPEN   2026-08-20T09:00:00Z ""                   ""    '[{"path":"impl.txt"}]'
+mkpr 3 MERGED 2026-08-21T09:00:00Z 2026-08-21T09:30:00Z "$F2" '[{"path":"other.txt"}]'
+mkpr 6 MERGED 2026-08-20T09:00:00Z 2026-08-20T10:00:00Z "$M1" '[{"path":"impl.txt"}]'
+mkpr 7 CLOSED 2026-08-20T09:00:00Z ""                   ""    '[{"path":"impl.txt"}]'
+mkpr 8 MERGED 2026-08-20T09:00:00Z 2026-08-20T10:00:00Z "$M1" '[{"path":"impl.txt"}]'
 
 PR=https://github.com/acme/app/pull
 WT_SWEEP="$ROOT/wt-merged-clean"
@@ -142,6 +210,7 @@ WT_NOPR="$ROOT/wt-no-pr"
 WT_UNKNOWN="$ROOT/wt-unreadable"
 WT_LIVE="$ROOT/wt-still-running"
 WT_CLOSED="$ROOT/wt-closed-pr"
+WT_SETTLED="$ROOT/wt-settled-merged"
 
 mkwt feat/merged-clean  "$WT_SWEEP"
 mkwt feat/open-pr       "$WT_OPEN"
@@ -150,6 +219,7 @@ mkwt feat/no-pr         "$WT_NOPR"
 mkwt feat/unreadable    "$WT_UNKNOWN"
 mkwt feat/still-running "$WT_LIVE"
 mkwt feat/closed-pr     "$WT_CLOSED"
+mkwt feat/settled-merged "$WT_SETTLED"
 printf 'work nobody has committed\n' > "$WT_DIRTY/scratch.txt"
 
 mkrun merged-clean  "done: ready"        "$WT_SWEEP"   "$PR/1"
@@ -161,8 +231,18 @@ mkrun unreadable    "done: ready"        "$WT_UNKNOWN" "$PR/5"
 # thing standing between this run and having the floor pulled out from under it.
 mkrun still-running "implementing — Opus (Claude sub)" "$WT_LIVE" "$PR/6"
 mkrun closed-pr     "done: ready"        "$WT_CLOSED"  "$PR/7"
-# A run cleanup.sh already promoted: nothing left to do, and not an error.
-mkrun already-swept "done: ready"        "$ROOT/wt-gone" "$PR/1"
+# A run cleanup.sh already promoted: nothing left to do, and not an error. Its
+# PR/8 outcome is terminal and long settled, so it is the run the age knob has
+# to leave alone — not even polled.
+mkrun already-swept "done: ready"        "$ROOT/wt-gone" "$PR/8"
+printf '%s\n' '{"pr_state":"MERGED","merged_at":"2026-08-20T10:00:00Z","time_to_merge_s":3600,
+"review_comment_count":0,"follow_up_commits":9,"reverted":false,"checked_at":"2026-01-01T00:00:00Z"}' \
+  > "$RUNS/already-swept/outcome.json"
+SETTLED_OUTCOME=$(cat "$RUNS/already-swept/outcome.json")
+# The same aged terminal outcome can still have a worktree standing. It remains
+# eligible for cleanup from the persisted state even though refresh has stopped.
+mkrun settled-merged "done: ready" "$WT_SETTLED" "$PR/8"
+printf '%s\n' "$SETTLED_OUTCOME" > "$RUNS/settled-merged/outcome.json"
 # A run whose stage line never landed. Merged and clean, and still not the
 # janitor's to take: a run whose state cannot be read is not a run that is done.
 WT_NOSTATUS="$ROOT/wt-no-status"
@@ -201,6 +281,10 @@ out=$(jan "JANITOR_PROC_AGE=soon" --report); rc=$?
 nonzero "guard: a non-numeric age refuses to run" "$rc"
 has "$out" "JANITOR_PROC_AGE must be whole seconds" "guard: it says what an age has to be"
 
+out=$(jan "JANITOR_OUTCOME_MAX_AGE=fortnight" --report); rc=$?
+nonzero "guard: a non-numeric outcome age refuses to run" "$rc"
+has "$out" "JANITOR_OUTCOME_MAX_AGE must be whole days" "guard: it says what an outcome age has to be"
+
 exists "guard: no guard removed a worktree" "$WT_SWEEP"
 
 # ---------------------------------------------------------------------------
@@ -215,6 +299,8 @@ check "unauthed: nothing is sweepable" "$(verbs "$out" sweep)" "0"
 check "unauthed: the merged run is unknown, not merged" "$(verb "$out" merged-clean)" "keep"
 has "$out" "PR state unreadable" "unauthed: an unreadable state is named as one"
 exists "unauthed: the merged worktree is still there" "$WT_SWEEP"
+absent "unauthed: no outcome is written off a state nobody could read" \
+  "$RUNS/merged-clean/outcome.json"
 printf 'authed\n' > "$GH_MODE"
 
 # `gh` missing entirely is a different message and the same restraint. Asserted
@@ -240,6 +326,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo "== outcome: an api that errors degrades to a null, never a failed sweep =="
+# ---------------------------------------------------------------------------
+printf 'api-down\n' > "$GH_MODE"
+out=$(jan "" --report); rc=$?
+check "api-down: --report still exits 0" "$rc" "0"
+check "api-down: the merged run's outcome still records the state" \
+  "$(oc .pr_state merged-clean)" "MERGED"
+check "api-down: and the follow-up count, which asks git and not the api" \
+  "$(oc .follow_up_commits merged-clean)" "3"
+check "api-down: the review count it could not read is null, not a zero it never counted" \
+  "$(oc .review_comment_count merged-clean)" "null"
+printf 'authed\n' > "$GH_MODE"
+
+# ---------------------------------------------------------------------------
 echo "== --report: one sweepable run, and nothing touched =="
 # ---------------------------------------------------------------------------
 : > "$GH_LOG"
@@ -247,11 +347,11 @@ out=$(jan "" --report); rc=$?
 check "report: exits 0" "$rc" "0"
 # The cwd is matched by its tail: cd normalises the doubled slash mktemp can
 # leave in $TMPDIR, so the recorded path is not $WT_OPEN byte for byte.
-file_has "$GH_LOG" "/wt-open-pr argv:pr view $PR/2 --json state" \
+file_has "$GH_LOG" "/wt-open-pr argv:pr view $PR/2 --json state,mergedAt,createdAt,mergeCommit,files" \
   "report: each PR is asked about from inside that run's own worktree"
 
 check "report: merged + clean is the one to sweep"      "$(verb "$out" merged-clean)"  "sweep"
-check "report: exactly one run is sweepable"            "$(verbs "$out" sweep)"        "1"
+check "report: exactly two runs are sweepable"           "$(verbs "$out" sweep)"        "2"
 check "report: an OPEN PR is kept"                      "$(verb "$out" open-pr)"       "keep"
 check "report: a merged but dirty worktree is kept"     "$(verb "$out" merged-dirty)"  "keep"
 check "report: a run with no PR is kept"                "$(verb "$out" no-pr)"         "keep"
@@ -267,16 +367,18 @@ has "$out" "no status line — cannot tell if it is done" "report: an unreadable
 
 # A run whose worktree cleanup.sh already removed is not a finding, and the
 # quartermaster's report directory is not a run.
-has "$out" "1 of 9 runs had no worktree left" "report: an already-promoted run is counted, not reported"
+has "$out" "1 of 10 runs had no worktree left" "report: an already-promoted run is counted, not reported"
 has "$out" "7 kept" "report: the seven it may not touch are counted"
-has "$out" "1 worktree(s) sweepable" "report: the sweepable count is on the summary line"
+has "$out" "2 worktree(s) sweepable" "report: the sweepable count is on the summary line"
 has "$out" "kept: 1 open · 1 closed · 1 dirty · 1 unknown · 1 no-pr · 2 unfinished" \
   "report: the summary breaks the kept runs down by reason"
-has "$out" "--report touched nothing" "report: it says it did nothing"
+has "$out" "--report swept and reaped nothing" "report: it says it did nothing"
+has "$out" "outcomes: 6 written · 2 settled (terminal, over 14 days old) · 1 not readable" \
+  "report: the outcome counts are on the summary line"
 
 echo "== --report is side-effect-free =="
 for w in "$WT_SWEEP" "$WT_OPEN" "$WT_DIRTY" "$WT_NOPR" "$WT_UNKNOWN" "$WT_LIVE" "$WT_CLOSED" \
-         "$WT_NOSTATUS"; do
+         "$WT_NOSTATUS" "$WT_SETTLED"; do
   exists "report: $(basename "$w") is untouched" "$w"
 done
 check "report: git still knows every worktree" "$(wt_count)" "$WT_BEFORE"
@@ -284,19 +386,69 @@ exists "report: the dirty file was not committed away" "$WT_DIRTY/scratch.txt"
 absent "report: no LaunchAgent was written" "$AGENTS/com.olyx.janitor.plist"
 
 # ---------------------------------------------------------------------------
-echo "== --clean: the merged clean worktree, and only that one =="
+echo "== outcome.json: the ground truth a finished run leaves behind =="
+# ---------------------------------------------------------------------------
+# Every number below is computed against the fixture repo's refreshed history:
+# three commits after $M1 touch impl.txt (a follow-up, the revert, and one pushed
+# from another clone), none touch
+# other.txt, and the revert's message names $M1.
+check "outcome: a merged run records the PR state"      "$(oc .pr_state merged-clean)" "MERGED"
+check "outcome: when it merged"                          "$(oc .merged_at merged-clean)" "2026-08-20T10:00:00Z"
+check "outcome: how long the PR took to merge"           "$(oc .time_to_merge_s merged-clean)" "3600"
+check "outcome: how many review comments humans left"    "$(oc .review_comment_count merged-clean)" "1"
+check "outcome: base commits after the merge touching its files" \
+  "$(oc .follow_up_commits merged-clean)" "3"
+check "outcome: the base ref was refreshed from remote" \
+  "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" "$REMOTE_FOLLOW"
+check "outcome: a revert commit naming the squash SHA"   "$(oc .reverted merged-clean)" "true"
+# The api count that failed in the api-down pass is re-read now that it answers.
+check "outcome: a field that was null is refreshed, not left behind" \
+  "$(oc .review_comment_count merged-clean)" "1"
+
+check "outcome: an OPEN PR has no merge facts to record" "$(oc .pr_state open-pr)" "OPEN"
+check "outcome: open means no merged_at"                 "$(oc .merged_at open-pr)" "null"
+check "outcome: and no time-to-merge"                    "$(oc .time_to_merge_s open-pr)" "null"
+check "outcome: its review comments are still the signal" "$(oc .review_comment_count open-pr)" "3"
+check "outcome: no git facts are invented for it"        "$(oc .follow_up_commits open-pr)" "null"
+check "outcome: a CLOSED PR is recorded as closed"       "$(oc .pr_state closed-pr)" "CLOSED"
+check "outcome: closed, so terminal, and never merged"   "$(oc .merged_at closed-pr)" "null"
+# A different landing commit on the same history: no commit after $F2 touches
+# other.txt. The later documentation commit mentions $F2 in prose but does not
+# carry git-revert's exact trailer, so it must not be labeled as a revert.
+check "outcome: a PR nothing followed up on reads zero"  "$(oc .follow_up_commits merged-dirty)" "0"
+check "outcome: and is not reverted"                     "$(oc .reverted merged-dirty)" "false"
+# The api answers an empty page and exit 0 for PR 3: zero comments, not the
+# blank line a sloppier count would turn into one.
+check "outcome: a PR nobody commented on counts zero"    "$(oc .review_comment_count merged-dirty)" "0"
+check "outcome: a live run's PR fate is recorded too"    "$(oc .pr_state still-running)" "MERGED"
+exists "outcome: the repo the git facts came from is kept in the run dir" "$RUNS/merged-clean/repo"
+# The state nobody could read is not an outcome: PR 5 has no pr-5 fixture, so
+# the poll fails and nothing is written that would pretend to knowledge.
+absent "outcome: an unreadable PR writes no outcome"     "$RUNS/unreadable/outcome.json"
+
+# The age knob: a terminal outcome older than the knob is not even polled, and
+# the file is left exactly as it was.
+check "outcome: a settled outcome is not rewritten" "$(cat "$RUNS/already-swept/outcome.json")" "$SETTLED_OUTCOME"
+has_not "$(cat "$GH_LOG")" "$PR/8" "outcome: a settled outcome is not even polled"
+check "outcome: a settled standing run is still sweepable" "$(verb "$out" settled-merged)" "sweep"
+check "outcome: exactly one api call per refreshed run" \
+  "$(grep -c "pulls/2/comments" "$GH_LOG" | tr -d ' ')" "1"
+
+# ---------------------------------------------------------------------------
+echo "== --clean: merged clean worktrees, including settled ones =="
 # ---------------------------------------------------------------------------
 out=$(jan "" --clean); rc=$?
 check "clean: exits 0" "$rc" "0"
 absent "clean: the merged clean worktree is gone" "$WT_SWEEP"
+absent "clean: the settled merged worktree is gone" "$WT_SETTLED"
 for w in "$WT_OPEN" "$WT_DIRTY" "$WT_NOPR" "$WT_UNKNOWN" "$WT_LIVE" "$WT_CLOSED" "$WT_NOSTATUS"; do
   exists "clean: $(basename "$w") is still there" "$w"
 done
-check "clean: git dropped exactly one worktree" "$(wt_count)" "$((WT_BEFORE - 1))"
+check "clean: git dropped exactly two worktrees" "$(wt_count)" "$((WT_BEFORE - 2))"
 has_not "$(git -C "$REPO" worktree list)" "wt-merged-clean" "clean: git no longer lists the swept worktree"
 has     "$(git -C "$REPO" worktree list)" "wt-open-pr"      "clean: git still lists the open PR's worktree"
 
-has "$out" "1 worktree(s) swept" "clean: the summary counts the sweep"
+has "$out" "2 worktree(s) swept" "clean: the summary counts the sweep"
 has "$out" "removed worktree $WT_SWEEP" "clean: cleanup.sh is what removed it, and says so"
 has "$out" "run logs kept at $RUNS/merged-clean" "clean: cleanup.sh kept the run's logs"
 has "$out" "pruned worktree metadata in $REPO_REAL" "clean: the repo it touched was pruned"
@@ -312,7 +464,7 @@ out=$(jan "" --clean); rc=$?
 check "again: exits 0" "$rc" "0"
 check "again: nothing is sweepable" "$(verbs "$out" sweep)" "0"
 has "$out" "0 worktree(s) swept" "again: it says it swept nothing"
-has "$out" "2 of 9 runs had no worktree left" "again: the swept run joins the already-clean ones"
+has "$out" "3 of 10 runs had no worktree left" "again: the swept runs join the already-clean one"
 check "again: still seven kept" "$(verbs "$out" keep)" "7"
 
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
@@ -450,7 +602,7 @@ echo "== shipped and documented like its siblings =="
 file_has "$SRC/install.sh" 'janitor.sh' "docs: install.sh installs the script"
 file_has "$SRC/README.md"  'janitor.sh' "docs: README names it"
 file_has "$SRC/docs/operations.md" 'janitor.sh --clean' "docs: operations documents the acting mode"
-for k in JANITOR_AT JANITOR_PROC_AGE JANITOR_PROC_MATCH JANITOR_GH_TIMEOUT; do
+for k in JANITOR_AT JANITOR_PROC_AGE JANITOR_PROC_MATCH JANITOR_GH_TIMEOUT JANITOR_OUTCOME_MAX_AGE; do
   file_has "$SRC/docs/operations.md" "$k" "docs: operations documents $k"
 done
 
