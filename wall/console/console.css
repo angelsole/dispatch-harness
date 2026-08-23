@@ -244,13 +244,10 @@ main { padding: 14px 16px 4px; }
 .foot { padding: 0 16px 20px; color: var(--faint); font-size: 12px; }
 .foot a { color: var(--dim); }
 
-/* --- a phone --------------------------------------------------------------------
-   The desktop line is a ten-column grid whose column minimums alone want about
-   a thousand pixels, so on a ~390px screen the board scrolled sideways. Below
-   560px the same ten spans reflow into a card — id, repo and provider on the
-   first row, the actor under it, then the activity, then the numbers along the
-   bottom — and everything long ellipsizes inside the card rather than widening
-   the page. Nothing above 560px is touched. */
+/* --- a phone ------------------------------------------------------------------
+   Additive: below 560px the same ten spans of a line reflow into one card. Every
+   item that can hold an unbounded string is shrinkable and clipped here, because
+   a single unshrinkable one scrolls the whole page sideways. */
 
 @media (max-width: 560px) {
   .bar {
@@ -287,7 +284,7 @@ main { padding: 14px 16px 4px; }
     min-height: 44px;
     padding: 10px 12px;
   }
-  .run .line > .id { flex: none; }
+  .run .line > .id { flex: 0 1 auto; min-width: 0; }
   .run .line > .repo { flex: 1 1 0; min-width: 0; }
   .run .line > .badge { flex: none; }
   .run .line > .stage { flex: 1 0 100%; }
