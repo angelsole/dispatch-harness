@@ -25,9 +25,9 @@ VISUAL_FAILED_STEP=""
 # thing that tells "the stage never happened" from "the stage could not run".
 VISUAL_REASON=""; VISUAL_REMEDY=""
 
-# The gate's exit code for an environment that cannot render — a missing
-# browser, a server that never came up. Distinct from a failing render, because
-# no fix round can install Chromium.
+# The shipped gate's exit code for an environment that cannot render, such as a
+# missing browser. Distinct from a failing render, because no fix round can
+# install Chromium.
 VISUAL_RC_NOT_RUN=3
 
 # A repo that carries .creative/ but pinned no command gets the gate this

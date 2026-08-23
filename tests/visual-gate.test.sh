@@ -498,6 +498,30 @@ file_has "$INFRA" "produced no frames" "render failure: naming the shot that nev
 check "render failure: gives the fix round an actionable failure" \
   "$(jq -r '.failures | length' "$INFRA")" "1"
 
+# A server that exits before announcing its port is the branch failing to
+# produce the page, not evidence that this machine cannot render. This is the
+# path a dev-server compile error takes before frames.py is ever invoked.
+mkdir -p "$ROOT/server-failure/.creative"
+cat > "$ROOT/server-failure/.creative/visual.conf.sh" <<'EOF'
+VISUAL_SERVER_CMD="printf 'compile error in scene.js\n' >&2; exit 7"
+VISUAL_URL="http://127.0.0.1:{port}"
+VISUAL_SERVER_TIMEOUT=1
+VISUAL_SHOTS=("scene|/|100")
+VISUAL_CRITIC=0
+EOF
+( cd "$ROOT/server-failure" && env -u VISUAL_LIVE PATH="$FAKES:$PATH" \
+    HARNESS_DIR="$HARNESS" VISUAL_REPO=server-failure \
+    VISUAL_PY="$FAKES/fake-python" VCHECK_PY=true FAKE_PY_MODE=no-frames \
+    bash "$CREATIVE/visual-gate.sh" ) > "$ROOT/server-failure.log" 2>&1
+check "server failure: an exited dev server fails the visual round" "$?" "1"
+SERVER_FAILURE="$ROOT/server-failure/.harness/visual-score.json"
+check "server failure: recorded as fail rather than not_run" \
+  "$(jq -r .status "$SERVER_FAILURE")" "fail"
+file_has "$SERVER_FAILURE" "exited 7 before printing a port" \
+  "server failure: preserves the server exit code for the fix round"
+file_has "$ROOT/server-failure.log" "compile error in scene.js" \
+  "server failure: preserves the compiler output in the visual log"
+
 
 # ---------------------------------------------------------------------------
 echo "== the critic protocol =="

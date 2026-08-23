@@ -376,12 +376,11 @@ before it renders anything, and each has its own non-verdict:
   with no visual surface cannot have changed the picture, and grading it against
   the reigning champion is noise at best. Nothing renders, no fix round, no
   outcome; `result.json` gets `{status: "skip", reason}`.
-- **`not_run`** — the machine could not render: no Playwright, a headless
-  browser that will not launch, or a server that never printed a port. That is
-  not a taste verdict and no fix round can install Chromium, so the run ships
-  and says so — `{status: "not_run", rounds, reason, remedy}` in `result.json`
-  and a two-line note in the PR body. Any gate pinned through
-  `VISUAL_GATE_CMD` opts in by exiting **3**.
+- **`not_run`** — the machine could not render: no Playwright or a headless
+  browser that will not launch. That is not a taste verdict and no fix round
+  can install Chromium, so the run ships and says so — `{status: "not_run",
+  rounds, reason, remedy}` in `result.json` and a two-line note in the PR body.
+  Any gate pinned through `VISUAL_GATE_CMD` opts in by exiting **3**.
 
 | Env var | Effect | Default |
 | --- | --- | --- |

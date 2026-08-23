@@ -39,7 +39,7 @@
 #
 # Exit 0 = pass, 1 = the render failed the gate, 2 = the gate could not run at
 # all because this repo's contract is broken, 3 = the MACHINE could not render
-# (no browser, no server). 1 and 2 are a failed round to the harness; 3 is
+# (no browser). 1 and 2 are a failed round to the harness; 3 is
 # `not_run` — no fix round, no outcome, because no model can install Chromium.
 set -u -o pipefail
 
@@ -268,8 +268,12 @@ if [ -n "$VISUAL_SERVER_CMD" ]; then
   done
   if [ -z "$PORT" ]; then
     tail -20 "$SRV_LOG" 2>/dev/null | sed 's/^/  server: /'
-    not_run_die "the server named by VISUAL_SERVER_CMD never printed a port matching $VISUAL_SERVER_PORT_RE — there was no page to judge" \
-      "run VISUAL_SERVER_CMD by hand in the worktree and see what it prints"
+    if kill -0 "$SERVER_PID" 2>/dev/null; then
+      die 2 "the running server named by VISUAL_SERVER_CMD never printed a port matching $VISUAL_SERVER_PORT_RE"
+    fi
+    wait "$SERVER_PID"
+    SERVER_RC=$?
+    die 1 "the server named by VISUAL_SERVER_CMD exited $SERVER_RC before printing a port matching $VISUAL_SERVER_PORT_RE"
   fi
   VISUAL_URL="${VISUAL_URL//\{port\}/$PORT}"
   echo "server: pid $SERVER_PID on port $PORT"
