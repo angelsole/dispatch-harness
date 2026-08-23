@@ -868,6 +868,13 @@ to merge, reverts — over the runs that have an [outcome.json](#the-run-directo
 (the [janitor's](operations.md#the-janitor) ground truth, so a corpus it has not
 visited prints `(none captured yet)` and everything else is unchanged).
 
+A `TOKENS` block sits between them, one row per `implementer_provider` plus an
+`all` row: median and p90 turns, median and total cache-read tokens, total output
+tokens, and — for `zai` rows — the summed
+[credit estimate](#metrics-schema). Turns and cache-read are the pair a runaway
+run shows up in, and they are only comparable within one vendor, which is what
+the grouping is for. Runs recorded before `metrics.usage` existed carry no row.
+
 ### Metrics schema
 
 Alongside the existing fields, each run records `arm`
@@ -901,7 +908,9 @@ fields are `null`/empty):
 | `metrics.implementer_max_turns` | The `--max-turns` ceiling this attempt was spawned with. Per *segment*, not per attempt: a resumed attempt gets the whole ceiling again. Recorded beside `num_turns` because the two count different things — see [the turns caveat](design-notes.md#reading-the-pipelines-own-vitals). |
 | `metrics.implementer_usage` | Token `usage` summed field-wise over the same result events. Numeric keys (`input_tokens`, `output_tokens`, the cache counters) are added up; a non-numeric one (`service_tier`, the nested counters newer CLIs report) is taken from the last segment. |
 | `metrics.implementer_segments` | How many result events those two were summed over: `1` for an attempt that ran straight through, `2`+ for one that hit the turn ceiling and resumed. `0` when the implementer never got as far as a result event. |
-| `metrics.total_cost_usd` | `total_cost_usd` summed over the same result events — a resumed attempt carries its whole cost, not just the last segment. `null` when no event reported a cost. |
+| `metrics.total_cost_usd` | `total_cost_usd` summed over the same result events — a resumed attempt carries its whole cost, not just the last segment. `null` when no event reported a cost. The CLI prices it at Anthropic's rates whatever the provider, so on a `zai` run it is **not** what the run cost; `metrics.usage.zai_credits_est` is. |
+| `metrics.usage` | The flat spend of the whole invocation: `{input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens, turns}`, summed over every result event and zero (never `null`) for a field no event reported. `turns` is `num_turns` summed, falling back to the count of `assistant` events when no result event carries one. A stream truncated mid-line by a killed process still contributes every complete event before the cut. On an `anthropic` run these counts *are* the meaningful figure — the subscription is flat — so no cost field is derived from them. |
+| `metrics.usage.zai_credits_est` | **`zai` runs only**, absent everywhere else: z.ai Coding-Plan credits by their published formula, `(input * 6.9 + cache_read * 1.7 + output * 24) / 10000`, rounded to two places. An **estimate** — the off-peak discount is not modelled — and cache-read is typically ~90% of it, which is why it scales with turns. See [GLM as the implementer](#glm-as-the-implementer). |
 | `metrics.config_hash` | Short hash over the harness repo HEAD (an empty component when Git or a checkout is unavailable) plus the pinned run configuration (provider, both models and efforts, turn ceiling, resume mode, arm) — the fingerprint two runs must share before their metrics are comparable. `null` when `shasum` is unavailable. |
 | `metrics.brief` | The shape of the task contract: `{lines, acceptance_count, has_reproduction, has_interface, has_edit_locations, has_decision_points}`, grepped from `brief.md`'s section headers. An absent section is `false`, not an error; a run with no brief at all carries the all-zero object. |
 | `metrics.verifier` | The verifier's own `verify.json`, verbatim: `{score, at_implementer, criteria[], items[], model, provider, evaluations, steps, segments, elided_steps, usage, seconds}` — or `null` on every run the stage did not score (off, no key, no library, timed out, crashed, garbled). `items[]` is the rubric vector, `{id, score, citation, samples[]}` per item; `criteria[]` carries the same vector by title, which is what the PR body's table renders; `at_implementer` belonged to the progress curve the rubric replaced and is now always `null`. Advisory: nothing in the pipeline branches on it. See [The verifier](#the-verifier). |
