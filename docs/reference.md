@@ -369,10 +369,27 @@ between, a `visual` object in `result.json`
 section in the PR body, and one more terminal status — **`visual_failed`**: the
 tests pass and the picture does not.
 
+Activation is repo-level, so the stage itself answers two cheaper questions
+before it renders anything, and each has its own non-verdict:
+
+- **`skip`** — no file this branch changes is in `VISUAL_SCOPE_GLOBS`. A diff
+  with no visual surface cannot have changed the picture, and grading it against
+  the reigning champion is noise at best. Nothing renders, no fix round, no
+  outcome; `result.json` gets `{status: "skip", reason}`.
+- **`not_run`** — the machine could not render: no Playwright or a headless
+  browser that will not launch. That is not a taste verdict and no fix round
+  can install Chromium, so the run ships and says so — `{status: "not_run",
+  rounds, reason, remedy}` in `result.json` and a two-line note in the PR body.
+  A gate pinned through `VISUAL_GATE_CMD` opts in by both exiting **3** and
+  writing `status: "not_run"` in `.harness/visual-score.json`; requiring both
+  preserves nonzero exit meanings used by custom gates that predate this
+  protocol.
+
 | Env var | Effect | Default |
 | --- | --- | --- |
 | `HARNESS_VISUAL_ROUNDS` | Visual gate rounds a run may spend before `visual_failed`. Anything that is not a positive integer falls back. | `2` |
 | `VISUAL_GATE_CMD` | The gate command itself, pinned per repo in `repos.local.sh`. Unpinned, a `.creative/` repo gets `profiles/visual/creative/visual-gate.sh`. | (the shipped gate) |
+| `VISUAL_SCOPE_GLOBS` | Which paths this repo's picture is made of, as space-separated git pathspec globs. Pinned per repo in `repos.local.sh`; a value REPLACES the defaults, so list every path including `.creative/**`. | `wall/** .creative/** assets/**` |
 
 The factories' two API keys live in `~/.claude/harness/factory.conf.sh` (mode
 600, never seeded — copy `profiles/visual/factory.conf.sh.example` and fill it
@@ -463,6 +480,7 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 | `INSTALL_CMD` | Install deps in a fresh worktree | from lockfile (`npm ci` / `yarn install` / `uv sync`) |
 | `GATE_CMD` | The deterministic test gate | from lockfile (`npm test` / `yarn test` / `uv run pytest`) |
 | `VISUAL_GATE_CMD` | The [visual profile's](#profiles) gate. Setting it is one of the two ways a repo opts in | none; the shipped gate once the profile applies |
+| `VISUAL_SCOPE_GLOBS` | Git pathspec globs naming the paths that repo's picture is made of; a branch touching none of them skips the [visual gate](#profiles) | none; the profile's `wall/** .creative/** assets/**` |
 | `MCP_CONFIG` | Path to an `.mcp.json` the worker loads | none (skipped if the path is missing) |
 | `ENV_SUBDIRS` | Extra dirs besides `.` to copy `.env*` into | none |
 | `DEV_CMD` | Dev server command for `preview.sh` | `npm run dev` |

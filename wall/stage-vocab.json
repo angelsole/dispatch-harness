@@ -105,7 +105,7 @@
       "state": "active",
       "color": "yellow",
       "example": "visual gate — rendering the shots (script, no model)",
-      "why": "The visual profile's render-and-grade round. Deterministic like the test gate, so it borrows the gate's neon and its rung rather than inventing a floor."
+      "why": "The visual profile's render-and-grade round, and the line it writes instead when a diff has no visual surface to render. Deterministic like the test gate, so it borrows the gate's neon and its rung rather than inventing a floor."
     },
     {
       "pattern": "^verify",
