@@ -974,25 +974,17 @@ if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
     || fail setup_failed "implementer-provider is pinned to zai but there is no readable key file at $ZAI_KEY_FILE (create it mode 600)"
 fi
 
-# Provider-routing variables are cleared at every model-launch boundary. This
-# run-task process can itself be launched by a provider-pinned harness, and its
-# ambient endpoint or credentials must not select a provider in this nested run.
-# CLI tuning remains inherited unless the selected provider replaces it.
-clear_provider_env() {
-  unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-}
-
 # Applied INSIDE the implementer subshell, so the credential lives in that
 # process's environment and never in an argv `ps` would show — the same
 # discipline as the verifier and Linear keys, which travel as a path or a header
-# file.
+# file. Nothing is exported for the default provider, which is what keeps an
+# anthropic run byte-identical to one from before this existed.
 #
 # The pipeline's own implementer_env hook: everything else that needs the
 # implementer's environment and nothing else — a profile's API keys — arrives
 # through the same slot and inherits the same scoping for free.
 apply_provider_env() {
   [ "$IMPLEMENTER_PROVIDER" = zai ] || return 0
-  unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
   ANTHROPIC_AUTH_TOKEN=$(cat "$ZAI_KEY_FILE") || return 1
   export ANTHROPIC_AUTH_TOKEN
   export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
@@ -1075,8 +1067,8 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     OPUS_STREAM_START_LINE=$(( $(wc -l < "$RUN_DIR/opus-stream.jsonl") + 1 ))
   fi
-  (cd "$WORKTREE" && clear_provider_env && hook_run implementer_env \
-      && env CLAUDE_CODE_SUBAGENT_MODEL="$IMPLEMENTER_SUBAGENT_MODEL" \
+  (cd "$WORKTREE" && hook_run implementer_env \
+      && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL="$IMPLEMENTER_SUBAGENT_MODEL" \
       "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
       --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
     | tee -a "$RUN_DIR/opus-stream.jsonl" \
@@ -1795,14 +1787,13 @@ run_codex() {  # $1 = round label, $2 = prompt
       | tee -a "$log"
     return 1
   fi
-  (clear_provider_env
-   with_timeout "$CODEX_TIMEOUT" \
-     ${home[@]+"${home[@]}"} \
-     "$CODEX_BIN" exec -C "$WORKTREE" \
-     ${sandbox[@]+"${sandbox[@]}"} \
-     -c "model=\"$CODEX_MODEL\"" \
-     -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
-     "$2" </dev/null 2>&1) \
+  with_timeout "$CODEX_TIMEOUT" \
+    ${home[@]+"${home[@]}"} \
+    "$CODEX_BIN" exec -C "$WORKTREE" \
+    ${sandbox[@]+"${sandbox[@]}"} \
+    -c "model=\"$CODEX_MODEL\"" \
+    -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
+    "$2" </dev/null 2>&1 \
     | tee -a "$log" \
     | while IFS= read -r l; do
         [ -n "$l" ] || continue
@@ -1831,8 +1822,8 @@ run_codex() {  # $1 = round label, $2 = prompt
 # It never sees the implementer's provider env — that is exported inside
 # opus_attempt's subshell alone — so this stays Anthropic whoever implemented.
 run_claude_worker() {  # $1 = round label, $2 = prompt
-  (cd "$WORKTREE" && clear_provider_env && with_timeout "$CODEX_TIMEOUT" \
-      env CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+  (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
+      env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
       "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \
