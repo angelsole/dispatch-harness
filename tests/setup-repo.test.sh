@@ -154,6 +154,36 @@ else
 fi
 check "provider: the refused run wrote nothing" "$(provider_pin)" "zai"
 
+# Carry-forward calls the same hook as repo_config, so it must provide the full
+# initialized-output contract. A valid hand-written arm can read another field
+# under set -u before assigning the provider.
+HC="$ROOT/hc"; mkdir -p "$HC"
+cat > "$HC/repos.local.sh" <<'SH'
+repo_config_local() {
+  local name="$2"
+  case "$name" in
+    # >>> setup-repo managed >>>
+    # <<< setup-repo managed <<<
+    webapp|webapp-*)
+      [ -n "$BASE_BRANCH" ] || BASE_BRANCH=main
+      IMPLEMENTER_PROVIDER=anthropic
+      ;;
+  esac
+}
+SH
+HARNESS_DIR="$HC" bash "$SETUP" "$NPM" --write >/dev/null
+contract_provider_pin() {
+  (
+    # shellcheck disable=SC1090
+    . "$HC/repos.local.sh"
+    BASE_BRANCH=""; IMPLEMENTER_PROVIDER=""
+    repo_config_local "/x/webapp" webapp
+    printf '%s' "${IMPLEMENTER_PROVIDER:-}"
+  )
+}
+check "provider: carry-forward honors the initialized hook contract" \
+  "$(contract_provider_pin)" "anthropic"
+
 # Generated shell must be literal: repo names/paths can contain shell syntax and
 # --ai output is untrusted model text. Sourcing repos.local.sh must not execute
 # command substitutions embedded in values.

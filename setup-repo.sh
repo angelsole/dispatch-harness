@@ -623,7 +623,14 @@ if [ -z "$F_IMPLEMENTER_PROVIDER" ] && [ -f "$LOCAL_FILE" ]; then
     (
       # shellcheck disable=SC1090
       . "$LOCAL_FILE" 2>/dev/null
-      IMPLEMENTER_PROVIDER=""
+      # Match repo_config's initialized-output contract before invoking the
+      # user's hook; hand-written arms may safely read any field under set -u.
+      # shellcheck disable=SC2034
+      {
+        BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
+        VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
+        ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
+      }
       repo_config_local "$REPO" "$NAME" >/dev/null 2>&1
       printf '%s' "${IMPLEMENTER_PROVIDER:-}"
     )
