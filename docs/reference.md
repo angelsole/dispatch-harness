@@ -39,6 +39,7 @@ environment variable.
 | `QM_AUTOBRIEF_TIMEOUT` | Seconds allowed for each self-briefing planner call | `1200` |
 | `QM_AUTOBRIEF_MODEL` | Model for self-briefing | the station's default |
 | `QM_AUTOBRIEF_MAX_BODY` | Ticket-description bytes handed to the planner | `60000` |
+| `QM_SPEC_CRITIC` | `1` requires [the spec critic](#the-spec-critic) to return a verdict for every self-written brief and holds it back on a contradiction; `0` publishes unread | `1` |
 | `QM_REPO_ROOTS` | Space-separated roots searched for repos named by briefs | `~/Projects` |
 | `QM_REPO_DEPTH` | Maximum discovery depth below each repo root | `3` |
 | `LINEAR_API_KEY_FILE` | The Linear key (mode 600, never echoed anywhere) | `$HARNESS_DIR/linear-api-key` |
@@ -299,6 +300,58 @@ usage, how long it took, and `location` on Vertex — copied verbatim into
 `result.json` as `metrics.verifier`) and **`verify.log`** (one line per attempt:
 the score, or `skipped (<reason>)`, or `failed (<reason>)`).
 Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
+
+## The spec critic
+
+Every stage after the planner treats `brief.md` as ground truth: the implementer
+builds from it, the gate runs its `Verify` block, the reviewer and the verifier
+judge the diff against its acceptance criteria. Nothing checks the specification
+itself. `spec-critic.sh` is one confined, read-only pass that does — before
+anybody acts on it.
+
+```bash
+~/.claude/harness/spec-critic.sh --brief runs/<RUN-ID>/brief.md \
+  --repo /path/to/repo --out runs/<RUN-ID>/spec-critic.json
+```
+
+**What it returns**, and nothing else — a single JSON object, enforced by the
+CLI's `--json-schema` rather than asked for in prose:
+
+| Field | What it holds |
+| --- | --- |
+| `contradictions` | Statements in the brief that cannot both hold: a criterion the Out of scope section forbids, a `Verify` command that contradicts what `Reproduction` says fails today. |
+| `criteria_not_testing_problem` | Acceptance criteria that could all pass with the Problem still there, and criteria no reading or command can settle. |
+| `conflicts_with_current_behavior` | `{claim, code_evidence}` — a claim the brief makes about how the repo works today that the code contradicts. `code_evidence` is a repo-relative `file:line` and is **required**: a conflict without a citation to an existing line in the supplied repo is dropped rather than passed on. |
+| `questions` | At most 3, batched into one round, ordered by how much they change what gets built. |
+
+Every list may be empty, and an honest empty verdict is the common one. The
+critic **reports**; it never edits a brief and it never decides a run. What a
+finding is worth is the caller's call: the planner skills fold the answers back
+into the brief before dispatch, and the quartermaster holds a self-written brief
+back on a contradiction or when the required verdict could not be produced (see
+[The Quartermaster](operations.md#the-quartermaster)).
+
+**Confinement.** `spec-critic-settings.json` allows `Read`, `Grep` and `Glob`
+and denies everything else by name — no `Bash` (a permission pattern matches the
+head of a command line, not what it goes on to run), no `Task`, no network, and
+no `Edit`/`Write`, because a critic that can write is a critic that can edit the
+brief it is grading. The brief itself is quoted into the prompt inside a fence
+whose marker is minted per call, so a brief written from a ticket description
+cannot close the quote and give orders. The session's cwd is a disposable
+scratch dir and the target repo is reachable only because `--add-dir` names it,
+so the write confinement holds whatever the policy file says.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `SPEC_CRITIC_MODEL` | Model for the pass | the CLI's own default |
+| `SPEC_CRITIC_TIMEOUT` | Seconds per call | `600` |
+| `SPEC_CRITIC_MAX_TURNS` | Turn ceiling — repo research is most of them | `40` |
+| `SPEC_CRITIC_SETTINGS` | The tool policy | `spec-critic-settings.json` beside the script |
+
+Exit 0 means a verdict was produced (read the JSON — passing is the usual
+outcome), 1 means the single critic pass could not produce one, 2 is a usage
+error. A critic that cannot answer is not evidence against a brief, but the
+quartermaster still defers because the required review is missing.
 
 ## The gate integrity check
 
