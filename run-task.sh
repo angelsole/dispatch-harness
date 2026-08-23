@@ -2648,10 +2648,7 @@ fi
 # integrity flags are the veto. Downstream of it, nothing changes — the escalated
 # attempt is gated, integrity-checked and reviewed like any other, and a run that
 # does not escalate reaches the review stage on the same line it always did.
-# A rejection belongs to the dispatch that produced it. Left standing it would
-# veto an escalation this dispatch has not yet earned (the same stale-verdict
-# class that bit OLYX-1497), so escalation-capable runs archive it at the last
-# possible moment: after existing setup/preflight behavior, before this decision.
+# A stale rejection must not veto a new escalation decision.
 if [ "$ESCALATION" = on ] && [ "$IMPLEMENTER_PROVIDER" != anthropic ] \
    && [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
   mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
