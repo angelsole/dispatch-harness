@@ -359,14 +359,40 @@ function ownerKindOf(owner) {
   return SYNTHETIC.has(owner) ? 'synthetic' : 'human';
 }
 
-// The invocation's turn count, or null on a run nobody counted. `usage.turns` is
-// the whole invocation and `implementer_num_turns` only the implementer's, so
-// the wider one wins; a run still in flight has no result.json and no answer.
-function turnsOf(metrics) {
+// Count completed segments by the CLI's own result value and the currently open
+// segment by assistant events. This is the same fallback telemetry uses when a
+// result omits num_turns, but it remains useful before result.json exists.
+function liveTurnsOf(dir) {
+  const stream = head(path.join(dir, 'opus-stream.jsonl'), 32 << 20);
+  if (!stream) return null;
+  let turns = 0;
+  let segment = 0;
+  let seen = false;
+  for (const line of stream.split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event || typeof event !== 'object') continue;
+    if (event.type === 'assistant') {
+      segment += 1;
+      seen = true;
+    } else if (event.type === 'result') {
+      const reported = event.num_turns;
+      turns += typeof reported === 'number' && Number.isFinite(reported) && reported >= 0
+        ? reported : segment;
+      segment = 0;
+      seen = true;
+    }
+  }
+  return seen ? turns + segment : null;
+}
+
+// The invocation's final count wins once result.json exists; while it is still
+// running, the append-only stream above supplies the count in progress.
+function turnsOf(metrics, dir) {
   for (const n of [metrics.usage && metrics.usage.turns, metrics.implementer_num_turns]) {
     if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return n;
   }
-  return null;
+  return liveTurnsOf(dir);
 }
 
 function providerOf(dir, result) {
@@ -428,7 +454,7 @@ function readRun(id, current) {
     // operator which subscription is being spent. The file exists from the first
     // stage and is rewritten when an escalation changes the answer.
     provider: providerOf(dir, result),
-    turns: turnsOf(metrics),
+    turns: turnsOf(metrics, dir),
     diff: metrics.diff || null,
     verifier: metrics.verifier || null,
     blocked: state === 'alarm' ? firstProse(path.join(dir, 'QUESTIONS.md')) : '',

@@ -1312,7 +1312,7 @@ check "detail: and neither has a live run finished counting" \
 # up. The file wins, for the same reason the `owner` pin does.
 PROVIDER_WALL="$ROOT/provider-wall"
 PROVIDER_NOW=$(date +%s)
-for id in FALLBACK-1 ESCALATED-1 GIBBERISH-1 EMPTY-PIN-1; do
+for id in FALLBACK-1 ESCALATED-1 GIBBERISH-1 EMPTY-PIN-1 LIVE-TURNS-1; do
   mkdir -p "$PROVIDER_WALL/$id"
   printf '%s implementing — Opus (Claude sub)\n' "$PROVIDER_NOW" > "$PROVIDER_WALL/$id/status"
   printf '%s\n' "$((PROVIDER_NOW - 300))" > "$PROVIDER_WALL/$id/started"
@@ -1325,6 +1325,14 @@ printf '{"metrics":{"usage":{"turns":"lots"},"implementer_num_turns":-4}}\n' \
   > "$PROVIDER_WALL/GIBBERISH-1/result.json"
 : > "$PROVIDER_WALL/EMPTY-PIN-1/implementer-provider"
 printf '{"implementer_provider":"zai"}\n' > "$PROVIDER_WALL/EMPTY-PIN-1/result.json"
+cat > "$PROVIDER_WALL/LIVE-TURNS-1/opus-stream.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"one"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"two"}]}}
+{"type":"result","subtype":"error_max_turns","num_turns":7}
+{"type":"assistant","message":{"content":[{"type":"text","text":"eight"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"nine"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"ten"}]}}
+EOF
 serve "$PROVIDER_WALL" "$ROOT/provider-wall.log"; PROVIDER_PORT="$PORT_OUT"
 PROVIDER_API="$(get "$PROVIDER_PORT" '/api/runs?view=console')"
 provider_of() {
@@ -1340,6 +1348,8 @@ check "detail: turns come off result.json without a pin file" \
   "$(provider_of FALLBACK-1 turns)" "12"
 check "detail: a turn count that is not a count is null, not a rendered lie" \
   "$(provider_of GIBBERISH-1 turns)" "null"
+check "detail: an active run counts completed and in-progress stream turns" \
+  "$(provider_of LIVE-TURNS-1 turns)" "10"
 
 # --- the console draws it ---------------------------------------------------------
 # `node --check` proves the console parses; nothing above proves it draws. The
