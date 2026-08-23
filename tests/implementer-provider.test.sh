@@ -46,17 +46,6 @@ ATTEMPTS="$ROOT/attempts"
 ZAI_KEY='zai-not-a-real-key-0123456789'
 ZAI_URL='https://api.z.ai/api/anthropic'
 
-# A dispatch commonly runs from a shell pinned to a provider for the outer
-# harness. Provider routing must be removed from nested launches, while ordinary
-# Claude CLI tuning remains inherited unless the selected provider replaces it.
-export ANTHROPIC_API_KEY='ambient-api-key'
-export ANTHROPIC_AUTH_TOKEN='ambient-auth-token'
-export ANTHROPIC_BASE_URL='https://ambient.invalid/anthropic'
-export API_TIMEOUT_MS=999999
-export ANTHROPIC_DEFAULT_HAIKU_MODEL='ambient-small'
-export CLAUDE_CODE_SUBAGENT_MODEL='ambient-subagent'
-export CLAUDE_CODE_AUTO_COMPACT_WINDOW=888888
-
 mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$STATION/claude" "$HARNESS/lib"
 : > "$SCHED_CALLS"; : > "$CLAUDE_CALLS"; : > "$ENVLOG"; : > "$NPX_CALLS"
 printf 'commit\n' > "$CLAUDE_MODE"
@@ -222,6 +211,7 @@ dispatch() {  # $1 = run id, $2 = mode, $3 = space-separated VAR=VAL overrides
   # shellcheck disable=SC2086
   env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES -u HARNESS_REDISPATCH \
+      -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
       CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 \
@@ -300,8 +290,8 @@ for role in reviewer fix; do
   E="$(env_of "$role")"
   has "$E" "base=[]"          "env: the $role stage is not pointed at z.ai"
   has "$E" "token=[]"         "env: the $role stage never sees the credential"
-  has "$E" "timeout=[999999]" "env: the $role stage keeps the CLI's own timeout"
-  has "$E" "haiku=[ambient-small]" "env: the $role stage keeps the CLI's own small model"
+  has "$E" "timeout=[]"       "env: the $role stage keeps the CLI's own timeout"
+  has "$E" "haiku=[]"         "env: the $role stage keeps the CLI's own small model"
   has "$E" "subagent=[sonnet]" "env: the $role stage keeps its Anthropic subagents"
   has "$E" "model=[claude-opus-5]" \
     "env: the $role stage runs on a Claude model, not the implementer's GLM one"
@@ -419,9 +409,9 @@ dispatch PROV-BASELINE commit ""
 BASE_IMPL="$(env_of implementer)"
 has "$BASE_IMPL" "base=[]"     "default: no base URL is injected"
 has "$BASE_IMPL" "token=[]"    "default: no auth token is injected"
-has "$BASE_IMPL" "timeout=[999999]" "default: request timeout override is preserved"
-has "$BASE_IMPL" "haiku=[ambient-small]" "default: small-model override is preserved"
-has "$BASE_IMPL" "compact=[888888]" "default: compaction override is preserved"
+has "$BASE_IMPL" "timeout=[]"  "default: no request timeout is injected"
+has "$BASE_IMPL" "haiku=[]"    "default: no small-model override is injected"
+has "$BASE_IMPL" "compact=[]"  "default: no compaction override is injected"
 has "$BASE_IMPL" "subagent=[sonnet]" "default: subagents stay on sonnet"
 has "$BASE_IMPL" "model=[claude-opus-5]" "default: and the implementer on Opus"
 has "$(env_of reviewer)" "model=[claude-opus-5]" \
