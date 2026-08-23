@@ -259,11 +259,11 @@ run_codex() {  # $1 = label, $2 = prompt
 # (subscription billing), worker permissions, same timeout cap. A sync is a
 # resume of an existing run, so its pinned implementer knobs are authoritative:
 # the first dispatch froze provider, model and effort, and neither the repo's
-# pin nor this shell's environment re-decides them here. What surrounds the
-# knob call is the fallback for a run dir that predates the pin files, and the
-# defaults are the same ones run-task.sh pins with — one definition, in
-# lib/common.sh. A cross-vendor implementer's model never leaks into this
-# Anthropic-billed fallback.
+# pin nor this shell's environment re-decides them here. The value around each
+# knob call covers a run dir that predates the pin files; the defaults are the
+# same ones run-task.sh pins with — one definition, in lib/common.sh. A
+# cross-vendor implementer's model never leaks into this Anthropic-billed
+# fallback.
 IMPLEMENTER_PROVIDER="$(harness_knob "$RUN_DIR" implementer-provider "${IMPLEMENTER_PROVIDER:-$DEFAULT_IMPLEMENTER_PROVIDER}")"
 IMPLEMENTER_MODEL="$(harness_knob "$RUN_DIR" implementer-model "${IMPLEMENTER_MODEL:-$DEFAULT_IMPLEMENTER_MODEL}")"
 IMPLEMENTER_EFFORT="$(harness_knob "$RUN_DIR" implementer-effort "${IMPLEMENTER_EFFORT:-$DEFAULT_IMPLEMENTER_EFFORT}")"
