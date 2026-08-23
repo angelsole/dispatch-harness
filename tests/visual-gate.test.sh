@@ -81,41 +81,28 @@ python3 -c 'import numpy, PIL' >/dev/null 2>&1 && HAVE_PY=1
 HAVE_MAGICK=0
 command -v magick >/dev/null 2>&1 && HAVE_MAGICK=1
 
-# A shot-scraper upgrade can leave Playwright importable while its newly named
-# managed Chromium is not installed. The renderer must use stable Chrome in
-# that exact state, without replacing the pinned browser when it is present.
-if python3 - "$CREATIVE/frames.py" "$ROOT" <<'PY'
-import importlib.util
-import pathlib
+# Browser selection belongs to the visual profile's established contract, not
+# to unrelated feature branches. The renderer launches Playwright's managed
+# browser directly and carries no named system-browser channel fallback.
+if python3 - "$CREATIVE/frames.py" <<'PY'
+import ast
 import sys
 
-spec = importlib.util.spec_from_file_location("visual_frames", sys.argv[1])
-frames = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(frames)
-
-class Chromium:
-    def __init__(self, executable):
-        self.executable_path = executable
-        self.calls = []
-
-    def launch(self, **kwargs):
-        self.calls.append(kwargs)
-        return "browser"
-
-missing = Chromium(str(pathlib.Path(sys.argv[2]) / "missing-chromium"))
-assert frames.launch_chromium(missing) == "browser"
-assert missing.calls == [{"headless": True, "channel": "chrome", "args": frames.LAUNCH_ARGS}]
-
-present_path = pathlib.Path(sys.argv[2]) / "managed-chromium"
-present_path.touch()
-present = Chromium(str(present_path))
-assert frames.launch_chromium(present) == "browser"
-assert present.calls == [{"headless": True, "args": frames.LAUNCH_ARGS}]
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+launches = [
+    node
+    for node in ast.walk(tree)
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Attribute)
+    and node.func.attr == "launch"
+]
+assert launches
+assert all(all(keyword.arg != "channel" for keyword in call.keywords) for call in launches)
 PY
 then
-  ok "renderer: stable Chrome is only the missing-managed-browser fallback"
+  ok "renderer: browser selection stays on Playwright's managed executable"
 else
-  bad "renderer: managed-browser preference and stable-Chrome fallback"
+  bad "renderer: an out-of-scope named-browser fallback was introduced"
 fi
 
 # --- the fake critic ---------------------------------------------------------
