@@ -67,7 +67,11 @@ mkdir -p "$AGENTS" "$RUNS" "$FAKES"
 printf 'Darwin\n' > "$UNAME_STATE"
 printf 'authed\n' > "$GH_MODE"
 
-git init -q --bare "$BARE"
+# Born on main by flag, not by the runner's default: a bare whose HEAD dangles
+# on a name nothing pushed clones out to no checkout at all, so the
+# remote-writer fixture below commits onto an unborn branch and its push fails
+# — a machine with init.defaultBranch=main hides that, a fresh runner does not.
+git init -q --bare -b main "$BARE"
 git clone -q "$BARE" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name  t
