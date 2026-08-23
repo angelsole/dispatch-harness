@@ -69,11 +69,16 @@ CRITIC_QUALITY="$ROOT/critic-quality"; mkdir -p "$CRITIC_QUALITY"
 
 VISUAL_PY="${VISUAL_PY:-$HOME/.local/share/uv/tools/shot-scraper/bin/python}"
 HAVE_PW=0
-"$VISUAL_PY" - <<'PY' >/dev/null 2>&1 && HAVE_PW=1
+"$VISUAL_PY" - "$CREATIVE/frames.py" <<'PY' >/dev/null 2>&1 && HAVE_PW=1
+import importlib.util
+import sys
 from playwright.sync_api import sync_playwright
+
+spec = importlib.util.spec_from_file_location("visual_frames", sys.argv[1])
+frames = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frames)
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=[
-        "--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
+    browser = frames.launch_chromium(p)
     browser.close()
 PY
 HAVE_PY=0
@@ -81,12 +86,12 @@ python3 -c 'import numpy, PIL' >/dev/null 2>&1 && HAVE_PY=1
 HAVE_MAGICK=0
 command -v magick >/dev/null 2>&1 && HAVE_MAGICK=1
 
-# A shot-scraper upgrade can leave Playwright importable while its newly named
-# managed Chromium is not installed. The renderer must use stable Chrome in
-# that exact state, without replacing the pinned browser when it is present.
-if python3 - "$CREATIVE/frames.py" "$ROOT" <<'PY'
+# The browser revision is part of the renderer contract. A missing managed
+# browser must not silently select a host-managed Chrome whose version can
+# differ between otherwise identical runners. The infrastructure test below
+# also proves that this condition is recorded as not_run with its remedy.
+if python3 - "$CREATIVE/frames.py" <<'PY'
 import importlib.util
-import pathlib
 import sys
 
 spec = importlib.util.spec_from_file_location("visual_frames", sys.argv[1])
@@ -94,28 +99,41 @@ frames = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(frames)
 
 class Chromium:
-    def __init__(self, executable):
-        self.executable_path = executable
+    def __init__(self, result=None, error=None):
         self.calls = []
+        self.result = result
+        self.error = error
 
     def launch(self, **kwargs):
         self.calls.append(kwargs)
-        return "browser"
+        if self.error is not None:
+            raise self.error
+        return self.result
 
-missing = Chromium(str(pathlib.Path(sys.argv[2]) / "missing-chromium"))
-assert frames.launch_chromium(missing) == "browser"
-assert missing.calls == [{"headless": True, "channel": "chrome", "args": frames.LAUNCH_ARGS}]
 
-present_path = pathlib.Path(sys.argv[2]) / "managed-chromium"
-present_path.touch()
-present = Chromium(str(present_path))
-assert frames.launch_chromium(present) == "browser"
-assert present.calls == [{"headless": True, "args": frames.LAUNCH_ARGS}]
+class Playwright:
+    def __init__(self, chromium):
+        self.chromium = chromium
+
+
+managed = Chromium(result="managed-chromium")
+assert frames.launch_chromium(Playwright(managed)) == "managed-chromium"
+assert managed.calls == [{"headless": True, "args": frames.LAUNCH_ARGS}]
+
+missing_error = RuntimeError("Executable doesn't exist at managed revision")
+missing = Chromium(error=missing_error)
+try:
+    frames.launch_chromium(Playwright(missing))
+except RuntimeError as exc:
+    assert exc is missing_error
+else:
+    raise AssertionError("missing managed Chromium selected a host fallback")
+assert missing.calls == [{"headless": True, "args": frames.LAUNCH_ARGS}]
 PY
 then
-  ok "renderer: stable Chrome is only the missing-managed-browser fallback"
+  ok "renderer attempts only Playwright's revision-pinned managed Chromium"
 else
-  bad "renderer: managed-browser preference and stable-Chrome fallback"
+  bad "renderer browser pinning policy"
 fi
 
 # --- the fake critic ---------------------------------------------------------

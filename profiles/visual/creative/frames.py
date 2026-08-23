@@ -3,7 +3,9 @@
 
 Runs on the Playwright that already ships inside shot-scraper's uv venv
 (~/.local/share/uv/tools/shot-scraper/bin/python) — the gate adds no dependency
-of its own. shot-scraper's own CLI cannot do this job: it has no hook that runs
+of its own. It requires Playwright's revision-pinned managed Chromium; using a
+machine's independently updated browser would make identical frames depend on
+the runner. shot-scraper's own CLI cannot do this job: it has no hook that runs
 before the app boots, so it can neither freeze the clock nor seed Math.random,
 and an animated scene captured without those is a different picture every run.
 
@@ -63,28 +65,9 @@ LAUNCH_ARGS = [
 ]
 
 
-def launch_chromium(chromium):
-    """Launch the managed browser, or stable Chrome when its cache is absent.
-
-    `uv tool upgrade shot-scraper` can update Playwright without downloading the
-    matching browser build. Playwright still exposes the new executable path in
-    that state, but launch() dies before a page exists. A machine that already
-    has stable Chrome can render safely through Playwright's named channel; the
-    managed build remains the first choice so normal captures stay pinned.
-    """
-    managed = pathlib.Path(chromium.executable_path)
-    if managed.is_file():
-        return chromium.launch(headless=True, args=LAUNCH_ARGS)
-    try:
-        return chromium.launch(headless=True, channel="chrome", args=LAUNCH_ARGS)
-    except Exception as exc:  # noqa: BLE001 — preserve the launch reason below
-        reason = str(exc).splitlines()[0][:300]
-        raise RuntimeError(
-            "Playwright Chromium is missing at %s and the stable Chrome "
-            "fallback could not launch: %s. Install the managed browser with "
-            "'%s -m playwright install chromium'."
-            % (managed, reason, sys.executable)
-        ) from exc
+def launch_chromium(playwright):
+    """Launch Playwright's revision-pinned managed Chromium."""
+    return playwright.chromium.launch(headless=True, args=LAUNCH_ARGS)
 
 
 def main():
@@ -135,7 +118,7 @@ def main():
 
     with sync_playwright() as p:
         try:
-            browser = launch_chromium(p.chromium)
+            browser = launch_chromium(p)
         except Exception as exc:  # noqa: BLE001 — one actionable render error
             sys.stderr.write("frames.py: browser launch failed: %s\n" % exc)
             return 2
