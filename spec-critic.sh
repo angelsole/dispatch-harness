@@ -194,12 +194,45 @@ fi
 
 # Two normalisations, both of them the contract rather than taste: the question
 # budget is a budget whatever the schema let through, and a conflict whose
-# evidence has no file:line citation is the vibe this stage refuses to pass on.
+# evidence does not resolve to a real line in this repo is the vibe this stage
+# refuses to pass on.
 VERDICT=$(printf '%s' "$VERDICT" | jq -c '
-  .questions |= .[0:3]
-  | .conflicts_with_current_behavior |= map(select(
-      (.code_evidence // "")
-      | test("(^|[[:space:]`(])[^[:space:]:`]+:[1-9][0-9]*([^0-9]|$)")))')
+  .questions |= .[0:3]')
+
+evidence_cites_repo_line() {  # $1 = code_evidence
+  local evidence="$1" path line tab
+  tab=$(printf '\t')
+  while IFS="$tab" read -r path line; do
+    [ -n "$path" ] && [ -n "$line" ] || continue
+    # Evidence is repo-relative by contract. Refusing absolute and parent paths
+    # also keeps the provenance check scoped to the repo the caller supplied.
+    case "$path" in
+      /*|..|../*|*/..|*/../*) continue ;;
+    esac
+    [ -f "$REPO/$path" ] || continue
+    if awk -v wanted="$line" 'NR == wanted { found = 1; exit }
+                                  END { exit !found }' "$REPO/$path"; then
+      return 0
+    fi
+  done < <(printf '%s' "$evidence" | jq -Rrs '
+    match("(^|[[:space:]`(])([^[:space:]:`()]+):([1-9][0-9]*)([^0-9]|$)"; "g")
+    | [.captures[1].string, .captures[2].string]
+    | @tsv')
+  return 1
+}
+
+conflicts=$(printf '%s' "$VERDICT" | jq -c '.conflicts_with_current_behavior')
+kept='[]'; i=0; count=$(printf '%s' "$conflicts" | jq -r 'length')
+while [ "$i" -lt "$count" ]; do
+  conflict=$(printf '%s' "$conflicts" | jq -c ".[$i]")
+  evidence=$(printf '%s' "$conflict" | jq -r '.code_evidence // ""')
+  if evidence_cites_repo_line "$evidence"; then
+    kept=$(jq -nc --argjson items "$kept" --argjson item "$conflict" '$items + [$item]')
+  fi
+  i=$((i + 1))
+done
+VERDICT=$(printf '%s' "$VERDICT" | jq -c --argjson kept "$kept" \
+  '.conflicts_with_current_behavior = $kept')
 
 if [ -n "$OUT" ]; then
   verdict_tmp="$OUT.tmp.$$"

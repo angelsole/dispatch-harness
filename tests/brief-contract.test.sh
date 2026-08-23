@@ -136,6 +136,8 @@ case "\$mode" in
                "criteria_not_testing_problem":["\"rounding feels right\" is settled by nobody"],
                "conflicts_with_current_behavior":[
                  {"claim":"applyTier already rounds half-up","code_evidence":"src/margin.ts:2 — Math.floor, not half-up"},
+                 {"claim":"a missing module does something","code_evidence":"does/not/exist.ts:999 — imagined implementation"},
+                 {"claim":"applyTier has a distant fallback","code_evidence":"src/margin.ts:999 — beyond EOF"},
                  {"claim":"applyTier uses bankers rounding","code_evidence":"the implementation uses floor"},
                  {"claim":"the module exports a default","code_evidence":"   "}],
                "questions":["Inclusive at the tier edge?","Backfill existing orders?",
@@ -324,6 +326,10 @@ check "loud: a conflict whose evidence is blank is dropped, not passed on" \
   "$(jq -r '[.conflicts_with_current_behavior[] | select(.claim | test("default"))] | length' "$OUT")" "0"
 check "loud: nonblank prose without a file:line is dropped too" \
   "$(jq -r '[.conflicts_with_current_behavior[] | select(.claim | test("bankers"))] | length' "$OUT")" "0"
+check "loud: a citation to a missing repo file is dropped" \
+  "$(jq -r '[.conflicts_with_current_behavior[] | select(.claim | test("missing module"))] | length' "$OUT")" "0"
+check "loud: a citation beyond the end of a real file is dropped" \
+  "$(jq -r '[.conflicts_with_current_behavior[] | select(.claim | test("distant fallback"))] | length' "$OUT")" "0"
 check "loud: the question budget is three, whatever the model returned" \
   "$(jq -r '.questions | length' "$OUT")" "3"
 has "$(jq -r '.questions | join("|")' "$OUT")" "Inclusive at the tier edge?" \
