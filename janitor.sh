@@ -26,12 +26,22 @@
 # whose state cannot be read is `unknown`, never "probably merged": a state that
 # could not be read is not evidence of anything.
 #
+# The same poll also writes outcome.json into each run dir with a PR: the state,
+# when it merged, how long that took, how many review comments humans left,
+# whether base-branch commits later touched the PR's files, and whether anything
+# reverted it. That is the only ground-truth label the pipeline ever gets about
+# whether a run's PR was good, and it costs the gh call the sweep already makes
+# plus at most one more. Refreshing stops once the PR is terminal and the
+# outcome is JANITOR_OUTCOME_MAX_AGE days old.
+#
 # Sweeping is delegated to cleanup.sh, which already knows how to remove a
 # worktree, delete the local branch only when it is on origin, and drop a
 # mirrored copy. Run logs under runs/<RUN-ID>/ are never deleted: this script
 # removes worktrees and processes, nothing else.
 #
-# What leaves this machine: one read-only `gh pr view` per run that has a PR.
+# What leaves this machine: one read-only `gh pr view` per run that has a PR,
+# plus — while that run's outcome is still being refreshed — one read-only
+# `gh api` call for its review comments.
 set -u
 
 _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
@@ -55,6 +65,7 @@ CLEANUP="$SELF_DIR/cleanup.sh"
 AT="${JANITOR_AT:-09:00}"                       # when the installed agent fires
 PROC_AGE="${JANITOR_PROC_AGE:-7200}"            # seconds one may live (2h)
 GH_TIMEOUT="${JANITOR_GH_TIMEOUT:-20}"          # seconds allowed per gh call
+OUTCOME_MAX_AGE="${JANITOR_OUTCOME_MAX_AGE:-14}"  # days a terminal outcome stays refreshed
 # The one knob that does NOT swallow an empty value into its default: an
 # accidentally-empty `JANITOR_PROC_MATCH=$SOMETHING` has to be refused out loud
 # rather than quietly reaping the default's processes instead.
@@ -72,6 +83,7 @@ capped() { capacity_capped "$@"; }
 
 case "$PROC_AGE" in ''|*[!0-9]*) fail "JANITOR_PROC_AGE must be whole seconds — got [$PROC_AGE]" ;; esac
 case "$GH_TIMEOUT" in ''|*[!0-9]*) fail "JANITOR_GH_TIMEOUT must be whole seconds — got [$GH_TIMEOUT]" ;; esac
+case "$OUTCOME_MAX_AGE" in ''|*[!0-9]*) fail "JANITOR_OUTCOME_MAX_AGE must be whole days — got [$OUTCOME_MAX_AGE]" ;; esac
 # An empty process name is never a valid reaping policy.
 [ -n "$PROC_MATCH" ] || fail "JANITOR_PROC_MATCH must not be empty"
 
@@ -149,19 +161,193 @@ gh_probe() {
   return 0
 }
 
-# Prints MERGED, OPEN or CLOSED — and nothing at all when the state could not be
-# read. An unreadable state is never collapsed into one of the three: that is
-# the whole difference between a janitor and a data-loss incident.
+# The fields one poll carries: the state the sweep decides on, plus the dates
+# and the squash commit the outcome is built from.
+PR_VIEW_FIELDS='state,mergedAt,createdAt,mergeCommit,files'
+
+# The one network ask per run with a PR. Prints gh's JSON object, and nothing at
+# all when it could not be read — an unreadable PR is never collapsed into a
+# state: that is the whole difference between a janitor and a data-loss incident.
 #
 # Asked from inside the run's own worktree, the way run-task.sh asks: the url
 # identifies the PR by itself, and the cwd makes the repo context right anyway on
-# an install where more than one host or account is configured.
-pr_state() {  # $1 = PR url, $2 = the run's worktree
-  local out
+# an install where more than one host or account is configured. Once the
+# worktree is gone there is nothing to cd into, and the url still identifies the
+# PR, so the harness dir stands in.
+pr_view() {  # $1 = PR url, $2 = the run's worktree ('' once swept)
+  local out cwd="$SELF_DIR"
   [ "$GH_OK" = 1 ] || return 0
-  out=$( (cd "$2" 2>/dev/null && capped "$GH_TIMEOUT" gh pr view "$1" --json state -q .state) 2>/dev/null ) \
+  { [ -n "$2" ] && [ -d "$2" ]; } && cwd="$2"
+  out=$( (cd "$cwd" 2>/dev/null && capped "$GH_TIMEOUT" gh pr view "$1" --json "$PR_VIEW_FIELDS") 2>/dev/null ) \
     || return 0
-  case "$out" in MERGED|OPEN|CLOSED) printf '%s' "$out" ;; esac
+  [ -n "$out" ] || return 0
+  printf '%s' "$out" | jq -e 'type == "object" and (.state | type == "string")' >/dev/null 2>&1 \
+    || return 0
+  printf '%s' "$out"
+}
+
+# ---------------------------------------------------------------------------
+# The outcome — the ground truth a finished run leaves behind
+# ---------------------------------------------------------------------------
+# result.json says what the pipeline did; outcome.json says what the world then
+# did with it. Refreshed from the poll the sweep already made plus at most one
+# `gh api` call, never allowed to fail a sweep: anything that cannot be read
+# leaves its field at the last value it had (null if there was none).
+
+# Where the run's repo lives, so the git-derived outcome fields survive the
+# sweep that removes the worktree. Resolved once from the worktree and kept in
+# the run dir, exactly like the worktree path itself.
+outcome_repo() {  # $1 = run dir, $2 = the run's worktree (''); prints a repo path or nothing
+  local d="$1" repo gitdir
+  if [ -s "$d/repo" ]; then
+    repo=$(cat "$d/repo" 2>/dev/null)
+    [ -n "$repo" ] && [ -d "$repo" ] && { printf '%s\n' "$repo"; return 0; }
+  fi
+  { [ -n "$2" ] && [ -d "$2" ]; } || return 0
+  gitdir=$(git -C "$2" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  repo=$(dirname "$gitdir")
+  printf '%s\n' "$repo" > "$d/repo" 2>/dev/null
+  printf '%s\n' "$repo"
+}
+
+# Refresh one origin/base pair at most once per pass, even when many outcomes
+# belong to the same repository. A failed fetch is cached as failed too: using
+# the old remote-tracking ref would turn unavailable ground truth into a stale
+# but authoritative-looking label.
+refreshed_base_ref() {  # $1 = repo, $2 = base branch; prints the refreshed ref or nothing
+  local repo="$1" base="$2" cache="$WORK/base-fetches" row status ref
+  row=$(awk -F '\t' -v r="$repo" -v b="$base" \
+    '$1 == r && $2 == b { print $3 "\t" $4; exit }' "$cache" 2>/dev/null)
+  if [ -z "$row" ]; then
+    status=failed
+    ref=''
+    if capped "$GH_TIMEOUT" git -C "$repo" fetch --quiet origin \
+         "+refs/heads/$base:refs/remotes/origin/$base" 2>/dev/null; then
+      ref=$(git -C "$repo" rev-parse --verify -q "refs/remotes/origin/$base" 2>/dev/null)
+      [ -z "$ref" ] || status=ok
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$repo" "$base" "$status" "$ref" >> "$cache"
+  else
+    status=${row%%$'\t'*}
+    ref=${row#*$'\t'}
+  fi
+  [ "$status" = ok ] && [ -n "$ref" ] && printf '%s\n' "$ref"
+  return 0
+}
+
+# The politeness knob, asked before the poll: a terminal outcome older than
+# JANITOR_OUTCOME_MAX_AGE days costs nothing further, not even the gh call.
+outcome_settled() {  # $1 = run dir, $2 = current PR url; succeeds when refresh may stop
+  local out="$1/outcome.json" url="$2" cutoff
+  [ -s "$out" ] || return 1
+  cutoff=$(( $(date +%s) - OUTCOME_MAX_AGE * 86400 ))
+  jq -e --arg url "$url" --argjson cutoff "$cutoff" '
+    .pr_url == $url
+    and (.pr_state == "MERGED" or .pr_state == "CLOSED")
+    and (((.checked_at // "") | if test("^[0-9]{4}-") then fromdateiso8601 else 0 end) < $cutoff)
+  ' "$out" >/dev/null 2>&1
+}
+
+# Prints written | unreadable.
+capture_outcome() {  # $1 = run dir, $2 = PR url, $3 = the poll's JSON ('' = unreadable), $4 = worktree
+  local d="$1" url="$2" view="$3" wt="${4:-}"
+  local out="$d/outcome.json" tmp
+  local state merged_at merge_oid files_tsv ttm ids rcc=''
+  local repo base base_ref tip_ct merged_ct follow='' reverted=''
+  local candidates candidate
+  local rest owner api fpaths=()
+
+  [ -n "$view" ] || { printf 'unreadable'; return 0; }
+
+  state=$(printf '%s' "$view"  | jq -r '.state // ""' 2>/dev/null)
+  merged_at=$(printf '%s' "$view" | jq -r '.mergedAt // ""' 2>/dev/null)
+  merge_oid=$(printf '%s' "$view" | jq -r '.mergeCommit.oid // ""' 2>/dev/null)
+  files_tsv=$(printf '%s' "$view" | jq -r '[.files[]?.path] | @tsv' 2>/dev/null)
+  ttm=$(printf '%s' "$view" | jq -r '
+    ((.mergedAt | fromdateiso8601?) // null) as $m
+    | ((.createdAt | fromdateiso8601?) // null) as $c
+    | if ($m != null and $c != null) then ($m - $c | tostring) else "" end' 2>/dev/null)
+
+  # The one extra call: the inline review comments, which `gh pr view` does not
+  # carry. Bots are counted out; a line per comment, paginated, so a heavily
+  # reviewed PR is counted rather than capped at the first page.
+  case "$url" in
+    https://github.com/*/*/pull/[0-9]*)
+      rest="${url#https://github.com/}"; owner="${rest%%/*}"; rest="${rest#*/}"
+      api="repos/$owner/${rest%%/*}/pulls/${rest##*/}/comments"
+      if ids=$( (cd "$SELF_DIR" 2>/dev/null \
+                 && capped "$GH_TIMEOUT" gh api --paginate "$api" \
+                      --jq '.[] | select(.user.type != "Bot") | .id') 2>/dev/null ); then
+        # printf '%s', not '%s\n': an empty answer is zero comments, not a
+        # blank line somebody counted.
+        rcc=$(printf '%s' "$ids" | grep -c '' | tr -d ' ')
+      fi
+      ;;
+  esac
+
+  # The git-derived fields: only a merged PR has them, and only while the local
+  # base branch has seen the merge. A base tip that predates the merge would
+  # answer "none" to a question it has no data for, so it answers null instead.
+  if [ "$state" = MERGED ] && [ -n "$merged_at" ] && [ -n "$merge_oid" ]; then
+    repo=$(outcome_repo "$d" "$wt")
+    base=$(jq -r '.base // empty' "$d/result.json" 2>/dev/null)
+    if [ -n "$repo" ] && [ -n "$base" ] \
+       && base_ref=$(refreshed_base_ref "$repo" "$base") && [ -n "$base_ref" ]; then
+      tip_ct=$(git -C "$repo" log -1 --format=%ct "$base_ref" 2>/dev/null)
+      # -R: the timestamp arrives as raw text, and without it jq tries to read
+      # it as a JSON number and dies at parse level, where no ? can catch it.
+      merged_ct=$(printf '%s' "$merged_at" | jq -Rr 'try fromdateiso8601 catch 0' 2>/dev/null)
+      if [ -n "$tip_ct" ] && [ "$tip_ct" -ge "$merged_ct" ] 2>/dev/null; then
+        if [ -n "$files_tsv" ]; then
+          IFS=$'\t' read -r -a fpaths <<< "$files_tsv"
+          # Exact when the squash commit is in the local history (and on the
+          # base branch); by date when only the merge time is.
+          if git -C "$repo" merge-base --is-ancestor "$merge_oid" "$base_ref" 2>/dev/null; then
+            follow=$(git -C "$repo" rev-list --count "$merge_oid..$base_ref" \
+                       -- ${fpaths[@]+"${fpaths[@]}"} 2>/dev/null || echo '')
+          else
+            follow=$(git -C "$repo" rev-list --count "$base_ref" --since="$merged_at" \
+                       -- ${fpaths[@]+"${fpaths[@]}"} 2>/dev/null || echo '')
+          fi
+        fi
+        # `git revert` records an exact trailer. A prose mention of the squash
+        # SHA (for example in release notes) is not evidence that it was undone.
+        reverted=false
+        candidates=$(git -C "$repo" log -F --grep="$merge_oid" --format=%H \
+                       "$base_ref" 2>/dev/null)
+        for candidate in $candidates; do
+          if git -C "$repo" show -s --format=%B "$candidate" 2>/dev/null \
+               | grep -Fxq "This reverts commit $merge_oid."; then
+            reverted=true
+            break
+          fi
+        done
+      fi
+    fi
+  fi
+
+  local prev='{}'
+  [ -s "$out" ] && prev=$(jq -c . "$out" 2>/dev/null)
+  [ -n "$prev" ] || prev='{}'
+  tmp=$(mktemp "$out.tmp.XXXXXX" 2>/dev/null) \
+    || { printf 'unreadable'; return 0; }
+  if jq -n --arg url "$url" --arg state "$state" --arg merged_at "$merged_at" --arg ttm "$ttm" \
+        --arg rcc "$rcc" --arg follow "$follow" --arg reverted "$reverted" \
+        --arg checked "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prev "$prev" '
+      {pr_url: $url,
+       pr_state: $state,
+       merged_at: (if $merged_at == "" then null else $merged_at end),
+       time_to_merge_s: (if $ttm == "" then ($prev.time_to_merge_s // null) else ($ttm | tonumber) end),
+       review_comment_count: (if $rcc == "" then ($prev.review_comment_count // null) else ($rcc | tonumber) end),
+       follow_up_commits: (if $follow == "" then ($prev.follow_up_commits // null) else ($follow | tonumber) end),
+       reverted: (if $reverted == "" then ($prev.reverted // null) else ($reverted == "true") end),
+       checked_at: $checked}
+    ' > "$tmp" 2>/dev/null && mv "$tmp" "$out"; then
+    printf 'written'
+  else
+    rm -f "$tmp"
+    printf 'unreadable'
+  fi
   return 0
 }
 
@@ -170,9 +356,10 @@ pr_state() {  # $1 = PR url, $2 = the run's worktree
 # ---------------------------------------------------------------------------
 sweep_runs() {  # $1 = report | clean
   local mode="$1"
-  local d id wt pr state porcelain gitdir kb rc stage_text dirty
+  local d id wt pr view state porcelain gitdir kb rc stage_text dirty
   local n_runs=0 n_sweep=0 n_open=0 n_closed=0 n_dirty=0 n_unknown=0
   local n_nopr=0 n_unfinished=0 n_gone=0 reclaim=0 kept=0
+  local n_oc_written=0 n_oc_settled=0 n_oc_unreadable=0
 
   if [ ! -d "$RUNS" ]; then
     say "no runs directory at $RUNS — nothing to sweep"
@@ -191,6 +378,32 @@ sweep_runs() {  # $1 = report | clean
 
     # The worktree, read exactly the way cleanup.sh reads it — the same helper.
     wt=$(harness_worktree "$d")
+
+    # The poll and the outcome come before anything else, because a run whose
+    # worktree is already gone still has a PR whose fate is worth recording —
+    # and a settled one is not polled at all.
+    pr=$(jq -r '.pr_url // empty' "$d/result.json" 2>/dev/null)
+    view=''
+    state=''
+    if [ -n "$pr" ]; then
+      if outcome_settled "$d" "$pr"; then
+        n_oc_settled=$((n_oc_settled + 1))
+        # Settling suppresses network refreshes, not the cleanup decision. The
+        # terminal state already persisted in outcome.json is still ground
+        # truth for a worktree that survived until a later pass.
+        if [ "$GH_OK" = 1 ]; then
+          state=$(jq -r '.pr_state // ""' "$d/outcome.json" 2>/dev/null)
+        fi
+      else
+        view=$(pr_view "$pr" "$wt")
+        state=$(printf '%s' "$view" | jq -r '.state // ""' 2>/dev/null)
+        case "$(capture_outcome "$d" "$pr" "$view" "$wt")" in
+          written)  n_oc_written=$((n_oc_written + 1)) ;;
+          *)        n_oc_unreadable=$((n_oc_unreadable + 1)) ;;
+        esac
+      fi
+    fi
+
     if [ -z "$wt" ] || [ ! -d "$wt" ]; then
       n_gone=$((n_gone + 1))
       continue
@@ -209,13 +422,13 @@ sweep_runs() {  # $1 = report | clean
           n_unfinished=$((n_unfinished + 1)); continue ;;
     esac
 
-    pr=$(jq -r '.pr_url // empty' "$d/result.json" 2>/dev/null)
     if [ -z "$pr" ]; then
       line keep "$id" "no pr_url — the work exists only here" "$wt"
       n_nopr=$((n_nopr + 1)); continue
     fi
 
-    state=$(pr_state "$pr" "$wt")
+    # MERGED, OPEN or CLOSED out of the poll above; anything else — including a
+    # DRAFT — is a state this sweep cannot act on, which is the `unknown` below.
     case "$state" in
       MERGED) ;;
       OPEN)   line keep "$id" "PR is OPEN — review fixes land here" "$wt"
@@ -273,6 +486,9 @@ sweep_runs() {  # $1 = report | clean
     say "$n_sweep worktree(s) sweepable, $(human_kb "$reclaim") to reclaim · $kept kept · $n_gone of $n_runs runs had no worktree left"
   fi
   say "  kept: $n_open open · $n_closed closed · $n_dirty dirty · $n_unknown unknown · $n_nopr no-pr · $n_unfinished unfinished"
+  if [ $((n_oc_written + n_oc_settled + n_oc_unreadable)) -gt 0 ]; then
+    say "  outcomes: $n_oc_written written · $n_oc_settled settled (terminal, over $OUTCOME_MAX_AGE days old) · $n_oc_unreadable not readable"
+  fi
   return 0
 }
 
@@ -370,7 +586,7 @@ pass() {  # $1 = report | clean
   reap_procs "$mode"
   if [ "$mode" != clean ]; then
     echo
-    say "--report touched nothing. janitor.sh --clean does the above."
+    say "--report swept and reaped nothing (outcome.json is still refreshed). janitor.sh --clean does the above."
     return 0
   fi
   # A sweep that could not finish is the one thing an operator has to notice.

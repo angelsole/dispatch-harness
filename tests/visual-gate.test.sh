@@ -86,6 +86,30 @@ python3 -c 'import numpy, PIL' >/dev/null 2>&1 && HAVE_PY=1
 HAVE_MAGICK=0
 command -v magick >/dev/null 2>&1 && HAVE_MAGICK=1
 
+# Browser selection belongs to the visual profile's established contract, not
+# to unrelated feature branches. The renderer launches Playwright's managed
+# browser directly and carries no named system-browser channel fallback.
+if python3 - "$CREATIVE/frames.py" <<'PY'
+import ast
+import sys
+
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+launches = [
+    node
+    for node in ast.walk(tree)
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Attribute)
+    and node.func.attr == "launch"
+]
+assert launches
+assert all(all(keyword.arg != "channel" for keyword in call.keywords) for call in launches)
+PY
+then
+  ok "renderer: browser selection stays on Playwright's managed executable"
+else
+  bad "renderer: an out-of-scope named-browser fallback was introduced"
+fi
+
 # The browser revision is part of the renderer contract. A missing managed
 # browser must not silently select a host-managed Chrome whose version can
 # differ between otherwise identical runners. The infrastructure test below
