@@ -39,6 +39,7 @@ environment variable.
 | `QM_AUTOBRIEF_TIMEOUT` | Seconds allowed for each self-briefing planner call | `1200` |
 | `QM_AUTOBRIEF_MODEL` | Model for self-briefing | the station's default |
 | `QM_AUTOBRIEF_MAX_BODY` | Ticket-description bytes handed to the planner | `60000` |
+| `QM_SPEC_CRITIC` | `1` requires [the spec critic](#the-spec-critic) to return a verdict for every self-written brief and holds it back on a contradiction; `0` publishes unread | `1` |
 | `QM_REPO_ROOTS` | Space-separated roots searched for repos named by briefs | `~/Projects` |
 | `QM_REPO_DEPTH` | Maximum discovery depth below each repo root | `3` |
 | `LINEAR_API_KEY_FILE` | The Linear key (mode 600, never echoed anywhere) | `$HARNESS_DIR/linear-api-key` |
@@ -120,6 +121,8 @@ to before — this is instrumentation, not a redesign.
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
+| `HARNESS_ESCALATION` | `on` \| `off` — whether a gate failure on the cheap implementer buys one pass on the Claude subscription ([Escalation](#escalation)). Defaults to `on` wherever the implementer is not already `anthropic`, `off` when it is (there is nothing to escalate to). An unrecognised value falls back to that default, says so once, and re-pins. | `on` on `zai`, `off` on `anthropic` |
+| `HARNESS_ESCALATION_STEPS` | Comma-separated classes of failing gate step that may escalate: `test`, `lint`, `type-check`, `build`, `unknown`, or `all`. A value naming a class that does not exist falls back to the default and says which one. | `test,lint,type-check` |
 | `HARNESS_SKIP_REVIEW` | `1` skips the review stage **and** its fix rounds — the `no_review` arm, and the only arm that ships without a review. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review — on codex when it is installed, otherwise on a Claude worker). A machine with no `codex` CLI pins `claude_only` instead and reviews on the Claude tier: see [Claude-only mode](operations.md#claude-only-mode). | unset (`full` arm) |
 
 ```bash
@@ -156,9 +159,12 @@ re-dispatch) is billed to the account the run was pinned to. The reviewer, the
 Claude review tier, its fix rounds, the conflict resolver and `sync-pr.sh` are
 untouched and stay on Anthropic/Codex; the Claude tier spawns with
 `claude-opus-5` rather than the implementer's GLM id, which would be a usage
-error against Anthropic. One nice consequence: with a `zai` implementer even the
-*Claude* review tier is a cross-vendor read, so the fallback described in
-[the review guarantee](../README.md#why-its-built-this-way) loses nothing.
+error against Anthropic. An Anthropic implementer also clears these z.ai-only
+variables inside its spawn, so a shell used for `attach.sh` cannot leak the
+compatible endpoint into a later Anthropic handoff. One nice consequence: with
+a `zai` implementer even the *Claude* review tier is a cross-vendor read, so the
+fallback described in [the review guarantee](../README.md#why-its-built-this-way)
+loses nothing.
 
 **Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,
 and pinning it also sets the CLI's auto-compaction window to match. `glm-4.7` is
@@ -184,6 +190,88 @@ mid-run balance event and defers normally.
 prints the exports an interactive resume needs — the key's path, never the key
 — and asks you to rerun it after exporting them. It never opens the session
 against the wrong endpoint.
+
+### Escalation
+
+The implementer is chosen once per run, and until now that choice was the run's
+last word: work that failed the test gate on the cheap tier ended the run on
+`gate_failed` and waited for a human. Escalation makes the cheap choice a
+**first** choice instead — the gate's own verdict is the evidence that buys one
+pass on the Claude subscription.
+
+**When it fires.** After the gate and the [integrity check](#the-gate-integrity-check),
+before the review, on a run that would otherwise reach `gate_failed`: the gate
+failed, `escalation` is `on`, the implementer is not already `anthropic`, and
+this run has not escalated before. The review is deliberately downstream of the
+decision — a diff the gate rejects is not worth a reviewer's pass, and the
+escalated attempt is gated, integrity-checked and reviewed exactly like the
+first one.
+
+**What it does.** It writes the handover the turn ceiling already writes (the
+previous session's [segment report](operations.md#turn-ceiling-a-run-that-resumes-itself))
+plus the gate's verdict on it — the failing step, the clipped gate extract, the
+diff stat — re-pins `implementer-provider` to `anthropic` and
+`implementer-model` to that vendor's default, and starts the run again. One
+fresh session gets the original brief, the same "this is an external artifact,
+the brief is the contract" framing the turn-ceiling handover uses, and the
+partial work still standing in the worktree.
+
+The escalation guard, target provider/model, and pending flag are published
+together in one atomic `escalation.json` update. A re-dispatch takes its target
+from that record rather than from separately-written pins, so an interrupted
+handoff remains complete and resumable.
+
+The handover is a **new attempt**, not a second segment of the failing one, so
+`attempts/<n>/` keeps the cheap tier's stream, gate rounds and final message and
+the escalated attempt's turn counts and token usage are the Claude
+subscription's alone. Two things follow for free: the escalated segment pays the
+[capacity preflight](operations.md#capacity-preflight-a-run-that-defers-itself),
+because it is the Claude window it spends now; and a deferral there defers the
+*escalation* — the handover stays armed and the evidence that earned it stays on
+disk — rather than losing the run.
+
+**The guards.** Each of them refuses out loud, in the run's log:
+
+- **Never twice.** One escalation per run; a second gate failure ends it on
+  `gate_failed` with the escalation recorded.
+- **Never on a flagged attempt.** Non-empty integrity `flags` mean the gate's
+  verdict is not to be trusted in either direction, and the answer to that is a
+  reviewer, not a more expensive implementer. A gamed green must not buy a
+  cheap pass.
+- **Never without a patch.** An attempt that left no diff against base is the
+  shape `implementer_failed` already ends on, and a stronger model recovers
+  none of those.
+- **Only the step classes the knob names.** Recovery is not uniform across
+  failure kinds, so the trigger branches on *what* failed. The failing step
+  (the command the gate died on — see
+  [which gate step failed](design-notes.md#which-gate-step-failed)) is matched
+  case-insensitively into one class:
+
+  | Class | Matched on | In the default set |
+  | --- | --- | --- |
+  | `type-check` | `tsc`, `typecheck`, `type-check`, `type_check`, `check:types`, `check-types`, `check_types`, `types:check`, `cargo check`, `mypy`, `pyright`, `analyze` | yes |
+  | `lint` | `lint`, `rubocop`, `shellcheck`, `ruff`, `flake8`, `clippy` | yes |
+  | `test` | `test`, `spec`, `jest`, `cypress` | yes |
+  | `build` | `build`, `compile`, `webpack` | no |
+  | `unknown` | anything else, and a round whose step was never recorded | no |
+
+  Classes are tried in that order, so `npm run type-check` is a type-check and
+  not a test. `HARNESS_ESCALATION_STEPS=all` escalates on any failing step.
+
+**Attribution.** With an escalation the branch carries two implementers' work,
+and the boundaries are recorded rather than inferred:
+
+| Range | Whose |
+| --- | --- |
+| `base..glm_head` | the cheap tier's (`escalation.glm_head`, also `escalation.from_provider`/`from_model`) |
+| `glm_head..opus_head` | the escalated session's |
+| `opus_head..HEAD` | the reviewer's |
+
+`opus_head` keeps its meaning — everything up to it is the implementer stage's —
+so `metrics.opus_commits` counts *both* implementers on an escalated run and
+`metrics.codex_commits` is unaffected. Split the two by `glm_head` when you need
+them apart. Commit messages stay clean, as everywhere else in this pipeline: the
+attribution lives in `result.json`, never in the commits.
 
 ### Not a knob: HARNESS_GATE_STEP
 
@@ -222,9 +310,13 @@ brief coverage, no unrequested scope, diff minimality and hygiene, test
 integrity, and (only for a run that actually resumed) resume coherence — are
 each scored on their **own** call, K independent samples each, against the
 acceptance criteria of `brief.md` as a spec stated before the work started.
-Every sample has to quote the diff hunk or trajectory line that decides it, and
-a quote the adapter cannot find verbatim in the evidence it sent scores that
-sample **0**, whatever number came with it. The K samples are aggregated by
+Every sample has to quote the requirement, diff hunk or trajectory line that
+decides it, and a quote the adapter cannot find verbatim in the task spec or
+the evidence it sent scores that sample **0**, whatever number came with it.
+One known limitation: evidence beyond the per-step, whole-trajectory or diff
+budget is clipped, and a genuine citation from past a cut scores 0 —
+`verify.json` carries an `evidence_truncated` boolean per item for those cases.
+The K samples are aggregated by
 median; the headline `score` is the plain **mean** of the item scores, which is
 an aggregate no amount of trajectory length can inflate. A call that never
 returned is dropped rather than counted zero; if every sample for one item
@@ -296,12 +388,66 @@ usage, how long it took, and `location` on Vertex — copied verbatim into
 the score, or `skipped (<reason>)`, or `failed (<reason>)`).
 Both rotate into `attempts/<n>/` with the rest of an attempt's telemetry.
 
+## The spec critic
+
+Every stage after the planner treats `brief.md` as ground truth: the implementer
+builds from it, the gate runs its `Verify` block, the reviewer and the verifier
+judge the diff against its acceptance criteria. Nothing checks the specification
+itself. `spec-critic.sh` is one confined, read-only pass that does — before
+anybody acts on it.
+
+```bash
+~/.claude/harness/spec-critic.sh --brief runs/<RUN-ID>/brief.md \
+  --repo /path/to/repo --out runs/<RUN-ID>/spec-critic.json
+```
+
+**What it returns**, and nothing else — a single JSON object, enforced by the
+CLI's `--json-schema` rather than asked for in prose:
+
+| Field | What it holds |
+| --- | --- |
+| `contradictions` | Statements in the brief that cannot both hold: a criterion the Out of scope section forbids, a `Verify` command that contradicts what `Reproduction` says fails today. |
+| `criteria_not_testing_problem` | Acceptance criteria that could all pass with the Problem still there, and criteria no reading or command can settle. |
+| `conflicts_with_current_behavior` | `{claim, code_evidence}` — a claim the brief makes about how the repo works today that the code contradicts. `code_evidence` is a repo-relative `file:line` and is **required**: a conflict without a citation to an existing line in the supplied repo is dropped rather than passed on. |
+| `questions` | At most 3, batched into one round, ordered by how much they change what gets built. |
+
+Every list may be empty, and an honest empty verdict is the common one. The
+critic **reports**; it never edits a brief and it never decides a run. What a
+finding is worth is the caller's call: the planner skills fold the answers back
+into the brief before dispatch, and the quartermaster holds a self-written brief
+back on a contradiction or when the required verdict could not be produced (see
+[The Quartermaster](operations.md#the-quartermaster)).
+
+**Confinement.** `spec-critic-settings.json` allows `Read`, `Grep` and `Glob`
+and denies everything else by name — no `Bash` (a permission pattern matches the
+head of a command line, not what it goes on to run), no `Task`, no network, and
+no `Edit`/`Write`, because a critic that can write is a critic that can edit the
+brief it is grading. The brief itself is quoted into the prompt inside a fence
+whose marker is minted per call, so a brief written from a ticket description
+cannot close the quote and give orders. The session's cwd is a disposable
+scratch dir and the target repo is reachable only because `--add-dir` names it,
+so the write confinement holds whatever the policy file says.
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `SPEC_CRITIC_MODEL` | Model for the pass | the CLI's own default |
+| `SPEC_CRITIC_TIMEOUT` | Seconds per call | `600` |
+| `SPEC_CRITIC_MAX_TURNS` | Turn ceiling — repo research is most of them | `40` |
+| `SPEC_CRITIC_SETTINGS` | The tool policy | `spec-critic-settings.json` beside the script |
+
+Exit 0 means a verdict was produced (read the JSON — passing is the usual
+outcome), 1 means the single critic pass could not produce one, 2 is a usage
+error. A critic that cannot answer is not evidence against a brief, but the
+quartermaster still defers because the required review is missing.
+
 ## The gate integrity check
 
 Between the implementer's gate round and the review stage, `lib/gate-integrity.sh`
 asks the question a green gate cannot answer about itself: **was it earned?** It
-is deterministic (no model), best-effort, time-boxed, and it only ever **flags** —
-no status, no gate verdict and no PR decision depends on anything it finds.
+is deterministic (no model), best-effort, and time-boxed. It reports **flags**
+rather than rewriting the gate verdict; non-empty flags also veto
+[escalation](#escalation), so they can affect provider routing and the run's
+eventual outcome.
 
 **Replay.** Every test file this branch adds or changes is run against the
 *unpatched base tree* in a scratch worktree, scoped to that one file, with the
@@ -369,10 +515,27 @@ between, a `visual` object in `result.json`
 section in the PR body, and one more terminal status — **`visual_failed`**: the
 tests pass and the picture does not.
 
+Activation is repo-level, so the stage itself answers two cheaper questions
+before it renders anything, and each has its own non-verdict:
+
+- **`skip`** — no file this branch changes is in `VISUAL_SCOPE_GLOBS`. A diff
+  with no visual surface cannot have changed the picture, and grading it against
+  the reigning champion is noise at best. Nothing renders, no fix round, no
+  outcome; `result.json` gets `{status: "skip", reason}`.
+- **`not_run`** — the machine could not render: no Playwright or a headless
+  browser that will not launch. That is not a taste verdict and no fix round
+  can install Chromium, so the run ships and says so — `{status: "not_run",
+  rounds, reason, remedy}` in `result.json` and a two-line note in the PR body.
+  A gate pinned through `VISUAL_GATE_CMD` opts in by both exiting **3** and
+  writing `status: "not_run"` in `.harness/visual-score.json`; requiring both
+  preserves nonzero exit meanings used by custom gates that predate this
+  protocol.
+
 | Env var | Effect | Default |
 | --- | --- | --- |
 | `HARNESS_VISUAL_ROUNDS` | Visual gate rounds a run may spend before `visual_failed`. Anything that is not a positive integer falls back. | `2` |
 | `VISUAL_GATE_CMD` | The gate command itself, pinned per repo in `repos.local.sh`. Unpinned, a `.creative/` repo gets `profiles/visual/creative/visual-gate.sh`. | (the shipped gate) |
+| `VISUAL_SCOPE_GLOBS` | Which paths this repo's picture is made of, as space-separated git pathspec globs. Pinned per repo in `repos.local.sh`; a value REPLACES the defaults, so list every path including `.creative/**`. | `wall/** .creative/** assets/**` |
 
 The factories' two API keys live in `~/.claude/harness/factory.conf.sh` (mode
 600, never seeded — copy `profiles/visual/factory.conf.sh.example` and fill it
@@ -463,6 +626,7 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 | `INSTALL_CMD` | Install deps in a fresh worktree | from lockfile (`npm ci` / `yarn install` / `uv sync`) |
 | `GATE_CMD` | The deterministic test gate | from lockfile (`npm test` / `yarn test` / `uv run pytest`) |
 | `VISUAL_GATE_CMD` | The [visual profile's](#profiles) gate. Setting it is one of the two ways a repo opts in | none; the shipped gate once the profile applies |
+| `VISUAL_SCOPE_GLOBS` | Git pathspec globs naming the paths that repo's picture is made of; a branch touching none of them skips the [visual gate](#profiles) | none; the profile's `wall/** .creative/** assets/**` |
 | `MCP_CONFIG` | Path to an `.mcp.json` the worker loads | none (skipped if the path is missing) |
 | `ENV_SUBDIRS` | Extra dirs besides `.` to copy `.env*` into | none |
 | `DEV_CMD` | Dev server command for `preview.sh` | `npm run dev` |
@@ -582,6 +746,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `outcome.json` | What the world did with the PR: `pr_url`, `pr_state`, `merged_at`, `time_to_merge_s`, `review_comment_count`, `follow_up_commits`, `reverted`, `checked_at` — written by the [janitor](operations.md#the-janitor) once the run has a PR. Absent until then, and absent for a PR the janitor could never read |
 | `repo` | The repo the janitor resolved the run's PR to, so later sweeps skip the re-derivation |
 | `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
+| `escalation.json`, `escalation-report.md` | [Escalation](#escalation): what the cheap tier failed on and where its commits end (copied into `result.json` as `escalation`), and the handover the escalated session was given. Only on a run that escalated |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
 | `verify.json`, `verify.log` | The [verifier's](#the-verifier) score, and why it did or did not produce one |
 | `visual/`, `visual-*.log`, `visual-rounds.log` | The [visual profile's](#profiles) frames, contact sheet and score, one log per round, and the round ledger. Only on a repo the profile applies to |
@@ -709,8 +874,9 @@ fields are `null`/empty):
 | --- | --- |
 | `review` | How the review stage actually went: `reviewed` \| `reviewed_claude` \| `failed_silent` \| `skipped`, empty when the run never reached it. Runs recorded before this ticket may also carry the retired `no_evidence` — an empty Codex review now falls through to the Claude tier instead of shipping. See [Reading the pipeline's own vitals](design-notes.md#reading-the-pipelines-own-vitals). |
 | `review_account` | Which backend the review attempt ran on: `primary` \| `fallback` \| `claude`. Absent (not empty) on the arm that never attempts a review. Set the moment a tier is entered, so it names the attempt, not the outcome — `review` is what says a diff was read. See [A second Codex account](operations.md#a-second-codex-account-for-a-dry-primary). |
-| `gate_integrity` | The [integrity check's](#the-gate-integrity-check) own `gate-integrity.json`, verbatim: `{base, head, replay: {status, reason, runner, discriminating, non_discriminating, not_run, files{}}, flags[], flag_count}`. Additive and optional — absent on a run that never reached the stage (or ran with it off), and `flags: []` on a branch it found nothing in. Advisory: nothing in the pipeline branches on it. |
+| `gate_integrity` | The [integrity check's](#the-gate-integrity-check) own `gate-integrity.json`, verbatim: `{base, head, replay: {status, reason, runner, discriminating, non_discriminating, not_run, files{}}, flags[], flag_count}`. Additive and optional — absent on a run that never reached the stage (or ran with it off), and `flags: []` on a branch it found nothing in. It does not rewrite the gate verdict, but non-empty flags veto [escalation](#escalation) and can therefore affect routing and the eventual outcome. |
 | `review_findings` | [Find, refute, fix](#find-refute-fix): `{found, refuted, promoted, fixed, refute}`. `fixed` is counted from the commit log (the fix pass names the finding id in its message), so a promoted finding nobody committed for reads as promoted-not-fixed rather than as fixed. `refute` is `ok` \| `failed` \| `off`, and on anything but `ok` every finding was promoted unchecked. Additive and optional — absent on a review that produced no structured findings, which is the single-pass review this replaced. |
+| `escalation` | [Escalation](#escalation): `{triggered, from_provider, from_model, at_attempt, failed_step, glm_head}` — the vendor and model the run implemented on before it escalated, the attempt and the failing gate step that triggered it, and the commit the cheap tier's work ends at. Additive and optional: absent on every run that did not escalate, which is every run before this existed. |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |
 | `metrics.gate_rounds` | `[{round, result, seconds, failed_step}]` for each gate run (`1`, `2`, `3`, `base-sync`, …). `result` is `pass` \| `fail` \| `skipped` (see [When the post-review gate is skipped](design-notes.md#when-the-post-review-gate-is-skipped)); a skipped round records `0` seconds. `failed_step` is the command a failing round died on, `null` on a passing or skipped round and on rounds recorded before this existed. |
@@ -718,7 +884,7 @@ fields are `null`/empty):
 | `attempt` / `attempts_total` | This invocation's ordinal, and how many attempts the run has had. See [Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch). |
 | `metrics.attempts` | The attempt ledger: `[{n, status, started, ended}]`, one row per invocation, which is what makes attempt-level rates and the idle gaps between attempts computable from `result.json` alone. |
 | `metrics.self_resumes` | Mid-run session limits this run rescheduled itself out of. |
-| `metrics.opus_commits` | Commit count `base..opus_head` (the implementer's). |
+| `metrics.opus_commits` | Commit count `base..opus_head` (the implementer stage's — both implementers on an [escalated](#escalation) run). |
 | `metrics.codex_commits` | Commit count `opus_head..HEAD` (the reviewer's). |
 | `metrics.diff` | `{files_changed, insertions, deletions}` vs. base. |
 | `metrics.implementer_num_turns` | `num_turns` summed over every result event of this invocation's stream-json — one per [turn-ceiling segment](operations.md#turn-ceiling-a-run-that-resumes-itself). Identical to the CLI's own number on a run that never resumed. |

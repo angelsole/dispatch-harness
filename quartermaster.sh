@@ -17,9 +17,11 @@
 #   quartermaster.sh --uninstall        remove that agent
 #
 # A tagged ticket with no brief is self-briefed by --arm: a confined planner
-# writes runs/<TICKET>/brief.md from the ticket text, and the run is armed with
+# writes runs/<TICKET>/brief.md from the ticket text, a confined spec critic
+# attacks that brief before it can be published, and the run is armed with
 # nobody having read the plan. QM_AUTOBRIEF=0 restores the stricter contract
-# where only a human-approved brief is armable. --report never briefs.
+# where only a human-approved brief is armable; QM_SPEC_CRITIC=0 drops the
+# critic. --report never briefs.
 # <<< --help <<<
 #
 # The report is written to runs/quartermaster/<YYYY-MM-DD>.md and pushed as one
@@ -27,7 +29,8 @@
 #
 # What leaves this machine: the Linear API (read, plus one comment per ticket
 # actually armed), the ntfy push, and — only when --arm self-briefs a ticket —
-# a planner session on the owning station's Claude subscription. Capacity
+# a planner session, then a spec-critic session, both on the owning station's
+# Claude subscription. Capacity
 # accounting stays local-file only: ccusage parses the station's own logs and
 # contacts no model provider.
 set -u
@@ -75,6 +78,10 @@ AUTOBRIEF="${QM_AUTOBRIEF:-1}"
 AUTOBRIEF_TIMEOUT="${QM_AUTOBRIEF_TIMEOUT:-1200}"  # per ticket; planning is slow
 AUTOBRIEF_MODEL="${QM_AUTOBRIEF_MODEL:-}"          # empty = the station's default
 AUTOBRIEF_MAX_BODY="${QM_AUTOBRIEF_MAX_BODY:-60000}"  # description bytes fed to the planner
+# The spec critic reads every self-written brief before it can be published. It
+# only ever holds a brief back, never edits one, and a critic that cannot answer
+# leaves the brief deferred because the required reading did not happen.
+SPEC_CRITIC="${QM_SPEC_CRITIC:-1}"
 # Where the planner may look for the repo a ticket names. Space-separated roots,
 # searched to REPO_DEPTH for .git — a planner cannot pick a repo this machine
 # has not been told about, which is what keeps an invented path out of a brief.
@@ -396,11 +403,14 @@ nth_time() {  # $1 = zero-based index into TIMES; prints nothing when we run out
 #     ticket's directory, nor replace a brief a human approved.
 #   - What the brief claims is verified rather than trusted — by validate_brief
 #     below, which the arming loop applies to every brief it is about to hand
-#     schedule.sh, whoever wrote it.
+#     schedule.sh, whoever wrote it, and then by the spec critic, a second
+#     confined session that reads the brief against the repo and holds it back
+#     when it says two things at once.
 #
 # What none of that restores is a human reading the plan before it runs. That is
 # the trade QM_AUTOBRIEF makes, which is why self-briefed tickets get their own
-# report heading instead of being folded in with the approved ones.
+# report heading instead of being folded in with the approved ones — with the
+# critic's verdict on the line, because it is the only reading the plan got.
 
 # Where a brief may name a repo. Discovered once per evening and kept: the
 # answer cannot change under us, and now that every brief is checked against it
@@ -450,6 +460,30 @@ validate_brief() {  # $1 = repo, $2 = branch
   fi
   if ! git check-ref-format "refs/heads/$2" >/dev/null 2>&1; then
     echo "the brief's branch is not a valid git ref: $2" >&2
+    return 1
+  fi
+  return 0
+}
+
+# The unattended planner has no human approval step to catch a template-shaped
+# header with none of the contract the implementer needs. A section counts only
+# when its exact template heading is followed by some non-blank content before
+# the next top-level section; the documented "none" and "unknown" answers both
+# satisfy that rule without inviting the validator to invent semantics.
+validate_autobrief_contract() {  # $1 = candidate brief
+  local brief="$1" section missing=""
+  for section in "Reproduction" "Interface contract" "Edit locations" "Decision points"; do
+    if ! awk -v heading="## $section" '
+      $0 == heading { seen = 1; inside = 1; next }
+      inside && /^## / { exit }
+      inside && /[^[:space:]]/ { content = 1 }
+      END { exit !(seen && content) }
+    ' "$brief"; then
+      missing="${missing}${missing:+, }## $section"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    echo "the generated brief is missing or leaves empty required section(s): $missing" >&2
     return 1
   fi
   return 0
@@ -520,12 +554,52 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
   printf '%s\n' "$count"
 }
 
+# The spec critic, on the candidate brief and before it is published. Nothing
+# downstream ever re-reads the specification it is handed, so this is the only
+# place a self-written one is checked for saying two things at once — and the
+# evening is the only stage that can act on the answer, because 02:00 has nobody
+# to ask.
+#
+# Contradictions hold a brief back. The other three lists are advice for whoever
+# reads the run afterwards: an untested criterion still builds something, and a
+# question is a question. A critic that produced no verdict also leaves the brief
+# deferred — not as evidence against it, but because the required pre-dispatch
+# reading did not happen.
+#
+# Prints the reason on stderr and returns 1 when the brief must not be armed.
+spec_critic_pass() {  # $1 ticket, $2 candidate, $3 repo, $4 station, $5 station dir, $6 verdict
+  local ticket="$1" candidate="$2" repo="$3" station="$4" dir="$5" verdict="$6"
+  local run_dir="$RUNS/$1" verdict_rel="runs/$1/${6##*/}" n
+  [ "$SPEC_CRITIC" = 1 ] || return 0
+  (
+    unset GH_TOKEN ANTHROPIC_API_KEY
+    export HARNESS_DIR="$HARNESS_DIR"
+    export CLAUDE_CONFIG_DIR="$dir/claude"
+    export CODEX_HOME="$dir/codex"
+    export GH_CONFIG_DIR="$dir/gh"
+    export HARNESS_OWNER="$station"
+    export SPEC_CRITIC_TIMEOUT="$AUTOBRIEF_TIMEOUT"
+    [ -z "$AUTOBRIEF_MODEL" ] || export SPEC_CRITIC_MODEL="$AUTOBRIEF_MODEL"
+    "$SELF_DIR/spec-critic.sh" --brief "$candidate" --repo "$repo" --out "$verdict"
+  ) </dev/null >>"$run_dir/spec-critic.log" 2>&1 || {
+    echo "the spec critic produced no verdict (see runs/$ticket/spec-critic.log)" >&2
+    return 1
+  }
+  n=$(jq -r '.contradictions | length' "$verdict" 2>/dev/null) || n=0
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$n" -gt 0 ]; then
+    echo "the spec critic found $n contradiction(s) in the brief (see $verdict_rel)" >&2
+    return 1
+  fi
+  return 0
+}
+
 # Prints the reason on stderr and returns non-zero on failure; silence and 0
 # mean the brief is on disk, has usable headers, and names an armable target.
 autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 station dir
   local ticket="$1" title="$2" bodyfile="$3" station="$4" dir="$5"
   local run_dir="$RUNS/$1" brief="$RUNS/$1/brief.md"
-  local repos prompt fence candidate stage planned copyfail snap stray reason r b rc=0
+  local repos prompt fence candidate verdict stage planned copyfail snap stray reason r b rc=0
   repos=$(repo_candidates)
   if [ -z "$repos" ]; then
     echo "no git repo found under QM_REPO_ROOTS ($REPO_ROOTS)" >&2
@@ -542,6 +616,9 @@ autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 statio
   fi
   fence=$(fence_tag)
   candidate="$run_dir/brief.candidate.$fence.md"
+  # The verdict belongs to this candidate until that candidate wins publication.
+  # Concurrent quartermasters therefore never read or clear one another's result.
+  verdict="$run_dir/spec-critic.$fence.json"
   if [ -e "$candidate" ] || [ -L "$candidate" ]; then
     echo "cannot reserve a unique candidate path under runs/$ticket" >&2
     return 1
@@ -705,6 +782,18 @@ to the path and under the rules given above the fence."
     printf '%s\n' "$reason" >&2
     return 1
   fi
+  if ! reason=$(validate_autobrief_contract "$candidate" 2>&1 >/dev/null); then
+    reject_brief "$candidate" "${brief%.md}.rejected.md"
+    printf '%s\n' "$reason" >&2
+    return 1
+  fi
+  # Before publication, not after: a brief that contradicts itself must never sit
+  # at the armable path, where tomorrow's pass would read it as approved.
+  if ! reason=$(spec_critic_pass "$ticket" "$candidate" "$r" "$station" "$dir" "$verdict" 2>&1 >/dev/null); then
+    reject_brief "$candidate" "${brief%.md}.rejected.md"
+    printf '%s\n' "$reason" >&2
+    return 1
+  fi
   # ln is the portable atomic no-clobber primitive here: candidate and final
   # share a directory/filesystem, and link(2) fails if brief.md appeared while
   # the planner was running. The planner itself never writes the armable path.
@@ -713,7 +802,19 @@ to the path and under the rules given above the fence."
     echo "runs/$ticket/brief.md appeared while planning — the candidate was quarantined, not published" >&2
     return 1
   fi
+  # Only the process whose candidate became brief.md may publish the canonical
+  # verdict. Until this point every process has read only its private result.
+  if [ "$SPEC_CRITIC" = 1 ] && ! mv -f "$verdict" "$run_dir/spec-critic.json"; then
+    reject_brief "$brief" "${brief%.md}.rejected.md"
+    rm -f "$candidate"
+    echo "the matching spec-critic verdict could not be published for runs/$ticket/brief.md" >&2
+    return 1
+  fi
   rm -f "$candidate"
+  if [ "$SPEC_CRITIC" = 1 ]; then
+    printf '%s\t%s\n' "$ticket" \
+      "spec-critic: no contradictions (runs/$ticket/spec-critic.json)" >> "$WORK/criticnotes"
+  fi
   printf '%s\n' "$ticket" >> "$WORK/autobriefed"
   return 0
 }
@@ -797,7 +898,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   local id ident email title reason brief repo branch slot out rc
   local n armed_here fits idx used_slots armed_hdr over_hdr
   local cap_word arms nobrief_n skipped_n refused_n st autobriefed_n briefailed_n
-  local times_n slots_left arm_cap sb rejected_n strays_n kind path
+  local times_n slots_left arm_cap sb rejected_n strays_n kind path critic_note
 
   say "## $station"
   say ""
@@ -819,6 +920,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   # needs to see. Kept in files rather than arrays: bash 3.2 has no dict.
   : > "$WORK/eligible"; : > "$WORK/nobrief"; : > "$WORK/skipped"; : > "$WORK/refused"
   : > "$WORK/autobriefed"; : > "$WORK/briefailed"; : > "$WORK/rejected"; : > "$WORK/strays"
+  : > "$WORK/criticnotes"
   armed_here=0
   while IFS="$TAB" read -r id ident email title; do
     [ -n "$ident" ] || continue
@@ -961,12 +1063,15 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
     say "### Self-briefed"
     say ""
     say "Briefs written tonight by the confined planner from the ticket text"
-    say "(\`QM_AUTOBRIEF\`) — no human has read them. Whether each was actually"
-    say "armed is recorded in the sections above:"
+    say "(\`QM_AUTOBRIEF\`) — no human has read them, and what the spec critic made"
+    say "of each is the only reading they got. Whether each was actually armed is"
+    say "recorded in the sections above:"
     say ""
     while read -r ident; do
       [ -n "$ident" ] || continue
-      say "- \`$ident\` — \`runs/$ident/brief.md\`, planner log alongside it"
+      critic_note=$(awk -F"$TAB" -v t="$ident" '$1 == t {print $2; exit}' \
+        "$WORK/criticnotes" 2>/dev/null)
+      say "- \`$ident\` — \`runs/$ident/brief.md\`, planner log alongside it${critic_note:+ — $critic_note}"
     done < "$WORK/autobriefed"
     say ""
   fi

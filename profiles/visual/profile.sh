@@ -16,14 +16,33 @@
 
 # The standing verdict, in the same shape and at the same scope as the test
 # gate's, because it is the same kind of fact: not_run (the stage never
-# happened) | pass | fail. The pairwise verdict and the critic's worst axis
-# travel with it — they are what a human reads first.
+# happened, or the machine could not render) | skip (nothing in the diff can
+# have changed the picture) | pass | fail. The pairwise verdict and the critic's
+# worst axis travel with it — they are what a human reads first.
 VISUAL_STATUS="not_run"; VISUAL_ROUNDS=0; VISUAL_PAIRWISE=""; VISUAL_WORST_AXIS=""
 VISUAL_FAILED_STEP=""
+# Why the verdict is not a verdict. Only ever set for skip and not_run, and the
+# thing that tells "the stage never happened" from "the stage could not run".
+VISUAL_REASON=""; VISUAL_REMEDY=""
+
+# The shipped gate's exit code for an environment that cannot render, such as a
+# missing browser. Distinct from a failing render, because no fix round can
+# install Chromium.
+VISUAL_RC_NOT_RUN=3
 
 # A repo that carries .creative/ but pinned no command gets the gate this
 # profile ships. The pin stays available for a repo that wants its own.
 VISUAL_GATE_CMD="${VISUAL_GATE_CMD:-bash $PROFILE_DIR/creative/visual-gate.sh}"
+
+# Which paths this repo's picture is made of. Activation is repo-level — a repo
+# carrying .creative/ gets the profile for every run it dispatches — so without
+# this a branch that touched only a shell script would still be rendered and
+# graded against the reigning champion, and a critic asked to compare two
+# identical pictures answers noise. Git pathspec globs, space-separated, pinned
+# per repo through repo_config; the defaults cover where a picture usually
+# lives and a repo whose render is elsewhere states so.
+DEFAULT_VISUAL_SCOPE_GLOBS="wall/** .creative/** assets/**"
+VISUAL_SCOPE_GLOBS="${VISUAL_SCOPE_GLOBS:-$DEFAULT_VISUAL_SCOPE_GLOBS}"
 
 # Bounded exactly like the test gate's fix rounds, and an exhausted budget is a
 # terminal status rather than a PR nobody looked at.
@@ -49,6 +68,27 @@ if [ -n "${MCP_CONFIG:-}" ] && [ ! -f "$VISUAL_FACTORY_CONF" ]; then
   echo "[harness] factory keys SKIP — no $VISUAL_FACTORY_CONF"
 fi
 
+# Does this branch touch anything the render is made of? Asked of git with the
+# globs as pathspecs, so they mean what git means by them rather than what a
+# re-implementation in shell would. Every unanswerable case — no merge base, a
+# pathspec git rejects, an empty glob list — renders: a round nobody needed
+# costs minutes, and a picture nobody looked at is the failure this stage
+# exists to prevent.
+visual_diff_in_scope() {
+  local base out g
+  local spec=() globs=()
+  [ -n "$VISUAL_SCOPE_GLOBS" ] || return 0
+  base=$(git -C "$WORKTREE" merge-base "$BASE_REF" HEAD 2>/dev/null) || return 0
+  [ -n "$base" ] || return 0
+  # read -ra, not an unquoted expansion: these are git's globs, and the shell
+  # would match them against ITS OWN working directory first — the harness
+  # checkout, which has a wall/ and a docs/ of its own.
+  read -ra globs <<< "$VISUAL_SCOPE_GLOBS"
+  for g in "${globs[@]}"; do spec+=(":(glob)$g"); done
+  out=$(git -C "$WORKTREE" diff --name-only "$base..HEAD" -- "${spec[@]}" 2>/dev/null) || return 0
+  [ -n "$out" ]
+}
+
 # Same shape as run_gate, deliberately: same trace prelude, same clipped
 # model-facing log, same one-row-per-round ledger in the same format, so
 # everything that already reads a gate round reads this one too. What differs is
@@ -57,7 +97,7 @@ fi
 # (git-excluded) and harvested into the run dir afterwards, because cleanup.sh
 # deletes worktrees and a champion has to outlive the run that earned it.
 run_visual_gate() {  # $1 = round
-  local rc started secs step script f visual_trace_prelude
+  local rc started secs step script f visual_trace_prelude reported_status
   stage "visual gate #$1 (deterministic + critic)"
   step="$RUN_DIR/visual-$1.step"
   : > "$step"
@@ -67,6 +107,9 @@ run_visual_gate() {  # $1 = round
   visual_trace_prelude="trap '$GATE_TRACE_WRITE' DEBUG"
   script="$visual_trace_prelude
 $VISUAL_GATE_CMD"
+  # Classification must use this invocation's score. A custom gate that writes
+  # no score must not inherit a previous round's not_run declaration.
+  rm -f "$WORKTREE/.harness/visual-score.json"
   started=$(date +%s)
   (cd "$WORKTREE" && HARNESS_GATE_STEP="$step" HARNESS_DIR="$HARNESS_DIR" \
      VISUAL_ROUND="$1" VISUAL_REPO="$(basename "$REPO")" \
@@ -74,9 +117,18 @@ $VISUAL_GATE_CMD"
   rc=$?
   secs=$(( $(date +%s) - started ))
   VISUAL_ROUNDS=$((VISUAL_ROUNDS + 1))
-  if [ $rc -eq 0 ]; then VISUAL_STATUS="pass"; else VISUAL_STATUS="fail"; fi
+  reported_status=$(jq -r '.status // ""' \
+    "$WORKTREE/.harness/visual-score.json" 2>/dev/null || echo "")
+  case $rc in
+    0) VISUAL_STATUS="pass" ;;
+    "$VISUAL_RC_NOT_RUN")
+      if [ "$reported_status" = not_run ]; then VISUAL_STATUS="not_run"
+      else VISUAL_STATUS="fail"
+      fi ;;
+    *) VISUAL_STATUS="fail" ;;
+  esac
   VISUAL_FAILED_STEP=""
-  if [ "$VISUAL_STATUS" = fail ]; then
+  if [ "$VISUAL_STATUS" != pass ]; then
     VISUAL_FAILED_STEP=$(tr -d '\t' < "$step" 2>/dev/null | head -1)
   fi
   gate_write_latest "$1 (visual)" "$VISUAL_STATUS" "$VISUAL_FAILED_STEP" \
@@ -93,6 +145,16 @@ $VISUAL_GATE_CMD"
   done
   VISUAL_PAIRWISE=$(jq -r '.pairwise // ""' "$RUN_DIR/visual/visual-score.json" 2>/dev/null || echo "")
   VISUAL_WORST_AXIS=$(jq -r '.worst_axis // ""' "$RUN_DIR/visual/visual-score.json" 2>/dev/null || echo "")
+  VISUAL_REASON=""; VISUAL_REMEDY=""
+  if [ "$VISUAL_STATUS" = not_run ]; then
+    VISUAL_REASON=$(jq -r '.reason // ""' "$RUN_DIR/visual/visual-score.json" 2>/dev/null || echo "")
+    VISUAL_REMEDY=$(jq -r '.remedy // ""' "$RUN_DIR/visual/visual-score.json" 2>/dev/null || echo "")
+    # Keep a sparse custom not_run score useful without making its reason field
+    # mandatory; the status field and exit code are the protocol boundary.
+    [ -n "$VISUAL_REASON" ] \
+      || VISUAL_REASON="${VISUAL_FAILED_STEP:-the visual gate reported it could not run on this machine (exit $rc)}"
+    echo "[harness] visual gate NOT RUN — $VISUAL_REASON${VISUAL_REMEDY:+ (remedy: $VISUAL_REMEDY)}"
+  fi
   return $rc
 }
 
@@ -131,7 +193,17 @@ Fix the RENDER. Camera, light, contrast, composition and motion timing before ad
 # them asks: does the thing LOOK right?
 visual_post_gate() {
   local n=1
+  if ! visual_diff_in_scope; then
+    VISUAL_STATUS="skip"
+    VISUAL_REASON="no file this branch changes is in the visual scope ($VISUAL_SCOPE_GLOBS)"
+    stage "visual gate skipped — nothing in this diff can change the picture"
+    echo "[harness] visual gate SKIP — $VISUAL_REASON"
+    return 0
+  fi
   until run_visual_gate "$n"; do
+    # The machine could not render. Nothing was judged, so there is nothing to
+    # fix and nothing to re-check: the run carries on and says why.
+    [ "$VISUAL_STATUS" = fail ] || return 0
     [ "$n" -lt "$VISUAL_MAX_ROUNDS" ] || break
     if [ "$REVIEW_AGENT" = codex ]; then
       stage "visual fix round $n — Codex (ChatGPT sub)"
@@ -149,7 +221,9 @@ visual_post_gate() {
 # on a Mach-port denial that no setting reaches — so it is handed the PNGs the
 # gate already made and told plainly that this is the only way it will see them.
 visual_review_prompt_extra() {
-  [ "$VISUAL_STATUS" != not_run ] || return 0
+  # Only a round that rendered has anything to hand over. A skip or a not_run
+  # would otherwise point the reviewer at PNGs that do not exist.
+  case "$VISUAL_STATUS" in pass|fail) ;; *) return 0 ;; esac
   printf '%s\n' "The visual gate also ran on this branch (status: $VISUAL_STATUS, pairwise against the reigning champion: ${VISUAL_PAIRWISE:-none}). Its evidence is inside .harness/ too: contact-sheet.png (every rendered frame on one sheet), frames/, champion/ when a champion exists, visual-score.json (the measured checks and the critic's verdict) and visual-latest.log. Read the sheet — you cannot render this yourself, so those PNGs are the only look at it you get. Judge them as part of the diff: a change that made the picture worse is a defect however green the tests are, and a diff that moved a threshold in .creative/visual.conf.sh, the rubric or the reference board to make the gate pass is gate-gaming under checklist item 1."
 }
 
@@ -160,6 +234,17 @@ visual_review_prompt_extra() {
 # nothing to embed and the paths are stated instead.
 visual_pr_body_sections() {
   local score="$RUN_DIR/visual/visual-score.json" sheet="$RUN_DIR/visual/contact-sheet.png" url=""
+  # A stage that could not run is worth four lines in the PR: the alternative is
+  # a merged render nobody judged and no trace anywhere that nobody did.
+  if [ "$VISUAL_STATUS" = not_run ] && [ -n "$VISUAL_REASON" ]; then
+    echo
+    echo "## Visual gate"
+    echo
+    printf -- '- **not run** — %s\n' "$VISUAL_REASON"
+    [ -z "$VISUAL_REMEDY" ] || printf -- '- remedy: `%s`\n' "$VISUAL_REMEDY"
+    return 0
+  fi
+  case "$VISUAL_STATUS" in pass|fail) ;; *) return 0 ;; esac
   [ -f "$score" ] || return 0
   # shellcheck source=/dev/null
   . "$HARNESS_DIR/demo.conf.sh" 2>/dev/null || true
@@ -188,14 +273,25 @@ visual_pr_body_sections() {
 }
 
 # A repo with no visual gate emits nothing here, so its result.json is
-# byte-for-byte the one this pipeline has always written.
+# byte-for-byte the one this pipeline has always written. A stage that never
+# happened emits nothing either — only a stage that ran, or ran into something,
+# has a fact to state.
 visual_result_json_extra() {
-  [ "$VISUAL_STATUS" != not_run ] || return 0
-  jq -n --arg status "$VISUAL_STATUS" --argjson rounds "$VISUAL_ROUNDS" \
-    --arg pairwise "$VISUAL_PAIRWISE" --arg worst "$VISUAL_WORST_AXIS" \
-    --arg path "$RUN_DIR/visual/visual-score.json" \
-    '{visual: {status:$status, rounds:$rounds, pairwise:$pairwise,
-               worst_axis:$worst, score_path:$path}}'
+  case "$VISUAL_STATUS" in
+    skip)
+      jq -n --arg reason "$VISUAL_REASON" '{visual: {status:"skip", reason:$reason}}' ;;
+    not_run)
+      [ -n "$VISUAL_REASON" ] || return 0
+      jq -n --argjson rounds "$VISUAL_ROUNDS" --arg reason "$VISUAL_REASON" \
+        --arg remedy "$VISUAL_REMEDY" \
+        '{visual: {status:"not_run", rounds:$rounds, reason:$reason, remedy:$remedy}}' ;;
+    *)
+      jq -n --arg status "$VISUAL_STATUS" --argjson rounds "$VISUAL_ROUNDS" \
+        --arg pairwise "$VISUAL_PAIRWISE" --arg worst "$VISUAL_WORST_AXIS" \
+        --arg path "$RUN_DIR/visual/visual-score.json" \
+        '{visual: {status:$status, rounds:$rounds, pairwise:$pairwise,
+                   worst_axis:$worst, score_path:$path}}' ;;
+  esac
 }
 
 # The tests pass and the picture does not. This is the outcome the visual gate

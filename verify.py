@@ -18,8 +18,9 @@ than the raw trajectory cut judge FPR from 0.64 to 0.28 (2510.03217). So:
 
   * five FIXED rubric items, each scored on its own call, never batched;
   * K independent samples per item, aggregated by median;
-  * every sample must quote the diff hunk or trajectory line that decides it —
-    a quote that is not found verbatim in the evidence scores that sample 0;
+  * every sample must quote the spec line, diff hunk or trajectory line that
+    decides it — a quote found verbatim in neither the task spec nor the
+    evidence scores that sample 0;
   * the evidence is anonymised before the judge sees it: every vendor and model
     name becomes an IMPLEMENTER/REVIEWER role token;
   * the headline scalar is the plain MEAN of the item scores, so nothing about
@@ -471,12 +472,12 @@ def elide(steps, max_chars):
 def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
     """Every step of the run, in the order it happened, clipped and anonymised.
 
-    Returns (steps, elided_steps, segments, diff) — segments being how many
-    implementer stretches the trajectory spans across every attempt, one per
-    result event, which is also what decides whether the resume coherence item
-    is asked at all. Never fabricates a step: a run whose implementer left no
-    stream has no trajectory, and the caller turns that into a skip rather than
-    into a number.
+    Returns (steps, elided_steps, segments, diff, steps_clipped) — segments
+    being how many implementer stretches the trajectory spans across every
+    attempt, one per result event, which is also what decides whether the resume
+    coherence item is asked at all. Never fabricates a step: a run whose
+    implementer left no stream has no trajectory, and the caller turns that
+    into a skip rather than into a number.
 
     Anonymisation happens before the budgets are applied, so every count a
     caller can assert on is a count of the text the judge will actually read.
@@ -488,14 +489,16 @@ def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
         steps.extend(file_steps)
         segments += file_segments
     if not steps:
-        return [], 0, 0, ""
+        return [], 0, 0, "", False
     diff = branch_diff(worktree, base_ref)
     steps.extend(gate_steps(run_dir))
     steps.extend(review_steps(run_dir, worktree))
     steps.extend(final_steps(worktree, base_ref, diff))
-    steps = [(kind, clip(anonymize(text), step_chars)) for kind, text in steps]
+    anonymized = [(kind, anonymize(text)) for kind, text in steps]
+    steps_clipped = any(len(text) > step_chars for _, text in anonymized)
+    steps = [(kind, clip(text, step_chars)) for kind, text in anonymized]
     steps, elided = elide(steps, max_chars)
-    return steps, elided, segments, diff
+    return steps, elided, segments, diff, steps_clipped
 
 
 # --- the rubric --------------------------------------------------------------
@@ -503,9 +506,9 @@ def build_trajectory(run_dir, worktree, base_ref, step_chars, max_chars):
 # answer on its own, none of them is a proxy for "how much work was this", and
 # together they are the vector the headline mean is taken over.
 #
-# `evidence` says which block the item is shown and, with it, where a citation
-# has to come from: `diff` items may only quote the diff, the `trajectory` item
-# may only quote a trajectory line.
+# `evidence` says which block the item is shown and judged from: the diff for
+# `diff` items, the run's record for the `trajectory` item. A citation may
+# quote that block or the task spec shown beside it — nothing else counts.
 RUBRIC = (
     {
         "id": "coverage",
@@ -585,13 +588,14 @@ ANSWER_TOKENS = 4096
 
 ANSWER_CONTRACT = """ANSWER FORMAT
 Reply with ONE JSON object and nothing else, citation first:
-{"citation": "<a span copied verbatim out of the EVIDENCE above>", "score": <number from 0.0 to 1.0>}
+{"citation": "<a span copied verbatim out of the TASK SPEC or the EVIDENCE above>", "score": <number from 0.0 to 1.0>}
 
-- The citation is what makes the score checkable. It must appear in EVIDENCE
-  character for character; an answer whose quote is not found there scores 0
-  whatever number it carries.
-- Quote the SMALLEST span that decides the item — one changed line, one hunk
-  header, one line of the record. Never quote this instruction block.
+- The citation is what makes the score checkable. It must appear in TASK SPEC
+  or in EVIDENCE, character for character; an answer whose quote is found in
+  neither scores 0 whatever number it carries.
+- Quote the SMALLEST span that decides the item — one requirement, one changed
+  line, one hunk header, one line of the record. Never quote this instruction
+  block.
 - 1.0 is fully satisfied and 0.0 is not satisfied at all. Use the range in
   between; most real work is neither.
 - Do not explain, do not add prose around the JSON, do not use markdown."""
@@ -1051,7 +1055,7 @@ def main(argv):
     samples = env_int("HARNESS_VERIFY_EVALS", 3, minimum=1)
     max_criteria = env_int("HARNESS_VERIFY_MAX_CRITERIA", 8, minimum=0)
 
-    steps, elided, segments, diff = build_trajectory(
+    steps, elided, segments, diff, steps_clipped = build_trajectory(
         run_dir, worktree, base_ref, step_chars, max_chars)
     if not steps:
         sys.stderr.write("no trajectory: no implementer stream under %s\n" % run_dir)
@@ -1059,11 +1063,22 @@ def main(argv):
 
     title, problem, criteria = brief_sections(run_dir)
     spec = task_spec(title, problem, criteria[:max_criteria], step_chars)
+    diff_limit = max(1, max_chars // DIFF_SHARE)
+    diff_text = anonymize(diff)
     evidence = {
-        "diff": clip(anonymize(diff), max(1, max_chars // DIFF_SHARE)),
+        "diff": clip(diff_text, diff_limit),
         "trajectory": "\n\n".join(
             "=== step %d ===\n%s" % (i + 1, text)
             for i, (_, text) in enumerate(steps)),
+    }
+    # A citation past a cut cannot match, so a genuine quote from clipped-away
+    # evidence false-zeroes — a known limitation, recorded per item rather than
+    # fixed: `evidence_truncated` in verify.json says which items were scored
+    # on clipped evidence (the whole-diff budget; per-step trajectory cuts; the
+    # record's elided middle).
+    truncated = {
+        "diff": len(diff_text) > diff_limit,
+        "trajectory": steps_clipped or elided > 0,
     }
     # An item with nothing to read is unknown, not zero: a branch with no diff
     # tells you nothing about test integrity, and inventing a 0 for it would put
@@ -1143,11 +1158,17 @@ def main(argv):
     for item in asked:
         body = evidence[item["evidence"]]
         prompt = item_prompt(item, spec, body)
-        haystack = squeeze(body)
+        # The judge is shown the spec beside the evidence, and a requirement is
+        # often the span that decides an item ("does this deliver everything
+        # the TASK SPEC asked for?"), so both blocks are the haystack. The spec
+        # is anonymised here because the judge only ever sees it anonymised —
+        # a quote of a role token is a quote of what was sent.
+        haystack = squeeze(anonymize(spec) + "\n" + body)
         drawn = [sample_item(ask, prompt, haystack) for _ in range(samples)]
         score, citation, vector = aggregate(drawn)
         scored.append({"item": item, "score": score, "citation": citation,
-                       "samples": vector, "drawn": drawn})
+                       "samples": vector, "drawn": drawn,
+                       "truncated": truncated[item["evidence"]]})
 
     unscored = [entry for entry in scored if entry["score"] is None]
     if unscored:
@@ -1190,6 +1211,7 @@ def main(argv):
             "score": rounded(entry["score"]),
             "citation": entry["citation"],
             "samples": [rounded(v) for v in entry["samples"]],
+            "evidence_truncated": entry["truncated"],
         } for entry in scored],
         "model": model,
         "provider": provider,

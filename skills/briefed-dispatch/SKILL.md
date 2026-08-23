@@ -52,19 +52,38 @@ codebase, the repo's CLAUDE.md yourself), then write each run's brief to
 `~/.claude/harness/runs/<RUN-ID>/brief.md` following
 `~/.claude/harness/brief-template.md`.
 
-Two rules specific to this skill:
+Fill in `## Reproduction`, `## Interface contract`, `## Edit locations` and
+`## Decision points` as `/dispatch` §3 prescribes — an honest "unknown" in any
+of them beats an invented answer. Three rules specific to this skill:
 
 - **Cross-repo contract.** When runs span repos, the workers never meet — the
   briefs are their only handshake. Decide the interface yourself (routes,
   payload shapes, field names, error semantics) and write the *identical*
-  contract section into every brief that touches it.
+  `## Interface contract` section into every brief that touches it.
 - **Decisions taken.** What the ticket leaves genuinely open, you close as the
-  architect and record in a `## Decisions taken` section of the brief — the
-  premise of this skill is that a `needs_input` stop, not a wrong guess on
-  conventions, is the failure mode to avoid. Only a product/priority fork that
-  could waste the whole run goes to the user before dispatch (one
-  AskUserQuestion, recommendation first); everything answerable from the
-  ticket, the codebase, or team convention is yours to answer.
+  architect and record as a decided fork in `## Decision points` — the premise
+  of this skill is that a `needs_input` stop, not a wrong guess on conventions,
+  is the failure mode to avoid, and a fork written down with its decision is a
+  stop that cannot happen. Reserve `STOP and ask` for what is genuinely
+  irreversible. Only a product/priority fork that could waste the whole run
+  goes to the user before dispatch (one AskUserQuestion, recommendation first);
+  everything answerable from the ticket, the codebase, or team convention is
+  yours to answer.
+- **Spec critic before dispatch.** There is no approval pause here, so the
+  critic is the only reading each brief gets before a worker acts on it. Run it
+  per run and act on the verdict before launching:
+
+  ```bash
+  ~/.claude/harness/spec-critic.sh --brief ~/.claude/harness/runs/<RUN-ID>/brief.md \
+    --repo <repo-path> --out ~/.claude/harness/runs/<RUN-ID>/spec-critic.json
+  ```
+
+  Fix every `contradiction` and `criteria_not_testing_problem` by rewriting the
+  section that caused it; open the `file:line` each
+  `conflicts_with_current_behavior` cites and correct the brief or record why
+  the claim stands. Its `questions` are yours to answer from the ticket and the
+  code — that is this skill's whole premise — and only a product fork reaches
+  the user. Never dispatch a brief whose contradictions you have not resolved.
 
 ## 4. Dispatch — every run, immediately
 
@@ -92,7 +111,9 @@ autonomy dialed up:
 - **needs_input** — read `QUESTIONS.md` and answer everything the ticket, your
   research, or repo convention answers; append `## Answers` to the brief and
   re-dispatch the same command (the worker resumes, it does not start over).
-  Only a genuine product fork reaches the user.
+  Only a genuine product fork reaches the user. A stop means the brief's
+  `## Decision points` was thin, so write each answer back there too — the same
+  fork must not stop the next run.
 - **rejected / gate_failed / other failures** — tail the relevant log, fix the
   environment or the brief, re-dispatch.
 

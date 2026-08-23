@@ -3,7 +3,9 @@
 
 Runs on the Playwright that already ships inside shot-scraper's uv venv
 (~/.local/share/uv/tools/shot-scraper/bin/python) — the gate adds no dependency
-of its own. shot-scraper's own CLI cannot do this job: it has no hook that runs
+of its own. It requires Playwright's revision-pinned managed Chromium; using a
+machine's independently updated browser would make identical frames depend on
+the runner. shot-scraper's own CLI cannot do this job: it has no hook that runs
 before the app boots, so it can neither freeze the clock nor seed Math.random,
 and an animated scene captured without those is a different picture every run.
 
@@ -63,6 +65,11 @@ LAUNCH_ARGS = [
 ]
 
 
+def launch_chromium(playwright):
+    """Launch Playwright's revision-pinned managed Chromium."""
+    return playwright.chromium.launch(headless=True, args=LAUNCH_ARGS)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
@@ -110,7 +117,11 @@ def main():
     shots = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
+        try:
+            browser = launch_chromium(p)
+        except Exception as exc:  # noqa: BLE001 — one actionable render error
+            sys.stderr.write("frames.py: browser launch failed: %s\n" % exc)
+            return 2
         ctx = browser.new_context(
             viewport={"width": a.width, "height": a.height},
             device_scale_factor=a.dpr,
