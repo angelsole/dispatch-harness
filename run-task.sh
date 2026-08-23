@@ -449,30 +449,40 @@ EOF
   # every one of them survives being missing.
   #
   # total_cost_usd is a TOP-LEVEL key on the result event, not under .usage —
-  # summed over the same events so a resumed attempt carries its whole cost.
+  # summed over the same events so a resumed attempt carries its whole cost. It
+  # is Anthropic-priced whatever the provider, so it means nothing on a zai run.
+  #
+  # Read line by line with `fromjson?` rather than slurped: a process killed
+  # mid-write leaves a half-written last line, and one `jq -s` parse error over
+  # the whole file threw away every complete event before it.
+  #
+  # assistant_events is the turn fallback for a stream whose result events carry
+  # no num_turns (or carry none at all).
   impl='{}'
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
-    impl=$(jq -s '
+    impl=$(jq -Rn '
       def sum_numeric_usage:
         reduce (.[] | to_entries[] | select(.value | type == "number")) as $item
           ({}; .[$item.key] = ((.[$item.key] // 0) + $item.value));
-      map(select(.type == "result")) as $r
-      | if ($r | length) == 0 then {} else
-          {
-            segments: ($r | length),
-            num_turns: ($r | map(.num_turns | numbers)
-                           | if length == 0 then null else add end),
-            usage: ($r | map(.usage | objects)
-                       | if length == 0 then null
-                         else . as $usage
-                           | ($usage | sum_numeric_usage)
-                             + (($usage | last)
-                                | with_entries(select(.value | type != "number")))
-                         end),
-            total_cost_usd: ($r | map(.total_cost_usd | numbers)
-                               | if length == 0 then null else add end)
-          }
-        end' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null || echo '{}')
+      [inputs | fromjson?] as $events
+      | ($events | map(select(.type == "result"))) as $r
+      | {assistant_events: ($events | map(select(.type == "assistant")) | length)}
+        + (if ($r | length) == 0 then {} else
+            {
+              segments: ($r | length),
+              num_turns: ($r | map(.num_turns | numbers)
+                             | if length == 0 then null else add end),
+              usage: ($r | map(.usage | objects)
+                         | if length == 0 then null
+                           else . as $usage
+                             | ($usage | sum_numeric_usage)
+                               + (($usage | last)
+                                  | with_entries(select(.value | type != "number")))
+                           end),
+              total_cost_usd: ($r | map(.total_cost_usd | numbers)
+                                 | if length == 0 then null else add end)
+            }
+          end)' "$RUN_DIR/opus-stream.jsonl" 2>/dev/null || echo '{}')
     [ -n "$impl" ] || impl='{}'
   fi
 
@@ -567,6 +577,7 @@ EOF
     --argjson impl "$impl" \
     --argjson verifier "$verifier" \
     --arg config_hash "$config_hash" \
+    --arg provider "$p_provider" \
     --argjson brief "$brief" \
     '{
       wall_seconds: $wall,
@@ -582,11 +593,29 @@ EOF
       implementer_usage: ($impl.usage // null),
       implementer_segments: ($impl.segments // 0),
       total_cost_usd: ($impl.total_cost_usd // null),
+      usage: ($impl.usage // {} | {
+               input_tokens: (.input_tokens // 0),
+               cache_read_input_tokens: (.cache_read_input_tokens // 0),
+               cache_creation_input_tokens: (.cache_creation_input_tokens // 0),
+               output_tokens: (.output_tokens // 0),
+               turns: ($impl.num_turns // $impl.assistant_events // 0)
+             }),
       diff: {files_changed: $files, insertions: $ins, deletions: $del},
       verifier: $verifier,
       config_hash: (if $config_hash == "" then null else $config_hash end),
       brief: $brief
-    }'
+    }
+    # z.ai Coding-Plan credits, by their published formula:
+    #   (input * 6.9 + cache_read * 1.7 + output * 24) / 10000
+    # An ESTIMATE — the off-peak discount is not modelled — and only for the
+    # provider it prices. An anthropic run carries no field at all: that
+    # subscription is flat, so the token counts above are the whole story.
+    | if $provider == "zai"
+      then .usage.zai_credits_est =
+        (((.usage.input_tokens * 6.9)
+          + (.usage.cache_read_input_tokens * 1.7)
+          + (.usage.output_tokens * 24)) / 10000 * 100 | round / 100)
+      else . end'
 }
 
 # One row per attempt, rewritten in place for the attempt that is ending now, so
