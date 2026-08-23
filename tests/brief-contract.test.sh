@@ -23,6 +23,7 @@ set -u
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 TPL="$SRC/brief-template.md"
 RT="$SRC/run-task.sh"
+DISPATCH_SKILL="$SRC/skills/dispatch/SKILL.md"
 PSET="$SRC/spec-critic-settings.json"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/brief-contract-test.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
@@ -429,6 +430,14 @@ has "$PROMPT" ".harness/QUESTIONS.md" \
   "prompt: the stop still writes the file the pipeline reads"
 has "$PROMPT" "batched, all of them at once" \
   "prompt: questions go out in one round, not one at a time"
+
+DISPATCH_TEXT=$(cat "$DISPATCH_SKILL")
+has "$DISPATCH_TEXT" "an ordinary reversible fork you leave out does not become a" \
+  "planner guidance: omitted reversible forks do not stop on worker judgement"
+has "$DISPATCH_TEXT" "an undeclared irreversible" \
+  "planner guidance: omitted irreversible actions retain the stop rule"
+has "$DISPATCH_TEXT" "action still stops the run" \
+  "planner guidance: the irreversible exception is explicit"
 
 echo
 printf 'brief contract: %d passed, %d failed\n' "$pass" "$fail"

@@ -96,7 +96,9 @@ honest "unknown" over an invented answer:
   with your decision (which it will follow without asking) or `STOP and ask`
   plus the blast radius. This section, not the worker's judgement, is what
   decides whether a run stops: a fork you decide here never becomes a
-  `needs_input`, and one you leave out never becomes a question either.
+  `needs_input`; an ordinary reversible fork you leave out does not become a
+  question on the worker's judgement alone, but an undeclared irreversible
+  action still stops the run.
 
 **Critique the brief before anyone acts on it.** Run the spec critic over each
 finished brief — a confined read-only pass that reads it against the repo:
