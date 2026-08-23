@@ -149,6 +149,13 @@ case "\$(cat "$CLAUDE_MODE")" in
     printf '{"type":"result","subtype":"success","session_id":"fork-%s","num_turns":7,"usage":{"input_tokens":100,"cache_read_input_tokens":200,"cache_creation_input_tokens":0,"output_tokens":300}}\n' "\$n"
     printf '{"type":"assistant","message":{"content":[{"typ'
     ;;
+  # Complete assistant events do not constitute reported usage when the CLI
+  # crashes before producing even one result event.
+  usage-no-result)
+    printf '{"type":"assistant","message":{"content":[{"type":"text","text":"one"}]}}\n'
+    printf '{"type":"assistant","message":{"content":[{"type":"text","text":"two"}]}}\n'
+    exit 1
+    ;;
 esac
 # git(1) writes to stdout, and stdout is the stream-json the harness parses.
 git add -A >/dev/null
@@ -846,12 +853,15 @@ check "truncated: and the run still reaches ready" "$(result .status)" "ready"
 
 # No result event at all — an implementer that died before reporting anything.
 # Zeros, never nulls, and metrics still get written.
+printf 'usage-no-result\n' > "$CLAUDE_MODE"
 dispatch USAGE-NONE ""
 check "empty: every counter reads zero rather than null" \
   "$(result '[.metrics.usage.input_tokens, .metrics.usage.cache_read_input_tokens,
               .metrics.usage.cache_creation_input_tokens, .metrics.usage.output_tokens,
               .metrics.usage.turns] | join(",")')" "0,0,0,0,0"
 exists "empty: and the run still writes its result" "$RUN/result.json"
+check "empty: complete assistant events do not become turns without a result" \
+  "$(jq -s 'map(select(.type == "assistant")) | length' "$RUN/opus-stream.jsonl")" "2"
 
 # Result events that report no num_turns at all: the turn count falls back to
 # the assistant events the stream does carry, rather than reporting nothing.

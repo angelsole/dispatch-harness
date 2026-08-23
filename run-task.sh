@@ -598,7 +598,9 @@ EOF
                cache_read_input_tokens: (.cache_read_input_tokens // 0),
                cache_creation_input_tokens: (.cache_creation_input_tokens // 0),
                output_tokens: (.output_tokens // 0),
-               turns: ($impl.num_turns // $impl.assistant_events // 0)
+               turns: (if ($impl.segments // 0) == 0 then 0
+                       else ($impl.num_turns // $impl.assistant_events // 0)
+                       end)
              }),
       diff: {files_changed: $files, insertions: $ins, deletions: $del},
       verifier: $verifier,
