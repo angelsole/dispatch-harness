@@ -583,6 +583,45 @@ has "$SYNC_IMPL" "model=[claude-opus-5]" \
 has_not "$SYNC_IMPL" "glm-5.3" "sync: the zai model id never reaches it"
 has_not "$SYNC_IMPL" "base=[$ZAI_URL]" "sync: nor the zai endpoint"
 
+# Runs from before knob files were introduced fall back through the same
+# repo/ambient/default layers. In particular, repo_config clearing its output
+# fields must not erase the shell values sync-pr inherited.
+SYNC="PROV-SYNC-LEGACY"
+git -C "$REPO" checkout -q -b "fix/$SYNC" main
+printf 'legacy branch side\n' > "$REPO/legacy.txt"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "feat: legacy branch side"
+git -C "$REPO" push -q -u origin "fix/$SYNC"
+git -C "$REPO" checkout -q main
+printf 'legacy base side\n' > "$REPO/legacy.txt"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "feat: legacy base side"
+git -C "$REPO" push -q origin main
+git -C "$REPO" branch -q -D "fix/$SYNC"
+
+RUN="$RUNS/$SYNC"; WT="$ROOT/greenapp-prov-sync-legacy"
+mkdir -p "$RUN"
+printf '# fixture task\n' > "$RUN/brief.md"
+jq -n --arg wt "$WT" --arg b "fix/$SYNC" \
+  '{ticket:"PROV-SYNC-LEGACY",status:"ready",worktree:$wt,branch:$b,base:"main"}' > "$RUN/result.json"
+cat > "$HARNESS/repos.local.sh" <<'EOF'
+repo_config_local() {
+  case "$2" in
+    greenapp|greenapp-*) INSTALL_CMD=''; GATE_CMD='true' ;;
+  esac
+}
+EOF
+: > "$ENVLOG"
+env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+    IMPLEMENTER_PROVIDER=anthropic IMPLEMENTER_MODEL=claude-sonnet-4-5 \
+    HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
+    CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" HARNESS_NOTIFY=0 \
+    bash "$SRC/sync-pr.sh" "$SYNC" > "$ROOT/sync-legacy.log" 2>&1
+SYNC_RC=$?
+check "sync legacy: the conflicted sync completes" "$SYNC_RC" "0"
+has "$(env_of implementer)" "model=[claude-sonnet-4-5]" \
+  "sync legacy: an ambient model survives repo_config"
+
 # ---------------------------------------------------------------------------
 echo "== the injection has exactly one home =="
 # ---------------------------------------------------------------------------
