@@ -117,7 +117,11 @@ def main():
     shots = []
 
     with sync_playwright() as p:
-        browser = launch_chromium(p)
+        try:
+            browser = launch_chromium(p)
+        except Exception as exc:  # noqa: BLE001 — one actionable render error
+            sys.stderr.write("frames.py: browser launch failed: %s\n" % exc)
+            return 2
         ctx = browser.new_context(
             viewport={"width": a.width, "height": a.height},
             device_scale_factor=a.dpr,

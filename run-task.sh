@@ -1089,7 +1089,7 @@ Rules:
 - Never git add or commit anything under .harness/ — it is orchestration metadata, excluded from git. If git refuses a path as ignored, leave it alone; never use git add -f.
 - Do NOT push, do NOT create PRs, do NOT switch branches.
 - Database/MCP tools: local environment only. Never switch environments or touch staging/production.
-- If you hit a decision the brief does not resolve and that materially changes the outcome, do NOT guess: write the specific question(s), each with the options you considered, to .harness/QUESTIONS.md and stop working. The orchestrator will get answers and resume you.
+- Stopping to ask is decided by the brief's '## Decision points', not by your own sense of doubt. Stop for exactly two things: a fork that section marks 'STOP and ask', and an irreversible action it does NOT declare — a schema migration or data backfill, deleting or rewriting files outside '## Edit locations', anything that leaves this machine. Do NOT stop for a fork the brief already decides: implement its decision as written, even where you would have chosen otherwise. To stop, write the specific question(s), each with the options you considered and what the wrong answer costs, to .harness/QUESTIONS.md and stop working — batched, all of them at once. The orchestrator will get answers and resume you.
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
 - When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
 
@@ -2499,12 +2499,11 @@ ticket_sync() {  # uses TICKET, PR_URL, BRANCH; always returns 0
 
 # --- Verifier (third vendor, script-driven — best-effort, and never a gate) ---
 # The harness measures how a run BEHAVED and nothing about how well it satisfied
-# its brief. verify.py hands the run's own trajectory — the implementer's
-# stream, the gate rounds, the reviewer's evidence, the final diff — to
-# llm-as-a-verifier, whose reward is the expectation over the logprobs of a
-# score token. That needs a third vendor: neither Claude nor the ChatGPT
-# subscription exposes logprobs, and it also keeps the score off the models
-# whose homework it is.
+# its brief. verify.py turns the run's own record — the implementer's stream,
+# the gate rounds, the reviewer's evidence, the final diff — into evidence for
+# a judge, which scores five fixed rubric items one call each, K samples per
+# item, every answer quoting the span that decides it. A third vendor on
+# purpose: it keeps the score off the models whose homework it is.
 #
 # Everything here is advisory. The stage cannot change STATUS, GATE_STATUS,
 # REVIEW_OK or the PR decision, and it returns 0 on every path — a missing

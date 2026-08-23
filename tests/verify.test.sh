@@ -635,7 +635,8 @@ check "rubric: each prompt names exactly one item" \
 has "$(printf '%s' "$DRY" | jq -r '.items[0].prompt')" "Reply with ONE JSON object" \
   "rubric: carrying the answer contract"
 has "$(printf '%s' "$DRY" | jq -r '.items[0].prompt')" \
-  "must appear in EVIDENCE" "rubric: which makes the citation the checkable part"
+  "must appear in TASK SPEC" \
+  "rubric: which makes the citation the checkable part"
 # The spec is the pre-stated contract, not the agent's account of it: brief.md
 # reaches every item, and it is what "did this do what was asked" is asked about.
 check "rubric: the task spec reaches every item" \
@@ -900,11 +901,13 @@ Two env cycles, each consumed one entry PER CALL, so a test can arrange exactly
 what the K samples of an item disagree about:
 
   VERIFY_STUB_SCORES   the number each answer carries          (default 0.6)
-  VERIFY_STUB_CITES    yes | no | bogus | garbage | boom       (default yes)
+  VERIFY_STUB_CITES    yes | spec | no | bogus | mangled | garbage | boom
+                                                               (default yes)
 
 `yes` quotes the first line of the EVIDENCE block of the very prompt it was
-handed, so a citation the adapter cannot verify is always this stub's deliberate
-choice and never an accident of the fixture.
+handed and `spec` the first line of its TASK SPEC block, so a citation the
+adapter cannot verify is always this stub's deliberate choice and never an
+accident of the fixture.
 """
 import json
 import os
@@ -933,6 +936,14 @@ def _evidence_line(prompt):
     return ""
 
 
+def _spec_line(prompt):
+    body = _between(prompt, "TASK SPEC — ", "\n\nEVIDENCE — ")
+    for line in body.splitlines()[1:]:
+        if line.strip():
+            return line.strip()
+    return ""
+
+
 def reply(prompt, model, backend, key_seen, request=None):
     n = _seen[0]
     _seen[0] = n + 1
@@ -954,8 +965,15 @@ def reply(prompt, model, backend, key_seen, request=None):
     answer = {"score": float(scores[n % len(scores)])}
     if mode == "yes":
         answer["citation"] = _evidence_line(prompt)
+    elif mode == "spec":
+        answer["citation"] = _spec_line(prompt)
     elif mode == "bogus":
         answer["citation"] = "a line that appears nowhere in this evidence block"
+    elif mode == "mangled":
+        # The known-bad quote from a real run: a commit id glued to a subject
+        # line, real words, matches no block the judge was ever shown.
+        answer["citation"] = ("index d214b5f..706f457 A timed-out replay is a "
+                              "timeout…")
     return json.dumps(answer)
 
 
@@ -1164,6 +1182,62 @@ check "citation: and nothing unbacked is published beside it" \
   "$(jq -r '.items[0].citation' "$V")" ""
 check "citation: a confident, unevidenced verifier scores the run 0" \
   "$(jq -r '.score' "$V")" "0.0"
+
+# ---------------------------------------------------------------------------
+echo "== verify.py: the spec is citable, and clipped evidence says so =="
+# ---------------------------------------------------------------------------
+# The judge is shown the TASK SPEC beside the evidence, and "does this deliver
+# everything the TASK SPEC asked for?" is decided by the requirement — which
+# lives in the spec, not the diff. A quote out of either block is a citation;
+# a quote out of neither still scores the sample 0.
+judge HARNESS_VERIFY_EVALS=1 VERIFY_STUB_SCORES=0.7 VERIFY_STUB_CITES=spec >/dev/null 2>&1
+check "spec cite: a quote that is only in the spec counts" \
+  "$(jq -r '.items[0].samples | join(",")' "$V")" "0.7"
+check "spec cite: and is published as the citation it is" \
+  "$(jq -r '.items[0].citation' "$V")" "Task: Add the export endpoint"
+check "spec cite: for the trajectory item too, whose haystack is spec + record" \
+  "$(jq -r '[.items[] | select(.citation == "Task: Add the export endpoint")] | length' "$V")" "5"
+check "spec cite: the run scores what its samples said" "$(jq -r '.score' "$V")" "0.7"
+
+judge HARNESS_VERIFY_EVALS=1 VERIFY_STUB_SCORES=0.7 >/dev/null 2>&1
+check "diff cite: a quote from the diff still counts" \
+  "$(jq -r '.items[0].samples | join(",")' "$V")" "0.7"
+has "$(jq -r '.items[0].citation' "$V")" "diff --git" \
+  "diff cite: and the published one is still a line of the diff"
+
+judge HARNESS_VERIFY_EVALS=1 VERIFY_STUB_SCORES=0.9 VERIFY_STUB_CITES=mangled >/dev/null 2>&1
+check "mangled cite: the known-bad quote from a real run matches neither block" \
+  "$(jq -r '.items[0].samples | join(",")' "$V")" "0.0"
+check "mangled cite: so the item it decided is 0" "$(jq -r '.items[0].score' "$V")" "0.0"
+check "mangled cite: and nothing is published beside it" \
+  "$(jq -r '.items[0].citation' "$V")" ""
+
+# A diff past its budget is cut mid-hunk and a genuine citation from past the
+# cut would false-zero — a known limitation. verify.json says which items were
+# scored on clipped evidence, so a future change can act on it. The fixture's
+# diff is ~94 characters, so a 120-char budget clips it to 30.
+judge HARNESS_VERIFY_EVALS=1 HARNESS_VERIFY_MAX_CHARS=120 >/dev/null 2>&1
+check "truncated: a diff past its budget is recorded as clipped" \
+  "$(jq -r '.items[0].evidence_truncated' "$V")" "true"
+check "truncated: on every diff item alike" \
+  "$(jq -r '[.items[] | select(.id != "resume") | select(.evidence_truncated)] | length' "$V")" "4"
+check "truncated: and an over-budget record is clipped too, elided middle and all" \
+  "$(jq -r '.items[] | select(.id == "resume") | .evidence_truncated' "$V")" "true"
+
+# Per-step clipping can remove evidence while the joined trajectory remains
+# below its separate budget. That cut must be disclosed even when no complete
+# step was elided and the diff was preserved in full.
+judge HARNESS_VERIFY_EVALS=1 HARNESS_VERIFY_STEP_CHARS=60 >/dev/null 2>&1
+check "truncated: a per-step-only cut records the resume evidence as clipped" \
+  "$(jq -r '.items[] | select(.id == "resume") | .evidence_truncated' "$V")" "true"
+check "truncated: a per-step-only cut does not mark the intact diff" \
+  "$(jq -r '[.items[] | select(.id != "resume") | select(.evidence_truncated)] | length' "$V")" "0"
+check "truncated: a per-step-only cut needs no whole steps elided" \
+  "$(jq -r '.elided_steps' "$V")" "0"
+
+judge HARNESS_VERIFY_EVALS=1 >/dev/null 2>&1
+check "truncated: a run inside every budget records false" \
+  "$(jq -r '[.items[] | select(.evidence_truncated)] | length' "$V")" "0"
 
 judge HARNESS_VERIFY_EVALS=1 VERIFY_STUB_SCORES=0.9 VERIFY_STUB_CITES=garbage >/dev/null 2>&1
 check "citation: an answer that is not JSON at all is worth the same" \

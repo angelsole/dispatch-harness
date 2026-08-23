@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Tool policy for spec-critic.sh: the fresh, read-only `claude -p` pass that",
+    "attacks a brief before anything downstream treats it as ground truth.",
+    "",
+    "The brief is UNTRUSTED TEXT. A self-briefed one is written from a Linear",
+    "description any workspace member can edit, and a hand-written one is quoted",
+    "into this prompt the same way. A critic with a shell is a critic a brief can",
+    "turn into a shell — permission patterns match the head of a command line and",
+    "cannot see what it goes on to execute or redirect — so there is no Bash rule",
+    "in allow at all and Bash is denied besides. Task goes with it: a subagent is",
+    "a second context with a turn budget of its own, reading the same brief with",
+    "none of this caller's suspicion.",
+    "",
+    "A critic that can write is a critic that can edit the brief it is grading.",
+    "Edit and Write are denied outright: the verdict leaves through the CLI's",
+    "--json-schema structured output, and nothing else in this stage needs a",
+    "file. spec-critic.sh gives the session a disposable scratch dir as its cwd",
+    "and --add-dir's the repo it may research, so the write confinement holds",
+    "even if a future release relaxes one of these rules.",
+    "",
+    "Read, Grep and Glob are what it needs and all it gets: evidence for a",
+    "conflict has to be a file:line in the target repo, which is exactly what",
+    "those three can produce. The network tools are denied so the brief cannot",
+    "leave the machine, and the harness's own secrets are denied by path — a",
+    "critic that can read them writes them into a verdict later stages quote."
+  ],
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Task",
+      "TodoWrite",
+      "Read(~/.claude/harness/linear-api-key)",
+      "Read(~/.claude/harness/notify.conf)",
+      "Read(~/.claude/harness/auth/**)"
+    ]
+  }
+}
