@@ -87,6 +87,7 @@ fi
 WORKTREE="$(dirname "$REPO")/$(basename "$REPO")-$TICKET_LC"
 BASE_REF="origin/$BASE_BRANCH"
 mkdir -p "$RUN_DIR"
+ESCALATION_STATE="$RUN_DIR/escalation.json"
 # From here the run dir exists, so another machine's wall can follow this run
 # (HARNESS_MIRROR). Best-effort throughout, and stopped — after one last pass —
 # on every exit path by the EXIT trap mirror_start installs.
@@ -134,7 +135,22 @@ positive_int() {
 # this pipeline was built around; `zai` is Zhipu's GLM Coding Plan, served over
 # an Anthropic-compatible endpoint the same `claude` binary speaks. It is the
 # implementer's alone: every other model stage stays where it is.
-pin_knob implementer-provider IMPLEMENTER_PROVIDER "$DEFAULT_IMPLEMENTER_PROVIDER"
+# An escalation publishes its target in the same atomic record as the guard and
+# pending handoff. Once present, that record is authoritative over older pins.
+ESCALATION_TARGET_PROVIDER=$(jq -r \
+  'select(.triggered == true and .to_provider == "anthropic" and
+          ((.to_model // "") | type == "string" and length > 0)) | .to_provider' \
+  "$ESCALATION_STATE" 2>/dev/null || echo "")
+ESCALATION_TARGET_MODEL=$(jq -r \
+  'select(.triggered == true and .to_provider == "anthropic" and
+          ((.to_model // "") | type == "string" and length > 0)) | .to_model' \
+  "$ESCALATION_STATE" 2>/dev/null || echo "")
+if [ -n "$ESCALATION_TARGET_PROVIDER" ] && [ -n "$ESCALATION_TARGET_MODEL" ]; then
+  IMPLEMENTER_PROVIDER=$ESCALATION_TARGET_PROVIDER
+  printf '%s\n' "$IMPLEMENTER_PROVIDER" > "$RUN_DIR/implementer-provider"
+else
+  pin_knob implementer-provider IMPLEMENTER_PROVIDER "$DEFAULT_IMPLEMENTER_PROVIDER"
+fi
 # An unknown provider must neither reach the injection below nor become the
 # run's pinned condition: say so once, fall back, and re-pin what it used.
 case "$IMPLEMENTER_PROVIDER" in
@@ -147,7 +163,12 @@ case "$IMPLEMENTER_PROVIDER" in
 esac
 DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 [ "$IMPLEMENTER_PROVIDER" != zai ] || DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ZAI_MODEL"
-pin_knob implementer-model  IMPLEMENTER_MODEL  "$DEFAULT_IMPLEMENTER_MODEL"
+if [ -n "$ESCALATION_TARGET_MODEL" ]; then
+  IMPLEMENTER_MODEL=$ESCALATION_TARGET_MODEL
+  printf '%s\n' "$IMPLEMENTER_MODEL" > "$RUN_DIR/implementer-model"
+else
+  pin_knob implementer-model IMPLEMENTER_MODEL "$DEFAULT_IMPLEMENTER_MODEL"
+fi
 pin_knob implementer-effort IMPLEMENTER_EFFORT "$DEFAULT_IMPLEMENTER_EFFORT"
 # What every OTHER Claude-subscription stage spawns with: the Claude review
 # tier, its fix rounds and the conflict resolver. Normally the implementer's own
@@ -519,7 +540,8 @@ write_result() {
   # with, because fail() can reach here long before that block has run.
   escalation=null
   if [ -f "$RUN_DIR/escalation.json" ]; then
-    escalation=$(jq -c . "$RUN_DIR/escalation.json" 2>/dev/null) || escalation=null
+    escalation=$(jq -c 'del(.pending, .to_provider, .to_model)' \
+      "$RUN_DIR/escalation.json" 2>/dev/null) || escalation=null
     [ -n "$escalation" ] || escalation=null
   fi
   jq -n \
@@ -1089,10 +1111,9 @@ RESUME_RULES="These rules from your original instructions are still binding:
 # Opus segment because that segment now spends the Claude window, and a deferral
 # there defers the escalation rather than losing the evidence that earned it.
 #
-# Three files carry the decision across that process boundary, and none of them
-# is rotated with the attempt:
-ESCALATION_STATE="$RUN_DIR/escalation.json"     # the permanent record; also "never twice"
-ESCALATION_PENDING="$RUN_DIR/escalation-pending" # a handover this run still owes
+# Two files carry the decision across that process boundary, and neither is
+# rotated with the attempt. The state is one atomic record for the permanent
+# guard, target pins and whether the handoff is still owed.
 ESCALATION_REPORT="$RUN_DIR/escalation-report.md"
 
 # Which kind of gate step died, from the command itself. Coarse on purpose:
@@ -1203,9 +1224,11 @@ escalate() {
   segment_report "$ESCALATION_REPORT" "$((TURN_RESUMES + 1))"
   escalation_append_evidence "$ESCALATION_REPORT"
   if ! jq -n --arg from_provider "$from_provider" --arg from_model "$from_model" \
+        --arg to_provider anthropic --arg to_model "$DEFAULT_ANTHROPIC_MODEL" \
         --argjson at_attempt "${ATTEMPT:-1}" --arg failed_step "$GATE_FAILED_STEP" \
         --arg glm_head "$glm_head" \
         '{triggered: true, from_provider: $from_provider, from_model: $from_model,
+          to_provider: $to_provider, to_model: $to_model, pending: true,
           at_attempt: $at_attempt,
           failed_step: (if $failed_step == "" then null else $failed_step end),
           glm_head: (if $glm_head == "" then null else $glm_head end)}' \
@@ -1215,9 +1238,6 @@ escalate() {
     return 1
   fi
   mv "$ESCALATION_STATE.tmp" "$ESCALATION_STATE" || return 1
-  : > "$ESCALATION_PENDING"
-  echo anthropic > "$RUN_DIR/implementer-provider"
-  echo "$DEFAULT_ANTHROPIC_MODEL" > "$RUN_DIR/implementer-model"
   # This attempt is being replaced rather than finished, and nothing else would
   # write its row: the ledger has to carry the verdict that earned the handover.
   STATUS="gate_failed"
@@ -1331,10 +1351,12 @@ opus_incomplete() {
 }
 
 ESCALATION_HANDOFF=0
-if [ -f "$ESCALATION_PENDING" ]; then
+if jq -e '.triggered == true and .pending == true and
+          .to_provider == "anthropic" and ((.to_model // "") | length > 0)' \
+     "$ESCALATION_STATE" >/dev/null 2>&1; then
   # The handover an escalation armed. A FRESH session — the point of escalating
   # is a cold read by another model, not the cheap tier's context replayed on a
-  # dearer one. The pending marker stays armed until the CLI returns a session
+  # dearer one. The pending state stays armed until the CLI returns a session
   # id; if this process dies before then, the next dispatch still starts the
   # fresh escalated session instead of resuming an old or never-started id.
   ESCALATION_HANDOFF=1
@@ -1360,8 +1382,13 @@ else
 fi
 opus_attempt "$OPUS_PROMPT" "${SESSION_ARGS[@]}"
 if [ "$ESCALATION_HANDOFF" = 1 ] && [ "$OPUS_SESSION_ESTABLISHED" = 1 ]; then
-  rm -f "$ESCALATION_PENDING"
-  ESCALATION_HANDOFF=0
+  if jq '.pending = false' "$ESCALATION_STATE" > "$ESCALATION_STATE.tmp" 2>/dev/null \
+     && mv "$ESCALATION_STATE.tmp" "$ESCALATION_STATE"; then
+    ESCALATION_HANDOFF=0
+  else
+    rm -f "$ESCALATION_STATE.tmp"
+    echo "[harness] escalation: could not mark the established handoff complete — it remains pending"
+  fi
 fi
 
 # --- 4b. Turn ceiling: resume rather than die at the finish line -------------

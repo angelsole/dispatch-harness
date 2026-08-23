@@ -334,8 +334,10 @@ check "record: and the first is in the ledger on the verdict that escalated it" 
 exists "record: the cheap attempt's stream is preserved" "$RUN/attempts/1/opus-stream.jsonl"
 exists "record: with its gate rounds"                    "$RUN/attempts/1/gate-rounds.log"
 exists "record: and the handover report is kept"         "$RUN/escalation-report.md"
-absent "record: the pending marker is cleared once the handover is made" \
+absent "record: no independent pending marker is written" \
   "$RUN/escalation-pending"
+check "record: the atomic handoff record is no longer pending" \
+  "$(jq -r '.pending' "$RUN/escalation.json")" "false"
 
 # ---------------------------------------------------------------------------
 echo "== a second failure ends the run, it does not escalate again =="
@@ -519,7 +521,10 @@ check "defer: exiting 0 — deferred, not failed" "$RC" "0"
 check "defer: having armed exactly one schedule" "$(arm_calls)" "$((BEFORE_ARMS + 1))"
 check "defer: the cheap implementer ran, the escalated one did not" \
   "$(spawns_of implementer)" "1"
-exists "defer: the handover is still owed"       "$RUN/escalation-pending"
+check "defer: the atomic handoff record still says it is owed" \
+  "$(jq -r '.pending' "$RUN/escalation.json")" "true"
+absent "defer: no independent pending marker can get out of sync" \
+  "$RUN/escalation-pending"
 exists "defer: with its report still on disk"    "$RUN/escalation-report.md"
 check "defer: and the escalation still on the record" \
   "$(result .escalation.triggered)" "true"
@@ -531,7 +536,8 @@ check "defer: the re-dispatch runs the escalated session it owed" \
   "$(spawns_of implementer)" "1"
 has "$(env_of implementer 1)" "model=[claude-opus-5]" "defer: on the escalation target"
 has "$(prompt_of 1)" "left FAILING" "defer: with the handover it kept"
-absent "defer: and the marker is cleared once it is spent" "$RUN/escalation-pending"
+check "defer: and the atomic record is cleared once it is spent" \
+  "$(jq -r '.pending' "$RUN/escalation.json")" "false"
 
 # A handoff is not spent merely because its session id was allocated. Without a
 # result event proving the CLI established that session, a later dispatch must
@@ -539,8 +545,25 @@ absent "defer: and the marker is cleared once it is spent" "$RUN/escalation-pend
 dispatch ESC-START-FAIL escalation-start-fails fail-once "IMPLEMENTER_PROVIDER=zai"
 check "handoff: a session that never establishes fails the escalated attempt" \
   "$(result .status)" "implementer_failed"
-exists "handoff: the pending marker survives until a session is established" \
-  "$RUN/escalation-pending"
+exists "handoff: the transaction record survives until a session is established" \
+  "$RUN/escalation.json"
+check "handoff: its atomic record still says the handoff is owed" \
+  "$(jq -r '.pending' "$RUN/escalation.json")" "true"
+
+# The transaction record, not separately-written pins, drives recovery. Simulate
+# an interruption that left old pin contents behind and prove the owed handoff
+# still launches on the complete target recorded atomically.
+printf 'zai\n' > "$RUN/implementer-provider"
+printf 'glm-5.3\n' > "$RUN/implementer-model"
+dispatch ESC-START-FAIL commit fail-once ""
+has "$(env_of implementer 1)" "model=[claude-opus-5]" \
+  "handoff: recovery takes its model from the atomic record"
+has "$(env_of implementer 1)" "base=[]" \
+  "handoff: recovery takes its provider from the atomic record"
+has "$(prompt_of 1)" "left FAILING" \
+  "handoff: recovery still receives the escalation handoff"
+check "handoff: the recovered session completes the pending transition" \
+  "$(jq -r '.pending' "$RUN/escalation.json")" "false"
 
 echo
 printf 'escalation: %d passed, %d failed\n' "$pass" "$fail"

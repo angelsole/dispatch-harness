@@ -212,6 +212,11 @@ fresh session gets the original brief, the same "this is an external artifact,
 the brief is the contract" framing the turn-ceiling handover uses, and the
 partial work still standing in the worktree.
 
+The escalation guard, target provider/model, and pending flag are published
+together in one atomic `escalation.json` update. A re-dispatch takes its target
+from that record rather than from separately-written pins, so an interrupted
+handoff remains complete and resumable.
+
 The handover is a **new attempt**, not a second segment of the failing one, so
 `attempts/<n>/` keeps the cheap tier's stream, gate rounds and final message and
 the escalated attempt's turn counts and token usage are the Claude
