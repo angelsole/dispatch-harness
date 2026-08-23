@@ -456,8 +456,9 @@ EOF
   # mid-write leaves a half-written last line, and one `jq -s` parse error over
   # the whole file threw away every complete event before it.
   #
-  # assistant_events is the turn fallback for a stream whose result events carry
-  # no num_turns (or carry none at all).
+  # Each result event owns the assistant events since the preceding result. If
+  # that segment omits num_turns, only its own assistants become the fallback;
+  # segments that reported num_turns keep the CLI's value instead.
   impl='{}'
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     impl=$(jq -Rn '
@@ -466,7 +467,15 @@ EOF
           ({}; .[$item.key] = ((.[$item.key] // 0) + $item.value));
       [inputs | fromjson?] as $events
       | ($events | map(select(.type == "result"))) as $r
-      | {assistant_events: ($events | map(select(.type == "assistant")) | length)}
+      | (reduce $events[] as $event
+          ({assistant_events: 0, segment_assistant_events: 0, turns: 0};
+           if $event.type == "assistant" then
+             .assistant_events += 1 | .segment_assistant_events += 1
+           elif $event.type == "result" then
+             .turns += (($event.num_turns | numbers) // .segment_assistant_events)
+             | .segment_assistant_events = 0
+           else . end)) as $turns
+      | {assistant_events: $turns.assistant_events, turns: $turns.turns}
         + (if ($r | length) == 0 then {} else
             {
               segments: ($r | length),
@@ -599,7 +608,7 @@ EOF
                cache_creation_input_tokens: (.cache_creation_input_tokens // 0),
                output_tokens: (.output_tokens // 0),
                turns: (if ($impl.segments // 0) == 0 then 0
-                       else ($impl.num_turns // $impl.assistant_events // 0)
+                       else ($impl.turns // $impl.num_turns // $impl.assistant_events // 0)
                        end)
              }),
       diff: {files_changed: $files, insertions: $ins, deletions: $del},

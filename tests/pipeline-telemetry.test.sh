@@ -142,6 +142,18 @@ case "\$(cat "$CLAUDE_MODE")" in
     seq 1 30 >> impl.txt
     printf '{"type":"result","subtype":"success","session_id":"fork-%s","num_turns":52,"usage":{"input_tokens":500,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":10000,"output_tokens":2000,"service_tier":"standard"}}\n' "\$n"
     ;;
+  # A resumed stream where only one segment reports num_turns. The assistants
+  # in the other segment are that segment's fallback, not grounds to discard it.
+  usage-mixed-turns)
+    if [ "\$n" -lt 2 ]; then
+      printf '{"type":"result","subtype":"error_max_turns","session_id":"fork-%s","num_turns":40}\n' "\$n"
+      exit 1
+    fi
+    printf '{"type":"assistant","message":{"content":[{"type":"text","text":"one"}]}}\n'
+    printf '{"type":"assistant","message":{"content":[{"type":"text","text":"two"}]}}\n'
+    seq 1 30 >> impl.txt
+    printf '{"type":"result","subtype":"success","session_id":"fork-%s"}\n' "\$n"
+    ;;
   # A stream cut mid-line, the shape a killed process leaves behind: one whole
   # result event, then half of the next event and no newline at all.
   usage-truncated)
@@ -872,6 +884,16 @@ check "fallback: the CLI's own turn count is genuinely absent here" \
   "$(result .metrics.implementer_num_turns)" ""
 check "fallback: so turns are counted from the assistant events instead" \
   "$(result .metrics.usage.turns)" "2"
+
+# Fallback is per segment: a numeric count in one segment must not suppress the
+# assistant-event count for a different result event that omitted num_turns.
+printf 'usage-mixed-turns\n' > "$CLAUDE_MODE"
+dispatch USAGE-MIXED-TURNS ""
+printf 'commit\n' > "$CLAUDE_MODE"
+check "mixed fallback: the reported segment keeps its CLI turn count" \
+  "$(result .metrics.implementer_num_turns)" "40"
+check "mixed fallback: the unreported segment adds its assistant turns" \
+  "$(result .metrics.usage.turns)" "42"
 
 # ---------------------------------------------------------------------------
 echo "== the config hash resolves the harness checkout from the installed entry =="
