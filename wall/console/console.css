@@ -200,7 +200,7 @@ main { padding: 14px 16px 4px; }
 .detail .title { color: var(--ink); margin: 8px 0 6px; }
 .detail .why { color: var(--bad); margin: 0 0 8px; }
 
-.attach { display: flex; align-items: stretch; gap: 0; margin: 0 0 10px; max-width: 640px; }
+.attach { display: flex; align-items: stretch; gap: 0; margin: 0 0 10px; max-width: min(640px, 100%); }
 .attach code {
   flex: 1;
   padding: 5px 8px;
@@ -243,3 +243,73 @@ main { padding: 14px 16px 4px; }
 
 .foot { padding: 0 16px 20px; color: var(--faint); font-size: 12px; }
 .foot a { color: var(--dim); }
+
+/* --- a phone --------------------------------------------------------------------
+   The desktop line is a ten-column grid whose column minimums alone want about
+   a thousand pixels, so on a ~390px screen the board scrolled sideways. Below
+   560px the same ten spans reflow into a card — id, repo and provider on the
+   first row, the actor under it, then the activity, then the numbers along the
+   bottom — and everything long ellipsizes inside the card rather than widening
+   the page. Nothing above 560px is touched. */
+
+@media (max-width: 560px) {
+  .bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title  link"
+      "counts counts"
+      "where  where";
+    gap: 5px 12px;
+    padding: 8px 12px;
+  }
+  .bar h1 { grid-area: title; }
+  .counts { grid-area: counts; }
+  .link { grid-area: link; }
+  .where {
+    grid-area: where;
+    margin-left: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  main { padding: 12px 10px 4px; }
+  .board { margin-bottom: 18px; }
+  .rows { gap: 8px; }
+
+  .run .line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 3px 10px;
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+  .run .line > .id { flex: none; }
+  .run .line > .repo { flex: 1 1 0; min-width: 0; }
+  .run .line > .badge { flex: none; }
+  .run .line > .stage { flex: 1 0 100%; }
+  .run .line > .activity { flex: 1 0 100%; }
+  .run .line > .elapsed,
+  .run .line > .diff,
+  .run .line > .turns { flex: none; text-align: left; }
+  .pips { flex: none; align-self: center; }
+
+  .turns::before {
+    content: 'turns';
+    margin-right: 4px;
+    color: var(--faint);
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .detail { padding: 6px 12px 12px; }
+  .attach button { min-height: 44px; }
+  .feed .t { flex: none; }
+  .feed .text { min-width: 0; }
+
+  .foot { padding: 0 12px 20px; }
+}
