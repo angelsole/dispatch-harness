@@ -193,6 +193,46 @@ by side show the same night.
 `prefers-reduced-motion` leaves the whole drift unwritten and keeps the static
 scene.
 
+## The ops console
+
+The city is for a room. `http://<this-machine>:4711/console` is for the person
+operating the runs: a dark flight board, dense and tabular, with no city in it
+at all.
+
+One row per run — id, repo, the **provider badge** (GLM or OPUS, off the run's
+`implementer-provider` pin rather than off the stage text, which says
+"Opus (Claude sub)" whatever is actually being spent), the stage and its actor,
+the **activity** line (the tool and file the worker is touching right now),
+time in stage, total elapsed, `+/−`, turns and a pip per gate round. Runs that
+`needs_input` are pinned to the top in red, because they are the only thing on
+the board that is waiting on a human. Finished runs collapse underneath,
+newest first.
+
+Click a row and it opens: the run's title, why it is blocked when it is, the
+tail of `feed.log`, and the one control the console has —
+
+```bash
+~/.claude/harness/attach.sh <RUN-ID>
+```
+
+— as a copy-able command. Everything the console can *do* is that paste. It
+never mutates a run, and it shows this machine's `WALL_RUNS` only; a second
+machine's runs are the
+[mirror](operations.md#runs-from-any-machine-harness_mirror)'s job, not the
+console's.
+
+It is live over `/api/stream` and falls back to polling `/api/runs` every few
+seconds when the stream drops (the dot in the top-right says which). A snapshot
+that does not parse leaves the previous board standing rather than blanking it.
+
+**Why it is worth knowing this exists.** `wall/server.js` is not a city server
+that happens to expose JSON — it is **the run-data layer**, and `/api/runs` and
+`/api/stream` are its interface. The city is one frontend over it; the console
+is the second, and shares not a line of code with the first. Lifting that layer
+into its own directory so N frontends (web, mobile, pixel) hang cleanly off it
+is deferred work and nothing here does it — this is only the proof that the
+seam is real.
+
 ## Which tower a run stands in
 
 `run-task.sh` builds each worktree as `<repo-dir>-<ticket>` beside the repo and

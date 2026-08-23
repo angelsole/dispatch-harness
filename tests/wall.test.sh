@@ -41,7 +41,7 @@ fi
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
 for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/room.js \
-         wall/fixtures/seed.js wall/fixtures/city.js; do
+         wall/console/console.js wall/fixtures/seed.js wall/fixtures/city.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 # The fixture generator accepts a target for hermetic tests, but must never
@@ -80,6 +80,69 @@ if [ -z "$OFFSITE" ]; then
   ok "assets: no off-origin URLs in anything the page authors"
 else
   bad "assets: off-origin URLs in the page: $OFFSITE"
+fi
+
+# --- the ops console is the second frontend, not a second city ------------------
+# The console is a separate consumer of /api/runs and /api/stream, and the whole
+# claim it makes is that it depends on those two endpoints and nothing else. So
+# it gets the same provenance rule as the page — nothing off-origin — plus the
+# one that is its own: not a byte of the city.
+CONSOLE_SRC="$(cat "$SRC/wall/console/console.html" "$SRC/wall/console/console.css" \
+  "$SRC/wall/console/console.js")"
+CONSOLE_OFFSITE="$(printf '%s' "$CONSOLE_SRC" | grep -oE 'https?://[A-Za-z0-9./_-]+' \
+  | grep -v '^https\{0,1\}://www\.w3\.org/' | sort -u | tr '\n' ' ')"
+if [ -z "$CONSOLE_OFFSITE" ]; then
+  ok "console: no off-origin URLs — no CDN, no web font"
+else
+  bad "console: off-origin URLs in the console: $CONSOLE_OFFSITE"
+fi
+# Comments stripped first: the console's header names the city files precisely
+# to say it does not load them, and a grep that cannot tell prose from code
+# would make writing that sentence down the thing that fails.
+CONSOLE_CODE="$(node -e '
+  const fs = require("fs");
+  process.stdout.write(process.argv.slice(1)
+    .map((f) => fs.readFileSync(f, "utf8"))
+    .join("\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, ""));
+' "$SRC/wall/console/console.html" "$SRC/wall/console/console.css" \
+  "$SRC/wall/console/console.js")"
+CITY_LEAK=''
+for name in wall.js scene.js world-canvas.js room.js wall.css phaser Phaser; do
+  case "$CONSOLE_CODE" in *"$name"*) CITY_LEAK="$CITY_LEAK $name" ;; esac
+done
+if [ -z "$CITY_LEAK" ]; then
+  ok "console: shares no file with the city"
+else
+  bad "console: the console reaches into the city:$CITY_LEAK"
+fi
+# And the reverse: the city never learns the console exists.
+CITY_SRC="$(cat "$SRC/wall/index.html" "$SRC/wall/wall.js" "$SRC/wall/scene.js" \
+  "$SRC/wall/world-canvas.js" "$SRC/wall/room.js")"
+grep_not "$CITY_SRC" "/console" "console: and the city does not know it is there"
+# Every stage-vocab actor has a colour in the console's own table. A new row in
+# the vocabulary would otherwise arrive on the board as an unstyled blank — the
+# same drift stage-vocab.test.sh catches for the statusline's copy.
+ACTOR_GAP="$(node -e '
+  const fs = require("fs");
+  const vocab = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const js = fs.readFileSync(process.argv[2], "utf8");
+  const css = fs.readFileSync(process.argv[3], "utf8");
+  const listed = new Set(((js.match(/const ACTORS = \[([^\]]*)\]/) || [, ""])[1])
+    .split(",").map((s) => s.trim().replace(/^.|.$/g, "")).filter(Boolean));
+  const gaps = [];
+  for (const row of vocab.stages) {
+    if (!listed.has(row.key)) gaps.push(row.key + ": not in ACTORS");
+    else if (!css.includes("--a-" + row.key + ":")) gaps.push(row.key + ": no --a- colour");
+  }
+  process.stdout.write(gaps.length ? [...new Set(gaps)].join("; ") : "");
+' "$SRC/wall/stage-vocab.json" "$SRC/wall/console/console.js" "$SRC/wall/console/console.css" 2>&1)"
+if [ -z "$ACTOR_GAP" ]; then
+  ok "console: every stage-vocab actor has a hue on the board"
+else
+  bad "console: stage-vocab actors the console cannot draw ($ACTOR_GAP)"
 fi
 # Everything under wall/vendor/ that is not documentation is third-party code,
 # and the manifest is the pin: a swapped bundle fails here rather than shipping.
@@ -1002,6 +1065,61 @@ grep_not "$(cat "$SRC/wall/index.html")" 'vendor/phaser.min.js' \
 grep_not "$(cat "$SRC/wall/index.html")" 'world-canvas.js' \
   "assets: nor the canvas world it belongs to"
 
+# --- the ops console, served ------------------------------------------------------
+# The same server, a second frontend: /console is the functional board over the
+# same two endpoints. What is checked here is that it is reachable, that it is
+# not the city, that its own files come down with the right types, and that
+# adding it opened no way into the rest of the checkout.
+echo "== wall: the ops console =="
+code_of() { curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$1"; }
+type_of() { curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$PORT$1"; }
+check "console: /console is served"        "$(code_of /console)" "200"
+check "console: as html"                   "$(type_of /console)" "text/html; charset=utf-8"
+check "console: its script is served"      "$(code_of /console/console.js)" "200"
+check "console: as javascript"             "$(type_of /console/console.js)" "text/javascript; charset=utf-8"
+check "console: its stylesheet is served"  "$(code_of /console/console.css)" "200"
+check "console: as css"                    "$(type_of /console/console.css)" "text/css; charset=utf-8"
+CONSOLE_PAGE="$(get "$PORT" /console)"
+grep_ok "$CONSOLE_PAGE" "OPS CONSOLE" "console: renders the board document"
+grep_ok "$CONSOLE_PAGE" "/console/console.css" "console: links its own stylesheet"
+grep_ok "$CONSOLE_PAGE" "/console/console.js"  "console: links its own script"
+grep_not "$CONSOLE_PAGE" "GHOST SHIFT" "console: and is not the city"
+# Every file the console document pulls in is one this server serves, the same
+# rule the page is held to.
+CONSOLE_ASSETS="$(node -e '
+  const fs = require("fs");
+  const html = fs.readFileSync(process.argv[1], "utf8");
+  const found = new Set();
+  for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) found.add(m[1]);
+  const out = [...found].filter((u) => !/^(data:|#|https?:|\/$)/.test(u));
+  process.stdout.write(out.sort().join(" "));
+' "$SRC/wall/console/console.html")"
+if [ -z "$CONSOLE_ASSETS" ]; then
+  bad "console: the board loads at least one file of its own"
+else
+  ok "console: the board's own loads are [$CONSOLE_ASSETS]"
+fi
+for asset in $CONSOLE_ASSETS; do
+  if [ "$(code_of "$asset")" = 200 ]; then
+    ok "console: $asset is served"
+  else
+    bad "console: $asset is served"
+  fi
+done
+# The routes are a named table, not a directory walk, so there is nothing under
+# /console/ to traverse out of — asked as questions rather than asserted, since
+# a later directory route would have to answer them too. --path-as-is keeps curl
+# from collapsing the dots before the server ever sees them.
+for escape in /console/../server.js /console/%2e%2e/server.js /console/console.js/../../server.js \
+              /console/../../gate.sh /console/room.js; do
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' --path-as-is "http://127.0.0.1:$PORT$escape")"
+  check "console: $escape is not a file this server reads" "$CODE" "404"
+done
+# The city and the data layer are untouched by any of it.
+check "console: / is still the city"  "$(code_of /)" "200"
+grep_ok "$(get "$PORT" /)" "GHOST SHIFT" "console: and still renders it"
+check "console: /api/runs is untouched" "$(code_of /api/runs)" "200"
+
 API="$(get "$PORT" /api/runs)"
 # Kept on disk as well: the room probe further down runs the real renderer's
 # arithmetic over this exact payload rather than a restatement of it.
@@ -1161,6 +1279,258 @@ check "detail: a run from before the verifier carries null, not zero" \
   "$(state_of LEGACY-0042 verifier)" "null"
 check "detail: and so does a live run nobody has scored yet" \
   "$(state_of OLYX-1631 verifier)" "null"
+# WHICH SUBSCRIPTION IS BEING SPENT. Not in the stage text — run-task.sh writes
+# "implementing — Opus (Claude sub)" on a zai run too — so the pin file is the
+# only honest source, and it is there from the first stage rather than only once
+# result.json exists.
+check "detail: the implementer provider surfaces from its pin" \
+  "$(state_of OLYX-1631 provider)" "anthropic"
+check "detail: and a GLM run says so while it is still running" \
+  "$(state_of OLYX-1648 provider)" "zai"
+check "detail: a run from before the pin claims no provider, rather than guessing one" \
+  "$(state_of LEGACY-0042 provider)" ""
+# TURNS. The whole invocation's count when there is one, the implementer's own
+# when there is not, and null — never a zero somebody could read as "no work" —
+# for a run still in flight or one recorded before either field existed.
+check "detail: turns surface from the invocation's usage" \
+  "$(state_of OLYX-1598 turns)" "64"
+check "detail: turns fall back to the implementer's own count" \
+  "$(state_of BOT-2287 turns)" "37"
+check "detail: a run with no countable turns carries null, not zero" \
+  "$(state_of OLYX-1642 turns)" "null"
+check "detail: and neither has a live run finished counting" \
+  "$(state_of OLYX-1631 turns)" "null"
+
+# The two cases the fixtures cannot show: a run whose only record of the
+# provider is result.json, and one an escalation moved to another provider
+# mid-flight — where the pin has been rewritten and result.json has not caught
+# up. The file wins, for the same reason the `owner` pin does.
+PROVIDER_WALL="$ROOT/provider-wall"
+PROVIDER_NOW=$(date +%s)
+for id in FALLBACK-1 ESCALATED-1 GIBBERISH-1; do
+  mkdir -p "$PROVIDER_WALL/$id"
+  printf '%s implementing — Opus (Claude sub)\n' "$PROVIDER_NOW" > "$PROVIDER_WALL/$id/status"
+  printf '%s\n' "$((PROVIDER_NOW - 300))" > "$PROVIDER_WALL/$id/started"
+done
+printf '{"implementer_provider":"zai","metrics":{"usage":{"turns":12}}}\n' \
+  > "$PROVIDER_WALL/FALLBACK-1/result.json"
+printf 'anthropic\n' > "$PROVIDER_WALL/ESCALATED-1/implementer-provider"
+printf '{"implementer_provider":"zai"}\n' > "$PROVIDER_WALL/ESCALATED-1/result.json"
+printf '{"metrics":{"usage":{"turns":"lots"},"implementer_num_turns":-4}}\n' \
+  > "$PROVIDER_WALL/GIBBERISH-1/result.json"
+serve "$PROVIDER_WALL" "$ROOT/provider-wall.log"; PROVIDER_PORT="$PORT_OUT"
+PROVIDER_API="$(get "$PROVIDER_PORT" /api/runs)"
+provider_of() {
+  printf '%s' "$PROVIDER_API" | jq -r --arg id "$1" '.runs[] | select(.id==$id) | .'"$2"
+}
+check "detail: the provider falls back to result.json" \
+  "$(provider_of FALLBACK-1 provider)" "zai"
+check "detail: an escalated run reports the provider it escalated to" \
+  "$(provider_of ESCALATED-1 provider)" "anthropic"
+check "detail: turns come off result.json without a pin file" \
+  "$(provider_of FALLBACK-1 turns)" "12"
+check "detail: a turn count that is not a count is null, not a rendered lie" \
+  "$(provider_of GIBBERISH-1 turns)" "null"
+
+# --- the console draws it ---------------------------------------------------------
+# `node --check` proves the console parses; nothing above proves it draws. The
+# stub below is the smallest DOM the file actually touches, and the probe runs
+# the REAL console.js through it against the REAL /api/runs payload written
+# further up — first paint, a run expanded, a half-written frame, and the stream
+# dropping. A browser is the one thing this suite cannot have, so this is how the
+# page gets executed at all.
+echo "== wall: the console draws =="
+CONSOLE_PROBE="$ROOT/console-probe.js"
+cat > "$CONSOLE_PROBE" <<'JS'
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const [FILE, API_FILE] = process.argv.slice(2);
+
+function matches(el, sel) {
+  for (const part of sel.match(/\.[A-Za-z0-9_-]+|\[[^\]]+\]|^[a-z]+/g) || []) {
+    if (part[0] === '.') { if (!el.classList.contains(part.slice(1))) return false; }
+    else if (part[0] === '[') { if (el.getAttribute(part.slice(1, -1)) === null) return false; }
+    else if (el.tagName !== part) return false;
+  }
+  return true;
+}
+
+class El {
+  constructor(tag) {
+    this.tagName = tag;
+    this.children = [];
+    this.attrs = {};
+    this.handlers = {};
+    this.hidden = false;
+    this.parent = null;
+    this._text = '';
+    this._classes = new Set();
+    const classes = this._classes;
+    this.classList = {
+      add: (c) => classes.add(c),
+      remove: (c) => classes.delete(c),
+      contains: (c) => classes.has(c),
+    };
+  }
+  get className() { return [...this._classes].join(' '); }
+  set className(v) {
+    // Emptied and refilled rather than replaced: classList closes over this set.
+    this._classes.clear();
+    for (const c of String(v).split(/\s+/).filter(Boolean)) this._classes.add(c);
+  }
+  get offsetWidth() { return 0; }
+  get textContent() {
+    return this.children.length ? this.children.map((c) => c.textContent).join('') : this._text;
+  }
+  set textContent(v) { this._text = String(v); this.children = []; }
+  appendChild(node) { node.parent = this; this.children.push(node); return node; }
+  replaceChildren(...nodes) { for (const n of nodes) n.parent = this; this.children = nodes; }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+  addEventListener(type, fn) { (this.handlers[type] = this.handlers[type] || []).push(fn); }
+  fire(type) { for (const fn of this.handlers[type] || []) fn({ stopPropagation() {} }); }
+  *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
+  querySelector(sel) { for (const n of this.walk()) if (matches(n, sel)) return n; return null; }
+  querySelectorAll(sel) { return [...this.walk()].filter((n) => matches(n, sel)); }
+}
+
+const ids = new Map();
+const root = new El('body');
+const mk = (id, tag) => {
+  const el = new El(tag || 'div');
+  el.setAttribute('id', id);
+  ids.set(id, el);
+  return root.appendChild(el);
+};
+for (const id of ['link', 'link-text', 'runs-dir', 'n-active', 'n-done', 'alarms',
+  'alarm-rows', 'active', 'active-rows', 'recent', 'recent-rows', 'active-empty']) mk(id);
+mk('n-alarm', 'span').appendChild(new El('b'));
+
+global.document = {
+  createElement: (tag) => new El(tag),
+  createTextNode: (text) => { const n = new El('#text'); n.textContent = text; return n; },
+  getElementById: (id) => ids.get(id) || null,
+  querySelectorAll: (sel) => root.querySelectorAll(sel),
+  createRange: () => ({ selectNodeContents() {} }),
+};
+global.window = { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) };
+// node >= 21 ships its own read-only `navigator`, which a plain assignment
+// cannot replace. The console only asks it for a clipboard.
+Object.defineProperty(global, 'navigator', { value: {}, configurable: true });
+global.setInterval = () => ({});
+global.clearInterval = () => {};
+const API = fs.readFileSync(API_FILE, 'utf8');
+global.fetch = () => Promise.resolve({ text: () => Promise.resolve(API) });
+let stream = null;
+global.EventSource = class {
+  constructor(url) { this.url = url; this.handlers = {}; stream = this; }
+  addEventListener(type, fn) { (this.handlers[type] = this.handlers[type] || []).push(fn); }
+  emit(type, event) { for (const fn of this.handlers[type] || []) fn(event); }
+};
+
+require(path.resolve(FILE));
+
+const out = [];
+const say = (k, v) => out.push(k + '=' + v);
+const rows = (id) => ids.get(id).children;
+const row = (runId) => ['alarm-rows', 'active-rows', 'recent-rows']
+  .flatMap((c) => rows(c))
+  .find((r) => (r.querySelector('.id') || {}).textContent === runId) || null;
+const cell = (runId, sel) => {
+  const r = row(runId);
+  if (!r) return 'NO-ROW';
+  const node = r.querySelector(sel);
+  return node ? node.textContent : 'NO-CELL';
+};
+
+say('stream', stream ? stream.url : 'none');
+stream.emit('open', {});
+stream.emit('snapshot', { data: API });
+
+say('alarms', rows('alarm-rows').length);
+say('active', rows('active-rows').length);
+say('recent', rows('recent-rows').length);
+say('pinned', (rows('alarm-rows')[0].querySelector('.id') || {}).textContent);
+say('alarms-shown', ids.get('alarms').hidden ? 'hidden' : 'shown');
+say('runsdir', ids.get('runs-dir').textContent);
+say('count-active', ids.get('n-active').textContent);
+say('glm', cell('OLYX-1648', '.badge'));
+say('opus', cell('OLYX-1631', '.badge'));
+say('unpinned', cell('LEGACY-0042', '.badge'));
+say('activity', cell('OLYX-1631', '.activity'));
+say('turns', cell('OLYX-1598', '.turns'));
+say('diff', cell('OLYX-1598', '.diff'));
+say('pips', row('OLYX-1598').querySelectorAll('.pip').length);
+say('hue', row('OLYX-1631').querySelector('.actor').getAttribute('style'));
+say('elapsed', /^[0-9]+[smh]/.test(cell('OLYX-1631', '.elapsed')) ? 'counting' : 'blank');
+
+// Expanding is the console's one control: the feed, and a command to paste.
+row('OLYX-1642').querySelector('.line').fire('click');
+say('attach', (row('OLYX-1642').querySelector('code') || {}).textContent);
+say('feed', row('OLYX-1642').querySelector('.feed').children.length);
+say('why', (row('OLYX-1642').querySelector('.why') || {}).textContent ? 'shown' : 'missing');
+stream.emit('snapshot', { data: API });
+say('stays-open', row('OLYX-1642').querySelector('code') ? 'open' : 'closed');
+
+// Nothing malformed may take the board down: a truncated frame, a frame that is
+// JSON but not a snapshot, and a run dir the server could only half read.
+const before = rows('active-rows').length;
+stream.emit('snapshot', { data: '{"runs": [{"id": "HALF' });
+stream.emit('snapshot', { data: '{"ok": true}' });
+stream.emit('snapshot', { data: 'not json at all' });
+say('survives', rows('active-rows').length === before ? 'board stands' : 'board lost');
+const frame = JSON.parse(API);
+frame.runs = [null, 'nonsense', { id: 'HALF-1', state: 'active' }, ...frame.runs];
+stream.emit('snapshot', { data: JSON.stringify(frame) });
+say('half-run', cell('HALF-1', '.activity'));
+say('half-stage', cell('HALF-1', '.actor'));
+
+// And the stream dropping is a fallback, not a dead page.
+stream.emit('error', {});
+say('link', ids.get('link').getAttribute('data-state') + '/' + ids.get('link-text').textContent);
+
+process.stdout.write(out.join('\n'));
+JS
+CONSOLE_OUT="$(node "$CONSOLE_PROBE" "$SRC/wall/console/console.js" "$ROOT/api.json" 2>&1)"
+probe() { printf '%s' "$CONSOLE_OUT" | sed -n "s/^$1=//p"; }
+if printf '%s' "$CONSOLE_OUT" | grep -q '^stream='; then
+  ok "draws: the real console.js runs against the real snapshot"
+else
+  bad "draws: the console threw on the real snapshot ($CONSOLE_OUT)"
+fi
+check "draws: it subscribes to the stream"  "$(probe stream)" "/api/stream"
+check "draws: one row per live run"         "$(probe active)" \
+  "$(printf '%s' "$API" | jq '[.runs[] | select(.state=="active")] | length')"
+check "draws: needs_input is pinned in its own board" "$(probe alarms)" "1"
+check "draws: and it is the run that is waiting"      "$(probe pinned)" "OLYX-1642"
+check "draws: the alarm board only appears when there is one" "$(probe alarms-shown)" "shown"
+check "draws: finished runs collapse below"  "$(probe recent)" \
+  "$(printf '%s' "$API" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')"
+check "draws: the header counts the live ones" "$(probe count-active)" "$(probe active)"
+check "draws: and names the runs dir it is watching" "$(probe runsdir)" "$RUNS"
+check "draws: a GLM run wears the GLM badge"   "$(probe glm)" "GLM"
+check "draws: an Opus run wears its own"       "$(probe opus)" "OPUS"
+check "draws: an unpinned run wears a dash, not a guess" "$(probe unpinned)" "—"
+check "draws: the activity column is the tool and the file" \
+  "$(probe activity)" "⏺ Edit src/invoices/export.ts"
+check "draws: turns"  "$(probe turns)" "64"
+check "draws: diff"   "$(probe diff)" "+214 −63"
+check "draws: a pip per gate round" "$(probe pips)" "2"
+check "draws: the actor takes its hue from the stage vocabulary" \
+  "$(probe hue)" "color: var(--a-opus)"
+check "draws: the clocks are counting" "$(probe elapsed)" "counting"
+check "draws: expanding offers the attach command" \
+  "$(probe attach)" "$(printf '%s' "$RUNS" | sed 's|/runs$||')/attach.sh OLYX-1642"
+check "draws: and the feed tail beside it" "$(probe feed)" \
+  "$(printf '%s' "$API" | jq '[.runs[] | select(.id=="OLYX-1642")][0].feed | length')"
+check "draws: with the blocking question above both" "$(probe why)" "shown"
+check "draws: a later frame does not close it" "$(probe stays-open)" "open"
+check "draws: a malformed frame leaves the board standing" "$(probe survives)" "board stands"
+check "draws: a half-written run renders as much as it has" "$(probe half-run)" "idle"
+check "draws: and admits it does not know who is working" "$(probe half-stage)" "?"
+check "draws: a dropped stream falls back to polling" "$(probe link)" "polling/polling"
 
 echo "== wall: ordering =="
 ORDER="$(printf '%s' "$API" | jq -r '.runs[].id' | tr '\n' ' ')"
