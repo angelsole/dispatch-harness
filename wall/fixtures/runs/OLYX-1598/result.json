@@ -30,6 +30,13 @@
       "insertions": 214,
       "deletions": 63
     },
+    "usage": {
+      "input_tokens": 41000,
+      "cache_read_input_tokens": 1840000,
+      "cache_creation_input_tokens": 96000,
+      "output_tokens": 38000,
+      "turns": 64
+    },
     "verifier": {
       "score": 0.83,
       "at_implementer": 0.71,

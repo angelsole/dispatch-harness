@@ -16,6 +16,8 @@
 // by ../wall.sh, which owns the flags and computes the defaults below.
 //
 //   GET /              the page (index.html, wall.css, wall.js)
+//   GET /console       the ops console (wall/console/), a second frontend over
+//                      the same two endpoints — see docs/wall.md
 //   GET /api/runs      one snapshot of every run, as JSON
 //   GET /api/stream    the same snapshot pushed over SSE whenever it changes
 //
@@ -357,6 +359,16 @@ function ownerKindOf(owner) {
   return SYNTHETIC.has(owner) ? 'synthetic' : 'human';
 }
 
+// The invocation's turn count, or null on a run nobody counted. `usage.turns` is
+// the whole invocation and `implementer_num_turns` only the implementer's, so
+// the wider one wins; a run still in flight has no result.json and no answer.
+function turnsOf(metrics) {
+  for (const n of [metrics.usage && metrics.usage.turns, metrics.implementer_num_turns]) {
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
 function readRun(id, current) {
   const dir = path.join(RUNS, id);
   const { since, stage } = current || currentStage(dir);
@@ -405,6 +417,13 @@ function readRun(id, current) {
     branch: result.branch || '',
     implementer: result.implementer_model || '',
     reviewer: result.reviewer_model || '',
+    // The pin file, not the stage text: `implementing — Opus (Claude sub)` is
+    // written verbatim on a zai run too, so the words on the wall cannot tell an
+    // operator which subscription is being spent. The file exists from the first
+    // stage and is rewritten when an escalation changes the answer.
+    provider: firstLine(path.join(dir, 'implementer-provider')) ||
+      result.implementer_provider || '',
+    turns: turnsOf(metrics),
     diff: metrics.diff || null,
     verifier: metrics.verifier || null,
     blocked: state === 'alarm' ? firstProse(path.join(dir, 'QUESTIONS.md')) : '',
@@ -941,6 +960,15 @@ const STATIC = {
   '/world-canvas.js': ['world-canvas.js', 'text/javascript; charset=utf-8'],
   '/room.js': ['room.js', 'text/javascript; charset=utf-8'],
   '/vendor/phaser.min.js': [path.join('vendor', 'phaser.min.js'), 'text/javascript; charset=utf-8'],
+  // The ops console: a second, functional frontend over /api/runs and
+  // /api/stream, sharing nothing with the city above it. Named rows for the
+  // same reason /vendor/ has one — a directory route is a path traversal this
+  // server has never had, and three files do not need one.
+  '/console': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
+  '/console/': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
+  '/console/console.html': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
+  '/console/console.css': [path.join('console', 'console.css'), 'text/css; charset=utf-8'],
+  '/console/console.js': [path.join('console', 'console.js'), 'text/javascript; charset=utf-8'],
 };
 
 // The room's sprites. A directory rather than a named row per file, because the

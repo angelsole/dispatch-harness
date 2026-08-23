@@ -38,7 +38,12 @@ function write(id, name, body) {
 // pins the first from HARNESS_OWNER and derives the second from the repo path.
 // `worktree: 'result'` puts the path only in result.json (as a run that started
 // before the pin existed would look), `'none'` leaves it unreadable entirely.
-function run({ id, project, owner, stageAge, totalAge, stage, activity, title, worktree }) {
+// `provider` is the implementer subscription the run is spending — the ops
+// console's badge, and the one thing the stage text cannot tell you, since it
+// says "Opus (Claude sub)" whichever provider is billed. `'none'` leaves the
+// pin unwritten, as a run from before it existed.
+function run({ id, project, owner, stageAge, totalAge, stage, activity, title, worktree,
+  provider = 'anthropic' }) {
   fs.mkdirSync(path.join(DEST, id), { recursive: true });
   write(id, 'status', `${at(stageAge)} ${stage}`);
   write(id, 'started', at(totalAge));
@@ -48,6 +53,7 @@ function run({ id, project, owner, stageAge, totalAge, stage, activity, title, w
   write(id, 'owner', owner);
   write(id, 'brief.md', `# ${title}\n\n- **Ticket**: ${id}\n`);
   if (!worktree) write(id, 'worktree', worktreeFor(project, id));
+  if (provider !== 'none') write(id, 'implementer-provider', provider);
   write(id, 'base', 'origin/main');
 }
 
@@ -170,6 +176,13 @@ result('OLYX-1598', {
     gate_rounds: [{ round: '1', result: 'fail' }, { round: '2', result: 'pass' }],
     opus_commits: 3, codex_commits: 2,
     diff: { files_changed: 7, insertions: 214, deletions: 63 },
+    // The whole invocation's spend. `turns` is the column the ops console draws;
+    // BOT-2287 below carries the implementer-only count instead, which is the
+    // other shape the wall has to read.
+    usage: {
+      input_tokens: 41000, cache_read_input_tokens: 1840000,
+      cache_creation_input_tokens: 96000, output_tokens: 38000, turns: 64,
+    },
     // A run the third-vendor verifier scored: the plate chip and the SCORE
     // columns have something to render. LEGACY-0042 deliberately has none — it
     // predates result.json entirely and is the field-absent case.
@@ -206,7 +219,7 @@ feed('OLYX-1655', [
 ]);
 
 run({
-  id: 'BOT-2291', project: 'olyx-agents', owner: 'bot', stageAge: 55, totalAge: 900,
+  id: 'BOT-2291', project: 'olyx-agents', owner: 'bot', stageAge: 55, totalAge: 900, provider: 'zai',
   stage: 'base sync — merge latest main (script — no model)',
   activity: 'base sync — merge latest main (script — no model)',
   title: 'Nightly dependency sweep — bump and verify',
@@ -242,6 +255,7 @@ result('BOT-2287', {
   metrics: {
     wall_seconds: 2800, gate_rounds: [{ round: '1', result: 'pass' }],
     opus_commits: 2, codex_commits: 0,
+    implementer_num_turns: 37,
     diff: { files_changed: 5, insertions: 131, deletions: 47 },
     // A green gate and a rejection: exactly the run whose score is worth having,
     // and the reason the verifier scores the rejected arm too.
@@ -259,7 +273,7 @@ result('BOT-2287', {
 // --- valoryx-graphql-api: one implementing, one on the roof --------------------
 run({
   id: 'OLYX-1648', project: 'valoryx-graphql-api', owner: 'reinier', stageAge: 260, totalAge: 2100,
-  stage: 'implementing — Opus (Claude sub)',
+  stage: 'implementing — Opus (Claude sub)', provider: 'zai',
   activity: '⏺ Write src/webhooks/retry-queue.ts',
   title: 'Webhook retries — exponential backoff with a dead letter queue',
 });
@@ -326,7 +340,7 @@ feed('adhoc-kpi-sparklines', [
 // wrote it. The wall will not invent a repo for it.
 run({
   id: 'LEGACY-0042', project: '', owner: '', stageAge: 210, totalAge: 3600,
-  stage: 'implementing — Opus (Claude sub)', worktree: 'none',
+  stage: 'implementing — Opus (Claude sub)', worktree: 'none', provider: 'none',
   activity: '⏺ Edit lib/importer/csv.rb',
   title: 'Importer — tolerate BOM-prefixed CSV headers',
 });
