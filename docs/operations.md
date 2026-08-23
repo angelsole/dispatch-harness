@@ -447,7 +447,7 @@ worktree is long gone.
 
 **What it records.** Before deciding anything about a worktree, every run whose
 `result.json` carries a `pr_url` gets an `outcome.json` written beside it:
-`pr_state`, `merged_at`, `time_to_merge_s` (PR created → merged),
+`pr_url`, `pr_state`, `merged_at`, `time_to_merge_s` (PR created → merged),
 `review_comment_count` (inline review comments, bots excluded),
 `follow_up_commits` (commits on the base branch after the merge that touch
 files the PR changed), `reverted` (a later commit whose message names the merge
@@ -455,7 +455,7 @@ SHA), and `checked_at`. The comment count costs one extra read-only `gh api`
 call per PR; everything else rides the `gh pr view` the sweep already makes,
 plus local git in the run's repo. Once a PR is terminal (`MERGED` or `CLOSED`)
 and its outcome is `JANITOR_OUTCOME_MAX_AGE` days old, the file stops being
-refreshed — the ground truth is not going to change. Capture never fails a
+refreshed — provided it still names the run's current PR. Capture never fails a
 sweep: a PR whose state cannot be read keeps the previous file as it was.
 `metrics.sh --report` summarizes the block as merge rate, median minutes to
 merge and revert count.

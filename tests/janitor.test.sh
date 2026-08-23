@@ -215,6 +215,7 @@ WT_UNKNOWN="$ROOT/wt-unreadable"
 WT_LIVE="$ROOT/wt-still-running"
 WT_CLOSED="$ROOT/wt-closed-pr"
 WT_SETTLED="$ROOT/wt-settled-merged"
+WT_REDISPATCHED="$ROOT/wt-redispatched-open"
 
 mkwt feat/merged-clean  "$WT_SWEEP"
 mkwt feat/open-pr       "$WT_OPEN"
@@ -224,6 +225,7 @@ mkwt feat/unreadable    "$WT_UNKNOWN"
 mkwt feat/still-running "$WT_LIVE"
 mkwt feat/closed-pr     "$WT_CLOSED"
 mkwt feat/settled-merged "$WT_SETTLED"
+mkwt feat/redispatched-open "$WT_REDISPATCHED"
 printf 'work nobody has committed\n' > "$WT_DIRTY/scratch.txt"
 
 mkrun merged-clean  "done: ready"        "$WT_SWEEP"   "$PR/1"
@@ -239,14 +241,18 @@ mkrun closed-pr     "done: ready"        "$WT_CLOSED"  "$PR/7"
 # PR/8 outcome is terminal and long settled, so it is the run the age knob has
 # to leave alone — not even polled.
 mkrun already-swept "done: ready"        "$ROOT/wt-gone" "$PR/8"
-printf '%s\n' '{"pr_state":"MERGED","merged_at":"2026-08-20T10:00:00Z","time_to_merge_s":3600,
-"review_comment_count":0,"follow_up_commits":9,"reverted":false,"checked_at":"2026-01-01T00:00:00Z"}' \
+printf '{"pr_url":"%s","pr_state":"MERGED","merged_at":"2026-08-20T10:00:00Z","time_to_merge_s":3600,
+"review_comment_count":0,"follow_up_commits":9,"reverted":false,"checked_at":"2026-01-01T00:00:00Z"}\n' "$PR/8" \
   > "$RUNS/already-swept/outcome.json"
 SETTLED_OUTCOME=$(cat "$RUNS/already-swept/outcome.json")
 # The same aged terminal outcome can still have a worktree standing. It remains
 # eligible for cleanup from the persisted state even though refresh has stopped.
 mkrun settled-merged "done: ready" "$WT_SETTLED" "$PR/8"
 printf '%s\n' "$SETTLED_OUTCOME" > "$RUNS/settled-merged/outcome.json"
+# A deliberate re-dispatch can reuse the run directory for a different PR. Its
+# old terminal outcome must not settle the new OPEN PR or authorize cleanup.
+mkrun redispatched-open "done: ready" "$WT_REDISPATCHED" "$PR/2"
+printf '%s\n' "$SETTLED_OUTCOME" > "$RUNS/redispatched-open/outcome.json"
 # A run whose stage line never landed. Merged and clean, and still not the
 # janitor's to take: a run whose state cannot be read is not a run that is done.
 WT_NOSTATUS="$ROOT/wt-no-status"
@@ -371,18 +377,18 @@ has "$out" "no status line — cannot tell if it is done" "report: an unreadable
 
 # A run whose worktree cleanup.sh already removed is not a finding, and the
 # quartermaster's report directory is not a run.
-has "$out" "1 of 10 runs had no worktree left" "report: an already-promoted run is counted, not reported"
-has "$out" "7 kept" "report: the seven it may not touch are counted"
+has "$out" "1 of 11 runs had no worktree left" "report: an already-promoted run is counted, not reported"
+has "$out" "8 kept" "report: the eight it may not touch are counted"
 has "$out" "2 worktree(s) sweepable" "report: the sweepable count is on the summary line"
-has "$out" "kept: 1 open · 1 closed · 1 dirty · 1 unknown · 1 no-pr · 2 unfinished" \
+has "$out" "kept: 2 open · 1 closed · 1 dirty · 1 unknown · 1 no-pr · 2 unfinished" \
   "report: the summary breaks the kept runs down by reason"
 has "$out" "--report swept and reaped nothing" "report: it says it did nothing"
-has "$out" "outcomes: 6 written · 2 settled (terminal, over 14 days old) · 1 not readable" \
+has "$out" "outcomes: 7 written · 2 settled (terminal, over 14 days old) · 1 not readable" \
   "report: the outcome counts are on the summary line"
 
 echo "== --report is side-effect-free =="
 for w in "$WT_SWEEP" "$WT_OPEN" "$WT_DIRTY" "$WT_NOPR" "$WT_UNKNOWN" "$WT_LIVE" "$WT_CLOSED" \
-         "$WT_NOSTATUS" "$WT_SETTLED"; do
+         "$WT_NOSTATUS" "$WT_SETTLED" "$WT_REDISPATCHED"; do
   exists "report: $(basename "$w") is untouched" "$w"
 done
 check "report: git still knows every worktree" "$(wt_count)" "$WT_BEFORE"
@@ -435,8 +441,14 @@ absent "outcome: an unreadable PR writes no outcome"     "$RUNS/unreadable/outco
 check "outcome: a settled outcome is not rewritten" "$(cat "$RUNS/already-swept/outcome.json")" "$SETTLED_OUTCOME"
 has_not "$(cat "$GH_LOG")" "$PR/8" "outcome: a settled outcome is not even polled"
 check "outcome: a settled standing run is still sweepable" "$(verb "$out" settled-merged)" "sweep"
+check "outcome: a reused run refreshes against its current PR" \
+  "$(oc .pr_state redispatched-open)" "OPEN"
+check "outcome: the replacement PR is recorded with the outcome" \
+  "$(oc .pr_url redispatched-open)" "$PR/2"
+check "outcome: an old merged PR cannot authorize cleanup of the new one" \
+  "$(verb "$out" redispatched-open)" "keep"
 check "outcome: exactly one api call per refreshed run" \
-  "$(grep -c "pulls/2/comments" "$GH_LOG" | tr -d ' ')" "1"
+  "$(grep -c "pulls/2/comments" "$GH_LOG" | tr -d ' ')" "2"
 
 # ---------------------------------------------------------------------------
 echo "== --clean: merged clean worktrees, including settled ones =="
@@ -445,7 +457,7 @@ out=$(jan "" --clean); rc=$?
 check "clean: exits 0" "$rc" "0"
 absent "clean: the merged clean worktree is gone" "$WT_SWEEP"
 absent "clean: the settled merged worktree is gone" "$WT_SETTLED"
-for w in "$WT_OPEN" "$WT_DIRTY" "$WT_NOPR" "$WT_UNKNOWN" "$WT_LIVE" "$WT_CLOSED" "$WT_NOSTATUS"; do
+for w in "$WT_OPEN" "$WT_DIRTY" "$WT_NOPR" "$WT_UNKNOWN" "$WT_LIVE" "$WT_CLOSED" "$WT_NOSTATUS" "$WT_REDISPATCHED"; do
   exists "clean: $(basename "$w") is still there" "$w"
 done
 check "clean: git dropped exactly two worktrees" "$(wt_count)" "$((WT_BEFORE - 2))"
@@ -468,8 +480,8 @@ out=$(jan "" --clean); rc=$?
 check "again: exits 0" "$rc" "0"
 check "again: nothing is sweepable" "$(verbs "$out" sweep)" "0"
 has "$out" "0 worktree(s) swept" "again: it says it swept nothing"
-has "$out" "3 of 10 runs had no worktree left" "again: the swept runs join the already-clean one"
-check "again: still seven kept" "$(verbs "$out" keep)" "7"
+has "$out" "3 of 11 runs had no worktree left" "again: the swept runs join the already-clean one"
+check "again: still eight kept" "$(verbs "$out" keep)" "8"
 
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite

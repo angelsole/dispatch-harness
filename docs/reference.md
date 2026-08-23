@@ -579,7 +579,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `gate-*.log`, `gate-rounds.log` | Each gate round's output and its one-line verdict |
 | `gate-integrity.json`, `gate-integrity-replay.log` | The [integrity check's](#the-gate-integrity-check) findings (copied into `result.json` as `gate_integrity`), and the transcript of replaying this branch's tests against base |
 | `result.json` | The run's machine-readable outcome and metrics ([schema](#metrics-schema)) |
-| `outcome.json` | What the world did with the PR: `pr_state`, `merged_at`, `time_to_merge_s`, `review_comment_count`, `follow_up_commits`, `reverted`, `checked_at` — written by the [janitor](operations.md#the-janitor) once the run has a PR. Absent until then, and absent for a PR the janitor could never read |
+| `outcome.json` | What the world did with the PR: `pr_url`, `pr_state`, `merged_at`, `time_to_merge_s`, `review_comment_count`, `follow_up_commits`, `reverted`, `checked_at` — written by the [janitor](operations.md#the-janitor) once the run has a PR. Absent until then, and absent for a PR the janitor could never read |
 | `repo` | The repo the janitor resolved the run's PR to, so later sweeps skip the re-derivation |
 | `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |

@@ -237,12 +237,13 @@ refreshed_base_ref() {  # $1 = repo, $2 = base branch; prints the refreshed ref 
 
 # The politeness knob, asked before the poll: a terminal outcome older than
 # JANITOR_OUTCOME_MAX_AGE days costs nothing further, not even the gh call.
-outcome_settled() {  # $1 = run dir; succeeds when the outcome may stop refreshing
-  local out="$1/outcome.json" cutoff
+outcome_settled() {  # $1 = run dir, $2 = current PR url; succeeds when refresh may stop
+  local out="$1/outcome.json" url="$2" cutoff
   [ -s "$out" ] || return 1
   cutoff=$(( $(date +%s) - OUTCOME_MAX_AGE * 86400 ))
-  jq -e --argjson cutoff "$cutoff" '
-    (.pr_state == "MERGED" or .pr_state == "CLOSED")
+  jq -e --arg url "$url" --argjson cutoff "$cutoff" '
+    .pr_url == $url
+    and (.pr_state == "MERGED" or .pr_state == "CLOSED")
     and (((.checked_at // "") | if test("^[0-9]{4}-") then fromdateiso8601 else 0 end) < $cutoff)
   ' "$out" >/dev/null 2>&1
 }
@@ -328,10 +329,11 @@ capture_outcome() {  # $1 = run dir, $2 = PR url, $3 = the poll's JSON ('' = unr
   local prev='{}'
   [ -s "$out" ] && prev=$(jq -c . "$out" 2>/dev/null)
   [ -n "$prev" ] || prev='{}'
-  if jq -n --arg state "$state" --arg merged_at "$merged_at" --arg ttm "$ttm" \
+  if jq -n --arg url "$url" --arg state "$state" --arg merged_at "$merged_at" --arg ttm "$ttm" \
         --arg rcc "$rcc" --arg follow "$follow" --arg reverted "$reverted" \
         --arg checked "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prev "$prev" '
-      {pr_state: $state,
+      {pr_url: $url,
+       pr_state: $state,
        merged_at: (if $merged_at == "" then null else $merged_at end),
        time_to_merge_s: (if $ttm == "" then ($prev.time_to_merge_s // null) else ($ttm | tonumber) end),
        review_comment_count: (if $rcc == "" then ($prev.review_comment_count // null) else ($rcc | tonumber) end),
@@ -382,7 +384,7 @@ sweep_runs() {  # $1 = report | clean
     view=''
     state=''
     if [ -n "$pr" ]; then
-      if outcome_settled "$d"; then
+      if outcome_settled "$d" "$pr"; then
         n_oc_settled=$((n_oc_settled + 1))
         # Settling suppresses network refreshes, not the cleanup decision. The
         # terminal state already persisted in outcome.json is still ground
