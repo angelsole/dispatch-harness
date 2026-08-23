@@ -955,22 +955,6 @@ mount_specs() {  # $1 = run dir, $2 = worktree
 mkdir -p "$WORKTREE/.harness"
 cp "$BRIEF" "$WORKTREE/.harness/brief.md"
 rm -f "$WORKTREE/.harness/QUESTIONS.md"   # stale questions would re-trigger needs_input
-# A rejection belongs to the dispatch that produced it. Left standing it makes a
-# re-review that APPROVES still read as rejected — the outcome check in section 6
-# keys off this file's existence (bit us on OLYX-1497: the approval round left
-# round 1's file in place and the run skipped its PR) — and it would equally veto
-# an escalation this dispatch has not yet earned. It is archived here rather than
-# in front of the review stage, where it used to sit, because the escalation
-# decision is upstream of that.
-#
-# The one arm that keeps it is the arm that can do neither: a no_review run with
-# nowhere to escalate has no way left to revisit the verdict, so a stale
-# rejection stays that run's outcome exactly as it always did.
-if [ -f "$WORKTREE/.harness/REJECTED.md" ] \
-   && { [ "$ARM" != no_review ] \
-        || { [ "$ESCALATION" = on ] && [ "$IMPLEMENTER_PROVIDER" != anthropic ]; }; }; then
-  mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
-fi
 mount_specs "$RUN_DIR" "$WORKTREE" \
   || fail setup_failed "could not mount $RUN_DIR/specs at $WORKTREE/.harness/specs"
 EXCLUDE_FILE="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
@@ -2633,6 +2617,14 @@ fi
 # integrity flags are the veto. Downstream of it, nothing changes — the escalated
 # attempt is gated, integrity-checked and reviewed like any other, and a run that
 # does not escalate reaches the review stage on the same line it always did.
+# A rejection belongs to the dispatch that produced it. Left standing it would
+# veto an escalation this dispatch has not yet earned (the same stale-verdict
+# class that bit OLYX-1497), so escalation-capable runs archive it at the last
+# possible moment: after existing setup/preflight behavior, before this decision.
+if [ "$ESCALATION" = on ] && [ "$IMPLEMENTER_PROVIDER" != anthropic ] \
+   && [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
+  mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
+fi
 if escalation_should_trigger; then
   escalate   # normally never returns: the run continues as a fresh invocation
 fi
@@ -2729,6 +2721,13 @@ if [ "$ARM" = "no_review" ]; then
   REVIEW_CLASS="skipped"   # the ablation arm (HARNESS_SKIP_REVIEW=1)
   stage "review skipped — HARNESS_SKIP_REVIEW=1 (no_review arm)"
 else
+# A rejection from a previous dispatch must not outlive the revision it judged:
+# the outcome check below keys off this file's existence, so a re-review that
+# approves would still be read as rejected (bit us on OLYX-1497 — approval
+# round left round 1's file in place and the run skipped its PR).
+if [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
+  mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
+fi
 # Same reasoning for the notes, and for the same reason the integrity check
 # below needs: a previous dispatch's review-notes.md left in the worktree would
 # be read as evidence that THIS review happened. Harvested into the run dir

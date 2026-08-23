@@ -219,7 +219,7 @@ EOF
 window 10000
 
 # --- the harness under test ---------------------------------------------------
-RC=0; OUT=""; RUN=""; WT=""; TEST_GATE_CMD=""
+RC=0; OUT=""; RUN=""; WT=""; TEST_GATE_CMD=""; TEST_PREFLIGHT_CMD=""
 dispatch() {  # $1 = run id, $2 = implementer mode, $3 = gate mode, $4 = overrides
   local ticket="$1" imode="$2" gmode="$3" overrides="${4:-}"
   RUN="$RUNS/$ticket"
@@ -239,6 +239,7 @@ dispatch() {  # $1 = run id, $2 = implementer mode, $3 = gate mode, $4 = overrid
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
       CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 \
       HARNESS_GATE_INTEGRITY=0 TEST_GATE_CMD="$TEST_GATE_CMD" \
+      PREFLIGHT_CMD="$TEST_PREFLIGHT_CMD" \
       $overrides \
       bash "$SRCDIR/run-task.sh" "$ticket" "$REPO" "fix/$ticket" \
       > "$ROOT/run-$ticket.log" 2>&1
@@ -431,7 +432,9 @@ STALE_WT="$ROOT/greenapp-$(printf '%s' "$STALE_TICKET" | tr '[:upper:]' '[:lower
 git -C "$REPO" worktree add -q -b "fix/$STALE_TICKET" "$STALE_WT" origin/main
 mkdir -p "$STALE_WT/.harness"
 printf '# prior dispatch rejection\n' > "$STALE_WT/.harness/REJECTED.md"
+TEST_PREFLIGHT_CMD='test -f .harness/REJECTED.md'
 dispatch "$STALE_TICKET" commit pass ""
+TEST_PREFLIGHT_CMD=""
 exists "guard: a reviewing arm archives the stale rejection" "$RUN/REJECTED.prev.md"
 absent "guard: and does not carry it into this dispatch" "$WT/.harness/REJECTED.md"
 check "guard: so a re-review that approves is not read as rejected" \
