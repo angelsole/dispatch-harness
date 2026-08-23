@@ -491,11 +491,12 @@ absent "infra: and nothing was rendered" "$ROOT/infra/.harness/frames/scene-f00.
 file_has "$ROOT/infra-no-browser.log" "NOT RUN" "infra: the log says so in its verdict line"
 
 run_infra_gate no-frames
-check "infra: a render that produced no frames is not_run too" "$?" "3"
-check "infra: recorded as not_run" "$(jq -r .status "$INFRA")" "not_run"
-file_has "$INFRA" "produced no frames" "infra: naming the shot that never came up"
-check "infra: still nothing the fix round could act on" \
-  "$(jq -r '.failures | length' "$INFRA")" "0"
+check "render failure: a launchable browser that produced no frames fails" "$?" "1"
+check "render failure: recorded as a failed visual round" \
+  "$(jq -r .status "$INFRA")" "fail"
+file_has "$INFRA" "produced no frames" "render failure: naming the shot that never came up"
+check "render failure: gives the fix round an actionable failure" \
+  "$(jq -r '.failures | length' "$INFRA")" "1"
 
 
 # ---------------------------------------------------------------------------

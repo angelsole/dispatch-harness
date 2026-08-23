@@ -301,11 +301,7 @@ for entry in "${VISUAL_SHOTS[@]}"; do
         --ready-js "$VISUAL_READY_JS" --reduced-motion "$VISUAL_REDUCED_MOTION" \
         --color-scheme "$VISUAL_COLOR_SCHEME" --animations "$VISUAL_ANIMATIONS" \
         --real-wait-ms "$VISUAL_REAL_WAIT_MS" > "$VISUAL_TMP/render-$name.json"; then
-    # Zero frames is an absence, not a picture: there is nothing for the checks
-    # to measure and nothing for the critic to look at, so it cannot be a taste
-    # verdict and a fix round aimed at it is aimed at nothing.
-    not_run_die "render: shot '$name' produced no frames at $VISUAL_URL$suffix — the page did not come up, or the ready predicate never fired" \
-      "open $VISUAL_URL$suffix by hand and check the app boots; if the browser is the problem, npx playwright install chromium"
+    die 1 "render: shot '$name' produced no frames at $VISUAL_URL$suffix — the page did not come up, or the ready predicate never fired"
   fi
   echo "render: $name -> $(jq -r '.frames | length' "$VISUAL_TMP/render-$name.json") frames in $(jq -r .seconds "$VISUAL_TMP/render-$name.json")s"
   jq -r '.page_errors[]? | "  page error: " + .' "$VISUAL_TMP/render-$name.json"
