@@ -284,7 +284,8 @@ has "$OUT" "names no such step class 'fortran'" "knob: naming the class it could
 # ---------------------------------------------------------------------------
 echo "== a failing gate on the cheap tier buys one pass on the Claude sub =="
 # ---------------------------------------------------------------------------
-dispatch ESC-ONE commit fail "IMPLEMENTER_PROVIDER=zai"
+dispatch ESC-ONE commit fail \
+  "IMPLEMENTER_PROVIDER=zai ANTHROPIC_BASE_URL=$ZAI_URL ANTHROPIC_AUTH_TOKEN=$ZAI_KEY"
 check "escalate: the implementer ran twice" "$(spawns_of implementer)" "2"
 has "$(env_of implementer 1)" "model=[glm-5.3]" "escalate: the first pass was the cheap vendor's"
 has "$(env_of implementer 1)" "base=[$ZAI_URL]" "escalate: pointed at its endpoint"

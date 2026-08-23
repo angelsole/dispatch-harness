@@ -158,9 +158,12 @@ re-dispatch) is billed to the account the run was pinned to. The reviewer, the
 Claude review tier, its fix rounds, the conflict resolver and `sync-pr.sh` are
 untouched and stay on Anthropic/Codex; the Claude tier spawns with
 `claude-opus-5` rather than the implementer's GLM id, which would be a usage
-error against Anthropic. One nice consequence: with a `zai` implementer even the
-*Claude* review tier is a cross-vendor read, so the fallback described in
-[the review guarantee](../README.md#why-its-built-this-way) loses nothing.
+error against Anthropic. An Anthropic implementer also clears these z.ai-only
+variables inside its spawn, so a shell used for `attach.sh` cannot leak the
+compatible endpoint into a later Anthropic handoff. One nice consequence: with
+a `zai` implementer even the *Claude* review tier is a cross-vendor read, so the
+fallback described in [the review guarantee](../README.md#why-its-built-this-way)
+loses nothing.
 
 **Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,
 and pinning it also sets the CLI's auto-compaction window to match. `glm-4.7` is

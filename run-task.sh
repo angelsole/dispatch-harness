@@ -1058,7 +1058,11 @@ fi
 # implementer's environment and nothing else — a profile's API keys — arrives
 # through the same slot and inherits the same scoping for free.
 apply_provider_env() {
-  [ "$IMPLEMENTER_PROVIDER" = zai ] || return 0
+  if [ "$IMPLEMENTER_PROVIDER" != zai ]; then
+    unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN API_TIMEOUT_MS \
+      ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    return 0
+  fi
   ANTHROPIC_AUTH_TOKEN=$(cat "$ZAI_KEY_FILE") || return 1
   export ANTHROPIC_AUTH_TOKEN
   export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
