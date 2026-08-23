@@ -422,6 +422,34 @@ for stale_case in \
     "$RUN/REJECTED.prev.md"
 done
 
+# But an arm that REVIEWS has always cleared it, escalation or no escalation:
+# section 6 keys the outcome off this file, so a re-review that approves would
+# still read as rejected. That is the pipeline's own behaviour and escalation
+# must not have narrowed it.
+STALE_TICKET=ESC-STALE-REVIEWED
+STALE_WT="$ROOT/greenapp-$(printf '%s' "$STALE_TICKET" | tr '[:upper:]' '[:lower:]')"
+git -C "$REPO" worktree add -q -b "fix/$STALE_TICKET" "$STALE_WT" origin/main
+mkdir -p "$STALE_WT/.harness"
+printf '# prior dispatch rejection\n' > "$STALE_WT/.harness/REJECTED.md"
+dispatch "$STALE_TICKET" commit pass ""
+exists "guard: a reviewing arm archives the stale rejection" "$RUN/REJECTED.prev.md"
+absent "guard: and does not carry it into this dispatch" "$WT/.harness/REJECTED.md"
+check "guard: so a re-review that approves is not read as rejected" \
+  "$(result .status)" "ready"
+
+# The other half of the same condition: the escalation path clears it even in
+# the arm that never reviews, or a stale verdict would veto the handover.
+STALE_TICKET=ESC-STALE-NOREVIEW-ESC
+STALE_WT="$ROOT/greenapp-$(printf '%s' "$STALE_TICKET" | tr '[:upper:]' '[:lower:]')"
+git -C "$REPO" worktree add -q -b "fix/$STALE_TICKET" "$STALE_WT" origin/main
+mkdir -p "$STALE_WT/.harness"
+printf '# prior dispatch rejection\n' > "$STALE_WT/.harness/REJECTED.md"
+dispatch "$STALE_TICKET" commit fail "IMPLEMENTER_PROVIDER=zai HARNESS_SKIP_REVIEW=1"
+exists "guard: the no_review arm archives it when it can still escalate" \
+  "$RUN/REJECTED.prev.md"
+check "guard: and the handover happens" "$(spawns_of implementer)" "2"
+check "guard: with the review still skipped" "$(result .review)" "skipped"
+
 # The step classes: escalation-steps decides, and it is overridable.
 TEST_GATE_CMD='exit 7'
 dispatch ESC-STEP-UNKNOWN commit fail "IMPLEMENTER_PROVIDER=zai"

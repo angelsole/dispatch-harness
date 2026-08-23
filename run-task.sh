@@ -955,11 +955,20 @@ mount_specs() {  # $1 = run dir, $2 = worktree
 mkdir -p "$WORKTREE/.harness"
 cp "$BRIEF" "$WORKTREE/.harness/brief.md"
 rm -f "$WORKTREE/.harness/QUESTIONS.md"   # stale questions would re-trigger needs_input
-# A rejection belongs to the dispatch that produced it, but historically it is
-# also the no-review redispatch verdict. Archive it only for a run that can
-# actually escalate: every other arm must preserve the old pipeline's outcome.
-if [ "$ESCALATION" = on ] && [ "$IMPLEMENTER_PROVIDER" != anthropic ] \
-   && [ -f "$WORKTREE/.harness/REJECTED.md" ]; then
+# A rejection belongs to the dispatch that produced it. Left standing it makes a
+# re-review that APPROVES still read as rejected — the outcome check in section 6
+# keys off this file's existence (bit us on OLYX-1497: the approval round left
+# round 1's file in place and the run skipped its PR) — and it would equally veto
+# an escalation this dispatch has not yet earned. It is archived here rather than
+# in front of the review stage, where it used to sit, because the escalation
+# decision is upstream of that.
+#
+# The one arm that keeps it is the arm that can do neither: a no_review run with
+# nowhere to escalate has no way left to revisit the verdict, so a stale
+# rejection stays that run's outcome exactly as it always did.
+if [ -f "$WORKTREE/.harness/REJECTED.md" ] \
+   && { [ "$ARM" != no_review ] \
+        || { [ "$ESCALATION" = on ] && [ "$IMPLEMENTER_PROVIDER" != anthropic ]; }; }; then
   mv "$WORKTREE/.harness/REJECTED.md" "$RUN_DIR/REJECTED.prev.md"
 fi
 mount_specs "$RUN_DIR" "$WORKTREE" \
