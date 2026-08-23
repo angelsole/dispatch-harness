@@ -1553,7 +1553,7 @@ check "draws: the actor takes its hue from the stage vocabulary" \
   "$(probe hue)" "color: var(--a-opus)"
 check "draws: the clocks are counting" "$(probe elapsed)" "counting"
 check "draws: expanding offers the attach command" \
-  "$(probe attach)" "$(printf '%s' "$RUNS" | sed 's|/runs$||')/attach.sh OLYX-1642"
+  "$(probe attach)" "~/.claude/harness/attach.sh OLYX-1642"
 check "draws: and the feed tail beside it" "$(probe feed)" \
   "$(printf '%s' "$API" | jq '[.runs[] | select(.id=="OLYX-1642")][0].feed | length')"
 check "draws: with the blocking question above both" "$(probe why)" "shown"
