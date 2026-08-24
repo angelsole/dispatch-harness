@@ -151,7 +151,7 @@
 
   function summaryTiles(summary) {
     const s = obj(summary);
-    const empty = !s;
+    const empty = !s || Object.keys(s).length === 0;
     const perRun = (p) => {
       const avg = s && s.avg && s.avg[p];
       if (!avg) return { value: '—', turns: '—' };

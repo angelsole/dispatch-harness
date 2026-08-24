@@ -1453,7 +1453,11 @@ COST_OUT="$(node -e '
   say("tiles-null-count", nullTiles.length);
   say("tiles-null-dashes", nullTiles.slice(0, 4).every((t) => t.value === "—")
     && nullTiles[4].value === "— vs —");
-  say("display-never-nan", [tiles, nullTiles, tip, C.formatCostTooltip(none),
+  const emptyTiles = C.summaryTiles({});
+  say("tiles-empty-count", emptyTiles.length);
+  say("tiles-empty-dashes", emptyTiles.slice(0, 4).every((t) => t.value === "—")
+    && emptyTiles[4].value === "— vs —");
+  say("display-never-nan", [tiles, nullTiles, emptyTiles, tip, C.formatCostTooltip(none),
     C.formatCostCell(zai), C.formatCostCell(none)]
     .every((v) => String(JSON.stringify(v)).indexOf("NaN") === -1
       && String(JSON.stringify(v)).indexOf("undefined") === -1));
@@ -1498,6 +1502,8 @@ check "tiles: the summed list price" "$(cost_of tiles-list-price)" '$33.93'
 check "tiles: the per-run comparison" "$(cost_of tiles-versus)" '$10.75 vs $23.18'
 check "tiles: a null summary is five honest dashes" \
   "$(cost_of tiles-null-count):$(cost_of tiles-null-dashes)" "5:true"
+check "tiles: an empty summary is five honest dashes" \
+  "$(cost_of tiles-empty-count):$(cost_of tiles-empty-dashes)" "5:true"
 check "display: nothing a run spent ever renders as NaN or undefined" "$(cost_of display-never-nan)" "true"
 
 # The enriched view is a console privilege: fed a frame carrying cost and
