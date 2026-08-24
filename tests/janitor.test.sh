@@ -11,7 +11,9 @@
 # LaunchAgent cases write into the sandbox. The worktrees are real worktrees of a
 # real repo with a local bare remote, so the sweep is asserted by asking git,
 # and the processes reaped are real processes of this suite's own making,
-# presented to the janitor with a canned age.
+# presented to the janitor with a canned age. The zombie reap's live-process
+# guard is exercised the other way round: `pgrep` is real, and a real process of
+# this suite's own making serves one fixture run.
 #
 # Usage: bash tests/janitor.test.sh
 set -u
@@ -62,6 +64,8 @@ LC_LOG="$ROOT/launchctl.log"
 GH_MODE="$ROOT/gh-mode"
 GH_LOG="$ROOT/gh.log"
 REAL_JQ=$(command -v jq)
+REAL_PGREP=$(command -v pgrep)
+REAL_STAT=$(command -v stat)
 
 mkdir -p "$AGENTS" "$RUNS" "$FAKES"
 : > "$PS_FIXTURE"; : > "$LC_LOG"; : > "$GH_LOG"
@@ -156,6 +160,33 @@ cat > "$FAKES/ps" <<EOF
 cat "$PS_FIXTURE" 2>/dev/null || true
 EOF
 
+cat > "$FAKES/pgrep" <<EOF
+#!/usr/bin/env bash
+case "\${JANITOR_TEST_PGREP_MODE:-}" in
+  error) exit 3 ;;
+  finish)
+    case "\$*" in
+      *zombie-finished*)
+        printf '%s done: ready\n' "\$(date +%s)" > "\$JANITOR_TEST_STATUS"
+        exit 1
+        ;;
+    esac
+    ;;
+esac
+exec "$REAL_PGREP" "\$@"
+EOF
+
+cat > "$FAKES/stat" <<EOF
+#!/usr/bin/env bash
+if [ "\${JANITOR_TEST_STAT_MODE:-}" = gnu ]; then
+  case "\${1:-}" in
+    -f) printf 'GNU stat filesystem output\n'; exit 1 ;;
+    -c) printf '%s\n' "\$JANITOR_TEST_STAT_EPOCH"; exit 0 ;;
+  esac
+fi
+exec "$REAL_STAT" "\$@"
+EOF
+
 cat > "$FAKES/uname" <<EOF
 #!/usr/bin/env bash
 cat "$UNAME_STATE"
@@ -166,7 +197,8 @@ cat > "$FAKES/launchctl" <<EOF
 printf '%s\n' "\$*" >> "$LC_LOG"
 EOF
 
-chmod +x "$FAKES/gh" "$FAKES/jq" "$FAKES/ps" "$FAKES/uname" "$FAKES/launchctl"
+chmod +x "$FAKES/gh" "$FAKES/jq" "$FAKES/ps" "$FAKES/pgrep" "$FAKES/stat" \
+  "$FAKES/uname" "$FAKES/launchctl"
 
 jan() {  # $1 = space-separated VAR=VAL overrides (may be empty), rest = argv
   local overrides="$1"; shift
@@ -294,6 +326,49 @@ WT_NOSTATUS="$ROOT/wt-no-status"
 mkwt feat/no-status "$WT_NOSTATUS"
 mkrun no-status     "done: ready"        "$WT_NOSTATUS" "$PR/1"
 rm -f "$RUNS/no-status/status"
+
+# Zombies: runs whose process died without a terminal status. One fixture per
+# verdict — stale and unserved (reaped), stale and served (never), fresh and
+# just-under-the-knob (never), already terminal (never), merged-PR-stuck
+# (reaped as shipped), an epoch-only status, a malformed one the mtime has to
+# date, and an id pgrep cannot safely be asked about.
+ZAG=$(date +%s);  ZAG=$((ZAG - 46800))    # 13h — over the 12h knob
+ZEDGE=$(date +%s); ZEDGE=$((ZEDGE - 43000))  # just under it
+mkrun zombie-stale  "demo — recording"              "" ""
+printf '%s demo — recording\n' "$ZAG" > "$RUNS/zombie-stale/status"
+mkrun zombie-fresh  "implementing — Opus (Claude sub)" "" ""
+Z_FRESH=$(cat "$RUNS/zombie-fresh/status")
+mkrun zombie-edge   "reviewing — Codex (ChatGPT sub)" "" ""
+printf '%s reviewing — Codex (ChatGPT sub)\n' "$ZEDGE" > "$RUNS/zombie-edge/status"
+Z_EDGE=$(cat "$RUNS/zombie-edge/status")
+mkrun zombie-done   "done: ready"                  "" ""
+printf '%s done: ready\n' "$ZAG" > "$RUNS/zombie-done/status"
+Z_DONE=$(cat "$RUNS/zombie-done/status")
+mkrun zombie-merged "sync failed — base moved"     "" "$PR/1"
+printf '%s sync failed — base moved\n' "$ZAG" > "$RUNS/zombie-merged/status"
+mkrun zombie-epoch  "implementing — Opus (Claude sub)" "" ""
+printf '%s\n' "$ZAG" > "$RUNS/zombie-epoch/status"
+mkrun zombie-junk   "whatever"                     "" ""
+printf 'not a status line at all\n' > "$RUNS/zombie-junk/status"
+touch -t "$(date -r "$ZAG" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$ZAG" '+%Y%m%d%H%M.%S')" \
+  "$RUNS/zombie-junk/status"
+mkrun "zombie odd"  "implementing — Opus (Claude sub)" "" ""
+printf '%s implementing — Opus (Claude sub)\n' "$ZAG" > "$RUNS/zombie odd/status"
+Z_ODD=$(cat "$RUNS/zombie odd/status")
+
+# The load-bearing guard: a real process whose argv names the run the way a
+# dispatch does, found by the real pgrep — never reaped, however stale.
+cat > "$FAKES/run-task.sh" <<'EOF'
+#!/usr/bin/env bash
+sleep 600
+EOF
+chmod +x "$FAKES/run-task.sh"
+mkrun zombie-live "implementing — Opus (Claude sub)" "" ""
+printf '%s implementing — Opus (Claude sub)\n' "$ZAG" > "$RUNS/zombie-live/status"
+Z_LIVE=$(cat "$RUNS/zombie-live/status")
+bash "$FAKES/run-task.sh" zombie-live >/dev/null 2>&1 &
+V_GUARD=$!
+VICTIMS="$VICTIMS $V_GUARD"
 # The quartermaster's reports live under runs/ and are not runs.
 mkdir -p "$RUNS/quartermaster"
 printf '# last night\n' > "$RUNS/quartermaster/2026-08-18.md"
@@ -330,6 +405,10 @@ out=$(jan "JANITOR_OUTCOME_MAX_AGE=fortnight" --report); rc=$?
 nonzero "guard: a non-numeric outcome age refuses to run" "$rc"
 has "$out" "JANITOR_OUTCOME_MAX_AGE must be whole days" "guard: it says what an outcome age has to be"
 
+out=$(jan "JANITOR_ZOMBIE_HOURS=soon" --report); rc=$?
+nonzero "guard: a non-numeric zombie age refuses to run" "$rc"
+has "$out" "JANITOR_ZOMBIE_HOURS must be whole hours" "guard: it says what a zombie age has to be"
+
 exists "guard: no guard removed a worktree" "$WT_SWEEP"
 
 # ---------------------------------------------------------------------------
@@ -343,6 +422,8 @@ has "$out" "--clean degraded to report-only" "unauthed: the whole pass explicitl
 check "unauthed: nothing is sweepable" "$(verbs "$out" sweep)" "0"
 check "unauthed: the merged run is unknown, not merged" "$(verb "$out" merged-clean)" "keep"
 has "$out" "PR state unreadable" "unauthed: an unreadable state is named as one"
+check "unauthed: a zombie is only listed, never written" "$(verb "$out" zombie-stale)" "reap"
+check "unauthed: the zombie's status is untouched" "$(cat "$RUNS/zombie-stale/status")" "$ZAG demo — recording"
 exists "unauthed: the merged worktree is still there" "$WT_SWEEP"
 absent "unauthed: no outcome is written off a state nobody could read" \
   "$RUNS/merged-clean/outcome.json"
@@ -367,7 +448,13 @@ else
   check "no gh: --clean still exits 0" "$rc" "0"
   has "$out" "gh is not installed" "no gh: it says the binary is missing"
   check "no gh: nothing is sweepable" "$(verbs "$out" sweep)" "0"
+  # This PATH has no pgrep either: the guard cannot run, so no zombie is even a
+  # candidate — an absence nobody can prove reaps nothing.
+  has "$out" "pgrep is unavailable — a stale status is never reaped without it" \
+    "no gh: without pgrep the reap pass refuses to run"
+  check "no gh: nothing is reapable" "$(verbs "$out" reap)" "0"
   exists "no gh: the merged worktree is still there" "$WT_SWEEP"
+  check "no gh: the zombie's status is untouched" "$(cat "$RUNS/zombie-stale/status")" "$ZAG demo — recording"
 fi
 
 # ---------------------------------------------------------------------------
@@ -410,15 +497,34 @@ has "$out" "still running" "report: a live run is named as one, not as a merged 
 has "$out" "no pr_url" "report: a run that never opened a PR is named as one"
 has "$out" "no status line — cannot tell if it is done" "report: an unreadable run state is named as one"
 
-# A run whose worktree cleanup.sh already removed is not a finding, and the
-# quartermaster's report directory is not a run.
-has "$out" "1 of 11 runs had no worktree left" "report: an already-promoted run is counted, not reported"
+echo "== --report: zombies are listed, never written =="
+check "report: a stale status with no server is a zombie to reap" "$(verb "$out" zombie-stale)"  "reap"
+check "report: a merged-PR zombie is one too"                     "$(verb "$out" zombie-merged)" "reap"
+check "report: an epoch-only status is one too"                   "$(verb "$out" zombie-epoch)"  "reap"
+check "report: a malformed status is dated by its mtime"          "$(verb "$out" zombie-junk)"   "reap"
+check "report: a stale run a process is serving is guarded"       "$(verb "$out" zombie-live)"   "live"
+check "report: a fresh status is no zombie"                       "$(verb "$out" zombie-fresh)"  ""
+check "report: one just under the knob is no zombie either"       "$(verb "$out" zombie-edge)"   ""
+check "report: a terminal status is never a zombie"               "$(verb "$out" zombie-done)"   ""
+has "$out" "would write: done: reaped (stale — no live process, was: demo — recording)" \
+  "report: it shows the status it would write"
+has "$out" "would write: done: ready (reaped — PR merged)" "report: a merged zombie names its verdict"
+has "$out" "was: no stage text" "report: an epoch-only reap says what it could not read"
+has "$out" "was: not a status line at all" "report: a malformed reap keeps the old text"
+has "$out" "zombies: statuses older than 12h" "report: the pass says what it looks for"
+has "$out" "4 to reap, 1 guarded by a live process, 3 under 12h, 1 could not be judged" \
+  "report: it counts every side of the reap"
+
+# A run whose worktree cleanup.sh already removed is not a finding, the
+# quartermaster's report directory is not a run, and neither are the zombies —
+# worktree-less ghosts are exactly what this pass is for.
+has "$out" "10 of 20 runs had no worktree left" "report: the worktree-less runs are counted, not reported"
 has "$out" "8 kept" "report: the eight it may not touch are counted"
 has "$out" "2 worktree(s) sweepable" "report: the sweepable count is on the summary line"
 has "$out" "kept: 2 open · 1 closed · 1 dirty · 1 unknown · 1 no-pr · 2 unfinished" \
   "report: the summary breaks the kept runs down by reason"
 has "$out" "--report swept and reaped nothing" "report: it says it did nothing"
-has "$out" "outcomes: 7 written · 2 settled (terminal, over 14 days old) · 1 not readable" \
+has "$out" "outcomes: 8 written · 2 settled (terminal, over 14 days old) · 1 not readable" \
   "report: the outcome counts are on the summary line"
 
 echo "== --report is side-effect-free =="
@@ -429,6 +535,9 @@ done
 check "report: git still knows every worktree" "$(wt_count)" "$WT_BEFORE"
 exists "report: the dirty file was not committed away" "$WT_DIRTY/scratch.txt"
 absent "report: no LaunchAgent was written" "$AGENTS/com.olyx.janitor.plist"
+check "report: the stale zombie's status is unwritten" "$(cat "$RUNS/zombie-stale/status")" "$ZAG demo — recording"
+absent "report: no reap line reached stages.log" "$RUNS/zombie-stale/stages.log"
+absent "report: nor timeline" "$RUNS/zombie-stale/timeline"
 
 # ---------------------------------------------------------------------------
 echo "== outcome.json: the ground truth a finished run leaves behind =="
@@ -466,6 +575,9 @@ check "outcome: and is not reverted"                     "$(oc .reverted merged-
 # blank line a sloppier count would turn into one.
 check "outcome: a PR nobody commented on counts zero"    "$(oc .review_comment_count merged-dirty)" "0"
 check "outcome: a live run's PR fate is recorded too"    "$(oc .pr_state still-running)" "MERGED"
+# The merged zombie's reap (asserted in --clean below) reads exactly this file:
+# the poll the sweep already made is the whole merge-detection cost.
+check "outcome: a merged zombie's PR fate is recorded"   "$(oc .pr_state zombie-merged)" "MERGED"
 exists "outcome: the repo the git facts came from is kept in the run dir" "$RUNS/merged-clean/repo"
 # The state nobody could read is not an outcome: PR 5 has no pr-5 fixture, so
 # the poll fails and nothing is written that would pretend to knowledge.
@@ -538,6 +650,42 @@ has "$out" "removed worktree $WT_SWEEP" "clean: cleanup.sh is what removed it, a
 has "$out" "run logs kept at $RUNS/merged-clean" "clean: cleanup.sh kept the run's logs"
 has "$out" "pruned worktree metadata in $REPO_REAL" "clean: the repo it touched was pruned"
 
+echo "== --clean: zombies are reaped, the guarded one is not =="
+check "reap: the stale zombie is reaped"        "$(verb "$out" zombie-stale)"  "reaped"
+check "reap: the merged zombie is reaped"       "$(verb "$out" zombie-merged)" "reaped"
+check "reap: the epoch-only zombie is reaped"   "$(verb "$out" zombie-epoch)"  "reaped"
+check "reap: the malformed zombie is reaped"    "$(verb "$out" zombie-junk)"   "reaped"
+check "reap: the guarded zombie is only named"  "$(verb "$out" zombie-live)"   "live"
+check "reap: the status turns terminal with reason and prior stage" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-stale/status")" \
+  "done: reaped (stale — no live process, was: demo — recording)"
+zt=$(cut -d' ' -f1 < "$RUNS/zombie-stale/status")
+case "$zt" in *[!0-9]*|'') bad "reap: the new status carries an epoch (got [$zt])" ;;
+                    *)     ok   "reap: the new status carries an epoch" ;; esac
+check "reap: a merged PR reaps as ready, not as a generic zombie" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-merged/status")" "done: ready (reaped — PR merged)"
+check "reap: an epoch-only status says it had no stage text" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-epoch/status")" \
+  "done: reaped (stale — no live process, was: no stage text)"
+check "reap: a malformed status is reaped with its old text kept" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-junk/status")" \
+  "done: reaped (stale — no live process, was: not a status line at all)"
+file_has "$RUNS/zombie-stale/stages.log" "done: reaped (stale — no live process, was: demo — recording)" \
+  "reap: stages.log carries the honest line"
+file_has "$RUNS/zombie-stale/timeline" "done: reaped (stale — no live process, was: demo — recording)" \
+  "reap: and so does timeline"
+check "reap: the guarded run's status is untouched" "$(cat "$RUNS/zombie-live/status")" "$Z_LIVE"
+alive "reap: the guard process itself survives" "$V_GUARD"
+check "reap: a fresh status is untouched"        "$(cat "$RUNS/zombie-fresh/status")" "$Z_FRESH"
+check "reap: one under the knob is untouched"    "$(cat "$RUNS/zombie-edge/status")"  "$Z_EDGE"
+check "reap: a terminal status is untouched"     "$(cat "$RUNS/zombie-done/status")"  "$Z_DONE"
+check "reap: an unaskable id is untouched"       "$(cat "$RUNS/zombie odd/status")"   "$Z_ODD"
+has "$out" "4 reaped, 1 guarded by a live process, 3 under 12h, 1 could not be judged" \
+  "reap: the summary counts both sides"
+exists "reap: the reaped run's dir survives"      "$RUNS/zombie-stale"
+exists "reap: and its result.json survives"       "$RUNS/zombie-stale/result.json"
+exists "reap: and its feed.log survives"          "$RUNS/zombie-stale/feed.log"
+
 echo "== --clean never deletes a run's paper trail =="
 exists "clean: the swept run's directory survives"   "$RUNS/merged-clean"
 exists "clean: its result.json survives"             "$RUNS/merged-clean/result.json"
@@ -549,8 +697,107 @@ out=$(jan "" --clean); rc=$?
 check "again: exits 0" "$rc" "0"
 check "again: nothing is sweepable" "$(verbs "$out" sweep)" "0"
 has "$out" "0 worktree(s) swept" "again: it says it swept nothing"
-has "$out" "3 of 11 runs had no worktree left" "again: the swept runs join the already-clean one"
+has "$out" "12 of 20 runs had no worktree left" "again: the swept runs join the already-clean one"
 check "again: still eight kept" "$(verbs "$out" keep)" "8"
+
+echo "== a reaped zombie is done, and never reaped twice =="
+check "again: the reaped status is left as written" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-stale/status")" \
+  "done: reaped (stale — no live process, was: demo — recording)"
+check "again: stages.log carries the reap exactly once" \
+  "$(grep -cF "done: reaped (stale" "$RUNS/zombie-stale/stages.log" | tr -d ' ')" "1"
+has "$out" "0 reaped, 1 guarded by a live process" "again: only the guarded zombie remains a finding"
+
+echo "== dotted scheduler ids remain reapable =="
+mkrun "release.1" "implementing — Opus (Claude sub)" "" ""
+printf '%s implementing — Opus (Claude sub)\n' "$ZAG" > "$RUNS/release.1/status"
+out=$(jan "" --clean); rc=$?
+check "dotted id: --clean exits 0" "$rc" "0"
+check "dotted id: a stale scheduled run is reaped" "$(verb "$out" release.1)" "reaped"
+check "dotted id: its status is terminal" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/release.1/status")" \
+  "done: reaped (stale — no live process, was: implementing — Opus (Claude sub))"
+
+echo "== unreadable zombie statuses remain untouched =="
+mkrun "zombie-unreadable" "implementing — Opus (Claude sub)" "" ""
+UNREADABLE_STATUS="$ZAG implementing — Opus (Claude sub)"
+printf '%s\n' "$UNREADABLE_STATUS" > "$RUNS/zombie-unreadable/status"
+chmod 0200 "$RUNS/zombie-unreadable/status"
+out=$(jan "" --clean); rc=$?
+chmod 0600 "$RUNS/zombie-unreadable/status"
+check "unreadable status: --clean exits 0" "$rc" "0"
+check "unreadable status: the unknown state is preserved" \
+  "$(cat "$RUNS/zombie-unreadable/status")" "$UNREADABLE_STATUS"
+absent "unreadable status: no stage history is invented" "$RUNS/zombie-unreadable/stages.log"
+absent "unreadable status: no timeline history is invented" "$RUNS/zombie-unreadable/timeline"
+
+echo "== pgrep errors never prove process absence =="
+mkrun "zombie-pgrep-error" "implementing — Opus (Claude sub)" "" ""
+PGREP_ERROR_STATUS="$ZAG implementing — Opus (Claude sub)"
+printf '%s\n' "$PGREP_ERROR_STATUS" > "$RUNS/zombie-pgrep-error/status"
+out=$(jan "JANITOR_TEST_PGREP_MODE=error" --clean); rc=$?
+check "pgrep error: --clean exits 0" "$rc" "0"
+check "pgrep error: the run is kept" "$(verb "$out" zombie-pgrep-error)" "keep"
+check "pgrep error: the non-terminal status is preserved" \
+  "$(cat "$RUNS/zombie-pgrep-error/status")" "$PGREP_ERROR_STATUS"
+absent "pgrep error: no stage history is invented" "$RUNS/zombie-pgrep-error/stages.log"
+absent "pgrep error: no timeline history is invented" "$RUNS/zombie-pgrep-error/timeline"
+
+echo "== status is revalidated after the process check =="
+mkrun "zombie-finished" "implementing — Opus (Claude sub)" "" ""
+printf '%s implementing — Opus (Claude sub)\n' "$ZAG" > "$RUNS/zombie-finished/status"
+out=$(jan "JANITOR_TEST_PGREP_MODE=finish JANITOR_TEST_STATUS=$RUNS/zombie-finished/status" --clean); rc=$?
+check "concurrent finish: --clean exits 0" "$rc" "0"
+check "concurrent finish: the run is kept" "$(verb "$out" zombie-finished)" "keep"
+check "concurrent finish: the legitimate terminal result survives" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-finished/status")" "done: ready"
+absent "concurrent finish: no reap stage is appended" "$RUNS/zombie-finished/stages.log"
+absent "concurrent finish: no reap timeline is appended" "$RUNS/zombie-finished/timeline"
+
+echo "== failed history writes prevent terminalization =="
+mkrun "zombie-no-history" "implementing — Opus (Claude sub)" "" ""
+NO_HISTORY_STATUS="$ZAG implementing — Opus (Claude sub)"
+printf '%s\n' "$NO_HISTORY_STATUS" > "$RUNS/zombie-no-history/status"
+chmod 0500 "$RUNS/zombie-no-history"
+out=$(jan "" --clean); rc=$?
+chmod 0700 "$RUNS/zombie-no-history"
+check "history failure: --clean exits 0" "$rc" "0"
+check "history failure: the run is kept" "$(verb "$out" zombie-no-history)" "keep"
+check "history failure: the non-terminal status is preserved" \
+  "$(cat "$RUNS/zombie-no-history/status")" "$NO_HISTORY_STATUS"
+absent "history failure: no stages.log is left behind" "$RUNS/zombie-no-history/stages.log"
+absent "history failure: no timeline is left behind" "$RUNS/zombie-no-history/timeline"
+
+echo "== failed status writes leave no false history =="
+mkrun "zombie-readonly-status" "implementing — Opus (Claude sub)" "" ""
+READONLY_STATUS="$ZAG implementing — Opus (Claude sub)"
+READONLY_STAGES="100 implementing — initial"
+READONLY_TIMELINE="00:01:40 implementing — initial"
+printf '%s\n' "$READONLY_STATUS" > "$RUNS/zombie-readonly-status/status"
+printf '%s\n' "$READONLY_STAGES" > "$RUNS/zombie-readonly-status/stages.log"
+printf '%s\n' "$READONLY_TIMELINE" > "$RUNS/zombie-readonly-status/timeline"
+chmod 0400 "$RUNS/zombie-readonly-status/status"
+out=$(jan "" --clean); rc=$?
+chmod 0600 "$RUNS/zombie-readonly-status/status"
+check "status failure: --clean exits 0" "$rc" "0"
+check "status failure: the run is kept" "$(verb "$out" zombie-readonly-status)" "keep"
+check "status failure: the non-terminal status is preserved" \
+  "$(cat "$RUNS/zombie-readonly-status/status")" "$READONLY_STATUS"
+check "status failure: stages.log is unchanged" \
+  "$(cat "$RUNS/zombie-readonly-status/stages.log")" "$READONLY_STAGES"
+check "status failure: timeline is unchanged" \
+  "$(cat "$RUNS/zombie-readonly-status/timeline")" "$READONLY_TIMELINE"
+
+echo "== GNU stat fallback dates malformed statuses =="
+mkrun "zombie-gnu-stat" "implementing — Opus (Claude sub)" "" ""
+printf 'not a status line at all\n' > "$RUNS/zombie-gnu-stat/status"
+out=$(jan "JANITOR_TEST_STAT_MODE=gnu JANITOR_TEST_STAT_EPOCH=$ZAG" --clean); rc=$?
+check "GNU stat: --clean exits 0" "$rc" "0"
+check "GNU stat: failed BSD output does not contaminate the epoch" \
+  "$(verb "$out" zombie-gnu-stat)" "reaped"
+check "GNU stat: the malformed old status becomes terminal" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-gnu-stat/status")" \
+  "done: reaped (stale — no live process, was: not a status line at all)"
 
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
@@ -626,6 +873,12 @@ check "knob: the match selects by process name" "$(verb "$out" "$V_OTHER")" "kil
 check "knob: and only by process name" "$(verb "$out" "$V_YOUNG")" ""
 : > "$PS_FIXTURE"
 
+echo "== JANITOR_ZOMBIE_HOURS moves the other line =="
+out=$(jan "JANITOR_ZOMBIE_HOURS=48" --report)
+check "knob: a 48h window leaves the 13h zombie alone" "$(verb "$out" zombie-stale)" ""
+out=$(jan "JANITOR_ZOMBIE_HOURS=1" --report)
+check "knob: a 1h window still respects the live guard" "$(verb "$out" zombie-live)" "live"
+
 # ---------------------------------------------------------------------------
 echo "== --install / --uninstall: the daily agent =="
 # ---------------------------------------------------------------------------
@@ -687,7 +940,7 @@ echo "== shipped and documented like its siblings =="
 file_has "$SRC/install.sh" 'janitor.sh' "docs: install.sh installs the script"
 file_has "$SRC/README.md"  'janitor.sh' "docs: README names it"
 file_has "$SRC/docs/operations.md" 'janitor.sh --clean' "docs: operations documents the acting mode"
-for k in JANITOR_AT JANITOR_PROC_AGE JANITOR_PROC_MATCH JANITOR_GH_TIMEOUT JANITOR_OUTCOME_MAX_AGE; do
+for k in JANITOR_AT JANITOR_PROC_AGE JANITOR_PROC_MATCH JANITOR_GH_TIMEOUT JANITOR_OUTCOME_MAX_AGE JANITOR_ZOMBIE_HOURS; do
   file_has "$SRC/docs/operations.md" "$k" "docs: operations documents $k"
 done
 

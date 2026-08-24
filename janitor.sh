@@ -9,12 +9,15 @@
 # shipped anyway. Twenty-two of those worktrees, thirteen gigabytes, was the
 # state of the machine this was written for. `flutter test` compounds it — it
 # leaves detached `flutter_tester` processes behind, and removing a worktree does
-# not kill them.
+# not kill them. And a run whose process dies without ever writing a terminal
+# `done:` status reads as in progress forever, because every surface keys
+# liveness on that prefix — a fifty-day ghost was the state of the machine this
+# was written for.
 #
 # >>> --help >>>
 # Usage:
-#   janitor.sh [--report]        what --clean would do; sweeps nothing
-#   janitor.sh --clean           sweep those worktrees, reap those processes
+#   janitor.sh [--report]        what --clean would do; sweeps and reaps nothing
+#   janitor.sh --clean           sweep those worktrees, reap zombies and processes
 #   janitor.sh --install [MODE]  daily LaunchAgent (MODE: --report|--clean)
 #   janitor.sh --uninstall       remove that agent
 #
@@ -37,7 +40,18 @@
 # Sweeping is delegated to cleanup.sh, which already knows how to remove a
 # worktree, delete the local branch only when it is on origin, and drop a
 # mirrored copy. Run logs under runs/<RUN-ID>/ are never deleted: this script
-# removes worktrees and processes, nothing else.
+# removes worktrees and processes, and flips stale statuses to terminal —
+# nothing else.
+#
+# A run is a zombie when its status exists and never reached `done:`, no live
+# `run-task.sh <id>` / `sync-pr.sh <id>` process serves it, and that status is
+# older than JANITOR_ZOMBIE_HOURS (12h). Reaping writes a terminal status only
+# — `done: reaped (stale — no live process, was: <the stage it died on>)`, or
+# `done: ready (reaped — PR merged)` when the poll above already recorded the
+# run's PR as merged — with the same line appended to stages.log and timeline so
+# the history stays honest. Worktrees stay the sweep's business: the two passes
+# never decide for each other. Without pgrep the absence of a live process
+# cannot be proven, and an unprovable absence reaps nothing.
 #
 # What leaves this machine: one read-only `gh pr view` per run that has a PR,
 # plus — while that run's outcome is still being refreshed — one read-only
@@ -66,6 +80,7 @@ AT="${JANITOR_AT:-09:00}"                       # when the installed agent fires
 PROC_AGE="${JANITOR_PROC_AGE:-7200}"            # seconds one may live (2h)
 GH_TIMEOUT="${JANITOR_GH_TIMEOUT:-20}"          # seconds allowed per gh call
 OUTCOME_MAX_AGE="${JANITOR_OUTCOME_MAX_AGE:-14}"  # days a terminal outcome stays refreshed
+ZOMBIE_HOURS="${JANITOR_ZOMBIE_HOURS:-12}"       # hours a non-terminal status may age unattended
 # The one knob that does NOT swallow an empty value into its default: an
 # accidentally-empty `JANITOR_PROC_MATCH=$SOMETHING` has to be refused out loud
 # rather than quietly reaping the default's processes instead.
@@ -84,6 +99,7 @@ capped() { capacity_capped "$@"; }
 case "$PROC_AGE" in ''|*[!0-9]*) fail "JANITOR_PROC_AGE must be whole seconds — got [$PROC_AGE]" ;; esac
 case "$GH_TIMEOUT" in ''|*[!0-9]*) fail "JANITOR_GH_TIMEOUT must be whole seconds — got [$GH_TIMEOUT]" ;; esac
 case "$OUTCOME_MAX_AGE" in ''|*[!0-9]*) fail "JANITOR_OUTCOME_MAX_AGE must be whole days — got [$OUTCOME_MAX_AGE]" ;; esac
+case "$ZOMBIE_HOURS" in ''|*[!0-9]*) fail "JANITOR_ZOMBIE_HOURS must be whole hours — got [$ZOMBIE_HOURS]" ;; esac
 # An empty process name is never a valid reaping policy.
 [ -n "$PROC_MATCH" ] || fail "JANITOR_PROC_MATCH must not be empty"
 
@@ -511,7 +527,187 @@ prune_repos() {
 }
 
 # ---------------------------------------------------------------------------
-# The reap
+# The zombie reap — statuses a dead process left non-terminal
+# ---------------------------------------------------------------------------
+# The stage text of a status line: everything after the leading epoch, the way
+# the sweep and the wall read it. A line with no epoch hands back the raw line;
+# one that is only an epoch hands back nothing.
+status_text() {  # $1 = the status file's first line
+  local ts="${1%% *}" rest
+  case "$ts" in *[!0-9]*|'') printf '%s' "$1"; return 0 ;; esac
+  rest="${1#"$ts"}"
+  printf '%s' "${rest# }"
+}
+
+# Seconds since a status was written: the line's own epoch when it has one,
+# else the file's mtime — a line nobody can parse still happened at some
+# point. Prints nothing when neither answers: a run that cannot be dated is
+# never a zombie.
+status_age() {  # $1 = status file, $2 = its first line
+  local ts="${2%% *}" m
+  case "$ts" in *[!0-9]*) ts='' ;; esac
+  if [ -n "$ts" ] && [ "${#ts}" -le 10 ]; then
+    printf '%s\n' "$(( $(date +%s) - $(dec "$ts") ))"
+    return 0
+  fi
+  if m=$(stat -f %m "$1" 2>/dev/null); then
+    :
+  elif m=$(stat -c %Y "$1" 2>/dev/null); then
+    :
+  else
+    return 0
+  fi
+  case "$m" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s\n' "$(( $(date +%s) - m ))"
+}
+
+# The merged special case's one fact, out of the sweep's own product: a PR this
+# pass already polled is in outcome.json, so the answer costs no network call.
+# The recorded url must be this run's — a file naming another PR is not
+# evidence about this one.
+pr_merged() {  # $1 = run dir, $2 = pr url ('' = none); succeeds when it is recorded MERGED
+  [ -n "$2" ] || return 1
+  [ "$(jq -r --arg url "$2" 'select(.pr_url == $url) | .pr_state // ""' \
+     "$1/outcome.json" 2>/dev/null)" = MERGED ]
+}
+
+reap_history_snapshot() {  # $1 = run dir; saves both histories before append
+  REAP_STAGES_EXISTED=0
+  REAP_TIMELINE_EXISTED=0
+  if [ -e "$1/stages.log" ]; then
+    cp "$1/stages.log" "$WORK/reap-stages.before" 2>/dev/null || return 1
+    REAP_STAGES_EXISTED=1
+  fi
+  if [ -e "$1/timeline" ]; then
+    cp "$1/timeline" "$WORK/reap-timeline.before" 2>/dev/null || return 1
+    REAP_TIMELINE_EXISTED=1
+  fi
+  return 0
+}
+
+reap_history_restore() {  # $1 = run dir
+  local rc=0
+  if [ "$REAP_STAGES_EXISTED" -eq 1 ]; then
+    cp "$WORK/reap-stages.before" "$1/stages.log" 2>/dev/null || rc=1
+  else
+    rm -f "$1/stages.log" 2>/dev/null || rc=1
+  fi
+  if [ "$REAP_TIMELINE_EXISTED" -eq 1 ]; then
+    cp "$WORK/reap-timeline.before" "$1/timeline" 2>/dev/null || rc=1
+  else
+    rm -f "$1/timeline" 2>/dev/null || rc=1
+  fi
+  return "$rc"
+}
+
+reap_zombies() {  # $1 = report | clean
+  local mode="$1"
+  local d id id_pattern first current text age new pr pgrep_rc
+  local n_reap=0 n_live=0 n_fresh=0 n_left=0
+
+  # The guard cannot run without pgrep, and a reap that cannot prove the
+  # absence of a live process does not happen at all.
+  command -v pgrep >/dev/null 2>&1 \
+    || { say "zombies: pgrep is unavailable — a stale status is never reaped without it"; return 0; }
+
+  say "zombies: statuses older than ${ZOMBIE_HOURS}h that never reached done: and have no live process"
+  [ -d "$RUNS" ] || return 0
+
+  for d in "$RUNS"/*; do
+    [ -d "$d" ] || continue
+    [ -f "$d/status" ] || continue
+    id="${d##*/}"
+
+    # Terminal runs are not zombies, whatever their age — and idempotence
+    # lives here too: a reaped run is a done: run on the next pass.
+    first=''
+    if ! IFS= read -r first < "$d/status" 2>/dev/null; then
+      n_left=$((n_left + 1))
+      continue
+    fi
+    text=$(status_text "$first")
+    case "$text" in done:*) continue ;; esac
+
+    age=$(status_age "$d/status" "$first")
+    [ -n "$age" ] || { n_left=$((n_left + 1)); continue; }
+    [ "$age" -gt $((ZOMBIE_HOURS * 3600)) ] || { n_fresh=$((n_fresh + 1)); continue; }
+
+    # Match the scheduler's ticket alphabet. The dot is escaped in the process
+    # pattern below so it remains a literal ticket character.
+    case "$id" in *[!A-Za-z0-9._-]*|.*) n_left=$((n_left + 1)); continue ;; esac
+
+    # A live run-task.sh or sync-pr.sh for this id is proof the run is not
+    # dead, whatever its status says. Only pgrep's no-match result proves
+    # absence; an enumeration error leaves the run unjudged.
+    id_pattern=${id//./\\.}
+    pgrep -f "run-task\.sh $id_pattern( |$)|sync-pr\.sh $id_pattern( |$)" >/dev/null 2>&1
+    pgrep_rc=$?
+    case "$pgrep_rc" in
+      0) n_live=$((n_live + 1))
+         line live "$id" "stale $(human_secs "$age") but a process is serving it" "$d"
+         continue ;;
+      1) ;;
+      *) n_left=$((n_left + 1))
+         line keep "$id" "process state could not be read — left as it was" "$d"
+         continue ;;
+    esac
+
+    current=''
+    if ! IFS= read -r current < "$d/status" 2>/dev/null || [ "$current" != "$first" ]; then
+      n_left=$((n_left + 1))
+      line keep "$id" "status changed while checking liveness — left as it was" "$d"
+      continue
+    fi
+
+    pr=$(jq -r '.pr_url // empty' "$d/result.json" 2>/dev/null)
+    if pr_merged "$d" "$pr"; then
+      new="done: ready (reaped — PR merged)"
+    else
+      new="done: reaped (stale — no live process, was: ${text:-no stage text})"
+    fi
+    n_reap=$((n_reap + 1))
+
+    if [ "$mode" != clean ]; then
+      line reap "$id" "stale $(human_secs "$age") — would write: $new" "$d"
+      continue
+    fi
+
+    if [ ! -w "$d/status" ]; then
+      n_reap=$((n_reap - 1))
+      line keep "$id" "status could not be rewritten — left as it was" "$d"
+      continue
+    fi
+    if ! reap_history_snapshot "$d"; then
+      n_reap=$((n_reap - 1))
+      line keep "$id" "history could not be read — left as it was" "$d"
+      continue
+    fi
+    if ! printf '%s %s\n' "$(date +%s)" "$new" >> "$d/stages.log" 2>/dev/null \
+       || ! printf '%s %s\n' "$(date '+%H:%M:%S')" "$new" >> "$d/timeline" 2>/dev/null; then
+      reap_history_restore "$d" || :
+      n_reap=$((n_reap - 1))
+      line keep "$id" "history could not be appended — left as it was" "$d"
+      continue
+    fi
+    if printf '%s %s\n' "$(date +%s)" "$new" > "$d/status" 2>/dev/null; then
+      line reaped "$id" "stale $(human_secs "$age") — $new" "$d"
+    else
+      reap_history_restore "$d" || :
+      n_reap=$((n_reap - 1))
+      line keep "$id" "status could not be rewritten — left as it was" "$d"
+    fi
+  done
+
+  if [ "$mode" = clean ]; then
+    say "  $n_reap reaped, $n_live guarded by a live process, $n_fresh under ${ZOMBIE_HOURS}h, $n_left could not be judged"
+  else
+    say "  $n_reap to reap, $n_live guarded by a live process, $n_fresh under ${ZOMBIE_HOURS}h, $n_left could not be judged"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# The process reap
 # ---------------------------------------------------------------------------
 # `flutter test` spawns a detached test runner and does not always take it with
 # it, and removing the worktree it ran in does not kill it either. Nothing
@@ -582,6 +778,8 @@ pass() {  # $1 = report | clean
   fi
   sweep_runs "$mode"
   [ "$mode" = clean ] && prune_repos
+  echo
+  reap_zombies "$mode"
   echo
   reap_procs "$mode"
   if [ "$mode" != clean ]; then

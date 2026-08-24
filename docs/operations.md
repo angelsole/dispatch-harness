@@ -482,6 +482,24 @@ sweep: a PR whose state cannot be read keeps the previous file as it was.
 `metrics.sh --report` summarizes the block as merge rate, median minutes to
 merge and revert count.
 
+**Zombies.** A run whose process died without ever writing a terminal `done:`
+status stays "in progress" on every surface forever — the wall, the console and
+the statusline all key liveness on the `done:` prefix, so the run renders as
+active for as long as nobody looks behind the status file. Between the sweep and
+the process reap, a second reap pass flips those: a run whose status is
+non-terminal, older than `JANITOR_ZOMBIE_HOURS` (twelve hours), and served by no
+live `run-task.sh <RUN-ID>` / `sync-pr.sh <RUN-ID>` process — `pgrep -f`, the
+load-bearing guard, and without `pgrep` the pass reaps nothing rather than reap
+on an unprovable absence — gets `done: reaped (stale — no live process, was:
+<the stage it died on>)` written over its status, with the same line appended to
+`stages.log` and `timeline` so the history stays honest. A run whose PR the
+sweep's own poll already recorded as merged in `outcome.json` is reaped as
+`done: ready (reaped — PR merged)` instead — it did ship, and its worktree
+becomes the sweep's to take on a later pass. Reaping deletes nothing and
+decides nothing about worktrees: run dirs, code and worktrees are exactly as
+the pass found them, an already-`done:` run is never reaped, and a run a live
+process is still serving is never touched however stale its status looks.
+
 **Processes.** Any process whose name exactly matches `JANITOR_PROC_MATCH`
 (`flutter_tester`) and whose `ps` elapsed time is over `JANITOR_PROC_AGE` (two
 hours) is reaped: `TERM`, then `KILL` if it is still there a couple of seconds
@@ -490,10 +508,10 @@ is the whole test. Younger ones are counted and left.
 
 **The two modes.** `janitor.sh` and `janitor.sh --report` produce the same
 listing of every worktree the harness still holds and what would happen to it.
-Report mode never removes worktrees or reaps processes, but it does perform the
-read-only PR/base refreshes described above and create or update `outcome.json`
-and the cached run `repo` path. `janitor.sh --clean` additionally carries out
-the reported cleanup. `--install` writes a daily launchd agent — one fixed
+Report mode never removes a worktree or reaps a process or a zombie status, but
+it does perform the read-only PR/base refreshes described above and create or
+update `outcome.json` and the cached run `repo` path. `janitor.sh --clean`
+additionally carries out the reported cleanup. `--install` writes a daily launchd agent — one fixed
 label, the `LABEL_ID` in `janitor.sh`, with `JANITOR_AT` to move it off 09:00 —
 on the quartermaster's conventions: a mode-600 wrapper carrying an environment
 snapshot, because launchd hands a job almost nothing. `GH_CONFIG_DIR` rides
@@ -510,6 +528,7 @@ like `schedule.sh` — `--report` and `--clean` themselves run anywhere.
 | `JANITOR_PROC_MATCH` | Process name to reap (empty is refused, not defaulted) | `flutter_tester` |
 | `JANITOR_GH_TIMEOUT` | Seconds allowed for each `gh` call | `20` |
 | `JANITOR_OUTCOME_MAX_AGE` | Days after which a terminal PR's `outcome.json` stops being refreshed | `14` |
+| `JANITOR_ZOMBIE_HOURS` | Hours after which a non-terminal status with no live process is reaped | `12` |
 
 What leaves the machine: one read-only `gh pr view` per run that has a PR, plus
 — while that PR's outcome is still being refreshed — one read-only `gh api` call
