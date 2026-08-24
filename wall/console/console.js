@@ -27,6 +27,11 @@
   // every run whatever the provider, so this comes off the run's pin file.
   const PROVIDERS = { zai: 'GLM', anthropic: 'OPUS' };
 
+  function providerLabel(provider) {
+    const key = String(provider || '');
+    return Object.prototype.hasOwnProperty.call(PROVIDERS, key) ? PROVIDERS[key] : null;
+  }
+
   const $ = (id) => document.getElementById(id);
 
   function h(tag, props, children) {
@@ -122,7 +127,7 @@
   function implementerLabel(run) {
     if (run.actor !== 'Opus') return null;
     return {
-      actor: PROVIDERS[String(run.provider || '')] || run.actor,
+      actor: providerLabel(run.provider) || run.actor,
       stage: String(run.stage || '').split(' — ')[0],
     };
   }
@@ -141,7 +146,7 @@
       h('span', {
         class: 'badge',
         'data-provider': provider,
-        text: PROVIDERS[provider] || '—',
+        text: providerLabel(provider) || '—',
         title: provider ? 'implementer: ' + provider : 'implementer provider not pinned',
       }),
       h('span', { class: 'stage' }, [

@@ -1762,6 +1762,10 @@ frame.runs = [null, 'nonsense', { id: 'HALF-1', state: 'active' },
   { id: 'OPS-1; printf PWNED', state: 'active' },
   { id: 'BAD-LINK-1', state: 'active', prUrl: 'javascript:alert(document.domain)',
     demoUrl: 'https://demo.example.net/safe' },
+  // Provider strings can come from legacy/manual run directories. Object
+  // prototype names are not provider mappings and must use the normal fallback.
+  { id: 'LEGACY-PROTO-1', state: 'active', provider: 'toString', actor: 'Opus',
+    actorKey: 'opus', stage: 'implementing — Opus (Claude sub)' },
   // A Claude review on a zai-pinned run: it shares the implementer's actorKey
   // 'opus' while the pin describes only the implementer, so the provider
   // relabel must leave this row alone — the regression the fix guards.
@@ -1781,6 +1785,8 @@ say('quoted-attach', row('OPS-1; printf PWNED').querySelector('code').textConten
 row('BAD-LINK-1').querySelector('.line').fire('click');
 say('safe-links', row('BAD-LINK-1').querySelectorAll('a').length);
 say('safe-href', row('BAD-LINK-1').querySelector('a').getAttribute('href'));
+say('proto-provider-badge', cell('LEGACY-PROTO-1', '.badge'));
+say('proto-provider-actor', cell('LEGACY-PROTO-1', '.actor'));
 say('claude-rev-actor', cell('CLAUDE-REV-1', '.actor'));
 say('claude-rev-stage', cell('CLAUDE-REV-1', '.stage-label'));
 say('done-distinct', cell('DONE-SYNC-1', '.activity'));
@@ -1851,6 +1857,10 @@ check "draws: an anthropic run's implementer word is OPUS" \
   "$(probe opus-actor)" "OPUS"
 check "draws: an unpinned implementer keeps the generic word" \
   "$(probe unpinned-actor)" "Opus"
+check "draws: an inherited object name is not a provider badge" \
+  "$(probe proto-provider-badge)" "—"
+check "draws: an inherited object name keeps the generic actor" \
+  "$(probe proto-provider-actor)" "Opus"
 check "draws: the relabel leaves the implementer hue alone" \
   "$(probe impl-hue)" "opus"
 check "draws: the implementer stage drops the hardcoded suffix" \
