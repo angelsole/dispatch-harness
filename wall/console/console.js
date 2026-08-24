@@ -27,6 +27,11 @@
   // every run whatever the provider, so this comes off the run's pin file.
   const PROVIDERS = { zai: 'GLM', anthropic: 'OPUS' };
 
+  function providerLabel(provider) {
+    const key = String(provider || '');
+    return Object.prototype.hasOwnProperty.call(PROVIDERS, key) ? PROVIDERS[key] : null;
+  }
+
   const $ = (id) => document.getElementById(id);
 
   function h(tag, props, children) {
@@ -114,16 +119,34 @@
     });
   }
 
+  // The implementer's stage string hardcodes "Opus" whatever subscription is
+  // pinned, so this row takes its actor word from the pin and drops the stage's
+  // redundant " — …" suffix. Gated on the actor VALUE, not actorKey: the Claude
+  // reviewer rows share the 'opus' key, and the pin says nothing about who
+  // reviewed — relabelling them would misattribute the review.
+  function implementerLabel(run) {
+    if (run.actor !== 'Opus') return null;
+    return {
+      actor: providerLabel(run.provider) || run.actor,
+      stage: String(run.stage || '').split(' — ')[0],
+    };
+  }
+
   function line(run) {
     const provider = String(run.provider || '');
-    const activity = String(run.activity || '');
+    const implementer = implementerLabel(run);
+    // A finished run's activity is usually the very `done:` line the stage
+    // column already carries; echoing it again adds nothing. Distinct last
+    // words — a sync failure, say — stay.
+    const finished = (run.state === 'ready' || run.state === 'failed') && actorKey(run) === 'done';
+    const activity = finished && run.activity === run.stage ? '' : String(run.activity || '');
     return [
       h('span', { class: 'id mono', text: run.id, title: run.id }),
       h('span', { class: 'repo mono', text: run.projectLabel || '—', title: run.projectLabel || '' }),
       h('span', {
         class: 'badge',
         'data-provider': provider,
-        text: PROVIDERS[provider] || '—',
+        text: providerLabel(provider) || '—',
         title: provider ? 'implementer: ' + provider : 'implementer provider not pinned',
       }),
       h('span', { class: 'stage' }, [
@@ -134,9 +157,13 @@
           class: 'actor',
           'data-actor': actorKey(run),
           style: 'color: var(--a-' + actorKey(run) + ')',
-          text: run.actor || '?',
+          text: implementer ? implementer.actor : (run.actor || '?'),
         }),
-        h('span', { class: 'stage-label', text: run.stage || '', title: run.stage || '' }),
+        h('span', {
+          class: 'stage-label',
+          text: implementer ? implementer.stage : (run.stage || ''),
+          title: run.stage || '',
+        }),
       ]),
       h('span', {
         class: activity ? 'activity mono' : 'activity mono none',
