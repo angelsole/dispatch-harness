@@ -250,6 +250,9 @@ const FLOOR_ACTOR = ['setup', 'opus', 'gate', 'codex', 'demo', 'pr'];
 // status, sync-pr.sh's prose "done: PR branch synced …") made it to the top.
 const DONE_FLOOR = [
   [/setup_failed/, 0],
+  // The implementer→gate boundary refused a dirty tree: work stopped right
+  // after IMPLEMENT, one rung below gate_failed.
+  [/dirty_worktree_failed/, 1],
   [/implementer_failed|capacity_failed/, 1],
   // visual_failed is the creative harness's render-and-grade round giving up.
   // Its live stage borrows the gate's rung (stage-vocab.json), so its burnout
