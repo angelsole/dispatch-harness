@@ -567,7 +567,7 @@ pr_merged() {  # $1 = run dir, $2 = pr url ('' = none); succeeds when it is reco
 
 reap_zombies() {  # $1 = report | clean
   local mode="$1"
-  local d id id_pattern first text age new pr
+  local d id id_pattern first text age new pr pgrep_rc
   local n_reap=0 n_live=0 n_fresh=0 n_left=0
 
   # The guard cannot run without pgrep, and a reap that cannot prove the
@@ -602,14 +602,20 @@ reap_zombies() {  # $1 = report | clean
     case "$id" in *[!A-Za-z0-9._-]*|.*) n_left=$((n_left + 1)); continue ;; esac
 
     # A live run-task.sh or sync-pr.sh for this id is proof the run is not
-    # dead, whatever its status says — and a pgrep that errored reads as
-    # alive, because an unprovable absence reaps nothing.
+    # dead, whatever its status says. Only pgrep's no-match result proves
+    # absence; an enumeration error leaves the run unjudged.
     id_pattern=${id//./\\.}
-    if pgrep -f "run-task\.sh $id_pattern( |$)|sync-pr\.sh $id_pattern( |$)" >/dev/null 2>&1; then
-      n_live=$((n_live + 1))
-      line live "$id" "stale $(human_secs "$age") but a process is serving it" "$d"
-      continue
-    fi
+    pgrep -f "run-task\.sh $id_pattern( |$)|sync-pr\.sh $id_pattern( |$)" >/dev/null 2>&1
+    pgrep_rc=$?
+    case "$pgrep_rc" in
+      0) n_live=$((n_live + 1))
+         line live "$id" "stale $(human_secs "$age") but a process is serving it" "$d"
+         continue ;;
+      1) ;;
+      *) n_left=$((n_left + 1))
+         line keep "$id" "process state could not be read — left as it was" "$d"
+         continue ;;
+    esac
 
     pr=$(jq -r '.pr_url // empty' "$d/result.json" 2>/dev/null)
     if pr_merged "$d" "$pr"; then

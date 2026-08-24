@@ -64,6 +64,7 @@ LC_LOG="$ROOT/launchctl.log"
 GH_MODE="$ROOT/gh-mode"
 GH_LOG="$ROOT/gh.log"
 REAL_JQ=$(command -v jq)
+REAL_PGREP=$(command -v pgrep)
 
 mkdir -p "$AGENTS" "$RUNS" "$FAKES"
 : > "$PS_FIXTURE"; : > "$LC_LOG"; : > "$GH_LOG"
@@ -158,6 +159,12 @@ cat > "$FAKES/ps" <<EOF
 cat "$PS_FIXTURE" 2>/dev/null || true
 EOF
 
+cat > "$FAKES/pgrep" <<EOF
+#!/usr/bin/env bash
+[ "\${JANITOR_TEST_PGREP_MODE:-}" != error ] || exit 3
+exec "$REAL_PGREP" "\$@"
+EOF
+
 cat > "$FAKES/uname" <<EOF
 #!/usr/bin/env bash
 cat "$UNAME_STATE"
@@ -168,7 +175,7 @@ cat > "$FAKES/launchctl" <<EOF
 printf '%s\n' "\$*" >> "$LC_LOG"
 EOF
 
-chmod +x "$FAKES/gh" "$FAKES/jq" "$FAKES/ps" "$FAKES/uname" "$FAKES/launchctl"
+chmod +x "$FAKES/gh" "$FAKES/jq" "$FAKES/ps" "$FAKES/pgrep" "$FAKES/uname" "$FAKES/launchctl"
 
 jan() {  # $1 = space-separated VAR=VAL overrides (may be empty), rest = argv
   local overrides="$1"; shift
@@ -700,6 +707,18 @@ check "unreadable status: the unknown state is preserved" \
   "$(cat "$RUNS/zombie-unreadable/status")" "$UNREADABLE_STATUS"
 absent "unreadable status: no stage history is invented" "$RUNS/zombie-unreadable/stages.log"
 absent "unreadable status: no timeline history is invented" "$RUNS/zombie-unreadable/timeline"
+
+echo "== pgrep errors never prove process absence =="
+mkrun "zombie-pgrep-error" "implementing — Opus (Claude sub)" "" ""
+PGREP_ERROR_STATUS="$ZAG implementing — Opus (Claude sub)"
+printf '%s\n' "$PGREP_ERROR_STATUS" > "$RUNS/zombie-pgrep-error/status"
+out=$(jan "JANITOR_TEST_PGREP_MODE=error" --clean); rc=$?
+check "pgrep error: --clean exits 0" "$rc" "0"
+check "pgrep error: the run is kept" "$(verb "$out" zombie-pgrep-error)" "keep"
+check "pgrep error: the non-terminal status is preserved" \
+  "$(cat "$RUNS/zombie-pgrep-error/status")" "$PGREP_ERROR_STATUS"
+absent "pgrep error: no stage history is invented" "$RUNS/zombie-pgrep-error/stages.log"
+absent "pgrep error: no timeline history is invented" "$RUNS/zombie-pgrep-error/timeline"
 
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
