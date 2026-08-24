@@ -565,6 +565,35 @@ pr_merged() {  # $1 = run dir, $2 = pr url ('' = none); succeeds when it is reco
      "$1/outcome.json" 2>/dev/null)" = MERGED ]
 }
 
+reap_history_snapshot() {  # $1 = run dir; saves both histories before append
+  REAP_STAGES_EXISTED=0
+  REAP_TIMELINE_EXISTED=0
+  if [ -e "$1/stages.log" ]; then
+    cp "$1/stages.log" "$WORK/reap-stages.before" 2>/dev/null || return 1
+    REAP_STAGES_EXISTED=1
+  fi
+  if [ -e "$1/timeline" ]; then
+    cp "$1/timeline" "$WORK/reap-timeline.before" 2>/dev/null || return 1
+    REAP_TIMELINE_EXISTED=1
+  fi
+  return 0
+}
+
+reap_history_restore() {  # $1 = run dir
+  local rc=0
+  if [ "$REAP_STAGES_EXISTED" -eq 1 ]; then
+    cp "$WORK/reap-stages.before" "$1/stages.log" 2>/dev/null || rc=1
+  else
+    rm -f "$1/stages.log" 2>/dev/null || rc=1
+  fi
+  if [ "$REAP_TIMELINE_EXISTED" -eq 1 ]; then
+    cp "$WORK/reap-timeline.before" "$1/timeline" 2>/dev/null || rc=1
+  else
+    rm -f "$1/timeline" 2>/dev/null || rc=1
+  fi
+  return "$rc"
+}
+
 reap_zombies() {  # $1 = report | clean
   local mode="$1"
   local d id id_pattern first current text age new pr pgrep_rc
@@ -637,10 +666,18 @@ reap_zombies() {  # $1 = report | clean
       continue
     fi
 
-    # History first, flip last: a pass that dies between the two leaves a run
-    # reapable again rather than terminal with a hole in its log.
-    printf '%s %s\n' "$(date +%s)" "$new" >> "$d/stages.log" 2>/dev/null || :
-    printf '%s %s\n' "$(date '+%H:%M:%S')" "$new" >> "$d/timeline" 2>/dev/null || :
+    if ! reap_history_snapshot "$d"; then
+      n_reap=$((n_reap - 1))
+      line keep "$id" "history could not be read — left as it was" "$d"
+      continue
+    fi
+    if ! printf '%s %s\n' "$(date +%s)" "$new" >> "$d/stages.log" 2>/dev/null \
+       || ! printf '%s %s\n' "$(date '+%H:%M:%S')" "$new" >> "$d/timeline" 2>/dev/null; then
+      reap_history_restore "$d" || :
+      n_reap=$((n_reap - 1))
+      line keep "$id" "history could not be appended — left as it was" "$d"
+      continue
+    fi
     if printf '%s %s\n' "$(date +%s)" "$new" > "$d/status" 2>/dev/null; then
       line reaped "$id" "stale $(human_secs "$age") — $new" "$d"
     else

@@ -741,6 +741,20 @@ check "concurrent finish: the legitimate terminal result survives" \
 absent "concurrent finish: no reap stage is appended" "$RUNS/zombie-finished/stages.log"
 absent "concurrent finish: no reap timeline is appended" "$RUNS/zombie-finished/timeline"
 
+echo "== failed history writes prevent terminalization =="
+mkrun "zombie-no-history" "implementing — Opus (Claude sub)" "" ""
+NO_HISTORY_STATUS="$ZAG implementing — Opus (Claude sub)"
+printf '%s\n' "$NO_HISTORY_STATUS" > "$RUNS/zombie-no-history/status"
+chmod 0500 "$RUNS/zombie-no-history"
+out=$(jan "" --clean); rc=$?
+chmod 0700 "$RUNS/zombie-no-history"
+check "history failure: --clean exits 0" "$rc" "0"
+check "history failure: the run is kept" "$(verb "$out" zombie-no-history)" "keep"
+check "history failure: the non-terminal status is preserved" \
+  "$(cat "$RUNS/zombie-no-history/status")" "$NO_HISTORY_STATUS"
+absent "history failure: no stages.log is left behind" "$RUNS/zombie-no-history/stages.log"
+absent "history failure: no timeline is left behind" "$RUNS/zombie-no-history/timeline"
+
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
 # asserts the janitor delegates, not that it re-implements the rule.
