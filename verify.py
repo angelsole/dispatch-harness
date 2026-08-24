@@ -399,13 +399,26 @@ def review_steps(run_dir, worktree):
     return steps
 
 
+def generated_paths(worktree):
+    """Paths git marks as not authored: linguist-generated (a tool regenerates
+    them on every run) and linguist-vendored (third-party blobs).
+
+    git() swallows failures, so a git without attr: pathspec magic — or an
+    unreadable marker — degrades to no extra excludes rather than aborting.
+    """
+    return git(worktree, "ls-files", "--cached", "--other",
+               ":(attr:linguist-generated)", ":(attr:linguist-vendored)").split()
+
+
 def branch_diff(worktree, base_ref):
-    """The complete diff of this branch against its base, lockfiles excluded.
+    """The complete diff of this branch against its base, lockfiles and
+    generated paths excluded.
 
     This is the evidence four of the five rubric items are judged from — what
     the run actually leaves behind, rather than how it narrated getting there.
     """
     excludes = [":(exclude)%s" % name for name in LOCKFILES]
+    excludes += [":(exclude)%s" % path for path in generated_paths(worktree)]
     return git(worktree, "diff", "%s...HEAD" % base_ref, "--", ".", *excludes).strip()
 
 
@@ -605,7 +618,11 @@ PREAMBLE = """You are grading ONE item of a fixed rubric about a finished softwa
 Everyone in this record is anonymous and stays that way: IMPLEMENTER wrote the
 change and REVIEWER read it afterwards. Judge the evidence in front of you and
 nothing about who produced it. Length is not quality: a long record is more to
-read, not more to reward."""
+read, not more to reward.
+
+Mechanical churn is not a defect: regenerated fixtures, lockfiles, and
+timestamp-only or whitespace-only changes are noise from tooling, not the
+author's work — grade the intentional change and disregard them."""
 
 
 def item_prompt(item, spec, evidence):

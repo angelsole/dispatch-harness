@@ -10,3 +10,9 @@ wall/vendor/** -diff linguist-vendored
 # from printing as pages of nothing in a review.
 .creative/refs/** -diff
 profiles/visual/creative/eval/sheets/** -diff
+
+# The fixture run dirs are rewritten wholesale by wall/fixtures/seed.js on every
+# dispatch — mostly timestamp churn. `linguist-generated` collapses them in a
+# GitHub PR diff and takes them out of the verifier's scored diff. seed.js
+# itself is hand-written source and must stay unmarked.
+wall/fixtures/runs/** linguist-generated
