@@ -1,9 +1,9 @@
-04:47:05 🧠 Reading the existing report handlers before touching the router
-04:48:05 ⏺ Read src/invoices/report.ts
-04:50:25 ⏺ Grep createWorkbook
-04:51:55 💬 Reusing the sheet builder from reports instead of writing a second one
-04:53:25 ⏺ Write src/invoices/export.ts
-04:54:55 ⏺ Edit src/invoices/router.ts
-04:57:05 ⏺ Bash npm run test -- invoices
-04:58:35 🧠 The XLSX golden file wants the amounts as numbers, not strings
-04:59:40 ⏺ Edit src/invoices/export.ts
+11:36:13 🧠 Reading the existing report handlers before touching the router
+11:37:13 ⏺ Read src/invoices/report.ts
+11:39:33 ⏺ Grep createWorkbook
+11:41:03 💬 Reusing the sheet builder from reports instead of writing a second one
+11:42:33 ⏺ Write src/invoices/export.ts
+11:44:03 ⏺ Edit src/invoices/router.ts
+11:46:13 ⏺ Bash npm run test -- invoices
+11:47:43 🧠 The XLSX golden file wants the amounts as numbers, not strings
+11:48:48 ⏺ Edit src/invoices/export.ts

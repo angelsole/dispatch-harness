@@ -1,0 +1,45 @@
+{
+  "ticket": "OLYX-1681",
+  "arm": "full",
+  "implementer_model": "opus",
+  "reviewer_model": "gpt-5.6-sol",
+  "base": "main",
+  "pr_url": "https://github.com/acme/dashboard/pull/815",
+  "demo_url": "",
+  "status": "ready",
+  "owner": "angel",
+  "gate": "pass",
+  "branch": "feat/stream-invoice-xlsx",
+  "worktree": "/Users/angel/Projects/olyxbase-olyx-1681",
+  "metrics": {
+    "wall_seconds": 4100,
+    "gate_rounds": [
+      {
+        "round": "1",
+        "result": "pass"
+      }
+    ],
+    "opus_commits": 4,
+    "codex_commits": 0,
+    "implementer_num_turns": 63,
+    "implementer_usage": {
+      "input_tokens": 121000,
+      "cache_read_input_tokens": 4100000,
+      "cache_creation_input_tokens": 150000,
+      "output_tokens": 96000
+    },
+    "total_cost_usd": 19.52,
+    "usage": {
+      "input_tokens": 121000,
+      "cache_read_input_tokens": 4100000,
+      "cache_creation_input_tokens": 150000,
+      "output_tokens": 96000,
+      "turns": 63
+    },
+    "diff": {
+      "files_changed": 11,
+      "insertions": 508,
+      "deletions": 122
+    }
+  }
+}
