@@ -250,6 +250,12 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   may move a threshold or promote a new champion
   (`profiles/visual/creative/champion.sh promote`). For visual work, prefer
   `/dispatch-pixel`, which plans against the art-direction contract.
+- **dirty_worktree_failed** — the implementer finished but left uncommitted or
+  untracked files (anything outside `.harness/`), so the run stopped at the
+  gate boundary rather than judge a partial diff. The uncommitted paths are
+  listed in the dispatch output; `git -C <worktree> status` shows them live.
+  Re-dispatch: the resumed session is handed the list and asked to commit or
+  discard each path, then the run continues from the gate.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
   read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
   or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the

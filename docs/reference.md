@@ -72,6 +72,7 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | `HARNESS_DIR` | Where the harness is installed. Every script honors it; install with `HARNESS_DIR=/path ./install.sh` | `~/.claude/harness` |
 | `HARNESS_OWNER` | Who dispatched the run. Pinned into the run dir on the first dispatch, so a resume from someone else's session never re-attributes it | your login name |
 | `HARNESS_REDISPATCH` | `1` dispatches a run that already reached `done: ready` | unset |
+| `HARNESS_SKIP_PUSH_PREFLIGHT` | `1` skips the setup-time push-auth check. Setup does a `git push --dry-run` against `origin` so a missing push credential (`GH_TOKEN`) fails the run in seconds as `setup_failed` instead of after implement → gate → review → verify; an anonymous read (the setup fetch) passes on a public repo, so only the write path proves the credential. Non-auth push errors never block setup — they are left to the real push at the end. Set this for a local-only dispatch whose remote genuinely cannot take a dry-run push. | unset |
 | `HARNESS_TICKET_SYNC` | `0` disables the [ticket sync](operations.md#ticket-sync) that comments the PR and moves the ticket to In Review | `1` |
 | `HARNESS_MIRROR` | ssh target (`host:path`) or local path a live run dir is mirrored to — see [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror) | unset |
 
