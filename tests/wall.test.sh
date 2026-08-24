@@ -1723,6 +1723,24 @@ say('diff', cell('OLYX-1598', '.diff'));
 say('pips', row('OLYX-1598').querySelectorAll('.pip').length);
 say('hue', row('OLYX-1631').querySelector('.actor').getAttribute('style'));
 say('elapsed', /^[0-9]+[smh]/.test(cell('OLYX-1631', '.elapsed')) ? 'counting' : 'blank');
+// The implementer row names the subscription actually being spent: the actor
+// word follows the provider pin the badge reads, the stage drops its hardcoded
+// " — Opus (Claude sub)" suffix, and the hue stays the implementer's own.
+say('glm-actor', cell('OLYX-1648', '.actor'));
+say('opus-actor', cell('OLYX-1631', '.actor'));
+say('unpinned-actor', cell('LEGACY-0042', '.actor'));
+say('impl-hue', row('OLYX-1648').querySelector('.actor').getAttribute('data-actor'));
+say('impl-stage-glm', cell('OLYX-1648', '.stage-label'));
+say('impl-stage-opus', cell('OLYX-1631', '.stage-label'));
+say('impl-stage-unpinned', cell('LEGACY-0042', '.stage-label'));
+say('impl-title', (row('OLYX-1648').querySelector('.stage-label') || {}).getAttribute('title'));
+say('codex-actor', cell('OLYX-1655', '.actor'));
+say('codex-stage', cell('OLYX-1655', '.stage-label'));
+// A finished run's stage column already says `done:`; the activity may not
+// echo it. The waiting alarm's activity is its whole message and stays.
+say('done-activity', cell('OLYX-1598', '.activity'));
+say('done-activity-none', row('OLYX-1598').querySelector('.activity.none') ? 'dimmed' : 'live');
+say('alarm-activity', cell('OLYX-1642', '.activity'));
 
 // Expanding is the console's one control: the feed, and a command to paste.
 row('OLYX-1642').querySelector('.line').fire('click');
@@ -1743,7 +1761,18 @@ const frame = JSON.parse(API);
 frame.runs = [null, 'nonsense', { id: 'HALF-1', state: 'active' },
   { id: 'OPS-1; printf PWNED', state: 'active' },
   { id: 'BAD-LINK-1', state: 'active', prUrl: 'javascript:alert(document.domain)',
-    demoUrl: 'https://demo.example.net/safe' }, ...frame.runs];
+    demoUrl: 'https://demo.example.net/safe' },
+  // A Claude review on a zai-pinned run: it shares the implementer's actorKey
+  // 'opus' while the pin describes only the implementer, so the provider
+  // relabel must leave this row alone — the regression the fix guards.
+  { id: 'CLAUDE-REV-1', state: 'active', provider: 'zai', actor: 'Claude',
+    actorKey: 'opus',
+    stage: 'review — Codex unavailable (no codex CLI on this machine) → Claude reviewer (Claude sub)' },
+  // A finished run whose last activity is NOT the terminal line: distinct
+  // words are information, and the de-dup must not eat them.
+  { id: 'DONE-SYNC-1', state: 'failed', provider: 'anthropic', actor: 'done',
+    actorKey: 'done', stage: 'done: gate_failed',
+    activity: 'sync failed: gate failed after base sync' }, ...frame.runs];
 stream.emit('snapshot', { data: JSON.stringify(frame) });
 say('half-run', cell('HALF-1', '.activity'));
 say('half-stage', cell('HALF-1', '.actor'));
@@ -1752,6 +1781,9 @@ say('quoted-attach', row('OPS-1; printf PWNED').querySelector('code').textConten
 row('BAD-LINK-1').querySelector('.line').fire('click');
 say('safe-links', row('BAD-LINK-1').querySelectorAll('a').length);
 say('safe-href', row('BAD-LINK-1').querySelector('a').getAttribute('href'));
+say('claude-rev-actor', cell('CLAUDE-REV-1', '.actor'));
+say('claude-rev-stage', cell('CLAUDE-REV-1', '.stage-label'));
+say('done-distinct', cell('DONE-SYNC-1', '.activity'));
 
 // The initial fetch began before this newer stream frame. Resolving that fetch
 // afterward must not roll the board back to the older activity in API.
@@ -1808,6 +1840,44 @@ check "draws: a pip per gate round" "$(probe pips)" "2"
 check "draws: the actor takes its hue from the stage vocabulary" \
   "$(probe hue)" "color: var(--a-opus)"
 check "draws: the clocks are counting" "$(probe elapsed)" "counting"
+# The implementer row names the subscription actually being spent: the actor
+# word agrees with the badge's provider pin, the stage drops its hardcoded
+# " — Opus (Claude sub)" suffix (full string on the hover), and the hue stays
+# the implementer's own. Reviewer rows share the 'opus' actorKey but describe
+# nobody the pin knows — they keep every word.
+check "draws: a zai run's implementer word is GLM, like its badge" \
+  "$(probe glm-actor)" "GLM"
+check "draws: an anthropic run's implementer word is OPUS" \
+  "$(probe opus-actor)" "OPUS"
+check "draws: an unpinned implementer keeps the generic word" \
+  "$(probe unpinned-actor)" "Opus"
+check "draws: the relabel leaves the implementer hue alone" \
+  "$(probe impl-hue)" "opus"
+check "draws: the implementer stage drops the hardcoded suffix" \
+  "$(probe impl-stage-glm)" "implementing"
+check "draws: on the anthropic run too" \
+  "$(probe impl-stage-opus)" "implementing"
+check "draws: and on the unpinned legacy run" \
+  "$(probe impl-stage-unpinned)" "implementing"
+check "draws: the full stage string survives on the hover" \
+  "$(probe impl-title)" "implementing — Opus (Claude sub)"
+check "draws: a Codex review keeps its actor and its full stage text" \
+  "$(probe codex-actor) | $(probe codex-stage)" "Codex | review — Codex (ChatGPT sub)"
+check "draws: a Claude review on a GLM run is not relabelled GLM" \
+  "$(probe claude-rev-actor)" "Claude"
+check "draws: nor does its stage text lose its suffix" \
+  "$(probe claude-rev-stage)" \
+  "review — Codex unavailable (no codex CLI on this machine) → Claude reviewer (Claude sub)"
+# A finished run's terminal line is already the stage column; the activity may
+# echo it as idle, never eat distinct last words, never touch the alarm.
+check "draws: a finished run says done once, not twice" \
+  "$(probe done-activity)" "idle"
+check "draws: and the echo reads as the empty state" \
+  "$(probe done-activity-none)" "dimmed"
+check "draws: a finished run's distinct last words are kept" \
+  "$(probe done-distinct)" "sync failed: gate failed after base sync"
+check "draws: the waiting alarm keeps its activity" \
+  "$(probe alarm-activity)" "waiting — implementer needs your input (QUESTIONS.md)"
 # shellcheck disable=SC2088  # Expected command text; expansion happens when the operator pastes it.
 ATTACH_SCRIPT='~/.claude/harness/attach.sh'
 check "draws: expanding offers the attach command" \
