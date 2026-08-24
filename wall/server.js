@@ -35,6 +35,11 @@ const path = require('node:path');
 // naming when there is no window to attach to.
 const ROOM = require('./room.js');
 
+// The cost half of the console's frame: shapes the pre-computed figures and
+// formats every cost string an operator sees. Dual-target (server + browser),
+// so it is required here rather than inlined.
+const Cost = require('./cost.js');
+
 // `|| default` would swallow a deliberate 0 — and --port 0 (let the OS pick a
 // free port) is how a second wall, and the test suite, stay out of each other's
 // way.
@@ -401,11 +406,30 @@ function providerOf(dir, result) {
   return result.implementer_provider || '';
 }
 
+// result.json, read once per file version. A finished run's result.json never
+// changes, and the summary corpus asks about every run on disk every poll —
+// without this memo that would be a re-parse of history each second. A missing
+// or half-written file is not memoised: it is retried next poll, exactly as a
+// direct readJSON would be.
+const resultMemo = new Map();   // run dir -> { mtimeMs, result }
+
+function resultOf(dir) {
+  const file = path.join(dir, 'result.json');
+  let mtimeMs = 0;
+  try { mtimeMs = fs.statSync(file).mtimeMs; } catch { return null; }
+  const hit = resultMemo.get(dir);
+  if (hit && hit.mtimeMs === mtimeMs) return hit.result;
+  const result = readJSON(file);
+  if (!result) return null;
+  resultMemo.set(dir, { mtimeMs, result });
+  return result;
+}
+
 function readRun(id, current) {
   const dir = path.join(RUNS, id);
   const { since, stage } = current || currentStage(dir);
   if (since === null && stage === '') return null; // not a run dir (yet)
-  const result = readJSON(path.join(dir, 'result.json')) || {};
+  const result = resultOf(dir) || {};
   const metrics = result.metrics || {};
   const started = Number(firstLine(path.join(dir, 'started'))) || since;
   const state = stateOf(stage);
@@ -416,6 +440,7 @@ function readRun(id, current) {
 
   const owner = ownerOf(dir, result);
   const project = projectOf(id, dir, result);
+  const provider = providerOf(dir, result);
   let { actor, actorKey } = actorOf(stage);
   const terminalNeedsInput = DONE_NEEDS_INPUT.test(stage);
   const floor = terminalNeedsInput ? previousFloor(dir) : floorOf(stage, actorKey);
@@ -453,7 +478,12 @@ function readRun(id, current) {
     // written verbatim on a zai run too, so the words on the wall cannot tell an
     // operator which subscription is being spent. The file exists from the first
     // stage and is rewritten when an escalation changes the answer.
-    provider: providerOf(dir, result),
+    provider,
+    // What the run spent, as the pipeline recorded it. Null while result.json
+    // has not landed; a record with null figures once it has and telemetry
+    // could not price it. à-la-carte list price, never money spent: the plan
+    // is flat whatever the provider.
+    cost: Cost.runCost(result, provider),
     turns: turnsOf(metrics, dir),
     diff: metrics.diff || null,
     verifier: metrics.verifier || null,
@@ -466,6 +496,9 @@ function readRun(id, current) {
 // Newest-first by the mtime of `status` (what stage() touches). The finished
 // cap is applied in snapshot(), after each cheap stage read: capping IDs here
 // could let a burst of completed runs hide an older run that is still active.
+// The mtime rides along because the summary windows on it — every run is
+// already statSynced here, and windowing is a second question about the same
+// fact.
 function listRunIds() {
   let entries;
   try {
@@ -481,8 +514,7 @@ function listRunIds() {
       return { name: e.name, mtime };
     })
     .filter((e) => e.mtime > 0)
-    .sort((a, b) => b.mtime - a.mtime)
-    .map((e) => e.name);
+    .sort((a, b) => b.mtime - a.mtime);
 }
 
 const ORDER = { alarm: 0, active: 1, failed: 2, ready: 2 };
@@ -492,12 +524,12 @@ const ORDER = { alarm: 0, active: 1, failed: 2, ready: 2 };
 // reading the file twice would double the wall's disk traffic for nothing.
 function scan() {
   const seen = [];
-  for (const id of listRunIds()) {
+  for (const { name, mtime } of listRunIds()) {
     try {
-      const dir = path.join(RUNS, id);
+      const dir = path.join(RUNS, name);
       const current = currentStage(dir);
       if (current.since === null && current.stage === '') continue;
-      seen.push({ id, dir, current });
+      seen.push({ id: name, dir, current, mtimeMs: mtime });
     } catch { /* one broken run dir never blanks the wall */ }
   }
   return seen;
@@ -527,6 +559,36 @@ function snapshot(scanned) {
     return (b.since || 0) - (a.since || 0);
   });
   return runs;
+}
+
+// The console frame's summary, over the windowed SCAN rather than the emitted
+// run list: snapshot() caps finished runs at MAX_FINISHED, so a summary read
+// off frame.runs would silently undercount any week that shipped more than
+// that. Only in-window runs are entered at all, so a wall watching years of
+// history does not re-read a pin file per ancient run per poll. Live runs
+// carry null figures: counting an active run's turns means reading its stream
+// a second time in a poll that already read it, and a moving number is not
+// one to total.
+function summaryOf(scanned, nowMs) {
+  const floor = nowMs - Cost.SUMMARY_WINDOW_DAYS * 864e5;
+  const entries = [];
+  for (const { dir, current, mtimeMs } of scanned) {
+    if (mtimeMs < floor || mtimeMs > nowMs) continue;
+    const state = stateOf(current.stage);
+    const finished = state === 'ready' || state === 'failed';
+    const result = resultOf(dir) || {};
+    const provider = providerOf(dir, result);
+    const cost = finished ? Cost.runCost(result, provider) : null;
+    entries.push({
+      state,
+      provider,
+      mtimeMs,
+      opusListUsd: cost ? cost.opusListUsd : null,
+      zaiCredits: cost ? cost.zaiCredits : null,
+      turns: finished ? turnsOf(result.metrics || {}, dir) : null,
+    });
+  }
+  return Cost.summarize(entries, { nowMs, windowDays: Cost.SUMMARY_WINDOW_DAYS });
 }
 
 // --- the skyline ----------------------------------------------------------------
@@ -1000,6 +1062,7 @@ const STATIC = {
   '/console/console.html': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
   '/console/console.css': [path.join('console', 'console.css'), 'text/css; charset=utf-8'],
   '/console/console.js': [path.join('console', 'console.js'), 'text/javascript; charset=utf-8'],
+  '/console/cost.js': ['cost.js', 'text/javascript; charset=utf-8'],
 };
 
 // The room's sprites. A directory rather than a named row per file, because the
@@ -1141,6 +1204,7 @@ function payload() {
     floors: FLOORS,
     completionSeconds: COMPLETION_S,
     signSeconds: SIGN_S,
+    summary: summaryOf(scanned, now.getTime()),
     week,
     city,
     ghost,
@@ -1153,10 +1217,12 @@ function payload() {
 // contract. Console-only telemetry is available only when that frontend opts
 // into the enriched representation; plain requests retain the original shape.
 function publicPayload(frame) {
-  return {
+  const out = {
     ...frame,
-    runs: frame.runs.map(({ provider: _provider, turns: _turns, ...run }) => run),
+    runs: frame.runs.map(({ provider: _provider, turns: _turns, cost: _cost, ...run }) => run),
   };
+  delete out.summary;
+  return out;
 }
 
 // Everything a viewer can see, and nothing that ticks on its own: `at` moves
@@ -1165,9 +1231,12 @@ function publicPayload(frame) {
 // even when no run on disk moved — and so is the week rolling over at Monday
 // 00:00, which empties the district with nothing on disk having changed at all.
 // Buildings carry their finish epoch rather than their age for the same reason:
-// an age would tick, and the wall would never be quiet.
+// an age would tick, and the wall would never be quiet. The summary is in here
+// for the same reason the week is: a run ageing out of the window changes the
+// console's frame with nothing on disk changing — and on the public body,
+// where publicPayload has deleted it, it contributes nothing at all.
 function fingerprint(frame) {
-  return JSON.stringify([frame.towers, frame.runs, frame.week, frame.city, frame.ghost]);
+  return JSON.stringify([frame.towers, frame.runs, frame.week, frame.city, frame.ghost, frame.summary]);
 }
 
 // One poll for all viewers; a frame is only pushed when something actually
@@ -1293,6 +1362,9 @@ module.exports = {
   weekStartOf, weekEndOf, kindOf, storeysOf, plotOf, lifeOf, buildCity, parseLedger, recordOf,
   shippedDiffOf, CITY_FILE, SIGN_S, STOREYS_MIN, STOREYS_MAX, PER_MOVER, SHOPS_AT, TRAM_AT,
   assetOf, ASSETS, roster, crewSigns, todayOf,
+  // The console's enriched view and its cost summary, callable without a port:
+  // the suites ask publicPayload and summarize the same questions a poll does.
+  publicPayload, summarize: Cost.summarize,
   // The stage vocabulary, resolved by the real code: tests/stage-vocab.test.sh
   // asks these the same questions a poll does, without staging a run dir per row.
   actorOf, stateOf, floorOf, FLOOR_OF, FLOORS,
