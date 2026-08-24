@@ -1181,6 +1181,15 @@ if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
     || fail setup_failed "implementer-provider is pinned to zai but there is no readable key file at $ZAI_KEY_FILE (create it mode 600)"
 fi
 
+# --- 3d. Push-auth preflight ---------------------------------------------------
+# The fetch above is an anonymous read and passes on a public repo with no
+# credential; only the push at the end needs one. Spend the check here, before
+# an implementer pass is billed to a run that cannot ship.
+if [ "${HARNESS_SKIP_PUSH_PREFLIGHT:-0}" != 1 ]; then
+  preflight_remote_auth "$WORKTREE" "$BRANCH" \
+    || fail setup_failed "push preflight: origin rejected the credential (see above; HARNESS_SKIP_PUSH_PREFLIGHT=1 skips this check)"
+fi
+
 # Applied INSIDE the implementer subshell, so the credential lives in that
 # process's environment and never in an argv `ps` would show — the same
 # discipline as the verifier and Linear keys, which travel as a path or a header
