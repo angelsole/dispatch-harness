@@ -55,8 +55,11 @@ fail() { echo "FATAL: $*" >&2; write_result "$1" ""; stage "done: $1"; exit 1; }
 # behaviour, because re-dispatching after a failure is the normal path.
 # HARNESS_REDISPATCH=1 is the deliberate override (a revised brief on a shipped
 # branch, a PR closed by hand).
+# The previous invocation's last stage, read before anything below rewrites the
+# status file — the dirty-worktree resume prompt keys off it.
+PREV_STATUS=$(cut -d' ' -f2- < "$RUN_DIR/status" 2>/dev/null || echo "")
 if [ "${HARNESS_REDISPATCH:-0}" != 1 ] && [ -f "$RUN_DIR/status" ]; then
-  PREV_STAGE=$(cut -d' ' -f2- < "$RUN_DIR/status" 2>/dev/null || echo "")
+  PREV_STAGE=$PREV_STATUS
   if [ "$PREV_STAGE" = "done: ready" ]; then
     PREV_PR=$(jq -r '.pr_url // ""' "$RUN_DIR/result.json" 2>/dev/null || echo "")
     echo "[harness] $TICKET already finished as 'done: ready' — not dispatching it again"
@@ -1178,6 +1181,15 @@ if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
     || fail setup_failed "implementer-provider is pinned to zai but there is no readable key file at $ZAI_KEY_FILE (create it mode 600)"
 fi
 
+# --- 3d. Push-auth preflight ---------------------------------------------------
+# The fetch above is an anonymous read and passes on a public repo with no
+# credential; only the push at the end needs one. Spend the check here, before
+# an implementer pass is billed to a run that cannot ship.
+if [ "${HARNESS_SKIP_PUSH_PREFLIGHT:-0}" != 1 ]; then
+  preflight_remote_auth "$WORKTREE" "$BRANCH" \
+    || fail setup_failed "push preflight: origin rejected the credential (see above; HARNESS_SKIP_PUSH_PREFLIGHT=1 skips this check)"
+fi
+
 # Applied INSIDE the implementer subshell, so the credential lives in that
 # process's environment and never in an argv `ps` would show — the same
 # discipline as the verifier and Linear keys, which travel as a path or a header
@@ -1216,6 +1228,7 @@ Rules:
 - Never weaken, skip, or delete tests to make them pass; if a test seems wrong, say so in your notes instead.
 - Comment policy: a comment states a constraint or gotcha the code cannot express — nothing else. Never narrate design rationale, alternatives considered, history, or ticket numbers in comments or doc comments; that context goes in commit messages and .harness/implementer-notes.md. Keep doc comments to a line or two of what the thing is for. Do not imitate verbose comments you find in the surrounding code.
 - Make small conventional commits (type(scope): description). Never mention AI, Claude, or agents in commits.
+- Commit ALL your work before finishing — the pipeline rejects a dirty worktree (any uncommitted or untracked change outside \`.harness/\`). Delete scratch you don't want; don't leave it uncommitted.
 - Never git add or commit anything under .harness/ — it is orchestration metadata, excluded from git. If git refuses a path as ignored, leave it alone; never use git add -f.
 - Do NOT push, do NOT create PRs, do NOT switch branches.
 - Database/MCP tools: local environment only. Never switch environments or touch staging/production.
@@ -1231,6 +1244,7 @@ Rules:
 # after the stage is the half that does not depend on a model reading it.
 RESUME_RULES="These rules from your original instructions are still binding:
 - Make small conventional commits (type(scope): description).
+- Commit ALL your work before finishing — the pipeline rejects a dirty worktree (any uncommitted or untracked change outside \`.harness/\`). Delete scratch you don't want; don't leave it uncommitted.
 - Never mention AI, Claude, or agents in commits — no Co-Authored-By, no Generated-with, no attribution trailer of any kind, in the subject, the body or the footer.
 - Never git add or commit anything under .harness/; never use git add -f.
 - Do NOT push, do NOT create PRs, do NOT switch branches."
@@ -1502,9 +1516,22 @@ if jq -e '.triggered == true and .pending == true and
   stage "implementing — Opus (Claude sub)"
 elif [ -f "$OPUS_SESSION_FILE" ]; then
   OPUS_SESSION=$(cat "$OPUS_SESSION_FILE")
-  OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and, if .harness/specs/ exists, re-read those source documents too before continuing under the same rules as before.
+  if [ "$PREV_STATUS" = "done: dirty_worktree_failed" ]; then
+    # The resumed session never saw the refusal, only its aftermath — the
+    # prompt has to carry the paths itself.
+    DIRTY_NOW=$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>/dev/null || true)
+    [ -n "$DIRTY_NOW" ] || DIRTY_NOW='(none — the tree is already clean)'
+    OPUS_PROMPT="The pipeline stopped because this worktree had uncommitted changes — the gate refuses to judge a partial diff. Commit the changes that belong to the task (conventional commits, nothing under .harness/), and delete the scratch you do not want. Then finish the task under the same rules as before.
+
+Uncommitted when the run stopped:
+$DIRTY_NOW
 
 $RESUME_RULES"
+  else
+    OPUS_PROMPT="The orchestrator updated .harness/brief.md — it now contains answers to your questions and/or revision notes. Re-read it and, if .harness/specs/ exists, re-read those source documents too before continuing under the same rules as before.
+
+$RESUME_RULES"
+  fi
   SESSION_ARGS=(--resume "$OPUS_SESSION")
   stage "resuming — Opus (Claude sub)"
 else
@@ -1765,6 +1792,14 @@ HYGIENE_EXIT=$?
 # Everything up to this commit is Opus's work; later commits are Codex's.
 OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)
 echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
+
+# Everything after this point — gate, review, push — judges the committed diff;
+# uncommitted leftovers end the run here with a status of their own.
+require_clean_worktree "$WORKTREE" || {
+  STATUS="dirty_worktree_failed"; write_result "$STATUS" ""
+  stage "done: $STATUS"
+  exit 1
+}
 
 # --- 5. Gate + Codex review/fix loop ------------------------------------------
 # Which step of the gate died. Three quarters of runs need a second gate round,
@@ -2245,10 +2280,8 @@ run_claude_worker() {  # $1 = round label, $2 = prompt
 run_readonly_review_pass() {  # $1 = round label, $2 = prompt, $3 = find|refute
   local before rc changed=0
   before=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null) || return 1
-  if [ -n "$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>/dev/null)" ]; then
-    echo "[harness] refusing a read-only review pass on a dirty worktree"
-    return 1
-  fi
+  require_clean_worktree "$WORKTREE" \
+    || { echo "[harness] refusing a read-only review pass on a dirty worktree"; return 1; }
   if [ "$REVIEW_AGENT" = codex ]; then
     run_codex "$1" "$2"; rc=$?
   else

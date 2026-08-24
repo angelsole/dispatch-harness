@@ -95,6 +95,42 @@ harness_knob() {  # $1 = run dir, $2 = file basename, $3 = default
   cat "$1/$2" 2>/dev/null || printf '%s' "$3"
 }
 
+# Is a worktree free of uncommitted work? The single predicate behind both the
+# implementer→gate boundary and the read-only review passes: every stage after
+# the implementer judges the committed diff, so a partial diff is refused
+# wherever it is found, by the same test. Harness-ignored paths (.harness/ and
+# friends) sit in the worktree's info/exclude and never count as dirty.
+require_clean_worktree() {  # $1 = worktree; 0 clean, 1 dirty (paths listed on stderr)
+  local dirty
+  dirty=$(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null)
+  [ -z "$dirty" ] && return 0
+  echo "[harness] implementer left uncommitted changes — not gating a partial diff. Commit them or discard:" >&2
+  printf '%s\n' "$dirty" | sed 's/^/  /' >&2
+  return 1
+}
+
+# Does a push's combined output carry a credential signature? Non-auth failures
+# (non-fast-forward, missing remote, dead network) are deliberately not ours to
+# judge — they belong to the real push at the end of the run.
+_is_auth_error() {  # $1 = combined stderr; testable in isolation
+  printf '%s' "$1" | grep -qiE "could not read (Username|Password)|Authentication failed|(Invalid|Bad) credentials|\\b403\\b"
+}
+
+# Exercise WRITE auth before any machine time is spent: an anonymous read (the
+# setup fetch) can pass on a public repo while the push at the end cannot.
+# GIT_TERMINAL_PROMPT=0 is what keeps a 401 from hanging on /dev/tty. Fails
+# only on a credential signature; everything else falls through to the real push.
+preflight_remote_auth() {  # $1 = worktree, $2 = branch, $3 = remote (default origin)
+  local remote="${3:-origin}" out
+  out=$(GIT_TERMINAL_PROMPT=0 git -C "$1" push --dry-run "$remote" "HEAD:refs/heads/$2" 2>&1) && return 0
+  if _is_auth_error "$out"; then
+    echo "[harness] cannot authenticate a push to '$remote' — the push at the end will fail." >&2
+    echo "[harness] fix: set GH_TOKEN=\$(gh auth token --user <acct>) or check 'gh auth status', then re-dispatch." >&2
+    return 1
+  fi
+  return 0   # non-auth failure — leave it to the real push
+}
+
 # Is the Codex CLI here? The Codex CLI is optional: a Claude subscription alone
 # runs the same pipeline with a fresh Claude review tier and Claude handling
 # base-sync conflicts. Resolved once per invocation so no stage ever shells out
