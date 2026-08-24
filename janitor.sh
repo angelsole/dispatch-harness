@@ -550,7 +550,13 @@ status_age() {  # $1 = status file, $2 = its first line
     printf '%s\n' "$(( $(date +%s) - $(dec "$ts") ))"
     return 0
   fi
-  m=$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null)
+  if m=$(stat -f %m "$1" 2>/dev/null); then
+    :
+  elif m=$(stat -c %Y "$1" 2>/dev/null); then
+    :
+  else
+    return 0
+  fi
   case "$m" in ''|*[!0-9]*) return 0 ;; esac
   printf '%s\n' "$(( $(date +%s) - m ))"
 }

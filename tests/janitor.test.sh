@@ -65,6 +65,7 @@ GH_MODE="$ROOT/gh-mode"
 GH_LOG="$ROOT/gh.log"
 REAL_JQ=$(command -v jq)
 REAL_PGREP=$(command -v pgrep)
+REAL_STAT=$(command -v stat)
 
 mkdir -p "$AGENTS" "$RUNS" "$FAKES"
 : > "$PS_FIXTURE"; : > "$LC_LOG"; : > "$GH_LOG"
@@ -175,6 +176,17 @@ esac
 exec "$REAL_PGREP" "\$@"
 EOF
 
+cat > "$FAKES/stat" <<EOF
+#!/usr/bin/env bash
+if [ "\${JANITOR_TEST_STAT_MODE:-}" = gnu ]; then
+  case "\${1:-}" in
+    -f) printf 'GNU stat filesystem output\n'; exit 1 ;;
+    -c) printf '%s\n' "\$JANITOR_TEST_STAT_EPOCH"; exit 0 ;;
+  esac
+fi
+exec "$REAL_STAT" "\$@"
+EOF
+
 cat > "$FAKES/uname" <<EOF
 #!/usr/bin/env bash
 cat "$UNAME_STATE"
@@ -185,7 +197,8 @@ cat > "$FAKES/launchctl" <<EOF
 printf '%s\n' "\$*" >> "$LC_LOG"
 EOF
 
-chmod +x "$FAKES/gh" "$FAKES/jq" "$FAKES/ps" "$FAKES/pgrep" "$FAKES/uname" "$FAKES/launchctl"
+chmod +x "$FAKES/gh" "$FAKES/jq" "$FAKES/ps" "$FAKES/pgrep" "$FAKES/stat" \
+  "$FAKES/uname" "$FAKES/launchctl"
 
 jan() {  # $1 = space-separated VAR=VAL overrides (may be empty), rest = argv
   local overrides="$1"; shift
@@ -774,6 +787,17 @@ check "status failure: stages.log is unchanged" \
   "$(cat "$RUNS/zombie-readonly-status/stages.log")" "$READONLY_STAGES"
 check "status failure: timeline is unchanged" \
   "$(cat "$RUNS/zombie-readonly-status/timeline")" "$READONLY_TIMELINE"
+
+echo "== GNU stat fallback dates malformed statuses =="
+mkrun "zombie-gnu-stat" "implementing — Opus (Claude sub)" "" ""
+printf 'not a status line at all\n' > "$RUNS/zombie-gnu-stat/status"
+out=$(jan "JANITOR_TEST_STAT_MODE=gnu JANITOR_TEST_STAT_EPOCH=$ZAG" --clean); rc=$?
+check "GNU stat: --clean exits 0" "$rc" "0"
+check "GNU stat: failed BSD output does not contaminate the epoch" \
+  "$(verb "$out" zombie-gnu-stat)" "reaped"
+check "GNU stat: the malformed old status becomes terminal" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-gnu-stat/status")" \
+  "done: reaped (stale — no live process, was: not a status line at all)"
 
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
