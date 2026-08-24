@@ -567,7 +567,7 @@ pr_merged() {  # $1 = run dir, $2 = pr url ('' = none); succeeds when it is reco
 
 reap_zombies() {  # $1 = report | clean
   local mode="$1"
-  local d id id_pattern first text age new pr pgrep_rc
+  local d id id_pattern first current text age new pr pgrep_rc
   local n_reap=0 n_live=0 n_fresh=0 n_left=0
 
   # The guard cannot run without pgrep, and a reap that cannot prove the
@@ -616,6 +616,13 @@ reap_zombies() {  # $1 = report | clean
          line keep "$id" "process state could not be read — left as it was" "$d"
          continue ;;
     esac
+
+    current=''
+    if ! IFS= read -r current < "$d/status" 2>/dev/null || [ "$current" != "$first" ]; then
+      n_left=$((n_left + 1))
+      line keep "$id" "status changed while checking liveness — left as it was" "$d"
+      continue
+    fi
 
     pr=$(jq -r '.pr_url // empty' "$d/result.json" 2>/dev/null)
     if pr_merged "$d" "$pr"; then

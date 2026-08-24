@@ -161,7 +161,17 @@ EOF
 
 cat > "$FAKES/pgrep" <<EOF
 #!/usr/bin/env bash
-[ "\${JANITOR_TEST_PGREP_MODE:-}" != error ] || exit 3
+case "\${JANITOR_TEST_PGREP_MODE:-}" in
+  error) exit 3 ;;
+  finish)
+    case "\$*" in
+      *zombie-finished*)
+        printf '%s done: ready\n' "\$(date +%s)" > "\$JANITOR_TEST_STATUS"
+        exit 1
+        ;;
+    esac
+    ;;
+esac
 exec "$REAL_PGREP" "\$@"
 EOF
 
@@ -719,6 +729,17 @@ check "pgrep error: the non-terminal status is preserved" \
   "$(cat "$RUNS/zombie-pgrep-error/status")" "$PGREP_ERROR_STATUS"
 absent "pgrep error: no stage history is invented" "$RUNS/zombie-pgrep-error/stages.log"
 absent "pgrep error: no timeline history is invented" "$RUNS/zombie-pgrep-error/timeline"
+
+echo "== status is revalidated after the process check =="
+mkrun "zombie-finished" "implementing — Opus (Claude sub)" "" ""
+printf '%s implementing — Opus (Claude sub)\n' "$ZAG" > "$RUNS/zombie-finished/status"
+out=$(jan "JANITOR_TEST_PGREP_MODE=finish JANITOR_TEST_STATUS=$RUNS/zombie-finished/status" --clean); rc=$?
+check "concurrent finish: --clean exits 0" "$rc" "0"
+check "concurrent finish: the run is kept" "$(verb "$out" zombie-finished)" "keep"
+check "concurrent finish: the legitimate terminal result survives" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/zombie-finished/status")" "done: ready"
+absent "concurrent finish: no reap stage is appended" "$RUNS/zombie-finished/stages.log"
+absent "concurrent finish: no reap timeline is appended" "$RUNS/zombie-finished/timeline"
 
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
