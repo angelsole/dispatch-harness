@@ -296,6 +296,8 @@
     ])));
   }
 
+  $('summary-window').textContent = 'Last ' + Cost.SUMMARY_WINDOW_DAYS + ' days';
+
   let firstPaint = true;
 
   function render(frame) {

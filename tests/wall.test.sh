@@ -151,6 +151,10 @@ grep_ok "$CONSOLE_SRC" ".elapsed.in-stage::before { content: 'stage'; }" \
   "console: stage elapsed has a visible label"
 grep_ok "$CONSOLE_SRC" ".elapsed.total::before { content: 'total'; }" \
   "console: total elapsed has a visible label"
+grep_not "$(cat "$SRC/wall/console/console.html")" "Last 7 days" \
+  "console: the summary window is not hardcoded in the document"
+grep_ok "$(cat "$SRC/wall/console/console.js")" "Cost.SUMMARY_WINDOW_DAYS" \
+  "console: the summary window comes from the cost module"
 # Everything under wall/vendor/ that is not documentation is third-party code,
 # and the manifest is the pin: a swapped bundle fails here rather than shipping.
 VENDOR_CHECK="$(node -e '
@@ -1641,7 +1645,7 @@ const mk = (id, tag) => {
 };
 for (const id of ['link', 'link-text', 'runs-dir', 'n-active', 'n-done', 'alarms',
   'alarm-rows', 'active', 'active-rows', 'recent', 'recent-rows', 'active-empty',
-  'summary', 'summary-tiles']) mk(id);
+  'summary', 'summary-window', 'summary-tiles']) mk(id);
 mk('n-alarm', 'span').appendChild(new El('b'));
 
 global.document = {
@@ -1696,6 +1700,7 @@ say('pinned', (rows('alarm-rows')[0].querySelector('.id') || {}).textContent);
 say('alarms-shown', ids.get('alarms').hidden ? 'hidden' : 'shown');
 say('runsdir', ids.get('runs-dir').textContent);
 say('count-active', ids.get('n-active').textContent);
+say('summary-window', ids.get('summary-window').textContent);
 const tiles = ids.get('summary-tiles').children;
 const tileValue = (i) => {
   const node = tiles[i] && tiles[i].querySelector('.value');
@@ -1781,6 +1786,8 @@ check "draws: the alarm board only appears when there is one" "$(probe alarms-sh
 check "draws: finished runs collapse below"  "$(probe recent)" \
   "$(printf '%s' "$API" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')"
 check "draws: the header counts the live ones" "$(probe count-active)" "$(probe active)"
+check "draws: the summary window names the shared constant" "$(probe summary-window)" \
+  "Last $(cost_of sum-window) days"
 check "draws: five tiles in the summary header" "$(probe tiles)" "5"
 check "draws: the ship rate over the fixtures' week" "$(probe ship-rate)" "75%"
 check "draws: the summed list price, à la carte" "$(probe list-price)" '$83.39'
