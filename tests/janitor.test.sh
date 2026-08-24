@@ -755,6 +755,26 @@ check "history failure: the non-terminal status is preserved" \
 absent "history failure: no stages.log is left behind" "$RUNS/zombie-no-history/stages.log"
 absent "history failure: no timeline is left behind" "$RUNS/zombie-no-history/timeline"
 
+echo "== failed status writes leave no false history =="
+mkrun "zombie-readonly-status" "implementing — Opus (Claude sub)" "" ""
+READONLY_STATUS="$ZAG implementing — Opus (Claude sub)"
+READONLY_STAGES="100 implementing — initial"
+READONLY_TIMELINE="00:01:40 implementing — initial"
+printf '%s\n' "$READONLY_STATUS" > "$RUNS/zombie-readonly-status/status"
+printf '%s\n' "$READONLY_STAGES" > "$RUNS/zombie-readonly-status/stages.log"
+printf '%s\n' "$READONLY_TIMELINE" > "$RUNS/zombie-readonly-status/timeline"
+chmod 0400 "$RUNS/zombie-readonly-status/status"
+out=$(jan "" --clean); rc=$?
+chmod 0600 "$RUNS/zombie-readonly-status/status"
+check "status failure: --clean exits 0" "$rc" "0"
+check "status failure: the run is kept" "$(verb "$out" zombie-readonly-status)" "keep"
+check "status failure: the non-terminal status is preserved" \
+  "$(cat "$RUNS/zombie-readonly-status/status")" "$READONLY_STATUS"
+check "status failure: stages.log is unchanged" \
+  "$(cat "$RUNS/zombie-readonly-status/stages.log")" "$READONLY_STAGES"
+check "status failure: timeline is unchanged" \
+  "$(cat "$RUNS/zombie-readonly-status/timeline")" "$READONLY_TIMELINE"
+
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
 # asserts the janitor delegates, not that it re-implements the rule.

@@ -666,6 +666,11 @@ reap_zombies() {  # $1 = report | clean
       continue
     fi
 
+    if [ ! -w "$d/status" ]; then
+      n_reap=$((n_reap - 1))
+      line keep "$id" "status could not be rewritten — left as it was" "$d"
+      continue
+    fi
     if ! reap_history_snapshot "$d"; then
       n_reap=$((n_reap - 1))
       line keep "$id" "history could not be read — left as it was" "$d"
@@ -681,6 +686,7 @@ reap_zombies() {  # $1 = report | clean
     if printf '%s %s\n' "$(date +%s)" "$new" > "$d/status" 2>/dev/null; then
       line reaped "$id" "stale $(human_secs "$age") — $new" "$d"
     else
+      reap_history_restore "$d" || :
       n_reap=$((n_reap - 1))
       line keep "$id" "status could not be rewritten — left as it was" "$d"
     fi
