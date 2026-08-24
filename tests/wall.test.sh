@@ -41,7 +41,7 @@ fi
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
 for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/room.js \
-         wall/console/console.js wall/fixtures/seed.js wall/fixtures/city.js; do
+         wall/cost.js wall/console/console.js wall/fixtures/seed.js wall/fixtures/city.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 check "console: JavaScript source contains no binary NUL byte" \
@@ -1133,13 +1133,13 @@ CONSOLE_API="$(get "$PORT" '/api/runs?view=console')"
 # arithmetic over this exact payload rather than a restatement of it.
 printf '%s' "$API" > "$ROOT/api.json"
 check "api: valid JSON" "$(printf '%s' "$API" | jq -r 'type')" "object"
-check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "12"
+check "api: every fixture run is listed" "$(printf '%s' "$API" | jq '.runs | length')" "14"
 check "api: plain run objects retain the pre-console schema" \
-  "$(printf '%s' "$API" | jq '[.runs[] | has("provider") or has("turns")] | any')" "false"
+  "$(printf '%s' "$API" | jq '[.runs[] | has("provider") or has("turns") or has("cost")] | any')" "false"
 check "console: its opted-in snapshot carries console telemetry" \
-  "$(printf '%s' "$CONSOLE_API" | jq '[.runs[] | has("provider") and has("turns")] | all')" "true"
-for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1667 OLYX-1673 OLYX-1598 \
-          BOT-2291 BOT-2287 adhoc-kpi-sparklines LEGACY-0042; do
+  "$(printf '%s' "$CONSOLE_API" | jq '[.runs[] | has("provider") and has("turns") and has("cost")] | all')" "true"
+for id in OLYX-1631 OLYX-1655 OLYX-1660 OLYX-1642 OLYX-1648 OLYX-1667 OLYX-1673 OLYX-1676 \
+          OLYX-1681 OLYX-1598 BOT-2291 BOT-2287 adhoc-kpi-sparklines LEGACY-0042; do
   grep_ok "$API" "\"$id\"" "api: lists $id"
 done
 
@@ -1159,6 +1159,9 @@ check "day: and it rides every run, which is how it reaches the room" \
 FINGERPRINT="$(awk '/^function fingerprint\(frame\) \{/, /^\}$/' "$SRC/wall/server.js")"
 grep_ok "$FINGERPRINT" 'frame.runs' "day: a date rolling over is a frame worth pushing"
 grep_not "$FINGERPRINT" 'frame.at' "day: a second ticking still is not"
+# The summary's window edge is the same kind of change: a run ageing out of it
+# moves the console's frame with nothing on disk moving at all.
+grep_ok "$FINGERPRINT" 'frame.summary' "summary: a run ageing out of the window is a frame worth pushing"
 # And the pin the suite uses, read off the server's own function rather than off
 # a second copy of the rule: a well-formed MM-DD wins, and anything else is not
 # a date at all and leaves the machine's own answer standing.
@@ -1358,6 +1361,206 @@ check "detail: a turn count that is not a count is null, not a rendered lie" \
 check "detail: an active run counts completed and in-progress stream turns" \
   "$(provider_of LIVE-TURNS-1 turns)" "10"
 
+# --- what a run spent -------------------------------------------------------------
+# wall/cost.js is the one module both the server and the console page load, so
+# its arithmetic and its strings are tested here rather than in either
+# frontend: the header's correctness is this block, not a rendered DOM. The
+# figures it reads are the pipeline's own (run-task.sh writes them); nothing
+# here re-derives a price.
+echo "== wall: cost and the window summary =="
+COST_OUT="$(node -e '
+  const C = require(process.argv[1] + "/wall/cost.js");
+  const out = [];
+  const say = (k, v) => out.push(k + "=" + v);
+
+  const zaiResult = { metrics: {
+    total_cost_usd: 10.75,
+    usage: { input_tokens: 1, output_tokens: 2, turns: 41, zai_credits_est: 3111.9 },
+    implementer_usage: { input_tokens: 780000, output_tokens: 400000,
+      cache_read_input_tokens: 9570000, cache_creation_input_tokens: 240000 },
+  } };
+  const opusResult = { metrics: { total_cost_usd: 1.23, usage: { turns: 9 } } };
+  // metrics, but nothing telemetry could price — a real shape, not a bug.
+  const unpriced = { metrics: { diff: { insertions: 88, deletions: 12 } } };
+
+  const zai = C.runCost(zaiResult, "zai");
+  say("rc-zai-usd", zai.opusListUsd === 10.75);
+  say("rc-zai-credits", zai.zaiCredits === 3111.9);
+  say("rc-zai-provider-echoed", zai.provider);
+  say("rc-zai-tokens", JSON.stringify(zai.tokens));
+  const opus = C.runCost(opusResult, "anthropic");
+  say("rc-opus-usd", opus.opusListUsd === 1.23);
+  say("rc-opus-no-credits", opus.zaiCredits === null);
+  say("rc-opus-no-tokens", opus.tokens === null);
+  const none = C.runCost(unpriced, "anthropic");
+  say("rc-unpriced-is-a-record", none !== null);
+  say("rc-unpriced-usd-is-null", none.opusListUsd === null);
+  say("rc-unpriced-not-undefined", none.opusListUsd !== undefined);
+  say("rc-absent-metrics-is-whole-null",
+    C.runCost({}, "zai") === null && C.runCost(null, "zai") === null
+      && C.runCost({ metrics: null }, "zai") === null);
+  say("rc-garbage-is-whole-null",
+    C.runCost("junk", "zai") === null && C.runCost([], "zai") === null);
+
+  // A synthetic week with the clock injected: two ships and a failure in
+  // window (the failure uncosted — counted, never summed), a fourth finished
+  // run long out of the window, and live runs that must not count at all.
+  const NOW = 1800000000000;
+  const day = 864e5;
+  const s = C.summarize([
+    { state: "ready", provider: "zai", mtimeMs: NOW - day, opusListUsd: 10.75, zaiCredits: 3111.9, turns: 41 },
+    { state: "ready", provider: "anthropic", mtimeMs: NOW - 2 * day, opusListUsd: 23.18, turns: 63 },
+    { state: "failed", provider: "anthropic", mtimeMs: NOW - 3 * day, opusListUsd: null, turns: 12 },
+    { state: "ready", provider: "zai", mtimeMs: NOW - 30 * day, opusListUsd: 99, zaiCredits: 99, turns: 99 },
+    { state: "active", provider: "zai", mtimeMs: NOW, opusListUsd: 5, zaiCredits: 5, turns: 5 },
+    { state: "alarm", provider: "anthropic", mtimeMs: NOW, opusListUsd: 7, turns: 7 },
+  ], { nowMs: NOW, windowDays: 7 });
+  say("sum-window", s.windowDays);
+  say("sum-runs", s.runs);
+  say("sum-by-provider", s.byProvider.zai + "," + s.byProvider.anthropic);
+  say("sum-shipped-failed", s.shipped + "," + s.failed);
+  say("sum-ship-rate", s.shipRate === 2 / 3);
+  say("sum-prs-per-day", s.prsPerDay === 2 / 7);
+  say("sum-usd-all", s.listUsdAll === 10.75 + 23.18);
+  say("sum-usd-by-provider",
+    s.listUsdByProvider.zai === 10.75 && s.listUsdByProvider.anthropic === 23.18);
+  say("sum-credits", s.zaiCredits === 3111.9);
+  say("sum-avg-zai", s.avg.zai.listUsd === 10.75 && s.avg.zai.turns === 41);
+  say("sum-avg-opus", s.avg.anthropic.listUsd === 23.18 && s.avg.anthropic.turns === 37.5);
+  const empty = C.summarize([], { nowMs: NOW });
+  say("sum-empty-runs", empty.runs);
+  say("sum-empty-ship-rate", empty.shipRate);
+  say("sum-empty-all-finite", [empty.prsPerDay, empty.listUsdAll, empty.listUsdByProvider.zai,
+    empty.listUsdByProvider.anthropic, empty.zaiCredits, empty.byProvider.zai,
+    empty.byProvider.anthropic].every((v) => Number.isFinite(v)));
+  say("sum-empty-avgs", empty.avg.zai === null && empty.avg.anthropic === null);
+
+  say("cell-zai", C.formatCostCell(zai));
+  say("cell-opus", C.formatCostCell(opus));
+  say("cell-missing", C.formatCostCell(null));
+  say("cell-unpriced", C.formatCostCell(none));
+  say("cell-unpinned", C.formatCostCell({ provider: "", opusListUsd: 5, zaiCredits: 5 }));
+  const tip = C.formatCostTooltip(zai);
+  say("tip-zai", tip);
+  say("tip-missing", C.formatCostTooltip(null));
+  say("tip-unpriced", C.formatCostTooltip(none));
+  const tiles = C.summaryTiles(s);
+  say("tiles-count", tiles.length);
+  say("tiles-ship-rate", tiles[0].value);
+  say("tiles-list-price", tiles[3].value);
+  say("tiles-versus", tiles[4].value);
+  const nullTiles = C.summaryTiles(null);
+  say("tiles-null-count", nullTiles.length);
+  say("tiles-null-dashes", nullTiles.slice(0, 4).every((t) => t.value === "—")
+    && nullTiles[4].value === "— vs —");
+  say("display-never-nan", [tiles, nullTiles, tip, C.formatCostTooltip(none),
+    C.formatCostCell(zai), C.formatCostCell(none)]
+    .every((v) => String(JSON.stringify(v)).indexOf("NaN") === -1
+      && String(JSON.stringify(v)).indexOf("undefined") === -1));
+  process.stdout.write(out.join("\n"));
+' "$SRC")"
+cost_of() { printf '%s' "$COST_OUT" | sed -n "s/^$1=//p"; }
+check "cost: a GLM result yields both figures, tokens and all" \
+  "$(cost_of rc-zai-tokens)" '{"input":780000,"output":400000,"cacheRead":9570000,"cacheCreate":240000}'
+check "cost: the provider is echoed, never re-derived" "$(cost_of rc-zai-provider-echoed)" "zai"
+check "cost: an Opus result yields its list price"      "$(cost_of rc-opus-usd)" "true"
+check "cost: and no credits field read from nowhere"    "$(cost_of rc-opus-no-credits)" "true"
+check "cost: metrics without a price is a record with null" \
+  "$(cost_of rc-unpriced-is-a-record):$(cost_of rc-unpriced-usd-is-null):$(cost_of rc-unpriced-not-undefined)" \
+  "true:true:true"
+check "cost: no metrics at all is the whole null"       "$(cost_of rc-absent-metrics-is-whole-null)" "true"
+check "cost: and neither is garbage"                    "$(cost_of rc-garbage-is-whole-null)" "true"
+check "summary: the window is the constant"             "$(cost_of sum-window)" "7"
+check "summary: finished runs in window, by provider" \
+  "$(cost_of sum-runs):$(cost_of sum-by-provider)" "3:1,2"
+check "summary: ships versus failures"                  "$(cost_of sum-shipped-failed)" "2,1"
+check "summary: ship rate is shipped over finished"     "$(cost_of sum-ship-rate)" "true"
+check "summary: throughput is shipped over the window"  "$(cost_of sum-prs-per-day)" "true"
+check "summary: the USD sums skip the nulls"            "$(cost_of sum-usd-all)" "true"
+check "summary: per provider too"                       "$(cost_of sum-usd-by-provider)" "true"
+check "summary: credits sum over GLM runs only"         "$(cost_of sum-credits)" "true"
+check "summary: per-provider averages, null costs excluded" "$(cost_of sum-avg-zai):$(cost_of sum-avg-opus)" "true:true"
+check "summary: an empty window is all finite" \
+  "$(cost_of sum-empty-runs):$(cost_of sum-empty-ship-rate):$(cost_of sum-empty-all-finite):$(cost_of sum-empty-avgs)" \
+  "0:null:true:true"
+check "cell: a GLM run shows its credits"    "$(cost_of cell-zai)" "3,112 cr"
+check "cell: an Opus run shows its dollars"  "$(cost_of cell-opus)" '$1.23'
+check "cell: a run with no cost shows a dash" "$(cost_of cell-missing)" "—"
+check "cell: so does one telemetry could not price" "$(cost_of cell-unpriced)" "—"
+check "cell: and one with no provider pinned" "$(cost_of cell-unpinned)" "—"
+check "tooltip: the counterfactual, the credits, and the tokens on one line" \
+  "$(cost_of tip-zai)" 'à la carte $10.75 · 3,112 zai credits · in 780k out 400k · cache 9.6M read / 240k write'
+check "tooltip: a missing cost is a dash, not a stack trace" "$(cost_of tip-missing)" "—"
+check "tooltip: an unpriced run still shows what is known"   "$(cost_of tip-unpriced)" "à la carte —"
+check "tiles: five of them" "$(cost_of tiles-count)" "5"
+check "tiles: the ship rate as a percentage" "$(cost_of tiles-ship-rate)" "67%"
+check "tiles: the summed list price" "$(cost_of tiles-list-price)" '$33.93'
+check "tiles: the per-run comparison" "$(cost_of tiles-versus)" '$10.75 vs $23.18'
+check "tiles: a null summary is five honest dashes" \
+  "$(cost_of tiles-null-count):$(cost_of tiles-null-dashes)" "5:true"
+check "display: nothing a run spent ever renders as NaN or undefined" "$(cost_of display-never-nan)" "true"
+
+# The enriched view is a console privilege: fed a frame carrying cost and
+# summary, the public projection must return neither — asked directly, so a
+# field sneaking back in fails here rather than in a city screenshot.
+PUBLIC_PAYLOAD="$(node -e '
+  const S = require(process.argv[1] + "/wall/server.js");
+  const frame = { at: 1, today: "01-01", towers: [], week: {}, city: [], ghost: [],
+    summary: { runs: 2, byProvider: { zai: 1, anthropic: 1 } },
+    runs: [{ id: "X-1", provider: "zai", turns: 3,
+      cost: { provider: "zai", opusListUsd: 1, zaiCredits: 2, tokens: null } },
+      { id: "X-2" }] };
+  const out = S.publicPayload(frame);
+  process.stdout.write([
+    out.runs.every((r) => !("cost" in r) && !("provider" in r) && !("turns" in r)),
+    !("summary" in out),
+    "summary" in frame && "cost" in frame.runs[0] && "provider" in frame.runs[0],
+  ].map((v) => String(v)).join(" "));
+' "$SRC")"
+check "public: the public body strips cost per run and the frame summary" \
+  "$PUBLIC_PAYLOAD" "true true true"
+
+# The same two bodies over the wire, against the fixtures: four finished runs
+# in the window — two costed ships, one ship telemetry never priced, one
+# rejection — and every live run outside the count.
+check "cost: every console run carries its cost" \
+  "$(printf '%s' "$CONSOLE_API" | jq '[.runs[] | has("cost")] | all')" "true"
+check "cost: the console frame carries the window summary" \
+  "$(printf '%s' "$CONSOLE_API" | jq 'has("summary")')" "true"
+check "cost: the public frame carries neither" \
+  "$(printf '%s' "$API" | jq 'has("summary") or ([.runs[] | has("cost")] | any)')" "false"
+check "cost: a GLM ship carries both figures" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1676")
+    | .cost | "\(.provider) \(.opusListUsd) \(.zaiCredits) \(.tokens.cacheRead)"')" \
+  "zai 63.87 3125.1 9570000"
+check "cost: an Opus ship carries the list price and no credits" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1681")
+    | .cost | "\(.opusListUsd) \(.zaiCredits)"')" \
+  "19.52 null"
+check "cost: a finished run telemetry could not price is a record with a null" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1598")
+    | "\(.cost != null) \(.cost.opusListUsd)"')" "true null"
+check "cost: a blocked run's metrics still surface as a record" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1642")
+    | "\(.cost != null) \(.cost.opusListUsd)"')" "true null"
+check "cost: a live run with no result.json yet carries null" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.runs[] | select(.id=="OLYX-1631") | .cost')" "null"
+check "summary: the fixtures' week at a glance" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.summary
+    | "\(.windowDays)d \(.runs) \(.shipped)+\(.failed) \(.byProvider.zai)z\(.byProvider.anthropic)a"')" \
+  "7d 4 3+1 1z3a"
+check "summary: ship rate is exact, throughput rounded to the milli" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.summary | "\(.shipRate) \(.prsPerDay * 1000 | round)"')" \
+  "0.75 429"
+check "summary: the sums exclude the nulls, not the runs" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.summary
+    | "\(.listUsdAll * 100 | round),\(.listUsdByProvider.zai * 100 | round),\(.listUsdByProvider.anthropic * 100 | round),\(.zaiCredits * 10 | round)"')" \
+  "8339,6387,1952,31251"
+check "summary: per-run averages over the runs that have the figure" \
+  "$(printf '%s' "$CONSOLE_API" | jq -r '.summary
+    | "\(.avg.zai.listUsd * 100 | round),\(.avg.zai.turns),\(.avg.anthropic.listUsd * 100 | round),\(.avg.anthropic.turns * 3 | round)"')" \
+  "6387,41,1952,164"
+
 # --- the console draws it ---------------------------------------------------------
 # `node --check` proves the console parses; nothing above proves it draws. The
 # stub below is the smallest DOM the file actually touches, and the probe runs
@@ -1431,7 +1634,8 @@ const mk = (id, tag) => {
   return root.appendChild(el);
 };
 for (const id of ['link', 'link-text', 'runs-dir', 'n-active', 'n-done', 'alarms',
-  'alarm-rows', 'active', 'active-rows', 'recent', 'recent-rows', 'active-empty']) mk(id);
+  'alarm-rows', 'active', 'active-rows', 'recent', 'recent-rows', 'active-empty',
+  'summary', 'summary-tiles']) mk(id);
 mk('n-alarm', 'span').appendChild(new El('b'));
 
 global.document = {
@@ -1447,6 +1651,9 @@ global.window = { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) 
 Object.defineProperty(global, 'navigator', { value: {}, configurable: true });
 global.setInterval = () => ({});
 global.clearInterval = () => {};
+// The page loads /console/cost.js before console.js; the probe loads the same
+// module the browser would, so the board under test formats with the real one.
+global.Cost = require(path.resolve(path.dirname(FILE), '..', 'cost.js'));
 const API = fs.readFileSync(API_FILE, 'utf8');
 let resolveFetch = null;
 global.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
@@ -1483,6 +1690,19 @@ say('pinned', (rows('alarm-rows')[0].querySelector('.id') || {}).textContent);
 say('alarms-shown', ids.get('alarms').hidden ? 'hidden' : 'shown');
 say('runsdir', ids.get('runs-dir').textContent);
 say('count-active', ids.get('n-active').textContent);
+const tiles = ids.get('summary-tiles').children;
+const tileValue = (i) => {
+  const node = tiles[i] && tiles[i].querySelector('.value');
+  return node ? node.textContent : 'NO-TILE';
+};
+say('tiles', tiles.length);
+say('ship-rate', tileValue(0));
+say('list-price', tileValue(3));
+say('cost-glm', cell('OLYX-1676', '.cost'));
+say('cost-opus', cell('OLYX-1681', '.cost'));
+say('cost-nil', cell('OLYX-1598', '.cost'));
+const glmCell = row('OLYX-1676') && row('OLYX-1676').querySelector('.cost');
+say('cost-title', glmCell ? glmCell.getAttribute('title') : 'NO-CELL');
 say('glm', cell('OLYX-1648', '.badge'));
 say('opus', cell('OLYX-1631', '.badge'));
 say('unpinned', cell('LEGACY-0042', '.badge'));
@@ -1555,6 +1775,14 @@ check "draws: the alarm board only appears when there is one" "$(probe alarms-sh
 check "draws: finished runs collapse below"  "$(probe recent)" \
   "$(printf '%s' "$API" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')"
 check "draws: the header counts the live ones" "$(probe count-active)" "$(probe active)"
+check "draws: five tiles in the summary header" "$(probe tiles)" "5"
+check "draws: the ship rate over the fixtures' week" "$(probe ship-rate)" "75%"
+check "draws: the summed list price, à la carte" "$(probe list-price)" '$83.39'
+check "draws: a GLM run's cost in credits" "$(probe cost-glm)" "3,125 cr"
+check "draws: an Opus run's cost in dollars" "$(probe cost-opus)" '$19.52'
+check "draws: a finished run telemetry could not price shows a dash" "$(probe cost-nil)" "—"
+check "draws: the cost cell's hover spells out the counterfactual" "$(probe cost-title)" \
+  'à la carte $63.87 · 3,125 zai credits · in 780k out 400k · cache 9.6M read / 240k write'
 check "draws: and names the runs dir it is watching" "$(probe runsdir)" "$RUNS"
 check "draws: a GLM run wears the GLM badge"   "$(probe glm)" "GLM"
 check "draws: an Opus run wears its own"       "$(probe opus)" "OPUS"
@@ -1590,7 +1818,7 @@ check "draws: a dropped stream falls back to polling" "$(probe link)" "polling/p
 echo "== wall: ordering =="
 ORDER="$(printf '%s' "$API" | jq -r '.runs[].id' | tr '\n' ' ')"
 check "order: alarm first, then live oldest-first, then finished" \
-  "$ORDER" "OLYX-1642 LEGACY-0042 OLYX-1655 OLYX-1648 OLYX-1660 OLYX-1667 adhoc-kpi-sparklines OLYX-1631 BOT-2291 OLYX-1673 OLYX-1598 BOT-2287 "
+  "$ORDER" "OLYX-1642 LEGACY-0042 OLYX-1655 OLYX-1648 OLYX-1660 OLYX-1667 adhoc-kpi-sparklines OLYX-1631 BOT-2291 OLYX-1673 OLYX-1676 OLYX-1681 OLYX-1598 BOT-2287 "
 
 # --- project towers -------------------------------------------------------------
 # The wall is organised around the work: one tower per project, that project's
@@ -2150,6 +2378,14 @@ if [ -n "$BUSY_WEEK_PORT" ]; then
     "$(printf '%s' "$BUSY_WEEK_API" | jq '.city | length')" "30"
   check "district: while the run feed stays capped, as it always was" \
     "$(printf '%s' "$BUSY_WEEK_API" | jq '[.runs[] | select(.state=="ready")] | length')" "24"
+  # The summary reads the scan, not that capped feed — the whole reason it is
+  # built apart from frame.runs.
+  BUSY_WEEK_CONSOLE="$(get "$BUSY_WEEK_PORT" '/api/runs?view=console')"
+  check "summary: the window counts every finished run, not the capped feed" \
+    "$(printf '%s' "$BUSY_WEEK_CONSOLE" | jq '.summary.runs')" "30"
+  check "summary: thirty uncosted ships sum to a finite nothing" \
+    "$(printf '%s' "$BUSY_WEEK_CONSOLE" | jq -r '.summary | "\(.listUsdAll) \(.shipRate) \(.avg.zai) \(.avg.anthropic)"')" \
+    "0 1 null null"
   check "life: thirty ships retain the established server milestones" \
     "$(printf '%s' "$BUSY_WEEK_API" | jq -r '.week.life | "\(.movers),\(.shops),\(.tram)"')" \
     "8,true,true"
@@ -5459,7 +5695,7 @@ check "things: and so does a run with no owner at all" \
   "$(room_of unownedThings)" "figurine+books"
 check "things: and the view carries them per run, so the plane rebakes on a swap" \
   "$(room_of viewThings)" \
-  "BOT-2287=figurine/books// BOT-2291=figurine/books// LEGACY-0042=figurine/books// OLYX-1598=ball//pennant/ OLYX-1631=mug/cactus/poster/ OLYX-1642=figurine/books// OLYX-1648=figurine/books// OLYX-1655=mug/cactus/poster/ OLYX-1660=mug/cactus/poster/ OLYX-1667=photo/mug// OLYX-1673=ball//pennant/ adhoc-kpi-sparklines=mug/cactus/poster/"
+  "BOT-2287=figurine/books// BOT-2291=figurine/books// LEGACY-0042=figurine/books// OLYX-1598=ball//pennant/ OLYX-1631=mug/cactus/poster/ OLYX-1642=figurine/books// OLYX-1648=figurine/books// OLYX-1655=mug/cactus/poster/ OLYX-1660=mug/cactus/poster/ OLYX-1667=photo/mug// OLYX-1673=ball//pennant/ OLYX-1676=ball//pennant/ OLYX-1681=mug/cactus/poster/ adhoc-kpi-sparklines=mug/cactus/poster/"
 
 # The one day. An office does one thing on somebody's birthday and this wall now
 # knows how: a `birthday` line on the roster, the server's own date in the
@@ -5726,13 +5962,13 @@ check "stage: every frame of every one of them is a file the room loads" \
   "$(room_of holdsAreFrames)" "true"
 check "stage: every fixture the wall serves resolves to its own stage's pose" \
   "$(room_of fixturePoses)" \
-  "BOT-2287=wait8 BOT-2291=wait8 LEGACY-0042=type8 OLYX-1598=done8 OLYX-1631=type8 OLYX-1642=wait8 OLYX-1648=type8 OLYX-1655=read8 OLYX-1660=watch8 OLYX-1667=type8 OLYX-1673=done8 adhoc-kpi-sparklines=done8"
+  "BOT-2287=wait8 BOT-2291=wait8 LEGACY-0042=type8 OLYX-1598=done8 OLYX-1631=type8 OLYX-1642=wait8 OLYX-1648=type8 OLYX-1655=read8 OLYX-1660=watch8 OLYX-1667=type8 OLYX-1673=done8 OLYX-1676=done8 OLYX-1681=done8 adhoc-kpi-sparklines=done8"
 check "stage: an alarm breathes whatever the work actor is" \
   "$(room_of alarmAlwaysWaits)" "true"
 check "stage: a run that shipped keeps the mug up" "$(room_of shippedPose)" "done8"
 check "stage: and one that burnt out puts its hands down" "$(room_of burntPose)" "wait8"
 check "stage: which is a fact the server ships and the view now carries" \
-  "$(room_of shippedFlag)" "OLYX-1598"
+  "$(room_of shippedFlag)" "OLYX-1598,OLYX-1676,OLYX-1681"
 
 # The moves. A pose is entered and left through its own eight frames on the room
 # clock — forward once into it, reversed out of it — and a change between two held
@@ -5895,7 +6131,7 @@ check "room: and every sprite it asks for is one this repo committed" \
 # person's set" is.
 check "crew: the room draws the owner of the run, not one figure for all of them" \
   "$(room_of whose)" \
-  "BOT-2287=room BOT-2291=room LEGACY-0042=room OLYX-1598=crew/emre OLYX-1631=crew/angel OLYX-1642=room OLYX-1648=room OLYX-1655=crew/angel OLYX-1660=crew/angel OLYX-1667=crew/ran OLYX-1673=crew/emre adhoc-kpi-sparklines=crew/angel"
+  "BOT-2287=room BOT-2291=room LEGACY-0042=room OLYX-1598=crew/emre OLYX-1631=crew/angel OLYX-1642=room OLYX-1648=room OLYX-1655=crew/angel OLYX-1660=crew/angel OLYX-1667=crew/ran OLYX-1673=crew/emre OLYX-1676=crew/emre OLYX-1681=crew/angel adhoc-kpi-sparklines=crew/angel"
 check "crew: ANGEL and angel are one crew member" "$(room_of shouty)" "crew/angel"
 check "crew: and so are Emre and the spaces around him" "$(room_of padded)" "crew/emre"
 check "crew: an owner nobody drew gets the room's own worker" "$(room_of stranger)" "room"
@@ -6349,11 +6585,11 @@ echo "== wall: the committed fixtures =="
 serve "$SRC/wall/fixtures/runs" "$ROOT/fixtures.log"; FIX="$PORT_OUT"
 if [ -n "$FIX" ]; then
   FIXAPI="$(get "$FIX" /api/runs)"
-  check "fixtures: twelve staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "12"
+  check "fixtures: fourteen staged runs" "$(printf '%s' "$FIXAPI" | jq '.runs | length')" "14"
   check "fixtures: one alarm" \
     "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="alarm")] | length')" "1"
-  check "fixtures: one ready, one failed" \
-    "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "2"
+  check "fixtures: three ready, one failed" \
+    "$(printf '%s' "$FIXAPI" | jq '[.runs[] | select(.state=="ready" or .state=="failed")] | length')" "4"
   check "fixtures: four repos plus the fallback tower" \
     "$(printf '%s' "$FIXAPI" | jq '.towers | length')" "5"
   check "fixtures: the long-finished runs are not in the skyline" \
@@ -6517,11 +6753,15 @@ fi
 # The guard, from the other side. $RUNS is a byte-identical copy of the same
 # fixtures staged somewhere else — which is what every real deployment looks
 # like — and an existing ledger is a wall with its own history. Neither is
-# seeded, so the only building either can have is the one it discovered.
+# seeded, so the only building either can have is the one it discovered. The
+# fixtures' own ready runs are exactly those: a staged copy witnesses them, and
+# an ageing committed one eventually stops witnessing them, so the guard admits
+# the ids either way and admits nothing else.
+WITNESSED_IDS='["OLYX-1598","OLYX-1676","OLYX-1681"]'
 serve "$RUNS" "$ROOT/elsewhere.log"; ELSEWHERE="$PORT_OUT"
 if [ -n "$ELSEWHERE" ]; then
   check "guard: fixtures staged anywhere else are a plain, exactly as before" \
-    "$(get "$ELSEWHERE" /api/runs | jq '[.city[] | select(.id != "OLYX-1598")] | length')" "0"
+    "$(get "$ELSEWHERE" /api/runs | jq --argjson seen "$WITNESSED_IDS" '[.city[] | select(.id as $id | $seen | index($id) | not)] | length')" "0"
   check "guard: and nothing was seeded into them" \
     "$(grep -c "seeding the city's memory" "$ROOT/elsewhere.log")" "0"
 else
@@ -6532,7 +6772,7 @@ PRIOR_CITY="$ROOT/prior-city.jsonl"
 serve "$SRC/wall/fixtures/runs" "$ROOT/prior.log" --city "$PRIOR_CITY"; PRIOR="$PORT_OUT"
 if [ -n "$PRIOR" ]; then
   check "guard: a ledger that already exists is never seeded into" \
-    "$(get "$PRIOR" /api/runs | jq '[.city[] | select(.id != "OLYX-1598")] | length')" "0"
+    "$(get "$PRIOR" /api/runs | jq --argjson seen "$WITNESSED_IDS" '[.city[] | select(.id as $id | $seen | index($id) | not)] | length')" "0"
   check "guard: not even an empty one" \
     "$(grep -c "seeding the city's memory" "$ROOT/prior.log")" "0"
 else
