@@ -688,6 +688,19 @@ check "dotted id: its status is terminal" \
   "$(sed -n '1s/^[0-9]* //p' "$RUNS/release.1/status")" \
   "done: reaped (stale — no live process, was: implementing — Opus (Claude sub))"
 
+echo "== unreadable zombie statuses remain untouched =="
+mkrun "zombie-unreadable" "implementing — Opus (Claude sub)" "" ""
+UNREADABLE_STATUS="$ZAG implementing — Opus (Claude sub)"
+printf '%s\n' "$UNREADABLE_STATUS" > "$RUNS/zombie-unreadable/status"
+chmod 0200 "$RUNS/zombie-unreadable/status"
+out=$(jan "" --clean); rc=$?
+chmod 0600 "$RUNS/zombie-unreadable/status"
+check "unreadable status: --clean exits 0" "$rc" "0"
+check "unreadable status: the unknown state is preserved" \
+  "$(cat "$RUNS/zombie-unreadable/status")" "$UNREADABLE_STATUS"
+absent "unreadable status: no stage history is invented" "$RUNS/zombie-unreadable/stages.log"
+absent "unreadable status: no timeline history is invented" "$RUNS/zombie-unreadable/timeline"
+
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
 # asserts the janitor delegates, not that it re-implements the rule.

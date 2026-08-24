@@ -586,7 +586,10 @@ reap_zombies() {  # $1 = report | clean
     # Terminal runs are not zombies, whatever their age — and idempotence
     # lives here too: a reaped run is a done: run on the next pass.
     first=''
-    IFS= read -r first < "$d/status" 2>/dev/null || true
+    if ! IFS= read -r first < "$d/status" 2>/dev/null; then
+      n_left=$((n_left + 1))
+      continue
+    fi
     text=$(status_text "$first")
     case "$text" in done:*) continue ;; esac
 
