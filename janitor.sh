@@ -567,7 +567,7 @@ pr_merged() {  # $1 = run dir, $2 = pr url ('' = none); succeeds when it is reco
 
 reap_zombies() {  # $1 = report | clean
   local mode="$1"
-  local d id first text age new pr
+  local d id id_pattern first text age new pr
   local n_reap=0 n_live=0 n_fresh=0 n_left=0
 
   # The guard cannot run without pgrep, and a reap that cannot prove the
@@ -594,14 +594,15 @@ reap_zombies() {  # $1 = report | clean
     [ -n "$age" ] || { n_left=$((n_left + 1)); continue; }
     [ "$age" -gt $((ZOMBIE_HOURS * 3600)) ] || { n_fresh=$((n_fresh + 1)); continue; }
 
-    # An id with characters pgrep would read as pattern is not askable; harness
-    # ids never carry any, and one that does is left alone.
-    case "$id" in *[!A-Za-z0-9_-]*) n_left=$((n_left + 1)); continue ;; esac
+    # Match the scheduler's ticket alphabet. The dot is escaped in the process
+    # pattern below so it remains a literal ticket character.
+    case "$id" in *[!A-Za-z0-9._-]*|.*) n_left=$((n_left + 1)); continue ;; esac
 
     # A live run-task.sh or sync-pr.sh for this id is proof the run is not
     # dead, whatever its status says — and a pgrep that errored reads as
     # alive, because an unprovable absence reaps nothing.
-    if pgrep -f "run-task\.sh $id( |$)|sync-pr\.sh $id( |$)" >/dev/null 2>&1; then
+    id_pattern=${id//./\\.}
+    if pgrep -f "run-task\.sh $id_pattern( |$)|sync-pr\.sh $id_pattern( |$)" >/dev/null 2>&1; then
       n_live=$((n_live + 1))
       line live "$id" "stale $(human_secs "$age") but a process is serving it" "$d"
       continue

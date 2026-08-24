@@ -678,6 +678,16 @@ check "again: stages.log carries the reap exactly once" \
   "$(grep -cF "done: reaped (stale" "$RUNS/zombie-stale/stages.log" | tr -d ' ')" "1"
 has "$out" "0 reaped, 1 guarded by a live process" "again: only the guarded zombie remains a finding"
 
+echo "== dotted scheduler ids remain reapable =="
+mkrun "release.1" "implementing — Opus (Claude sub)" "" ""
+printf '%s implementing — Opus (Claude sub)\n' "$ZAG" > "$RUNS/release.1/status"
+out=$(jan "" --clean); rc=$?
+check "dotted id: --clean exits 0" "$rc" "0"
+check "dotted id: a stale scheduled run is reaped" "$(verb "$out" release.1)" "reaped"
+check "dotted id: its status is terminal" \
+  "$(sed -n '1s/^[0-9]* //p' "$RUNS/release.1/status")" \
+  "done: reaped (stale — no live process, was: implementing — Opus (Claude sub))"
+
 echo "== the branch deletion is cleanup.sh's, on cleanup.sh's terms =="
 # feat/merged-clean was never pushed, so the local branch stays: this suite
 # asserts the janitor delegates, not that it re-implements the rule.
