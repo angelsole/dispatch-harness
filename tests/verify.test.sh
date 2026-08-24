@@ -742,6 +742,80 @@ DIFF_SEEN="$(adapter python3 "$ADAPTER" "$ARUN" "$AWT" origin/base --dry-run \
   | jq -r '.labels | join(",")')"
 has "$DIFF_SEEN" "final:diff" "dry run: a branch with a diff against its base carries it as the final state"
 
+# ---------------------------------------------------------------------------
+echo "== verify.py: generated churn is out of the scored diff =="
+# ---------------------------------------------------------------------------
+# seed.js rewrites every fixture run dir on each dispatch, and the rubric used
+# to grade that timestamp churn as the author's (a real run scored minimality
+# 0.0 on it) — or, with ~80 churned files, push the real change past the diff
+# clip so the judge never saw it at all. "Generated" is read from the
+# .gitattributes markers, the same doctrine as LOCKFILES: a generator writes
+# lines nobody reads.
+GENWT="$AROOT/gen-wt"
+mkdir -p "$GENWT/wall/fixtures/runs/OLYX-1676"
+git init -q "$GENWT"
+git -C "$GENWT" config user.email t@t
+git -C "$GENWT" config user.name t
+printf 'wall/fixtures/runs/** linguist-generated\n' > "$GENWT/.gitattributes"
+printf 'const seed = 1;\n' > "$GENWT/wall/seed.js"
+git -C "$GENWT" add -A
+git -C "$GENWT" commit -q -m "chore: base"
+git -C "$GENWT" update-ref refs/remotes/origin/main "$(git -C "$GENWT" rev-parse HEAD)"
+# The branch the verifier sees: the intentional change (a new module, an edit
+# to the hand-written generator) beside the reseed churn and a lockfile.
+printf 'const cost = 2;\n' > "$GENWT/wall/cost.js"
+printf 'const seed = 2;\n' > "$GENWT/wall/seed.js"
+printf '1787561473\n' > "$GENWT/wall/fixtures/runs/OLYX-1676/status"
+printf '{}\n' > "$GENWT/package-lock.json"
+git -C "$GENWT" add -A
+git -C "$GENWT" commit -q -m "feat: cost module, fixtures reseeded"
+bd() {  # branch_diff over a worktree, exactly as the adapter calls it
+  adapter python3 -c "import sys
+sys.path.insert(0, sys.argv[1])
+import verify
+print(verify.branch_diff(sys.argv[2], 'origin/main'))" "$SRC" "$1"
+}
+GEN="$(bd "$GENWT")"
+has "$GEN" "wall/cost.js" "generated: the intentional change is in the diff"
+has "$GEN" "wall/seed.js" "generated: the hand-written generator stays visible"
+has_not "$GEN" "wall/fixtures/runs" "generated: the reseeded fixture data is not"
+has_not "$GEN" "package-lock.json" "generated: and lockfiles stay out as before"
+check "generated: the repo itself marks its fixture runs" \
+  "$(git -C "$SRC" check-attr linguist-generated wall/fixtures/runs/OLYX-1676/status \
+     | awk '{ print $NF }')" "set"
+
+# A git without attr: pathspec magic fails the ls-files; the diff must degrade
+# to lockfiles-only exclusion rather than crash the verification.
+OLDGIT="$AROOT/old-git"
+REAL_GIT="$(command -v git)"
+mkdir -p "$OLDGIT"
+cat > "$OLDGIT/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in *":(attr:"*) exit 129 ;; esac
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$OLDGIT/git"
+OLDGEN="$(adapter env PATH="$OLDGIT:$PATH" python3 -c "import sys
+sys.path.insert(0, sys.argv[1])
+import verify
+print(verify.branch_diff(sys.argv[2], 'origin/main'))" "$SRC" "$GENWT")"
+has "$OLDGEN" "wall/cost.js" "fallback: the diff is still produced"
+has "$OLDGEN" "wall/fixtures/runs" "fallback: degraded to including the churn, not to crashing"
+has_not "$OLDGEN" "package-lock.json" "fallback: lockfiles are still excluded"
+
+# Belt-and-suspenders for churn an exclusion cannot see (nothing here marks a
+# path, only the judge's framing changes).
+PRE="$(adapter python3 -c "import sys
+sys.path.insert(0, sys.argv[1])
+import verify
+print(verify.PREAMBLE)" "$SRC")"
+has "$PRE" "Mechanical churn is not a defect" \
+  "preamble: the judge is told churn is not the author's defect"
+has "$PRE" "timestamp-only or whitespace-only" \
+  "preamble: naming both churn shapes an exclusion can miss"
+
 check "criteria: one per checkbox under the acceptance heading" \
   "$(printf '%s' "$DRY" | jq -r '.criteria | length')" "3"
 check "criteria: a wrapped bullet is one criterion, rejoined" \
