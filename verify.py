@@ -406,8 +406,9 @@ def generated_paths(worktree):
     git() swallows failures, so a git without attr: pathspec magic — or an
     unreadable marker — degrades to no extra excludes rather than aborting.
     """
-    return git(worktree, "ls-files", "--cached", "--other",
-               ":(attr:linguist-generated)", ":(attr:linguist-vendored)").split()
+    output = git(worktree, "ls-files", "-z", "--cached", "--other",
+                 ":(attr:linguist-generated)", ":(attr:linguist-vendored)")
+    return [path for path in output.split("\0") if path]
 
 
 def branch_diff(worktree, base_ref):

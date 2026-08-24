@@ -766,6 +766,7 @@ git -C "$GENWT" update-ref refs/remotes/origin/main "$(git -C "$GENWT" rev-parse
 printf 'const cost = 2;\n' > "$GENWT/wall/cost.js"
 printf 'const seed = 2;\n' > "$GENWT/wall/seed.js"
 printf '1787561473\n' > "$GENWT/wall/fixtures/runs/OLYX-1676/status"
+printf 'generated timestamp with spaces\n' > "$GENWT/wall/fixtures/runs/OLYX-1676/gate round.log"
 printf '{}\n' > "$GENWT/package-lock.json"
 git -C "$GENWT" add -A
 git -C "$GENWT" commit -q -m "feat: cost module, fixtures reseeded"
@@ -779,6 +780,8 @@ GEN="$(bd "$GENWT")"
 has "$GEN" "wall/cost.js" "generated: the intentional change is in the diff"
 has "$GEN" "wall/seed.js" "generated: the hand-written generator stays visible"
 has_not "$GEN" "wall/fixtures/runs" "generated: the reseeded fixture data is not"
+has_not "$GEN" "generated timestamp with spaces" \
+  "generated: attributed paths containing spaces stay out of the diff"
 has_not "$GEN" "package-lock.json" "generated: and lockfiles stay out as before"
 check "generated: the repo itself marks its fixture runs" \
   "$(git -C "$SRC" check-attr linguist-generated wall/fixtures/runs/OLYX-1676/status \
