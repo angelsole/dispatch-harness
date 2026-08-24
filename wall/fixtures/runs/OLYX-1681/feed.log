@@ -1,0 +1,6 @@
+10:41:13 ⏺ Read src/invoices/export.ts
+10:47:53 🧠 The workbook is built whole in memory — one quarter of them is 2 GB
+10:57:53 ⏺ Write src/invoices/sheet-stream.ts
+11:07:53 ⏺ Edit src/invoices/export.ts
+11:14:33 ⏺ Bash npm run test -- invoices
+11:17:53 🏁 success

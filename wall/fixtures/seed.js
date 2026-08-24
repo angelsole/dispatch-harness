@@ -1,9 +1,9 @@
 'use strict';
-// Stage the wall's fixture runs: twelve run dirs shaped exactly as run-task.sh
-// writes them, spread across four repos plus one run whose worktree is
-// unreadable (the UNCHARTED tower), at every floor of the pipeline and owned by
-// a mix of crew and the `bot` synthetic — one run per crew member the room has
-// a character for, so every one of them can be looked at.
+// Stage the wall's fixture runs: fourteen run dirs shaped exactly as
+// run-task.sh writes them, spread across four repos plus one run whose
+// worktree is unreadable (the UNCHARTED tower), at every floor of the pipeline
+// and owned by a mix of crew and the `bot` synthetic — one run per crew member
+// the room has a character for, so every one of them can be looked at.
 //
 // The generated runs/ directory is committed, so `wall.sh --runs
 // wall/fixtures/runs` and the demo storyboard work straight out of a clone.
@@ -197,6 +197,88 @@ result('OLYX-1598', {
       usage: { calls: 9, input_tokens: 184000, output_tokens: 900 },
       seconds: 71.4,
     },
+  },
+});
+
+// --- two ships that carry what they spent ---------------------------------------
+// The cost header's corpus: one finished run per provider, with the telemetry
+// run-task.sh writes into metrics — the à-la-carte list price every run
+// carries whatever the provider, and the z.ai credits only a GLM run does.
+// OLYX-1598 and BOT-2287 above stay deliberately uncosted: the board's '—'
+// and the summary's exclusion of a null cost from its sums both need a
+// finished run that predates the figures.
+run({
+  id: 'OLYX-1676', project: 'valoryx-graphql-api', owner: 'emre', stageAge: 1200, totalAge: 3900,
+  provider: 'zai', stage: 'done: ready', activity: 'done: ready',
+  title: 'Webhook retries — drain the dead letter queue on a schedule',
+});
+write('OLYX-1676', 'gate-rounds.log', '1 pass');
+feed('OLYX-1676', [
+  [3300, '🧠 A retry queue nobody drains is an outage with extra steps'],
+  [3000, '⏺ Write src/webhooks/drain.ts'],
+  [2400, '◆ codex Backoff reset belongs in config, not in the drain loop'],
+  [1900, '⏺ Edit src/webhooks/drain.ts'],
+  [1500, '⏺ Bash npm run test -- webhooks'],
+  [1300, '🏁 success'],
+  [1200, '⏺ Bash gh pr create --draft'],
+]);
+result('OLYX-1676', {
+  status: 'ready', owner: 'emre', gate: 'pass', branch: 'feat/webhook-dlq-drain',
+  worktree: worktreeFor('valoryx-graphql-api', 'OLYX-1676'),
+  pr_url: 'https://github.com/acme/valoryx-graphql-api/pull/1149',
+  metrics: {
+    wall_seconds: 3200,
+    gate_rounds: [{ round: '1', result: 'pass' }],
+    opus_commits: 3, codex_commits: 1,
+    implementer_num_turns: 41,
+    implementer_usage: {
+      input_tokens: 780000, cache_read_input_tokens: 9570000,
+      cache_creation_input_tokens: 240000, output_tokens: 400000,
+    },
+    total_cost_usd: 63.87,
+    usage: {
+      input_tokens: 780000, cache_read_input_tokens: 9570000,
+      cache_creation_input_tokens: 240000, output_tokens: 400000,
+      turns: 41, zai_credits_est: 3125.1,
+    },
+    diff: { files_changed: 9, insertions: 342, deletions: 71 },
+  },
+});
+
+run({
+  id: 'OLYX-1681', project: 'olyxbase', owner: 'angel', stageAge: 2000, totalAge: 4800,
+  stage: 'done: ready', activity: 'done: ready',
+  title: 'Invoice export — stream the XLSX instead of buffering it',
+});
+write('OLYX-1681', 'gate-rounds.log', '1 pass');
+feed('OLYX-1681', [
+  [4200, '⏺ Read src/invoices/export.ts'],
+  [3800, '🧠 The workbook is built whole in memory — one quarter of them is 2 GB'],
+  [3200, '⏺ Write src/invoices/sheet-stream.ts'],
+  [2600, '⏺ Edit src/invoices/export.ts'],
+  [2200, '⏺ Bash npm run test -- invoices'],
+  [2000, '🏁 success'],
+]);
+result('OLYX-1681', {
+  status: 'ready', owner: 'angel', gate: 'pass', branch: 'feat/stream-invoice-xlsx',
+  worktree: worktreeFor('olyxbase', 'OLYX-1681'),
+  pr_url: 'https://github.com/acme/dashboard/pull/815',
+  metrics: {
+    wall_seconds: 4100,
+    gate_rounds: [{ round: '1', result: 'pass' }],
+    opus_commits: 4, codex_commits: 0,
+    implementer_num_turns: 63,
+    implementer_usage: {
+      input_tokens: 121000, cache_read_input_tokens: 4100000,
+      cache_creation_input_tokens: 150000, output_tokens: 96000,
+    },
+    total_cost_usd: 19.52,
+    usage: {
+      input_tokens: 121000, cache_read_input_tokens: 4100000,
+      cache_creation_input_tokens: 150000, output_tokens: 96000,
+      turns: 63,
+    },
+    diff: { files_changed: 11, insertions: 508, deletions: 122 },
   },
 });
 

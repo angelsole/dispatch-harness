@@ -87,6 +87,52 @@ body {
 
 main { padding: 14px 16px 4px; }
 
+/* --- the summary header -------------------------------------------------------- */
+
+#summary { margin-bottom: 22px; }
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 8px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px 8px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+}
+
+.tile .label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile .value {
+  font-size: 19px;
+  line-height: 1.2;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tile .sub {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note { margin: 8px 0 0; color: var(--faint); font-size: 11px; }
+
 .board { margin-bottom: 22px; }
 
 .board h2 {
@@ -125,6 +171,7 @@ main { padding: 14px 16px 4px; }
     86px 86px             /* labelled in-stage, total */
     92px                  /* diff */
     46px                  /* turns */
+    minmax(60px, auto)    /* cost */
     minmax(48px, auto);   /* gate */
   align-items: center;
   gap: 12px;
@@ -186,6 +233,7 @@ main { padding: 14px 16px 4px; }
 .plus { color: var(--ok); }
 .minus { color: var(--bad); }
 .turns { text-align: right; color: var(--dim); }
+.cost { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .nil { color: var(--faint); }
 
 .pips { display: flex; gap: 3px; }
@@ -245,9 +293,9 @@ main { padding: 14px 16px 4px; }
 .foot a { color: var(--dim); }
 
 /* --- a phone ------------------------------------------------------------------
-   Additive: below 560px the same ten spans of a line reflow into one card. Every
-   item that can hold an unbounded string is shrinkable and clipped here, because
-   a single unshrinkable one scrolls the whole page sideways. */
+   Additive: below 560px the same eleven spans of a line reflow into one card.
+   Every item that can hold an unbounded string is shrinkable and clipped here,
+   because a single unshrinkable one scrolls the whole page sideways. */
 
 @media (max-width: 560px) {
   .bar {
@@ -291,7 +339,8 @@ main { padding: 14px 16px 4px; }
   .run .line > .activity { flex: 1 0 100%; }
   .run .line > .elapsed,
   .run .line > .diff,
-  .run .line > .turns { flex: none; text-align: left; }
+  .run .line > .turns,
+  .run .line > .cost { flex: none; text-align: left; }
   .pips { flex: none; align-self: center; }
 
   .turns::before {
@@ -302,6 +351,17 @@ main { padding: 14px 16px 4px; }
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
+
+  .cost::before {
+    content: 'cost';
+    margin-right: 4px;
+    color: var(--faint);
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 
   .detail { padding: 6px 12px 12px; }
   .detail .title,

@@ -1,0 +1,7 @@
+10:56:13 🧠 A retry queue nobody drains is an outage with extra steps
+11:01:13 ⏺ Write src/webhooks/drain.ts
+11:11:13 ◆ codex Backoff reset belongs in config, not in the drain loop
+11:19:33 ⏺ Edit src/webhooks/drain.ts
+11:26:13 ⏺ Bash npm run test -- webhooks
+11:29:33 🏁 success
+11:31:13 ⏺ Bash gh pr create --draft

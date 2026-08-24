@@ -1,0 +1,46 @@
+{
+  "ticket": "OLYX-1676",
+  "arm": "full",
+  "implementer_model": "opus",
+  "reviewer_model": "gpt-5.6-sol",
+  "base": "main",
+  "pr_url": "https://github.com/acme/valoryx-graphql-api/pull/1149",
+  "demo_url": "",
+  "status": "ready",
+  "owner": "emre",
+  "gate": "pass",
+  "branch": "feat/webhook-dlq-drain",
+  "worktree": "/Users/angel/Projects/valoryx-graphql-api-olyx-1676",
+  "metrics": {
+    "wall_seconds": 3200,
+    "gate_rounds": [
+      {
+        "round": "1",
+        "result": "pass"
+      }
+    ],
+    "opus_commits": 3,
+    "codex_commits": 1,
+    "implementer_num_turns": 41,
+    "implementer_usage": {
+      "input_tokens": 780000,
+      "cache_read_input_tokens": 9570000,
+      "cache_creation_input_tokens": 240000,
+      "output_tokens": 400000
+    },
+    "total_cost_usd": 63.87,
+    "usage": {
+      "input_tokens": 780000,
+      "cache_read_input_tokens": 9570000,
+      "cache_creation_input_tokens": 240000,
+      "output_tokens": 400000,
+      "turns": 41,
+      "zai_credits_est": 3125.1
+    },
+    "diff": {
+      "files_changed": 9,
+      "insertions": 342,
+      "deletions": 71
+    }
+  }
+}

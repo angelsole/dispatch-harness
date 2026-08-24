@@ -203,10 +203,19 @@ One row per run — id, repo, the **provider badge** (GLM or OPUS, off the run's
 `implementer-provider` pin rather than off the stage text, which says
 "Opus (Claude sub)" whatever is actually being spent), the stage and its actor,
 the **activity** line (the tool and file the worker is touching right now),
-time in stage, total elapsed, `+/−`, turns and a pip per gate round. Runs that
+time in stage, total elapsed, `+/−`, turns, **cost** (z.ai credits for a GLM
+run, list-price dollars for an Opus one, `—` when telemetry could not price it)
+and a pip per gate round. Runs that
 `needs_input` are pinned to the top in red, because they are the only thing on
 the board that is waiting on a human. Finished runs collapse underneath,
 newest first.
+
+Above the boards sits the **last 7 days** header — ship rate, PRs a day,
+finished runs, the summed list price, the GLM-vs-Opus per-run comparison —
+taken over every run whose status moved inside the window, not just the capped
+recent feed. Every cost figure is a list-price counterfactual (`wall/cost.js`
+reads what `run-task.sh` already recorded and re-prices nothing): both plans
+are flat-rate, so none of it is money spent.
 
 Click a row and it opens: the run's title, why it is blocked when it is, the
 tail of `feed.log`, and the one control the console has —

@@ -66,9 +66,10 @@
   function signature(run) {
     return JSON.stringify([
       run.state, run.stage, run.actor, run.actorKey, run.provider, run.activity,
-      run.projectLabel, run.title, run.diff, run.turns, run.gateRounds, run.gate,
-      run.outcome, run.prUrl, run.demoUrl, run.branch, run.blocked, run.reason,
-      (run.feed || []).length, (run.feed || []).map((f) => f.text).join('\\u0000'),
+      run.projectLabel, run.title, run.diff, run.turns, run.cost, run.gateRounds,
+      run.gate, run.outcome, run.prUrl, run.demoUrl, run.branch, run.blocked,
+      run.reason, (run.feed || []).length,
+      (run.feed || []).map((f) => f.text).join('\\u0000'),
     ]);
   }
 
@@ -100,6 +101,17 @@
       'data-verdict': String(r && r.verdict || ''),
       title: 'round ' + String(r && r.round || '?') + ': ' + String(r && r.verdict || '?'),
     })));
+  }
+
+  // What the run spent. Cost owns every figure and every string; this file
+  // only places the span, so the board cannot disagree with the header.
+  function costCell(cost) {
+    const text = Cost.formatCostCell(cost);
+    return h('span', {
+      class: text === '—' ? 'cost nil' : 'cost',
+      text,
+      title: Cost.formatCostTooltip(cost),
+    });
   }
 
   function line(run) {
@@ -139,6 +151,7 @@
         text: run.turns == null ? '—' : String(run.turns),
         title: 'turns',
       }),
+      costCell(run.cost),
       gateCell(run.gateRounds),
     ];
   }
@@ -273,6 +286,18 @@
     container.replaceChildren(...want);
   }
 
+  // The header's tiles, straight from Cost: DOM insertion only, so a wrong
+  // number here is a wrong number in cost.js, where the gate can see it.
+  function paintSummary(summary) {
+    $('summary-tiles').replaceChildren(...Cost.summaryTiles(summary).map((tile) => h('div', { class: 'tile' }, [
+      h('span', { class: 'label', text: tile.label }),
+      h('span', { class: 'value', text: tile.value }),
+      h('span', { class: 'sub', text: tile.sub }),
+    ])));
+  }
+
+  $('summary-window').textContent = 'Last ' + Cost.SUMMARY_WINDOW_DAYS + ' days';
+
   let firstPaint = true;
 
   function render(frame) {
@@ -284,6 +309,8 @@
     const alarms = runs.filter((r) => r.state === 'alarm');
     const active = runs.filter((r) => r.state === 'active');
     const recent = runs.filter((r) => r.state === 'ready' || r.state === 'failed');
+
+    paintSummary(frame.summary);
 
     fill($('alarm-rows'), alarms, firstPaint);
     fill($('active-rows'), active, firstPaint);

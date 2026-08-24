@@ -21,6 +21,13 @@
 </header>
 
 <main>
+  <section id="summary" class="board">
+    <h2 id="summary-window"></h2>
+    <div class="tiles" id="summary-tiles"></div>
+    <p class="note">List-price counterfactual: what this work would have cost
+      à la carte. Both plans are flat-rate — nothing here is money spent.</p>
+  </section>
+
   <section id="alarms" class="board loud" hidden>
     <h2>Needs input</h2>
     <div class="rows" id="alarm-rows"></div>
@@ -42,6 +49,7 @@
   Read-only. This machine's runs only. The ambient wall is at <a href="/">/</a>.
 </p>
 
+<script src="/console/cost.js"></script>
 <script src="/console/console.js"></script>
 </body>
 </html>
