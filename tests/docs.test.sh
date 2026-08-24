@@ -120,7 +120,7 @@ DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx
 
 # Guarded at every call site and degrade silently when absent — README owes
 # them nothing.
-GRACEFUL_BINS='osascript caffeinate timeout shasum'
+GRACEFUL_BINS='osascript caffeinate timeout shasum pgrep'
 
 echo "== README prerequisites vs. what the scripts need =="
 PREREQ_SECTION="$(awk '/^## Prerequisites$/{f=1;next} /^## /{f=0} f' "$README")"
