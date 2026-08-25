@@ -39,7 +39,7 @@ that talk to each other optimize for agreement. Their Case A is a critic
 confirming the reviewer's hedged noise, because confirming is the cooperative
 move. Their Case B is worse: the critic raises a real bug, the reviewer rebuts
 with confident prose citing no code at all, and the critic capitulates.
-Confidence beat evidence and the defect shipped.
+Confidence beat evidence, and the critic let the defect stand.
 
 Their fix is at the prompt level — typed disagreement. A critic must answer
 `AGREE`, `DISAGREE_EVIDENCE` with a code citation, or `DISAGREE_CONCERN` for
