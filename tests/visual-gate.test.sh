@@ -56,6 +56,10 @@ HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"; mkdir -p "$RUNS"
 CRITIC_MODE="$ROOT/critic-mode"; printf 'better\n' > "$CRITIC_MODE"
 CRITIC_CALLS="$ROOT/critic-calls.log"; : > "$CRITIC_CALLS"
 CRITIC_PROMPT="$ROOT/critic-prompt.txt"; : > "$CRITIC_PROMPT"
+# The schema the CLI was handed, per call. The prompt only summarises the axes;
+# this is the thing the CLI actually enforces, so an --axes assertion has to read
+# it rather than the prose.
+CRITIC_SCHEMA="$ROOT/critic-schema.json"; : > "$CRITIC_SCHEMA"
 # One answer file per call index, for the cases that must script the two
 # presentation orders apart; empty means "use the mode file".
 CRITIC_SCRIPT="$ROOT/critic-script"; mkdir -p "$CRITIC_SCRIPT"
@@ -83,6 +87,17 @@ with sync_playwright() as p:
 PY
 HAVE_PY=0
 python3 -c 'import numpy, PIL' >/dev/null 2>&1 && HAVE_PY=1
+# The real renderer python with its argv recorded. Which flags the gate hands
+# frames.py is a contract in both directions — the ui kind must add two, and a
+# pixel repo must still see exactly the argv it saw before kinds existed — and
+# neither is visible in the frames or the score.
+FRAMES_ARGV="$ROOT/frames-argv.log"; : > "$FRAMES_ARGV"
+cat > "$FAKES/logging-python" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$FRAMES_ARGV"
+exec "$VISUAL_PY" "\$@"
+EOF
+chmod +x "$FAKES/logging-python"
 HAVE_MAGICK=0
 command -v magick >/dev/null 2>&1 && HAVE_MAGICK=1
 
@@ -181,14 +196,20 @@ fi
 # shape that must still fail the gate.
 cat > "$FAKES/claude" <<EOF
 #!/usr/bin/env bash
-prompt=""; prev=""
-for a in "\$@"; do [ "\$prev" = "-p" ] && prompt="\$a"; prev="\$a"; done
+prompt=""; schema=""; prev=""
+for a in "\$@"; do
+  [ "\$prev" = "-p" ] && prompt="\$a"
+  [ "\$prev" = "--json-schema" ] && schema="\$a"
+  prev="\$a"
+done
 case "\$prompt" in
   *"visual critic"*)
     printf 'critic\n' >> "$CRITIC_CALLS"
     n=\$(grep -c '' "$CRITIC_CALLS" | tr -d ' ')
     printf '%s\n' "\$prompt" > "$CRITIC_PROMPT"
     printf '%s\n' "\$prompt" > "$CRITIC_PROMPT.\$n"
+    printf '%s\n' "\$schema" > "$CRITIC_SCHEMA"
+    printf '%s\n' "\$schema" > "$CRITIC_SCHEMA.\$n"
     a=\$(printf '%s\n' "\$prompt" | sed -n 's/^2\. Image A: //p' | head -1)
     b=\$(printf '%s\n' "\$prompt" | sed -n 's/^3\. Image B: //p' | head -1)
     sha_a=""; sha_b=""
@@ -358,6 +379,18 @@ check "good: with no champion, pairwise is none" \
   "$(jq -r .pairwise "$ROOT/repo/.harness/visual-score.json")" "none"
 check "good: and no critic was paid for" "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "0"
 
+# Back-compat as argv rather than as prose: with none of the kind vars set, the
+# renderer is invoked with exactly the flags it was invoked with before kinds
+# existed. A `--clock frozen` that means the same thing is still a new flag, and
+# a repo pinning its own VISUAL_PY wrapper would see it.
+: > "$FRAMES_ARGV"
+run_gate_on good.html VISUAL_PY="$FAKES/logging-python"
+check "back-compat: the pixel default still passes" "$?" "0"
+PIXEL_ARGV=$(grep -F 'frames.py' "$FRAMES_ARGV" | head -1)
+has "$PIXEL_ARGV" "--ready-js" "back-compat: the renderer argv is the one it always was"
+has_not "$PIXEL_ARGV" "--clock" "back-compat: no --clock when VISUAL_KIND is unset"
+has_not "$PIXEL_ARGV" "--ready-event" "back-compat: nor --ready-event"
+
 # The sheet is required evidence, not a best-effort decoration. Force an
 # impossible byte ceiling: a checks-clean render must fail closed before the
 # critic rather than pass with no image for either model to inspect.
@@ -518,6 +551,174 @@ check "advisory: which cost the round nothing" "$(jq -r '.failures | length' "$S
 check "advisory: and is on the record anyway" "$(jq -r '.advisory | length' "$SCORE")" "1"
 has "$(jq -r '.advisory[0]' "$SCORE")" "raise the hero tower" \
   "advisory: with the one fix a human can act on"
+
+# --- the two boot shapes an app frontend arrives in --------------------------
+# frames.py's own contract, without the gate around it. Both fixtures are the
+# Flutter web shape: nothing painted at load, and readiness that arrives either
+# at the end of an rAF chain or as a one-shot window event.
+FRAMES_JSON="$ROOT/frames.json"
+FRAMES_ERR="$ROOT/frames.err"
+frames_on() {  # $1 = out dir, rest = frames.py args
+  local out="$1"; shift
+  rm -rf "$out"
+  "$VISUAL_PY" "$CREATIVE/frames.py" --out "$out" --tag boot --frames 1 \
+    --wait-ms 100 --settle-ms 200 --width 640 --height 360 --timeout-ms 5000 \
+    "$@" > "$FRAMES_JSON" 2> "$FRAMES_ERR"
+}
+# Distinct colours in a PNG. The rAF-boot fixture paints nothing until its chain
+# finishes, so "more than a flat background" is the assertion that the boot
+# actually completed rather than merely not erroring.
+colours() {
+  python3 -c 'import sys
+from PIL import Image
+print(len(Image.open(sys.argv[1]).convert("RGB").getcolors(maxcolors=1 << 24) or []))' "$1"
+}
+
+# Playwright's clock.install() does not pause the page — rAF, setTimeout and
+# performance.now keep ticking in real time — so this boot shape comes up under
+# BOTH clocks. Asserting both is what makes the frozen half a canary: the day an
+# upgrade starts pausing the page, it fails here instead of on a real app.
+for clock in frozen real; do
+  frames_on "$ROOT/raf-$clock" --url "file://$FX/raf-boot.html" \
+    --clock "$clock" --ready-js 'window.__appReady === true'
+  check "raf boot: an rAF-chain boot is captured under --clock $clock" "$?" "0"
+  exists "raf boot: with a frame to show for it (--clock $clock)" \
+    "$ROOT/raf-$clock/boot-f00.png"
+  gt "raf boot: and the chain finished, so the frame is not the blank pre-boot page (--clock $clock)" \
+    "$(colours "$ROOT/raf-$clock/boot-f00.png")" 3
+done
+
+frames_on "$ROOT/ev-ready" --url "file://$FX/event-ready.html" --clock real \
+  --ready-event fixture-app-ready
+check "ready event: a one-shot window event dispatched after load is observed" "$?" "0"
+exists "ready event: so the shot was taken" "$ROOT/ev-ready/boot-f00.png"
+
+frames_on "$ROOT/ev-never" --url "file://$FX/event-ready.html" --clock real \
+  --ready-event never-dispatched --timeout-ms 2000
+check "ready event: an event that never fires is a failed capture, not a shot" "$?" "1"
+has "$(cat "$FRAMES_ERR")" "frames.py: boot failed" "ready event: with the reason on stderr"
+absent "ready event: and nothing was written" "$ROOT/ev-never/boot-f00.png"
+
+frames_on "$ROOT/ev-both" --url "file://$FX/raf-boot.html" \
+  --ready-event fixture-first-frame --ready-js 'window.__appReady === true'
+check "ready event: --ready-event and --ready-js compose into one predicate" "$?" "0"
+
+# --- the ui kind -------------------------------------------------------------
+# Its own fixture conf, deliberately not the Part A one: that conf pins
+# VISUAL_FRAMES=2, which is exactly the kind default under test and would make a
+# broken default indistinguishable from a working one. Nothing here sets frames,
+# rubric, axes or clock — every assertion below is about what the kind filled in.
+mkdir -p "$ROOT/uikind/.creative"
+cat > "$ROOT/uikind/.creative/visual.conf.sh" <<EOF
+VISUAL_KIND=ui
+VISUAL_URL="file://$FX"
+VISUAL_SHOTS=("screen|/good.html|100")
+VISUAL_WAIT_MS=100
+VISUAL_SETTLE_MS=100
+VISUAL_WIDTH=640
+VISUAL_HEIGHT=360
+VISUAL_CRITIC=1
+EOF
+script_calls
+: > "$FRAMES_ARGV"
+( cd "$ROOT/uikind" && env -u VISUAL_LIVE PATH="$FAKES:$PATH" \
+    CLAUDE_BIN="$FAKES/claude" HARNESS_DIR="$HARNESS" VISUAL_REPO=uikind \
+    VISUAL_PY="$FAKES/logging-python" bash "$CREATIVE/visual-gate.sh" ) \
+  > "$ROOT/gate-uikind.log" 2>&1
+check "ui kind: the gate passes an app-frontend render" "$?" "0"
+UI_ARGV=$(grep -F 'frames.py' "$FRAMES_ARGV" | head -1)
+has "$UI_ARGV" "--clock real" "ui kind: the renderer is given a real clock"
+has "$UI_ARGV" "--frames 2" "ui kind: and two frames rather than six"
+has_not "$UI_ARGV" "--ready-event" "ui kind: with no ready event, because the conf named none"
+exists "ui kind: frame 0" "$ROOT/uikind/.harness/frames/screen-f00.png"
+exists "ui kind: frame 1" "$ROOT/uikind/.harness/frames/screen-f01.png"
+absent "ui kind: and no third frame" "$ROOT/uikind/.harness/frames/screen-f02.png"
+check "ui kind: the critic was asked once, there being no champion" \
+  "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "1"
+check "ui kind: on the six app-UI axes" \
+  "$(jq -r '.properties.axes.required | join(",")' "$CRITIC_SCHEMA")" \
+  "layout_integrity,typography,spacing_alignment,color_contrast,visual_hierarchy,polish"
+file_has "$CRITIC_PROMPT" "layout_integrity" \
+  "ui kind: graded against the ui rubric, which names the same axes"
+has_not "$(cat "$CRITIC_PROMPT")" "grid_discipline" \
+  "ui kind: and no pixel axis reaches the model"
+
+# --- the render that cannot have changed -------------------------------------
+# No thresholds at all, so both fixture pages pass the checks and reach the
+# critic: what is under test here is the SSIM skip, not the checks.
+mkdir -p "$ROOT/unchanged/.creative"
+cat > "$ROOT/unchanged/.creative/visual.conf.sh" <<EOF
+VISUAL_URL="file://$FX"
+VISUAL_SHOTS=("scene|/\${TEST_PAGE:-good.html}|100")
+[ -z "\${TEST_SECOND_SHOT:-}" ] || VISUAL_SHOTS+=("extra|/\$TEST_SECOND_SHOT|100")
+VISUAL_FRAMES=1
+VISUAL_WAIT_MS=100
+VISUAL_SETTLE_MS=100
+VISUAL_WIDTH=640
+VISUAL_HEIGHT=360
+VISUAL_CRITIC="\${TEST_CRITIC:-1}"
+EOF
+run_unchanged() {  # $1 = page, rest = extra env assignments
+  local page="$1"; shift
+  ( cd "$ROOT/unchanged" && env -u VISUAL_LIVE PATH="$FAKES:$PATH" \
+      CLAUDE_BIN="$FAKES/claude" HARNESS_DIR="$HARNESS" VISUAL_REPO=unchanged \
+      TEST_PAGE="$page" "$@" bash "$CREATIVE/visual-gate.sh" ) \
+    > "$ROOT/unchanged-$page.log" 2>&1
+}
+UNCH="$ROOT/unchanged/.harness/visual-score.json"
+printf 'better\n' > "$CRITIC_MODE"
+run_unchanged good.html TEST_CRITIC=0
+check "unchanged: a first render to crown" "$?" "0"
+env HARNESS_DIR="$HARNESS" bash "$CREATIVE/champion.sh" promote unchanged \
+  "$ROOT/unchanged/.harness" > "$ROOT/unchanged-promote.log" 2>&1
+check "unchanged: promoted by hand, as champions always are" "$?" "0"
+
+script_calls
+run_unchanged good.html VISUAL_UNCHANGED_SSIM=0.99
+check "unchanged: a render identical to the champion passes the round" "$?" "0"
+gt "unchanged: SSIM against the champion is ~1" \
+  "$(jq -r '.checks.shots.scene.vs_champion.ssim' "$UNCH")" 0.99
+check "unchanged: without paying for a single critic call" \
+  "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "0"
+check "unchanged: the verdict is a tie, never a reused better or worse" \
+  "$(jq -r .pairwise "$UNCH")" "tie"
+check "unchanged: and the score says the critic did not run" \
+  "$(jq -r .critic_ran "$UNCH")" "false"
+has "$(jq -r '.advisory[0]' "$UNCH")" "critic skipped" \
+  "unchanged: with one advisory line saying why"
+has "$(jq -r '.advisory[0]' "$UNCH")" "0.99" \
+  "unchanged: naming the threshold the render cleared"
+
+# The skip is a reason the critic did not run, so it may not speak for a round
+# where the critic was never going to run: no verdict was skipped there.
+run_unchanged good.html VISUAL_UNCHANGED_SSIM=0.99 TEST_CRITIC=0
+check "unchanged: a critic-off round still passes" "$?" "0"
+check "unchanged: and claims no pairwise verdict it did not obtain" \
+  "$(jq -r .pairwise "$UNCH")" "none"
+check "unchanged: nor an advisory about a call nobody was going to make" \
+  "$(jq -r '.advisory | length' "$UNCH")" "0"
+
+script_calls
+run_unchanged bad.html VISUAL_UNCHANGED_SSIM=0.99
+check "unchanged: a visibly different render breaks no check here" "$?" "0"
+check "unchanged: but it does pay for both presentation orders" \
+  "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "2"
+check "unchanged: and gets a real pairwise answer" "$(jq -r .pairwise "$UNCH")" "better"
+
+# One shot with no champion frame is exactly the round that needs an opinion.
+script_calls
+run_unchanged good.html VISUAL_UNCHANGED_SSIM=0.99 TEST_SECOND_SHOT=event-ready.html
+check "unchanged: a run carrying a shot the champion has never seen still passes" "$?" "0"
+check "unchanged: and is never skipped on the strength of the other shot" \
+  "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "2"
+
+run_unchanged good.html VISUAL_UNCHANGED_SSIM=2
+check "unchanged: a threshold outside (0,1] is a broken contract, not a skip" "$?" "2"
+file_has "$UNCH" "expected a number in (0,1]" "unchanged: with the reason in the score"
+
+run_unchanged good.html VISUAL_KIND=flutter
+check "kind: an unknown VISUAL_KIND fails the gate closed" "$?" "2"
+file_has "$UNCH" "expected pixel or ui" "kind: naming what it expected"
 fi
 
 # --- infrastructure is not taste ---------------------------------------------
@@ -682,6 +883,53 @@ env CLAUDE_BIN="$FAKES/claude" bash "$CREATIVE/critic.sh" \
 check "semantic: a two-image call that states no preference is a failed critic" "$?" "1"
 file_has "$ROOT/verdict.json" "must score images.A and images.B" \
   "semantic: the failed verdict records the broken invariant"
+
+# --- the axes are the caller's ------------------------------------------------
+# The prompt only summarises the axes; the --json-schema argument is what the
+# CLI enforces, so that is what these read. critic.sh knows nothing about kinds:
+# it grades on the names it is handed.
+script_calls
+printf 'better\n' > "$CRITIC_MODE"
+env CLAUDE_BIN="$FAKES/claude" bash "$CREATIVE/critic.sh" \
+  --challenger "$ROOT/sheet.png" --out "$ROOT/axes-default.json" \
+  > "$ROOT/critic-axes-default.log" 2>&1
+check "axes: the default is still the six pixel axes" \
+  "$(jq -r '.properties.axes.required | join(",")' "$CRITIC_SCHEMA")" \
+  "palette_discipline,grid_discipline,silhouette_readability,composition,animation_continuity,style_match_to_reference"
+
+script_calls
+env CLAUDE_BIN="$FAKES/claude" bash "$CREATIVE/critic.sh" \
+  --challenger "$ROOT/sheet.png" --axes layout_integrity,typography \
+  --out "$ROOT/axes-two.json" > "$ROOT/critic-axes-two.log" 2>&1
+check "axes: a critic asked for two axes still returns a verdict" "$?" "0"
+check "axes: and the schema requires exactly those two" \
+  "$(jq -r '.properties.axes.required | join(",")' "$CRITIC_SCHEMA")" \
+  "layout_integrity,typography"
+check "axes: with nothing else allowed alongside them" \
+  "$(jq -r '.properties.axes | [(.properties | keys | join(",")), .additionalProperties] | join(" ")' \
+     "$CRITIC_SCHEMA")" "layout_integrity,typography false"
+file_has "$CRITIC_PROMPT" "layout_integrity, typography" \
+  "axes: which the prompt names too, so the model fills them in with meaning"
+
+script_calls
+env CLAUDE_BIN="$FAKES/claude" bash "$CREATIVE/critic.sh" \
+  --challenger "$ROOT/sheet.png" --axes 'Layout-Integrity' \
+  --out "$ROOT/axes-bad.json" > "$ROOT/critic-axes-bad.log" 2>&1
+check "axes: a name that is not [a-z_]+ cannot become a schema key" "$?" "2"
+file_has "$ROOT/critic-axes-bad.log" "is not [a-z_]+" "axes: naming the offending axis"
+check "axes: and nothing was billed for it" \
+  "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "0"
+
+# The rubric fallback is the caller's too: critic.sh is told which file to fall
+# back to rather than being told which kind of picture this is.
+script_calls
+env CLAUDE_BIN="$FAKES/claude" bash "$CREATIVE/critic.sh" \
+  --challenger "$ROOT/sheet.png" --rubric "$ROOT/no-such-rubric.md" \
+  --rubric-default "$CREATIVE/rubric-ui.md" --out "$ROOT/rubric-default.json" \
+  > "$ROOT/critic-rubric-default.log" 2>&1
+check "rubric default: a missing --rubric falls back to the file the caller named" "$?" "0"
+file_has "$CRITIC_PROMPT" "layout_integrity" \
+  "rubric default: so the ui rubric is what got pasted into the call"
 
 # --- the calibrated protocol -------------------------------------------------
 # Blind, both orders, concordance or a margin — with the model faked per call
@@ -879,7 +1127,7 @@ check "eval: and refuses to run nine critics at a subscription" "$?" "2"
 # The rubric is pasted verbatim into a blind call, so a rubric that names the
 # champion un-blinds it. The two this repo ships must not.
 leak=''
-for r in "$CREATIVE/rubric.md" "$SRC/.creative/rubric.md"; do
+for r in "$CREATIVE/rubric.md" "$CREATIVE/rubric-ui.md" "$SRC/.creative/rubric.md"; do
   grep -qiE 'champion|challenger|the (current|new) render' "$r" && leak="$leak $r"
 done
 if [ -z "$leak" ]; then ok "blind: no shipped rubric names either image"
@@ -953,6 +1201,25 @@ else
     *) bad "live: the same sheet twice came back as $(jq -r .pairwise "$ROOT/live-pair.json") — the judge preferred a position over a picture" ;;
   esac
 fi
+
+# The `ui` kind is nothing without the two artefacts it defaults to, and a
+# rubric whose table does not name the axes the schema requires makes the
+# critic's answer meaningless rather than merely noisy.
+exists "ui kind: the app-UI rubric ships" "$CREATIVE/rubric-ui.md"
+exists "ui kind: and an example contract for a Flutter web app" \
+  "$CREATIVE/templates/visual.conf-ui.example.sh"
+for axis in layout_integrity typography spacing_alignment color_contrast \
+            visual_hierarchy polish; do
+  file_has "$CREATIVE/rubric-ui.md" "\`$axis\`" \
+    "ui kind: the ui rubric's table names $axis"
+  file_has "$CREATIVE/visual-gate.sh" "$axis" \
+    "ui kind: and the kind's default axis list carries it too"
+done
+for v in VISUAL_KIND VISUAL_CLOCK VISUAL_READY_EVENT VISUAL_AXES \
+         VISUAL_UNCHANGED_SSIM; do
+  file_has "$CREATIVE/README.md" "$v" "docs: the creative README documents $v"
+done
+file_has "$CREATIVE/README.md" "flutter" "docs: with the Flutter web recipe"
 
 # The profile is the guarantee, so assert it rather than trusting the prose.
 SETTINGS="$CREATIVE/critic-settings.json"
