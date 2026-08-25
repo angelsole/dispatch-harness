@@ -86,7 +86,8 @@ OUTSIDE_EVIDENCE="$ROOT/outside-evidence.txt"
 printf 'external text can never verify reviewed code\n' > "$OUTSIDE_EVIDENCE"
 ln -s "$OUTSIDE_EVIDENCE" "$REPO/evidence-link"
 printf 'abcdefghij\0klmnopqrst' > "$REPO/binary-evidence"
-git -C "$REPO" add evidence-link binary-evidence
+printf '😀😀😀😀😀\n' > "$REPO/unicode-evidence"
+git -C "$REPO" add evidence-link binary-evidence unicode-evidence
 git -C "$REPO" commit -q -m init
 git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
@@ -186,6 +187,13 @@ JSON
       nul-bridged-evidence) cat > .harness/refuted.json <<'JSON'
 [{"id": "F1", "refuted": true, "reason": "the binary fixture appears to contain this text",
   "evidence": {"file": "binary-evidence", "excerpt": "abcdefghijklmnopqrst"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      short-unicode-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "the Unicode fixture contains this exact excerpt",
+  "evidence": {"file": "unicode-evidence", "excerpt": "😀😀😀😀😀"}},
  {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
   "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
@@ -546,6 +554,17 @@ check "binary citation: valid text evidence still drops its own finding" \
   "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
 file_has "$RUN/refute-discarded.json" "contiguous verbatim slice" \
   "binary citation: the byte mismatch is recorded as the rejection reason"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- excerpt length counts characters rather than UTF-8 bytes --"
+printf 'short-unicode-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-SHORT-UNICODE ""
+check "Unicode citation: five multibyte characters remain under the minimum" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "Unicode citation: a long enough text excerpt remains valid" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+file_has "$RUN/refute-discarded.json" "under ten characters" \
+  "Unicode citation: the character-count rejection is recorded"
 printf 'spurious\n' > "$REFUTE_MODE"
 
 echo "-- doubt promotes, and says out loud that it is doubt --"

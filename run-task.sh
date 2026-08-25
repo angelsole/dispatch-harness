@@ -2532,7 +2532,7 @@ run_refute_pass() {  # $1 = prompt
 # harness owns the worktree, so it can go and look. Empty output = the citation
 # holds; anything printed is why it does not.
 review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
-  local rel="$1" excerpt="$2" body_hex excerpt_hex index_entry
+  local rel="$1" excerpt="$2" body_hex excerpt_hex excerpt_chars index_entry
   # Apply every path policy to its repository-relative spelling. Git accepts a
   # leading ./, but it must not turn orchestration metadata into reviewable code.
   while [ "${rel#./}" != "$rel" ]; do rel=${rel#./}; done
@@ -2550,7 +2550,10 @@ review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
   case "$index_entry" in
     120000\ *) printf '%s is a symlink, not a worktree-owned evidence file' "$rel"; return 0 ;;
   esac
-  [ "$(printf '%s' "$excerpt" | tr -d '[:space:]' | wc -c | tr -d ' ')" -ge 10 ] \
+  excerpt_chars=$(printf '%s' "$excerpt" \
+    | jq -Rrs 'gsub("\\s"; "") | length' 2>/dev/null) \
+    || { printf 'the excerpt length could not be measured'; return 0; }
+  [ "$excerpt_chars" -ge 10 ] \
     || { printf 'the excerpt is under ten characters of code'; return 0; }
   [ -r "$WORKTREE/$rel" ] \
     || { printf '%s could not be read' "$rel"; return 0; }
