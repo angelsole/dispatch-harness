@@ -72,8 +72,8 @@ anything:
   reviewed code. A tracked *symlink* is rejected outright on its index mode: the
   bytes behind a link need not belong to this checkout, so the harness never
   follows one, wherever it points.
-- **The excerpt is at least ten characters of code**, counted as characters
-  rather than bytes.
+- **The excerpt is at least ten non-whitespace characters of code**, counted as
+  characters rather than bytes.
 - **The excerpt is a contiguous verbatim slice of that file.** The whole file is
   compared at once, byte-exactly through a hex encoding, because a per-line
   match would happily accept an excerpt stitched together from lines that never
