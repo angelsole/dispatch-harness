@@ -26,7 +26,8 @@ green rounds later the picture is worse than where it started.
 | `contact-sheet.sh` | The frames as one sheet, kept under 500 KB (above that the Read tool recompresses PNGs to JPEG and smears every hard edge the checks care about). |
 | `critic.sh` | The critic calls: fresh session, no shell, `--json-schema`, reference board → image A → image B, asked twice with A and B swapped. |
 | `critic-settings.json` | That profile. |
-| `rubric.md` | The default six axes, used when the repo ships no `.creative/rubric.md`. |
+| `rubric.md` | The default six pixel-art axes, used when a `pixel` repo ships no `.creative/rubric.md`. |
+| `rubric-ui.md` | The same for `VISUAL_KIND=ui`: six axes about layout, type, spacing, contrast, hierarchy and finish. |
 | `champion.sh` | `promote <repo> <run-id\|dir>` / `show [repo]`. The only way a champion changes. |
 | `critic-eval.sh` | The critic's own test: known pairs through the real critic, scored on accuracy, order-concordance and repeat-agreement. Live only. |
 | `eval/` | `pairs.json` and the sheets it names — the pairs a human has already ranked. |
@@ -35,7 +36,7 @@ green rounds later the picture is worse than where it started.
 | `palette.py` | `extract` / `show` / `check` the palette LUT — the single lock artefact. |
 | `factory.mcp.json` | The two vendors as MCP servers, for a repo whose `MCP_CONFIG` points here. |
 | `factory-demo.sh` | Generate → post-pass → contact sheet, in one re-runnable command. |
-| `templates/` | `bible.md`, `rubric.md`, `proportions.md` — the skeletons a repo copies into its own `.creative/`. |
+| `templates/` | `bible.md`, `rubric.md`, `proportions.md` — the skeletons a repo copies into its own `.creative/` — plus `visual.conf-ui.example.sh`, a worked contract for a Flutter web app. |
 
 ## Turning it on for a repo
 
@@ -58,6 +59,65 @@ VISUAL_GATE_CMD="bash $HARNESS_DIR/profiles/visual/creative/visual-gate.sh"
 
 Neither, and the profile never loads: no `visual` field in `result.json`, no
 stage, no hook, nothing else changed.
+
+## Two kinds of picture
+
+The gate was built for pixel art and it still defaults to it. An ordinary app
+frontend — a React dashboard, a Flutter web build — is a different picture
+graded on different axes: `grid_discipline` on anti-aliased type means nothing,
+continuity across six frames of a static screen means nothing either, and what
+actually breaks an app screen is layout, spacing, contrast and hierarchy.
+`VISUAL_KIND` is which of the two this repo is.
+
+| Var | What it does | Default |
+| --- | --- | --- |
+| `VISUAL_KIND` | `pixel` or `ui`. Picks the defaults below and nothing else. | `pixel` |
+| `VISUAL_CLOCK` | `frozen` pins the page's Date and advances settle/wait in fake time; `real` skips the clock entirely and spends real milliseconds. | `frozen` (`ui`: `real`) |
+| `VISUAL_READY_EVENT` | A window event name to wait on, e.g. `flutter-first-frame`. The listener is installed before any page script runs, so a one-shot event is not missed. Composes with `VISUAL_READY_JS` — both must become true. | empty |
+| `VISUAL_AXES` | Comma-separated axis names for the critic's schema, `[a-z_]+` each. | the six in `rubric.md` (`ui`: the six in `rubric-ui.md`) |
+| `VISUAL_UNCHANGED_SSIM` | A float in (0,1]. When every shot's first frame scores at least this SSIM against its champion frame, the round records `tie` and skips the critic. Empty is off. | empty |
+
+`ui` also defaults `VISUAL_FRAMES` to 2 — continuity is a pixel-art concern and
+six screenshots of a static screen are five too many — and falls back to
+`rubric-ui.md` rather than `rubric.md` when the repo ships no
+`.creative/rubric.md`. Every one of those defaults is still one line in the conf
+away, and the conf wins: the kind fills in only what is still empty after it has
+been sourced.
+
+**The axes and the rubric travel together.** A conf that sets `VISUAL_AXES` must
+point `VISUAL_RUBRIC` at a rubric whose table names the same axes. Nothing
+enforces it — an axis the rubric never describes is graded on the model's own
+idea of what the word means, which is the noise this whole stage exists to
+remove.
+
+`VISUAL_UNCHANGED_SSIM` is the money knob. A round with a champion pays for two
+critic calls (~$1, 3–6 min); a diff that left the render pixel-identical to the
+reigning one is paying that to answer a question `vs_champion.ssim` already
+answered for free. The skip is `tie`, never a `better` reused from an earlier
+round: "not worse" is the honest reading of "unchanged". It never applies when
+any shot has no champion frame — a new shot is exactly the round that needs an
+opinion.
+
+### A Flutter web app
+
+`templates/visual.conf-ui.example.sh` is the worked contract; copy it to the
+target repo's `.creative/visual.conf.sh`. Two things about Flutter in
+particular:
+
+- **CanvasKit needs WebGL, and headless Chromium has no GPU.** The gate always
+  launches with `--use-angle=swiftshader --enable-unsafe-swiftshader`, which is
+  what makes CanvasKit come up at all. Nothing to set — but a blank render is
+  where to look first.
+- **A real clock.** The engine boots through WASM instantiation, renderer
+  warm-up and font loading, and `ui` therefore defaults to `VISUAL_CLOCK=real`.
+  Readiness comes from `VISUAL_READY_EVENT=flutter-first-frame`, which is a
+  one-shot event and cannot be polled for after the fact.
+
+And the gotcha that is not Flutter's: whatever `VISUAL_SERVER_CMD` runs must
+print a URL containing a port that `VISUAL_SERVER_PORT_RE` matches, because that
+line is the only way the gate learns where the app is. A cold `flutter run -d
+web-server` compiles before it says a word, so raise `VISUAL_SERVER_TIMEOUT`
+well above its 30 s default.
 
 ## The factory
 

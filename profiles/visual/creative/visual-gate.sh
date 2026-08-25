@@ -115,26 +115,37 @@ not_run_die() {  # $1 = the one-line reason, $2 = the remedy command
 # re-render for free is the one that gets used). A conf that assigns plainly
 # wins over the environment; a conf that wants the other precedence writes
 # ${VAR:-…} itself, as this repo's does for VISUAL_CRITIC.
+#
+# Four of them — VISUAL_FRAMES, VISUAL_CLOCK, VISUAL_RUBRIC, VISUAL_AXES — are
+# deliberately left EMPTY here instead of getting their hard default. Their
+# default depends on VISUAL_KIND, which the conf is the thing that sets, so a
+# value filled in before the conf is sourced could never be recognised as unset
+# afterwards. They are filled from the kind below, and validated there.
 VISUAL_URL="${VISUAL_URL:-}"
+VISUAL_KIND="${VISUAL_KIND:-}"
 VISUAL_SERVER_CMD="${VISUAL_SERVER_CMD:-}"
 VISUAL_SERVER_PORT_RE="${VISUAL_SERVER_PORT_RE:-http://[^:]*:([0-9]+)}"
 VISUAL_SERVER_TIMEOUT="${VISUAL_SERVER_TIMEOUT:-30}"
 VISUAL_SHOTS=()
-VISUAL_FRAMES="${VISUAL_FRAMES:-6}"
+VISUAL_FRAMES="${VISUAL_FRAMES:-}"
 VISUAL_WAIT_MS="${VISUAL_WAIT_MS:-750}"
 VISUAL_SETTLE_MS="${VISUAL_SETTLE_MS:-3000}"
 VISUAL_WIDTH="${VISUAL_WIDTH:-1280}"
 VISUAL_HEIGHT="${VISUAL_HEIGHT:-720}"
 VISUAL_DPR="${VISUAL_DPR:-1}"
 VISUAL_READY_JS="${VISUAL_READY_JS:-}"
+VISUAL_READY_EVENT="${VISUAL_READY_EVENT:-}"
+VISUAL_CLOCK="${VISUAL_CLOCK:-}"
 VISUAL_REDUCED_MOTION="${VISUAL_REDUCED_MOTION:-reduce}"
 VISUAL_COLOR_SCHEME="${VISUAL_COLOR_SCHEME:-dark}"
 VISUAL_ANIMATIONS="${VISUAL_ANIMATIONS:-disabled}"
 VISUAL_REAL_WAIT_MS="${VISUAL_REAL_WAIT_MS:-0}"
 VISUAL_PALETTE="${VISUAL_PALETTE:-}"
 VISUAL_REFS="${VISUAL_REFS:-}"
-VISUAL_RUBRIC="${VISUAL_RUBRIC:-.creative/rubric.md}"
+VISUAL_RUBRIC="${VISUAL_RUBRIC:-}"
+VISUAL_AXES="${VISUAL_AXES:-}"
 VISUAL_CRITIC="${VISUAL_CRITIC:-1}"
+VISUAL_UNCHANGED_SSIM="${VISUAL_UNCHANGED_SSIM:-}"
 VISUAL_MAX_OFFPALETTE_PCT="${VISUAL_MAX_OFFPALETTE_PCT:-}"
 VISUAL_MAX_OFFGRID_PCT="${VISUAL_MAX_OFFGRID_PCT:-}"
 VISUAL_MAX_PURE_BLACK_PCT="${VISUAL_MAX_PURE_BLACK_PCT:-}"
@@ -172,9 +183,63 @@ case "$VISUAL_CRITIC" in
   0|1) ;;
   *) die 2 "$VISUAL_CONF sets VISUAL_CRITIC='$VISUAL_CRITIC' — expected 0 or 1" ;;
 esac
+
+# --- what kind of picture this is --------------------------------------------
+# `pixel` is the gate this stage was built for: pixel art on a locked grid and
+# palette, six frames of it, graded on axes about grid and silhouette. `ui` is
+# an ordinary app frontend — a dashboard, a Flutter web build — where
+# grid_discipline on anti-aliased type means nothing, continuity across six
+# frames of a static screen means nothing either, and what actually breaks is
+# layout, spacing, contrast and hierarchy. The kind picks defaults and only
+# defaults: everything below is still one line in the conf away.
+#
+# It runs HERE, after the conf, because the conf is what sets the kind. Only
+# what is still empty is filled, so the precedence is unchanged: environment,
+# then the conf, then the kind.
+case "${VISUAL_KIND:=pixel}" in
+  pixel)
+    VISUAL_FRAMES="${VISUAL_FRAMES:-6}"
+    VISUAL_CLOCK="${VISUAL_CLOCK:-frozen}"
+    VISUAL_RUBRIC="${VISUAL_RUBRIC:-.creative/rubric.md}"
+    KIND_RUBRIC="$SELF_DIR/rubric.md"
+    ;;
+  ui)
+    VISUAL_FRAMES="${VISUAL_FRAMES:-2}"
+    VISUAL_CLOCK="${VISUAL_CLOCK:-real}"
+    VISUAL_RUBRIC="${VISUAL_RUBRIC:-.creative/rubric.md}"
+    VISUAL_AXES="${VISUAL_AXES:-layout_integrity,typography,spacing_alignment,color_contrast,visual_hierarchy,polish}"
+    KIND_RUBRIC="$SELF_DIR/rubric-ui.md"
+    ;;
+  *) die 2 "$VISUAL_CONF sets VISUAL_KIND='$VISUAL_KIND' — expected pixel or ui" ;;
+esac
 case "$VISUAL_FRAMES" in
   ''|*[!0-9]*|0) die 2 "$VISUAL_CONF sets VISUAL_FRAMES='$VISUAL_FRAMES' — expected a positive integer" ;;
 esac
+case "$VISUAL_CLOCK" in
+  frozen|real) ;;
+  *) die 2 "$VISUAL_CONF sets VISUAL_CLOCK='$VISUAL_CLOCK' — expected frozen or real" ;;
+esac
+# Axis names become JSON schema keys and jq paths. Validate the contract here,
+# even when the critic is disabled or an unchanged render will skip it, so the
+# same configuration cannot pass or fail depending on which render branch runs.
+if [ -n "$VISUAL_AXES" ]; then
+  case "$VISUAL_AXES" in
+    ,*|*,|*,,*) die 2 "$VISUAL_CONF sets VISUAL_AXES='$VISUAL_AXES' — expected a comma-separated list of [a-z_]+ names" ;;
+  esac
+  IFS=',' read -r -a VISUAL_AXES_ARRAY <<<"$VISUAL_AXES"
+  for axis in "${VISUAL_AXES_ARRAY[@]}"; do
+    case "$axis" in
+      *[!a-z_]*) die 2 "$VISUAL_CONF sets VISUAL_AXES='$VISUAL_AXES' — expected a comma-separated list of [a-z_]+ names" ;;
+    esac
+  done
+fi
+# A threshold in (0,1]: SSIM is a similarity, and 0 would skip the critic on
+# every render including a black frame.
+if [ -n "$VISUAL_UNCHANGED_SSIM" ]; then
+  awk -v t="$VISUAL_UNCHANGED_SSIM" \
+    'BEGIN { exit !(t ~ /^[0-9]*\.?[0-9]+$/ && t + 0 > 0 && t + 0 <= 1) }' \
+    || die 2 "$VISUAL_CONF sets VISUAL_UNCHANGED_SSIM='$VISUAL_UNCHANGED_SSIM' — expected a number in (0,1]"
+fi
 [ "${#VISUAL_SHOTS[@]}" -gt 0 ] \
   || die 2 "$VISUAL_CONF declares no VISUAL_SHOTS — there is nothing to render"
 
@@ -298,13 +363,22 @@ for entry in "${VISUAL_SHOTS[@]}"; do
     *[!A-Za-z0-9._-]*) die 2 "VISUAL_SHOTS name '$name' contains unsafe characters — use letters, digits, dot, underscore or hyphen" ;;
   esac
   step "render: $name"
-  if ! "$VISUAL_PY" "$SELF_DIR/frames.py" \
-        --url "$VISUAL_URL$suffix" --out "$FRAMES_DIR" --tag "$name" \
-        --frames "$VISUAL_FRAMES" --wait-ms "$waitms" --settle-ms "$VISUAL_SETTLE_MS" \
-        --width "$VISUAL_WIDTH" --height "$VISUAL_HEIGHT" --dpr "$VISUAL_DPR" \
-        --ready-js "$VISUAL_READY_JS" --reduced-motion "$VISUAL_REDUCED_MOTION" \
-        --color-scheme "$VISUAL_COLOR_SCHEME" --animations "$VISUAL_ANIMATIONS" \
-        --real-wait-ms "$VISUAL_REAL_WAIT_MS" > "$VISUAL_TMP/render-$name.json"; then
+  # The two new flags are appended only when they say something frames.py does
+  # not already do, so a pixel repo's render is invoked with the argv it has
+  # always been invoked with.
+  RENDER_ARGS=(--url "$VISUAL_URL$suffix" --out "$FRAMES_DIR" --tag "$name"
+               --frames "$VISUAL_FRAMES" --wait-ms "$waitms"
+               --settle-ms "$VISUAL_SETTLE_MS" --width "$VISUAL_WIDTH"
+               --height "$VISUAL_HEIGHT" --dpr "$VISUAL_DPR"
+               --ready-js "$VISUAL_READY_JS"
+               --reduced-motion "$VISUAL_REDUCED_MOTION"
+               --color-scheme "$VISUAL_COLOR_SCHEME"
+               --animations "$VISUAL_ANIMATIONS"
+               --real-wait-ms "$VISUAL_REAL_WAIT_MS")
+  [ "$VISUAL_CLOCK" = frozen ] || RENDER_ARGS+=(--clock "$VISUAL_CLOCK")
+  [ -z "$VISUAL_READY_EVENT" ] || RENDER_ARGS+=(--ready-event "$VISUAL_READY_EVENT")
+  if ! "$VISUAL_PY" "$SELF_DIR/frames.py" "${RENDER_ARGS[@]}" \
+        > "$VISUAL_TMP/render-$name.json"; then
     die 1 "render: shot '$name' produced no frames at $VISUAL_URL$suffix — the page did not come up, or the ready predicate never fired"
   fi
   echo "render: $name -> $(jq -r '.frames | length' "$VISUAL_TMP/render-$name.json") frames in $(jq -r .seconds "$VISUAL_TMP/render-$name.json")s"
@@ -366,6 +440,26 @@ if ! bash "$SELF_DIR/contact-sheet.sh" "$SHEET" "${SHEET_FRAMES[@]}"; then
 fi
 [ -f "$SHEET" ] || die 2 "contact sheet: the builder returned success without writing $SHEET"
 
+# --- the render that cannot have changed ---------------------------------------
+# The critic costs ~$1 and 3–6 minutes per round with a champion, and a round
+# whose render is pixel-identical to the reigning one is asking it a question
+# SSIM has already answered for free. vcheck.py computed that number a few lines
+# ago; the skip reads it rather than measuring anything again. Every shot must
+# clear the bar and every shot must HAVE a champion frame — one new shot with
+# nothing to compare against is exactly the round that needs an opinion.
+# Only ever a reason the critic did not run: on a round where it was never going
+# to run anyway, this must not rewrite `pairwise` or claim an advisory.
+UNCHANGED_NOTE=""
+if [ -n "$VISUAL_UNCHANGED_SSIM" ] && [ "$CHAMPION_COUNT" -gt 0 ] \
+   && [ "$VISUAL_CRITIC" = 1 ] && [ "$CHECKS_PASS" = "true" ]; then
+  MIN_SSIM=$(jq -r '[.shots[].vs_champion.ssim]
+    | if length == 0 or any(. == null) then "" else min end' "$CHECKS")
+  if [ -n "$MIN_SSIM" ] && awk -v s="$MIN_SSIM" -v t="$VISUAL_UNCHANGED_SSIM" \
+       'BEGIN { exit !(s + 0 >= t + 0) }'; then
+    UNCHANGED_NOTE="critic skipped — render is pixel-identical to the champion (min SSIM $MIN_SSIM ≥ $VISUAL_UNCHANGED_SSIM)"
+  fi
+fi
+
 # --- the critic ----------------------------------------------------------------
 CRITIC_RAN=0
 CRITIC_RC=0
@@ -373,12 +467,20 @@ if [ "$VISUAL_CRITIC" != 1 ]; then
   echo "critic: off (VISUAL_CRITIC=0)"
 elif [ "$CHECKS_PASS" != "true" ]; then
   echo "critic: not asked — the deterministic checks already failed, and a paid opinion adds nothing to that"
+elif [ -n "$UNCHANGED_NOTE" ]; then
+  echo "critic: $UNCHANGED_NOTE"
 else
   step "critic"
   CRITIC_RAN=1
-  RUBRIC_ARG="$SELF_DIR/rubric.md"
+  # The fallback is kind-aware: a ui repo with no rubric of its own must not be
+  # graded on the pixel rubric under ui axes, which is the one mismatch that
+  # makes the critic's answer meaningless rather than merely noisy.
+  RUBRIC_ARG="$KIND_RUBRIC"
   [ -f "$VISUAL_RUBRIC" ] && RUBRIC_ARG="$VISUAL_RUBRIC"
   CRITIC_ARGS=(--challenger "$SHEET" --rubric "$RUBRIC_ARG" --out "$CRITIC_OUT")
+  [ "$KIND_RUBRIC" = "$SELF_DIR/rubric.md" ] \
+    || CRITIC_ARGS+=(--rubric-default "$KIND_RUBRIC")
+  [ -z "$VISUAL_AXES" ] || CRITIC_ARGS+=(--axes "$VISUAL_AXES")
   [ -n "$CHAMPION_SHEET" ] && CRITIC_ARGS+=(--champion "$CHAMPION_SHEET")
   [ -n "$VISUAL_REFS" ] && [ -d "$VISUAL_REFS" ] && CRITIC_ARGS+=(--refs "$VISUAL_REFS")
   bash "$SELF_DIR/critic.sh" "${CRITIC_ARGS[@]}" || CRITIC_RC=$?
@@ -407,6 +509,7 @@ jq -n \
   --argjson render_seconds "$RENDER_SECONDS" \
   --argjson champion_shots "$CHAMPION_COUNT" \
   --argjson critic_ran "$CRITIC_RAN" \
+  --arg unchanged "$UNCHANGED_NOTE" \
   --slurpfile checks "$CHECKS" \
   --slurpfile critic "$CRITIC_JSON" \
   '($critic[0] // null) as $c
@@ -414,12 +517,12 @@ jq -n \
       contact_sheet:$sheet, frames_dir:$frames,
       render_seconds:$render_seconds, champion_shots:$champion_shots,
       checks:($checks[0] // {}), critic:$c, critic_ran:($critic_ran == 1),
-      pairwise:($c.pairwise // "none"),
+      pairwise:(if $unchanged != "" then "tie" else ($c.pairwise // "none") end),
       critic_calibration:($c.calibration // null),
       worst_axis:($c.worst_axis // ""),
       one_fix:($c.one_fix // ""),
       failures:[(($checks[0].failures) // [])[] | .reason],
-      advisory:[]}' > "$SCORE"
+      advisory:(if $unchanged != "" then [$unchanged] else [] end)}' > "$SCORE"
 
 # The critic's two failure modes, appended in the words the fix round is handed.
 # `pairwise: worse` is listed first on purpose: it is the verdict this stage

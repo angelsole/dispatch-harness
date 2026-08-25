@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>visual gate fixture — rAF boot</title>
+<!--
+  An app that comes up the way an engine-boot frontend comes up: nothing is on
+  the screen at load, and the first painted frame is at the end of a chain of
+  requestAnimationFrame callbacks. Flutter web's CanvasKit boot has this shape —
+  WASM instantiation, renderer warm-up and font loading are scheduled across
+  animation frames, and the app signals readiness only once the first real frame
+  has been drawn.
+
+  What the fixture is FOR: proving that this boot shape is captured under BOTH
+  clocks. frames.py's frozen clock only pumps fake time after the ready
+  predicate has fired, which looks like it must deadlock a boot that needs
+  animation frames to reach ready — but Playwright's clock.install() does not
+  pause the page, so rAF keeps ticking in real time and the chain finishes.
+  tests/visual-gate.test.sh asserts both modes, so the day a Playwright upgrade
+  does start pausing the page, the frozen half fails here instead of failing on
+  a real Flutter app.
+
+  The page paints nothing until the chain finishes, so a boot that never
+  completed is visible as a blank frame rather than as a subtly different one.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #14182c; }
+  body { width: 640px; height: 360px; overflow: hidden; }
+  i { position: absolute; display: block; }
+</style>
+<body>
+<script>
+  var STEPS = 20;
+  var step = 0;
+  function boot() {
+    step += 1;
+    if (step < STEPS) { requestAnimationFrame(boot); return; }
+    var blocks = [
+      [0, 288, 640, 32, '#1e2440'], [0, 320, 640, 40, '#2b3358'],
+      [32, 160, 96, 128, '#3d4a78'], [176, 96, 112, 192, '#5a6ea0'],
+      [336, 144, 80, 144, '#3d4a78'], [464, 112, 128, 176, '#7d94c0'],
+      [48, 176, 16, 16, '#e0a45c'], [192, 112, 16, 16, '#f0d890'],
+      [352, 160, 16, 16, '#f0d890'], [480, 128, 16, 16, '#e0a45c'],
+      [0, 352, 640, 8, '#d6e2f5']
+    ];
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      var el = document.createElement('i');
+      el.style.cssText = 'left:' + b[0] + 'px;top:' + b[1] + 'px;width:' + b[2] +
+        'px;height:' + b[3] + 'px;background:' + b[4];
+      document.body.appendChild(el);
+    }
+    window.__appReady = true;
+    window.dispatchEvent(new Event('fixture-first-frame'));
+  }
+  requestAnimationFrame(boot);
+</script>
+</body>
