@@ -2473,6 +2473,9 @@ case "$REFUTE_TIMEOUT" in *[1-9]*) ;; *) REFUTE_TIMEOUT=$DEFAULT_REFUTE_TIMEOUT 
 
 # What result.json reports as review_findings, and what the ledger below counts.
 REVIEW_FOUND=0; REVIEW_REFUTED=0; REVIEW_PROMOTED=0; REVIEW_FIXED=0
+# Promoted findings the refuter could not confirm — a subset of REVIEW_PROMOTED,
+# not a fourth outcome.
+REVIEW_DOUBTED=0
 # ok = a refute pass ran and left verdicts | failed = it left none, so every
 # finding was promoted (single-pass behaviour) | off = HARNESS_REVIEW_REFUTE=0.
 REVIEW_REFUTE_STATE="ok"
@@ -2508,6 +2511,7 @@ review_findings_normalize() {  # -> 1 when there is no readable findings file
   # nothing — and it is recorded as one rather than as a stage that never ran.
   printf '[]\n' > "$RUN_DIR/refuted.json"
   printf '[]\n' > "$RUN_DIR/promoted.json"
+  printf '[]\n' > "$RUN_DIR/refute-discarded.json"
   cp "$RUN_DIR/findings.json" "$src"
 }
 
@@ -2523,31 +2527,101 @@ run_refute_pass() {  # $1 = prompt
   run_readonly_review_pass 1-refute "$1" refute
 }
 
+# A refutation's citation is checked rather than believed: a plausible sentence
+# with a fabricated file:line is the cheapest way to kill a true finding, and the
+# harness owns the worktree, so it can go and look. Empty output = the citation
+# holds; anything printed is why it does not.
+review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
+  local rel="$1" excerpt="$2" body
+  case "$rel" in
+    '') printf 'the verdict carried no evidence block'; return 0 ;;
+    /*) printf 'the cited path is absolute'; return 0 ;;
+    ..|../*|*/..|*/../*) printf 'the cited path leaves the worktree'; return 0 ;;
+    .harness/*) printf 'the cited path is orchestration metadata, not reviewed code'; return 0 ;;
+  esac
+  git -C "$WORKTREE" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 \
+    || { printf '%s is not a tracked file on this branch' "$rel"; return 0; }
+  [ "$(printf '%s' "$excerpt" | tr -d '[:space:]' | wc -c | tr -d ' ')" -ge 10 ] \
+    || { printf 'the excerpt is under ten characters of code'; return 0; }
+  body=$(cat "$WORKTREE/$rel" 2>/dev/null) \
+    || { printf '%s could not be read' "$rel"; return 0; }
+  # Quoted inside the pattern so refuter-supplied text is matched literally, and
+  # matched against the whole file at once: a per-line match would accept an
+  # excerpt stitched together from lines that never touch.
+  case "$body" in
+    *"$excerpt"*) ;;
+    *) printf 'the excerpt is not a contiguous verbatim slice of %s' "$rel" ;;
+  esac
+}
+
 # Verdicts, joined onto the findings they judge. `refuted` counts only when the
-# refuter said so in as many words: a finding it left out, could not check, or
-# merely doubted is promoted. The burden is on the refutation, because the cost
-# of a wrong promotion is one unnecessary edit and the cost of a wrong refutation
-# is a defect shipped.
+# refuter said so in as many words AND cited code that verifies: a finding it
+# left out, could not check, merely doubted, or disproved on an unverifiable
+# citation is promoted. The burden is on the refutation, because the cost of a
+# wrong promotion is one unnecessary edit and the cost of a wrong refutation is a
+# defect shipped — so every degradation here falls toward promotion.
 review_refute_verdicts() {  # -> writes refuted.json + promoted.json, or 1
   local src="$WORKTREE/.harness/refuted.json" verdicts="$RUN_DIR/refute-verdicts.json"
+  local judged="$RUN_DIR/refute-judged.json"
+  local v id reason refuted doubt file excerpt why
   [ -f "$src" ] || return 1
-  jq '(if type == "object" then (.verdicts // []) else . end)
+  jq -c '(if type == "object" then (.verdicts // []) else . end)
       | (if type == "array" then . else [] end)
       | map(select(type == "object"))
-      | map({id: ((.id // "") | tostring),
-             refuted: (.refuted == true or .refuted == "true"),
-             reason: ((.reason // "") | tostring | gsub("^\\s+|\\s+$"; ""))})
-      | map(select(.id != "" and .refuted and .reason != ""))' \
+      | map(. as $v
+            | ($v.evidence | if type == "object" then . else {} end) as $e
+            | {id: (($v.id // "") | tostring),
+               refuted: ($v.refuted == true or $v.refuted == "true"),
+               doubt: ($v.doubt == true or $v.doubt == "true"),
+               reason: (($v.reason // "") | tostring | gsub("^\\s+|\\s+$"; "")),
+               file: (($e.file // "") | tostring | gsub("^\\s+|\\s+$"; "")),
+               excerpt: (($e.excerpt // "") | tostring | gsub("^\\s+|\\s+$"; ""))})
+      | map(select(.id != ""))
+      | .[]' \
     "$src" > "$verdicts" 2>/dev/null || return 1
-  jq -s '.[0] as $found | .[1] as $dropped
-         | (reduce $dropped[] as $v ({}; .[$v.id] = $v)) as $by_id
-         | {refuted:  ($found | map(select($by_id[.id]))
-                              | map(. + {reason: $by_id[.id].reason})),
-            promoted: ($found | map(select($by_id[.id] | not)))}' \
-    "$RUN_DIR/findings.json" "$verdicts" > "$RUN_DIR/split.json" 2>/dev/null || return 1
-  jq '.refuted'  "$RUN_DIR/split.json" > "$RUN_DIR/refuted.json"  2>/dev/null || return 1
-  jq '.promoted' "$RUN_DIR/split.json" > "$RUN_DIR/promoted.json" 2>/dev/null || return 1
-  rm -f "$RUN_DIR/split.json" "$verdicts"
+  : > "$judged"
+  while IFS= read -r v; do
+    [ -n "$v" ] || continue
+    id=$(printf '%s' "$v" | jq -r '.id') || return 1
+    reason=$(printf '%s' "$v" | jq -r '.reason')
+    refuted=$(printf '%s' "$v" | jq -r 'if .refuted then "1" else "" end')
+    doubt=$(printf '%s' "$v" | jq -r 'if .doubt then "1" else "" end')
+    file=$(printf '%s' "$v" | jq -r '.file')
+    excerpt=$(printf '%s' "$v" | jq -r '.excerpt')
+    why=""
+    if [ -n "$refuted" ] && [ -n "$doubt" ]; then
+      why="the verdict claimed a refutation and a doubt at once, so it was read as doubt"
+      refuted=""
+    elif [ -n "$refuted" ] && [ -z "$reason" ]; then
+      why="no reason was recorded"
+      refuted=""
+    elif [ -n "$refuted" ]; then
+      why=$(review_evidence_reject "$file" "$excerpt")
+      [ -z "$why" ] || refuted=""
+    fi
+    jq -nc --arg id "$id" --arg reason "$reason" --arg why "$why" \
+           --arg file "$file" --arg excerpt "$excerpt" \
+           --arg refuted "$refuted" --arg doubt "$doubt" \
+      '{id: $id, reason: $reason, why: $why,
+        refuted: ($refuted != ""), doubt: ($doubt != ""),
+        evidence: (if $refuted != "" then {file: $file, excerpt: $excerpt} else null end)}' \
+      >> "$judged" || return 1
+  done < "$verdicts"
+  jq -n --slurpfile found "$RUN_DIR/findings.json" --slurpfile judged "$judged" '
+      ($found[0] // []) as $f
+    | (reduce $judged[] as $j ({}; .[$j.id] = $j)) as $by
+    | {refuted:  [$f[] | select(($by[.id] // {}).refuted == true)
+                       | . + {reason: $by[.id].reason, evidence: $by[.id].evidence}],
+       promoted: [$f[] | select(($by[.id] // {}).refuted != true)
+                       | if ($by[.id] // {}).doubt == true then . + {doubted: true} else . end],
+       discarded: [$f[] | .id as $fid | ($by[$fid] // {})
+                        | select((.why // "") != "")
+                        | {id: $fid, why: .why, reason: (.reason // "")}]}' \
+    > "$RUN_DIR/split.json" 2>/dev/null || return 1
+  jq '.refuted'   "$RUN_DIR/split.json" > "$RUN_DIR/refuted.json"   2>/dev/null || return 1
+  jq '.promoted'  "$RUN_DIR/split.json" > "$RUN_DIR/promoted.json"  2>/dev/null || return 1
+  jq '.discarded' "$RUN_DIR/split.json" > "$RUN_DIR/refute-discarded.json" 2>/dev/null || return 1
+  rm -f "$RUN_DIR/split.json" "$verdicts" "$judged"
 }
 
 # How many promoted findings actually earned a commit. The fix pass is told to
@@ -2573,27 +2647,33 @@ EOF
 review_findings_ledger() {
   local notes="$WORKTREE/.harness/review-notes.md"
   {
-    printf '\n## Findings — found %s · refuted %s · promoted %s · fixed %s\n\n' \
-      "$REVIEW_FOUND" "$REVIEW_REFUTED" "$REVIEW_PROMOTED" "$REVIEW_FIXED"
-    printf '%s\n' "The review stage ran as three passes: a find pass that changed nothing, a refutation pass in a session that had not seen the diff, and a fix pass over what survived it. A finding earns an edit only by surviving refutation."
+    printf '\n## Findings — found %s · refuted %s · promoted %s · doubted %s · fixed %s\n\n' \
+      "$REVIEW_FOUND" "$REVIEW_REFUTED" "$REVIEW_PROMOTED" "$REVIEW_DOUBTED" "$REVIEW_FIXED"
+    printf '%s\n' "The review stage ran as three passes: a find pass that changed nothing, a refutation pass in a session that had not seen the diff, and a fix pass over what survived it. A finding earns an edit only by surviving refutation, and a refutation drops a finding only when it cites code the harness could verify."
     case "$REVIEW_REFUTE_STATE" in
       failed) printf '\n%s\n' "The refutation pass left no usable verdicts, so this stage fell back to single-pass behaviour: EVERY finding was promoted and none was disproved. Read the promoted list as a reviewer's unchecked claims." ;;
       off)    printf '\n%s\n' "Refutation was off for this run (HARNESS_REVIEW_REFUTE=0), so every finding was promoted unchecked — single-pass behaviour, on purpose." ;;
     esac
     printf '\n### Promoted\n\n'
     jq -r 'if length == 0 then "None." else
-             .[] | "- **\(.id)** `\(.file)\(if .line then ":\(.line)" else "" end)` — \(.claim)"
+             .[] | "- **\(.id)** `\(.file)\(if .line then ":\(.line)" else "" end)` — \(.claim)\(if .doubted then "\n  - promoted with doubt: the refuter found this plausible and could not confirm it, so the fix pass was told to confirm the scenario itself before editing anything for it" else "" end)"
            end' "$RUN_DIR/promoted.json" 2>/dev/null
     printf '\n### Refuted — dropped, no edit was made for these\n\n'
     jq -r 'if length == 0 then "None." else
-             .[] | "- **\(.id)** `\(.file)\(if .line then ":\(.line)" else "" end)` — \(.claim)\n  - refuted: \(if .reason == "" then "no reason recorded" else .reason end)"
+             .[] | "- **\(.id)** `\(.file)\(if .line then ":\(.line)" else "" end)` — \(.claim)\n  - refuted: \(if .reason == "" then "no reason recorded" else .reason end)\(if ((.evidence.file // "") == "") then "" else "\n  - verified citation, `\(.evidence.file)`:\n\n```\n\(.evidence.excerpt)\n```\n" end)"
            end' "$RUN_DIR/refuted.json" 2>/dev/null
-    printf '\n%s\n' "Not built here, and worth building: chunked review of at most fifty lines at a time with the surrounding code retrieved for each chunk — reviewer recall collapses on diffs larger than that."
+    if [ "$(jq 'length' "$RUN_DIR/refute-discarded.json" 2>/dev/null || echo 0)" != 0 ]; then
+      printf '\n### Refutations discarded — promoted instead\n\n'
+      printf '%s\n\n' "A refutation drops a finding only when it cites a tracked file and quotes a contiguous verbatim slice of it. Each verdict below is one whose refutation lacked verifiable evidence, so the finding it judged was promoted rather than dropped."
+      jq -r '.[] | "- **\(.id)** — \(.why)\(if .reason == "" then "" else "\n  - it claimed: \(.reason)" end)"' \
+        "$RUN_DIR/refute-discarded.json" 2>/dev/null
+    fi
   } >> "$notes"
   jq -n --arg refute "$REVIEW_REFUTE_STATE" \
         --argjson found "$REVIEW_FOUND" --argjson refuted "$REVIEW_REFUTED" \
-        --argjson promoted "$REVIEW_PROMOTED" --argjson fixed "$REVIEW_FIXED" \
-    '{found:$found,refuted:$refuted,promoted:$promoted,fixed:$fixed,refute:$refute}' \
+        --argjson promoted "$REVIEW_PROMOTED" --argjson doubted "$REVIEW_DOUBTED" \
+        --argjson fixed "$REVIEW_FIXED" \
+    '{found:$found,refuted:$refuted,promoted:$promoted,doubted:$doubted,fixed:$fixed,refute:$refute}' \
     > "$RUN_DIR/review-findings.json"
 }
 
@@ -2622,13 +2702,16 @@ review_refute_and_fix() {
     if [ "$REVIEW_REFUTE_STATE" != ok ]; then
       cp "$RUN_DIR/findings.json" "$RUN_DIR/promoted.json"
       printf '[]\n' > "$RUN_DIR/refuted.json"
+      printf '[]\n' > "$RUN_DIR/refute-discarded.json"
       [ "$REVIEW_REFUTE_STATE" = failed ] \
         && echo "[harness] the refutation pass left no usable verdicts — promoting all $REVIEW_FOUND findings, i.e. the single-pass review this replaces"
     fi
     REVIEW_REFUTED=$(jq 'length' "$RUN_DIR/refuted.json" 2>/dev/null || echo 0)
     REVIEW_PROMOTED=$(jq 'length' "$RUN_DIR/promoted.json" 2>/dev/null || echo 0)
+    REVIEW_DOUBTED=$(jq '[.[] | select(.doubted == true)] | length' "$RUN_DIR/promoted.json" 2>/dev/null || echo 0)
     case "$REVIEW_REFUTED"  in ''|*[!0-9]*) REVIEW_REFUTED=0 ;; esac
     case "$REVIEW_PROMOTED" in ''|*[!0-9]*) REVIEW_PROMOTED=0 ;; esac
+    case "$REVIEW_DOUBTED"  in ''|*[!0-9]*) REVIEW_DOUBTED=0 ;; esac
   fi
   if [ "$REVIEW_PROMOTED" -gt 0 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
     cp "$RUN_DIR/promoted.json" "$WORKTREE/.harness/promoted.json"
@@ -2642,7 +2725,7 @@ review_refute_and_fix() {
     [ -n "$before" ] && review_count_fixed "$before"
   fi
   review_findings_ledger
-  echo "[harness] review findings: $REVIEW_FOUND found, $REVIEW_REFUTED refuted, $REVIEW_PROMOTED promoted, $REVIEW_FIXED fixed"
+  echo "[harness] review findings: $REVIEW_FOUND found, $REVIEW_REFUTED refuted, $REVIEW_PROMOTED promoted ($REVIEW_DOUBTED with doubt), $REVIEW_FIXED fixed"
 }
 
 # --- Ticket sync (script — no model, best-effort) ------------------------------
@@ -2887,7 +2970,9 @@ You FIND; you do not fix. A later pass tries to disprove each thing you report a
 
 Before you open the diff, write .harness/expected-properties.md: from brief.md (and specs/ when present) alone, the properties a correct change MUST have — what each acceptance criterion implies about behaviour, the invariants it must not break, the error paths and edge cases it has to handle. Write it first and do not revise it afterwards; judging the diff against a spec you wrote before seeing it is what stops a plausible diff talking you into its own definition of correct.
 
-Then read the diff and work through this checklist, in order:
+How to read the diff: not straight through. List the changed files first (git diff --name-status $BASE_REF...HEAD), then work through the diff in slices of about fifty changed lines. For each slice, read the code it plugs into — the callers, the definitions and constants it uses, the tests that cover it — judge that slice there, and only then move on. Never judge a hunk in isolation from the code it lands in: recall on a diff read in one pass collapses long before the end of it, and a finding nobody makes is one no later pass can recover.
+
+Then work through this checklist, in order:
 1. Gate-gaming — weakened or deleted tests, skipped/disabled cases, loosened assertions, hardcoded expected values, modified fixtures. A green gate proves nothing if the tests were touched to make it green; the fix is a restored test and corrected code, never the reverse. Highest priority. Start from the gate integrity flags above and from any analyzer, linter or type-checker lines in gate-latest.log — those are evidence somebody already collected, not a verdict.
 2. Business logic — does the code actually satisfy every property you wrote down, and each acceptance criterion in the brief? Check edge cases, error paths, and the domain invariants documented in this repo's CLAUDE.md/AGENTS.md. Read the surrounding code the diff plugs into — verify correctness in context, not just in isolation.
 3. Blind spots — the defect classes reviewers reliably miss, so look for them on purpose rather than waiting for them to catch your eye: concurrency and races (shared state, unawaited work, non-atomic read-modify-write, ordering assumed between independent effects); time-of-check-to-time-of-use and any authorization that depends on timing (a permission read once and acted on later, a token or session checked before a step it is used after); and compositional authorization — each step permitted alone while the sequence of them is not, or a check enforced on one entry point and absent from another that reaches the same code.
@@ -2920,9 +3005,13 @@ Why this exists: a reviewer that also fixes what it finds turns every false posi
 Read .harness/findings.json. For each finding, go to the file and line it names and try to establish that it is WRONG — the failing scenario cannot actually occur, the code already handles it, the finding misreads the language or the framework, or the diff does not say what the finding says it says. Read the surrounding code, follow the callers, run the tests: whatever it takes to know.
 Change NOTHING. No edits, no commits, no files other than the one below.
 Write .harness/refuted.json — a JSON array, one verdict per finding id, and nothing else in the file:
-[{\"id\": \"F1\", \"refuted\": true, \"reason\": \"the specific evidence, citing file:line\"}]
-- refuted: true ONLY when you can point at concrete evidence that the finding is wrong. A finding you merely doubt, cannot check in the time you have, or find plausible is refuted: false. The burden is on the refutation: a wrong promotion costs one unnecessary edit, a wrong refutation ships a defect.
-- reason is required either way, and a human reads it: say what you actually checked, not that you disagree.
+[{\"id\": \"F1\", \"refuted\": true, \"reason\": \"why the finding is wrong, in words\", \"evidence\": {\"file\": \"path/from/repo/root.ts\", \"excerpt\": \"the verbatim code that contradicts it\"}},
+ {\"id\": \"F2\", \"refuted\": false, \"doubt\": true, \"reason\": \"plausible, but I could not confirm the scenario\"},
+ {\"id\": \"F3\", \"refuted\": false, \"reason\": \"what I checked\"}]
+- refuted: true ONLY when you can point at concrete evidence that the finding is wrong, and the verdict MUST carry that evidence: file is a git-tracked path in this worktree (never absolute, never through .., never under .harness/) and excerpt is code copied verbatim out of that file — ONE contiguous run of at least ten characters of code, not lines stitched together from separate places. The harness opens that file and checks your excerpt is a literal substring of it. A refutation whose citation does not verify is discarded and the finding is promoted, so a quotation you did not copy costs you the verdict.
+- doubt: true (with refuted: false) is for a finding you find plausible but cannot confirm, or cannot check in the time you have. Doubt does NOT drop a finding — it is promoted either way — but it travels to the fix pass, which is then required to confirm the scenario itself before it edits anything. Reach for it whenever the alternative is a refutation you cannot evidence. refuted and doubt are mutually exclusive; a verdict carrying both is read as doubt.
+- The burden is on the refutation: a wrong promotion costs one unnecessary edit, a wrong refutation ships a defect.
+- reason is required on every verdict, and a human reads it: say what you actually checked, not that you disagree.
 - Use the ids exactly as findings.json carries them. A finding you leave out is treated as not refuted."
 
 # --- The fix prompt -----------------------------------------------------------
@@ -2931,6 +3020,8 @@ Write .harness/refuted.json — a JSON array, one verdict per finding id, and no
 # error has to be revertible on its own.
 REVIEW_FIX_PROMPT="You are the fix stage of an automated pipeline. A reviewer found problems in this branch and a second, independent session failed to disprove the ones in .harness/promoted.json. Those are the only findings you may act on: everything else it found was disproved and is deliberately not here.
 Read .harness/promoted.json and fix each finding it lists.
+- A finding carrying \"doubted\": true survived refutation unconfirmed: the refuter found it plausible and could not establish its scenario. Confirm that scenario against the code yourself BEFORE you edit anything for it — that is the required first step, not an option. If you cannot confirm it, leave the code alone and record in .harness/review-notes.md what you checked and why you left it.
+- Edits may only address promoted findings. Improvements, refactors and cleanups you notice on the way go to .harness/review-notes.md as suggestions, never into the diff.
 - ONE COMMIT PER FINDING, and its message must carry the finding's id: \`fix(<scope>): <what changed> [<id>]\`. Conventional commits, never mentioning AI or agents.
 - Fix the defect, not the test. Never weaken, skip or delete a test to make the gate green; if a test is genuinely wrong, say so in your notes rather than quietly changing it.
 - If a promoted finding turns out to be wrong after all, leave the code alone and say so in .harness/review-notes.md. No commit for it.
