@@ -636,6 +636,7 @@ if [ -f "$LOCAL_FILE" ]; then
         BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
         VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
         ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
+        DEPS_CACHE_POST_CMD=""
       }
       command -v repo_config_local >/dev/null 2>&1 || exit 1
       repo_config_local "$REPO" "$NAME" >/dev/null 2>&1

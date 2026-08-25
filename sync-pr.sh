@@ -18,6 +18,8 @@ _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 # shellcheck source=lib/common.sh
 . "$_COMMON_LIB_PATH"
+# shellcheck source=lib/deps-cache.sh
+. "$(dirname "$_COMMON_LIB_PATH")/deps-cache.sh"
 unset _COMMON_LIB_PATH
 
 main() {
@@ -104,8 +106,26 @@ for d in "." ${ENV_SUBDIRS:-}; do
 done
 if [ -n "$INSTALL_CMD" ] && [ ! -d "$WORKTREE/node_modules" ]; then
   stage "installing deps"
-  (cd "$WORKTREE" && bash -c "$INSTALL_CMD") > "$RUN_DIR/sync-install.log" 2>&1 \
-    || fail "install failed (see $RUN_DIR/sync-install.log)"
+  # Same cache as run-task.sh's install step: a recreated worktree whose
+  # lockfile an earlier run already installed clones its node_modules back in
+  # seconds. Restore-only here — the base merge below may change the lockfile,
+  # so this tree is not worth storing; the miss path is the untouched original.
+  DEPS_KEY=""
+  if [ "${HARNESS_DEPS_CACHE:-1}" = "1" ] \
+     && deps_cache_covered "$INSTALL_CMD" "${DEPS_CACHE_POST_CMD:-}"; then
+    DEPS_KEY="$(deps_cache_key "$WORKTREE" "$INSTALL_CMD")" || DEPS_KEY=""
+  fi
+  if [ -n "$DEPS_KEY" ] && deps_cache_restore "$(basename "$REPO")" "$DEPS_KEY" "$WORKTREE"; then
+    echo "[harness] deps: cache hit ($DEPS_KEY) — node_modules cloned, install skipped" \
+      | tee "$RUN_DIR/sync-install.log"
+    if [ -n "${DEPS_CACHE_POST_CMD:-}" ]; then
+      (cd "$WORKTREE" && bash -c "$DEPS_CACHE_POST_CMD") >> "$RUN_DIR/sync-install.log" 2>&1 \
+        || fail "DEPS_CACHE_POST_CMD failed (see $RUN_DIR/sync-install.log)"
+    fi
+  else
+    (cd "$WORKTREE" && bash -c "$INSTALL_CMD") > "$RUN_DIR/sync-install.log" 2>&1 \
+      || fail "install failed (see $RUN_DIR/sync-install.log)"
+  fi
 fi
 
 GATE_STATUS="not_run"
