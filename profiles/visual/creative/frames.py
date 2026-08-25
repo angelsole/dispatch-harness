@@ -12,14 +12,24 @@ and an animated scene captured without those is a different picture every run.
 Determinism, in the order it has to happen:
   1. add_init_script seeds Math.random with a fixed xorshift before any page
      script runs — every "random" layout decision is the same one every time.
-  2. clock.install() BEFORE goto freezes Date/setTimeout/rAF. A frozen clock
-     also stalls the boot of anything driven by rAF (Phaser, our own wall), so
-     the clock is then pumped by --settle-ms to let the app come up, and by
-     --wait-ms between frames. Both advances are fake time: the wall clock is
-     never waited on, so a slow machine renders the same frames as a fast one.
+  2. clock.install() BEFORE goto pins the page's epoch, so every run reads the
+     same Date, and gives --settle-ms/--wait-ms a clock to advance without
+     waiting on the wall clock: a slow machine and a fast one get the same fake
+     milliseconds between frames. What install() does NOT do, measured on the
+     Playwright this runs against, is pause the page — rAF, setTimeout and
+     performance.now go on ticking in real time and run_for() adds fake time on
+     top of that. An app whose first painted frame is the end of an rAF chain
+     (a Flutter web / CanvasKit boot; tests/fixtures/visual/raf-boot.html) is
+     therefore ready under both clocks. `--clock real` skips install()
+     altogether, for an engine that must see the machine's own Date and for
+     motion that only real milliseconds can drive; settle and wait then sleep.
   3. wait_until="load" plus an app-ready predicate. NEVER networkidle: a page
      that polls (the wall polls once a second) never goes idle and goto times
-     out at 30 s.
+     out at 30 s. Readiness is a JS expression (--ready-js), a one-shot window
+     event (--ready-event), or both — an engine that announces itself by
+     dispatching an event has nothing left to poll for by the time anyone
+     asks, so the listener goes in through add_init_script before any page
+     script runs.
   4. SwiftShader, explicitly. Chrome removed the silent software-GL fallback,
      so headless WebGL needs --use-angle=swiftshader AND
      --enable-unsafe-swiftshader. --disable-gpu is NOT in the list on purpose:
@@ -31,7 +41,8 @@ downstream may compare frames for equality — see vcheck.py, which uses SSIM.
 Usage:
   frames.py --url URL --out DIR --tag NAME [--frames 6] [--wait-ms 750]
             [--settle-ms 3000] [--width 1280] [--height 720] [--dpr 1]
-            [--ready-js 'EXPR'] [--time-ms 1755000000000] [--timeout-ms 20000]
+            [--ready-js 'EXPR'] [--ready-event NAME] [--clock frozen|real]
+            [--time-ms 1755000000000] [--timeout-ms 20000]
             [--reduced-motion reduce|no-preference] [--color-scheme dark|light]
 
 Prints one JSON object describing what it captured; exits non-zero with a
@@ -53,6 +64,14 @@ SEED_JS = """(() => {
     s ^= s << 5;  s >>>= 0;
     return s / 4294967296;
   };
+})();"""
+
+# The other half of --ready-event: a one-shot window event has already been
+# dispatched by the time a poller could look for it, so the flag it leaves
+# behind is what readiness actually waits on.
+READY_EVENT_JS = """(() => {
+  window.addEventListener(%s, () => { window.__visualGateReady = true; },
+                          {once: true});
 })();"""
 
 LAUNCH_ARGS = [
@@ -82,6 +101,10 @@ def main():
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--dpr", type=float, default=1)
     ap.add_argument("--ready-js", default="")
+    ap.add_argument("--ready-event", default="")
+    # `real` is the escape hatch for an app whose boot needs animation frames
+    # to happen at all; see the docstring. Math.random stays seeded either way.
+    ap.add_argument("--clock", default="frozen", choices=["frozen", "real"])
     ap.add_argument("--time-ms", type=int, default=1755000000000)
     ap.add_argument("--seed", type=int, default=0x2F6E2B1)
     ap.add_argument("--timeout-ms", type=int, default=20000)
@@ -135,7 +158,27 @@ def main():
         page.on("pageerror", lambda e: errors.append(str(e)[:300]))
         page.on("console", lambda m: m.type == "error" and errors.append(m.text[:300]))
         page.add_init_script(SEED_JS % a.seed)
-        page.clock.install(time=a.time_ms)
+        if a.ready_event:
+            page.add_init_script(READY_EVENT_JS % json.dumps(a.ready_event))
+        if a.clock == "frozen":
+            page.clock.install(time=a.time_ms)
+
+        def advance(ms):
+            """Let `ms` pass — in fake time under the frozen clock, in real time
+            without it. clock.run_for is only valid after clock.install."""
+            if a.clock == "frozen":
+                page.clock.run_for(ms)
+            elif ms:
+                time.sleep(ms / 1000.0)
+
+        # Both predicates when both are given: an app can paint its first frame
+        # (the event) some way before the thing being photographed is on screen
+        # (the expression).
+        ready_terms = []
+        if a.ready_event:
+            ready_terms.append("window.__visualGateReady === true")
+        if a.ready_js:
+            ready_terms.append("(%s)" % a.ready_js)
         try:
             page.goto(a.url, wait_until="load", timeout=a.timeout_ms)
             # Settle AFTER ready, not after load. Ready is "the app has come up";
@@ -145,11 +188,12 @@ def main():
             # starts with the shot — lands inside the capture window, where the
             # continuity check reads every step of it as a cut. Without a ready
             # predicate, load is the only "up" there is, so the settle follows it.
-            if a.ready_js:
-                page.wait_for_function("() => (%s)" % a.ready_js, timeout=a.timeout_ms)
-            page.clock.run_for(a.settle_ms)
+            if ready_terms:
+                page.wait_for_function("() => (%s)" % " && ".join(ready_terms),
+                                       timeout=a.timeout_ms)
+            advance(a.settle_ms)
             for i in range(a.frames):
-                page.clock.run_for(a.wait_ms)
+                advance(a.wait_ms)
                 if a.real_wait_ms:
                     time.sleep(a.real_wait_ms / 1000.0)
                 path = out / ("%s-f%02d.png" % (a.tag, i))

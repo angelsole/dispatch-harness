@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>visual gate fixture — event ready</title>
+<!--
+  An app that announces readiness with a one-shot window event instead of a flag
+  a poller can read — Flutter web's `flutter-first-frame` has exactly this
+  shape. The event is dispatched from inside the load handler, so it has already
+  come and gone by the time anything outside the page could poll for it: only a
+  listener installed BEFORE any page script ran (frames.py's --ready-event
+  init script) can observe it.
+
+  The page leaves no flag behind on purpose. A fixture that also set a global
+  would let a broken --ready-event implementation pass by polling for that
+  instead.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #14182c; }
+  body { width: 640px; height: 360px; overflow: hidden; }
+  i { position: absolute; display: block; }
+</style>
+<body>
+  <i style="left:0;   top:288px; width:640px; height:32px;  background:#1e2440"></i>
+  <i style="left:0;   top:320px; width:640px; height:40px;  background:#2b3358"></i>
+  <i style="left:176px; top:96px; width:112px; height:192px; background:#5a6ea0"></i>
+  <i style="left:464px; top:112px; width:128px; height:176px; background:#7d94c0"></i>
+  <i style="left:0;   top:352px; width:640px; height:8px;   background:#d6e2f5"></i>
+<script>
+  window.addEventListener('load', function () {
+    window.dispatchEvent(new Event('fixture-app-ready'));
+  });
+</script>
+</body>
