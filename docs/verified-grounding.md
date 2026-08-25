@@ -119,13 +119,14 @@ suite.
 
 ## What gets counted
 
-None of the above is worth much as a story if the rates are guesswork, so every
-run writes `review_findings: {found, refuted, promoted, doubted, fixed,
-refute}` into its `result.json`
-([schema](reference.md#metrics-schema)). The false-alarm rate and the doubt rate
-are measured per branch rather than estimated, and `refute` records whether the
-refutation pass ran at all — on anything but `ok`, every finding was promoted
-unchecked, and the ledger says so in words.
+None of the above is worth much as a story if the rates are guesswork. When a
+review produces structured findings, its run writes `review_findings: {found,
+refuted, promoted, doubted, fixed, refute}` into `result.json`
+([schema](reference.md#metrics-schema)). That makes the false-alarm rate and the
+doubt rate measurable per branch, and `refute` records whether the refutation
+pass ran at all — on anything but `ok`, every finding was promoted unchecked,
+and the ledger says so in words. Runs without structured findings, and paths
+that end before review, omit the field.
 
 ## What this is not
 
