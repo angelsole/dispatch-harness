@@ -570,18 +570,50 @@ from the brief *before* it opens the diff, then reads the diff and writes
 Its checklist keeps gate-gaming at the top and gains an explicit blind-spot item —
 concurrency and races, time-of-check-to-time-of-use and timing-dependent
 authorization, compositional authorization — because those are the classes a
-reviewer misses by waiting for them to catch its eye.
+reviewer misses by waiting for them to catch its eye. It is also told *how* to
+read: the changed files first, then the diff in slices of about fifty changed
+lines, with the code each slice plugs into read alongside it before moving on.
+Recall on a diff read straight through collapses long before its end, and no
+amount of refutation recovers a finding nobody made.
 
 **Refute.** A fresh session on the same backend, which has not seen the diff,
 reads each finding and tries to establish that it is **wrong**. It writes
-`.harness/refuted.json`: `[{id, refuted, reason}]`. `refuted: true` needs
-concrete evidence; a finding it merely doubts, cannot check, or leaves out is
-**promoted**. The burden sits on the refutation, because a wrong promotion costs
-one unnecessary edit and a wrong refutation ships a defect.
+`.harness/refuted.json`:
+
+```json
+[{"id": "F1", "refuted": true,  "reason": "why it is wrong",
+  "evidence": {"file": "src/x.ts", "excerpt": "the verbatim code that contradicts it"}},
+ {"id": "F2", "refuted": false, "doubt": true, "reason": "plausible, could not confirm it"},
+ {"id": "F3", "refuted": false, "reason": "what was checked"}]
+```
+
+`refuted: true` drops a finding only when the harness can **verify the
+citation**: `evidence.file` is a git-tracked path in the worktree — never
+absolute, never through `..`, never under `.harness/`, so a refuter cannot cite
+the findings file it was handed or escape the tree — and `evidence.excerpt` is
+at least ten characters of code that appear in that file as one contiguous
+verbatim run. The check reads the whole file and tests containment, not line by
+line: an excerpt stitched from lines that each exist separately but never touch
+is a fabrication and is treated as one. A verdict with no evidence block, a
+citation that does not verify, or a blank reason counts as **not refuted** — the
+finding is promoted and `review-notes.md` names the discarded verdict and why.
+
+`doubt: true` (with `refuted: false`) is the vocabulary for a finding the refuter
+finds plausible but cannot confirm, instead of a refutation it cannot evidence.
+It changes nothing about promotion; it marks the promoted entry `doubted: true`
+so the fix pass can see it. `refuted` and `doubt` are mutually exclusive, and a
+verdict carrying both is read as doubt. A finding the refuter merely doubts,
+cannot check, or leaves out is **promoted**. The burden sits on the refutation,
+because a wrong promotion costs one unnecessary edit and a wrong refutation ships
+a defect — every degradation here falls toward promotion.
 
 **Fix.** Only promoted findings are edited, one commit per finding with the
 finding id in the message, and then the post-review gate runs exactly as it
-always did.
+always did. A finding marked `doubted` is the one exception to editing on sight:
+the fix pass has to confirm its scenario against the code first, and leave the
+code alone with a note when it cannot. Edits address promoted findings and
+nothing else — improvements noticed on the way are suggestions in
+`review-notes.md`, not commits.
 
 Ids are the harness's, `F1..Fn` in the order the find pass wrote them; it
 rewrites `findings.json` with them so every later pass and the ledger name the
@@ -598,16 +630,14 @@ reviewer's unchecked claims. Nothing here can hold a run or leave a diff
 unreviewed: [every arm reviews or holds](../README.md) is decided before this
 stage and untouched by it.
 
-**Where it goes.** `findings.json`, `refuted.json` and `promoted.json` in the run
-dir; the `{found, refuted, promoted, fixed}` counts in `result.json` as
+**Where it goes.** `findings.json`, `refuted.json`, `promoted.json` and
+`refute-discarded.json` in the run dir; the
+`{found, refuted, promoted, doubted, fixed}` counts in `result.json` as
 `review_findings`; and a `## Findings` section appended to `review-notes.md`
-listing both sides — promoted with what was fixed, refuted with the reason it was
-dropped — so the planner's verdict step sees what was thrown away and why.
-
-Not built here, and the obvious next step: chunked review of at most fifty lines
-at a time with the surrounding code retrieved per chunk. Reviewer recall
-collapses on diffs larger than that, and no amount of refutation recovers a
-finding nobody made.
+listing every side — promoted with what was fixed and which of them carried
+doubt, refuted with the reason and the verified citation it was dropped on, and
+the refutations discarded for unverifiable evidence — so the planner's verdict
+step sees what was thrown away and why.
 
 ## The repo pin
 
@@ -747,9 +777,10 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `QUESTIONS.md` | The implementer's blocking questions — the run is `needs_input` while it exists |
 | `implementer-notes.md` | What the implementer changed and decided (it becomes the PR body) |
 | `review-notes.md` / `REJECTED.md` | The reviewer's notes (with the promoted/refuted ledger appended), or its rejection |
-| `findings.json`, `refuted.json`, `promoted.json` | [Find, refute, fix](#find-refute-fix): what the review pass reported, what the refutation pass disproved, and what therefore earned an edit. Absent on a review that produced no structured findings |
+| `findings.json`, `refuted.json`, `promoted.json` | [Find, refute, fix](#find-refute-fix): what the review pass reported, what the refutation pass disproved (each with the citation that verified), and what therefore earned an edit (`doubted: true` on the ones the refuter could not confirm). Absent on a review that produced no structured findings |
+| `refute-discarded.json` | `[{id, why, reason}]` — refutations thrown away because their evidence did not verify, so the finding was promoted instead. `[]` on a run where every verdict held up |
 | `expected-properties.md` | What the review pass said a correct change must do, written from the brief *before* it opened the diff |
-| `review-findings.json` | The `{found, refuted, promoted, fixed, refute}` counts, copied into `result.json` as `review_findings` |
+| `review-findings.json` | The `{found, refuted, promoted, doubted, fixed, refute}` counts, copied into `result.json` as `review_findings` |
 | `feed.log` | Live transcript across both model stages |
 | `gate-*.log`, `gate-rounds.log` | Each gate round's output and its one-line verdict |
 | `gate-integrity.json`, `gate-integrity-replay.log` | The [integrity check's](#the-gate-integrity-check) findings (copied into `result.json` as `gate_integrity`), and the transcript of replaying this branch's tests against base |
@@ -895,7 +926,7 @@ fields are `null`/empty):
 | `review` | How the review stage actually went: `reviewed` \| `reviewed_claude` \| `failed_silent` \| `skipped`, empty when the run never reached it. Runs recorded before this ticket may also carry the retired `no_evidence` — an empty Codex review now falls through to the Claude tier instead of shipping. See [Reading the pipeline's own vitals](design-notes.md#reading-the-pipelines-own-vitals). |
 | `review_account` | Which backend the review attempt ran on: `primary` \| `fallback` \| `claude`. Absent (not empty) on the arm that never attempts a review. Set the moment a tier is entered, so it names the attempt, not the outcome — `review` is what says a diff was read. See [A second Codex account](operations.md#a-second-codex-account-for-a-dry-primary). |
 | `gate_integrity` | The [integrity check's](#the-gate-integrity-check) own `gate-integrity.json`, verbatim: `{base, head, replay: {status, reason, runner, discriminating, non_discriminating, not_run, files{}}, flags[], flag_count}`. Additive and optional — absent on a run that never reached the stage (or ran with it off), and `flags: []` on a branch it found nothing in. It does not rewrite the gate verdict, but non-empty flags veto [escalation](#escalation) and can therefore affect routing and the eventual outcome. |
-| `review_findings` | [Find, refute, fix](#find-refute-fix): `{found, refuted, promoted, fixed, refute}`. `fixed` is counted from the commit log (the fix pass names the finding id in its message), so a promoted finding nobody committed for reads as promoted-not-fixed rather than as fixed. `refute` is `ok` \| `failed` \| `off`, and on anything but `ok` every finding was promoted unchecked. Additive and optional — absent on a review that produced no structured findings, which is the single-pass review this replaced. |
+| `review_findings` | [Find, refute, fix](#find-refute-fix): `{found, refuted, promoted, doubted, fixed, refute}`. `fixed` is counted from the commit log (the fix pass names the finding id in its message), so a promoted finding nobody committed for reads as promoted-not-fixed rather than as fixed. `doubted` is a subset of `promoted`, not a fourth outcome: the findings the refuter found plausible but could not confirm, which the fix pass had to confirm itself before editing. `refute` is `ok` \| `failed` \| `off`, and on anything but `ok` every finding was promoted unchecked. Additive and optional — absent on a review that produced no structured findings, which is the single-pass review this replaced. |
 | `escalation` | [Escalation](#escalation): `{triggered, from_provider, from_model, at_attempt, failed_step, glm_head}` — the vendor and model the run implemented on before it escalated, the attempt and the failing gate step that triggered it, and the commit the cheap tier's work ends at. Additive and optional: absent on every run that did not escalate, which is every run before this existed. |
 | `metrics.wall_seconds` | Wall time this invocation (from the `started` file). |
 | `metrics.stage_durations` | Seconds per stage label, summed across resumes. |

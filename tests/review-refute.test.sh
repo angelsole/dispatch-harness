@@ -6,6 +6,10 @@
 #   1. A real finding survives refutation and gets exactly one commit naming it.
 #   2. A spurious finding is refuted, produces NO edit at all, and the run still
 #      records what was dropped and on what evidence.
+#   2b. A refutation only drops a finding when its citation verifies against the
+#      worktree: no evidence, an excerpt stitched from lines that never touch, or
+#      a path under .harness/ all promote the finding instead.
+#   2c. `doubt: true` promotes, is counted, and is marked for the fix pass.
 #   3. Refutation that leaves nothing behind — a crash, a timeout, the knob off —
 #      degrades to today's single-pass review (every finding promoted) and says so
 #      in the notes and in result.json rather than quietly looking refuted.
@@ -78,7 +82,13 @@ git init -q --bare "$BARE"
 git clone -q "$BARE" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name  t
-git -C "$REPO" commit -q --allow-empty -m init
+OUTSIDE_EVIDENCE="$ROOT/outside-evidence.txt"
+printf 'external text can never verify reviewed code\n' > "$OUTSIDE_EVIDENCE"
+ln -s "$OUTSIDE_EVIDENCE" "$REPO/evidence-link"
+printf 'abcdefghij\0klmnopqrst' > "$REPO/binary-evidence"
+printf '😀😀😀😀😀\n' > "$REPO/unicode-evidence"
+git -C "$REPO" add evidence-link binary-evidence unicode-evidence
+git -C "$REPO" commit -q -m init
 git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
 
@@ -129,30 +139,87 @@ JSON
     case "\$(cat "$REFUTE_MODE")" in
       spurious) cat > .harness/refuted.json <<'JSON'
 [{"id": "F1", "refuted": false, "reason": "impl.txt:1 really does start at zero"},
- {"id": "F2", "refuted": true,  "reason": "other.txt:1 closes the handle in a finally block"}]
+ {"id": "F2", "refuted": true,  "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
         ;;
       all) cat > .harness/refuted.json <<'JSON'
-[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached"},
- {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
+[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached",
+  "evidence": {"file": "impl.txt", "excerpt": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
         ;;
       no-reason) cat > .harness/refuted.json <<'JSON'
-[{"id": "F1", "refuted": true, "reason": "   "},
- {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
+[{"id": "F1", "refuted": true, "reason": "   ",
+  "evidence": {"file": "impl.txt", "excerpt": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      no-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached"},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "17\n19\n21\n23\n25"}}]
+JSON
+        ;;
+      harness-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "the findings file itself says so",
+  "evidence": {"file": ".harness/findings.json", "excerpt": "the counter starts at zero"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      dot-harness-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "the findings file itself says so",
+  "evidence": {"file": "./.harness/findings.json", "excerpt": "the counter starts at zero"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      symlink-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "an external file claims the counter is correct",
+  "evidence": {"file": "evidence-link", "excerpt": "external text can never verify reviewed code"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      nul-bridged-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "the binary fixture appears to contain this text",
+  "evidence": {"file": "binary-evidence", "excerpt": "abcdefghijklmnopqrst"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      short-unicode-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "the Unicode fixture contains this exact excerpt",
+  "evidence": {"file": "unicode-evidence", "excerpt": "😀😀😀😀😀"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      doubt) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": false, "doubt": true,
+  "reason": "plausible, but I could not reach the counter to check it"},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
         ;;
       mutate) cat > .harness/refuted.json <<'JSON'
-[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached"},
- {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
+[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached",
+  "evidence": {"file": "impl.txt", "excerpt": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
         printf 'refuter mutation\n' > other.txt
         git add other.txt
         git commit -q -m "bad refuter edit"
         ;;
       fail-valid) cat > .harness/refuted.json <<'JSON'
-[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached"},
- {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block"}]
+[{"id": "F1", "refuted": true, "reason": "impl.txt:1 is never reached",
+  "evidence": {"file": "impl.txt", "excerpt": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
         exit 7
         ;;
@@ -267,6 +334,7 @@ echo "-- the counts --"
 check "split: two findings"        "$(result .review_findings.found)"    "2"
 check "split: one of them refuted" "$(result .review_findings.refuted)"  "1"
 check "split: one promoted"        "$(result .review_findings.promoted)" "1"
+check "split: none of them doubted" "$(result .review_findings.doubted)"  "0"
 check "split: and one fixed"       "$(result .review_findings.fixed)"    "1"
 check "split: the refutation pass itself is recorded as having worked" \
   "$(result .review_findings.refute)" "ok"
@@ -292,6 +360,10 @@ check "split: promoted.json holds the survivor" \
   "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
 file_has "$RUN/refuted.json" "closes the handle in a finally block" \
   "split: and carries the refuter's own reason, not a shrug"
+check "split: with the citation the harness verified against the worktree" \
+  "$(jq -r '.[0].evidence.file' "$RUN/refuted.json")" "impl.txt"
+check "split: no refutation was thrown away on unverifiable evidence" \
+  "$(jq -r 'length' "$RUN/refute-discarded.json")" "0"
 exists "split: the refutation pass has its own log" "$RUN/codex-1-refute.log"
 exists "split: and so does the fix pass" "$RUN/codex-1-fix.log"
 file_has "$RUN/expected-properties.md" "keeps the counter one-based" \
@@ -299,15 +371,19 @@ file_has "$RUN/expected-properties.md" "keeps the counter one-based" \
 
 echo "-- review-notes.md carries the split, for the planner's verdict --"
 NOTES="$RUN/review-notes.md"
-file_has "$NOTES" "found 2 · refuted 1 · promoted 1 · fixed 1" \
+file_has "$NOTES" "found 2 · refuted 1 · promoted 1 · doubted 0 · fixed 1" \
   "notes: the counts are in the heading"
 file_has "$NOTES" "### Promoted" "notes: the promoted section is there"
 file_has "$NOTES" "### Refuted"  "notes: and the refuted one"
 file_has "$NOTES" "**F2**"       "notes: naming the finding that was dropped"
 file_has "$NOTES" "refuted: other.txt:1 closes the handle in a finally block" \
   "notes: with the evidence it was dropped on"
+file_has "$NOTES" "verified citation" \
+  "notes: and the code that evidence was checked against"
 file_has "$NOTES" "reviewer: read the diff" \
   "notes: the reviewer's own notes are still there under the ledger"
+file_has_not "$NOTES" "Not built here" \
+  "notes: the ledger no longer advertises chunked review as unbuilt"
 
 echo "-- the passes are given three different jobs --"
 has "$(cat "$FIND_PROMPT")" "You FIND; you do not fix" \
@@ -324,8 +400,14 @@ has "$(cat "$FIND_PROMPT")" "compositional authorization" \
   "prompt: and compositional authorization"
 has "$(cat "$FIND_PROMPT")" "gate integrity flags above" \
   "prompt: the find pass starts from the deterministic flags"
+has "$(cat "$FIND_PROMPT")" "fifty changed lines" \
+  "prompt: and reads the diff in slices rather than in one pass"
 has "$(cat "$REFUTE_PROMPT_FILE")" "your job is to DISPROVE them" \
   "prompt: the refutation pass is asked to disprove, not to review"
+has "$(cat "$REFUTE_PROMPT_FILE")" "literal substring" \
+  "prompt: it is told its citation is checked against the file"
+has "$(cat "$REFUTE_PROMPT_FILE")" "doubt: true" \
+  "prompt: and given doubt as a verdict of its own"
 has_not "$(cat "$REFUTE_PROMPT_FILE")" "Gate-gaming" \
   "prompt: it is not handed the review checklist as well"
 has "$(cat "$REFUTE_PROMPT_FILE")" "Change NOTHING" \
@@ -334,6 +416,10 @@ has "$(cat "$FIX_PROMPT_FILE")" "ONE COMMIT PER FINDING" \
   "prompt: the fix pass commits one per finding"
 has "$(cat "$FIX_PROMPT_FILE")" ".harness/promoted.json" \
   "prompt: over the promoted list and nothing else"
+has "$(cat "$FIX_PROMPT_FILE")" "Confirm that scenario against the code yourself BEFORE you edit" \
+  "prompt: a doubted finding must be confirmed before it earns an edit"
+has "$(cat "$FIX_PROMPT_FILE")" "Edits may only address promoted findings" \
+  "prompt: and the scope fence sends everything else to the notes"
 
 # ---------------------------------------------------------------------------
 echo "== every finding refuted: nothing is edited at all =="
@@ -406,6 +492,96 @@ check "no reason: the unsupported verdict is promoted" \
   "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
 check "no reason: the evidenced verdict is still refuted" \
   "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- and the evidence has to be real code, not a plausible sentence --"
+# The attack this closes: a confident refutation with a fabricated citation kills
+# a true finding for free. F1 cites nothing; F2 quotes lines that each exist in
+# impl.txt but never sit next to each other, which a per-line match would accept.
+printf 'no-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-NO-EVIDENCE ""
+check "unverifiable evidence: nothing is dropped on it" \
+  "$(result .review_findings.refuted)" "0"
+check "unverifiable evidence: both findings are promoted instead" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1,F2"
+check "unverifiable evidence: both discarded verdicts are recorded" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refute-discarded.json")" "F1,F2"
+file_has "$RUN/refute-discarded.json" "no evidence block" \
+  "unverifiable evidence: the verdict that cited nothing says so"
+file_has "$RUN/refute-discarded.json" "contiguous verbatim slice" \
+  "unverifiable evidence: and the stitched excerpt is named for what it is"
+file_has "$RUN/review-notes.md" "refutation lacked verifiable evidence" \
+  "unverifiable evidence: the ledger says why the findings survived"
+check "unverifiable evidence: so both are fixed, not silently dropped" \
+  "$(result .review_findings.fixed)" "2"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- a refuter cannot cite the orchestration metadata it was handed --"
+printf 'harness-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-HARNESS-PATH ""
+check "harness citation: quoting .harness/ is not a refutation" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "harness citation: the properly cited verdict still drops its finding" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+file_has "$RUN/refute-discarded.json" "orchestration metadata" \
+  "harness citation: recorded as the reason the verdict was discarded"
+
+printf 'dot-harness-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-DOT-HARNESS-PATH ""
+check "harness citation: a leading dot component cannot bypass the policy" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+file_has "$RUN/refute-discarded.json" "orchestration metadata" \
+  "harness citation: the normalized spelling records the same rejection"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- tracked symlinks cannot import evidence from outside the worktree --"
+printf 'symlink-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-SYMLINK ""
+check "symlink citation: external target content cannot drop a finding" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "symlink citation: an ordinary tracked file remains valid evidence" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+file_has "$RUN/refute-discarded.json" "symlink" \
+  "symlink citation: the escape is recorded as the rejection reason"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- a NUL byte remains part of the file during excerpt matching --"
+printf 'nul-bridged-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-NUL-BRIDGE ""
+check "binary citation: text separated by NUL is not contiguous evidence" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "binary citation: valid text evidence still drops its own finding" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+file_has "$RUN/refute-discarded.json" "contiguous verbatim slice" \
+  "binary citation: the byte mismatch is recorded as the rejection reason"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- excerpt length counts characters rather than UTF-8 bytes --"
+printf 'short-unicode-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-SHORT-UNICODE ""
+check "Unicode citation: five multibyte characters remain under the minimum" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "Unicode citation: a long enough text excerpt remains valid" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+file_has "$RUN/refute-discarded.json" "under ten characters" \
+  "Unicode citation: the character-count rejection is recorded"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- doubt promotes, and says out loud that it is doubt --"
+printf 'doubt\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-DOUBT ""
+check "doubt: the doubted finding is promoted, not dropped" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "doubt: and carries the doubt to the fix pass" \
+  "$(jq -r '.[0].doubted' "$RUN/promoted.json")" "true"
+check "doubt: the evidenced refutation still drops its own finding" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+check "doubt: counted in result.json as a subset of promoted" \
+  "$(result .review_findings.promoted),$(result .review_findings.doubted)" "1,1"
+file_has "$RUN/review-notes.md" "doubted 1" \
+  "doubt: the ledger heading counts it"
+file_has "$RUN/review-notes.md" "promoted with doubt" \
+  "doubt: and the promoted entry is marked"
 printf 'spurious\n' > "$REFUTE_MODE"
 
 echo "-- the refuter cannot mutate the reviewed worktree --"
