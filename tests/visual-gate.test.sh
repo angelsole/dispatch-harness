@@ -674,6 +674,14 @@ env HARNESS_DIR="$HARNESS" bash "$CREATIVE/champion.sh" promote unchanged \
 check "unchanged: promoted by hand, as champions always are" "$?" "0"
 
 script_calls
+run_unchanged good.html VISUAL_UNCHANGED_SSIM=0.99 VISUAL_AXES=Layout-Integrity
+check "unchanged: invalid axes fail before an identical render can skip the critic" "$?" "2"
+file_has "$UNCH" "expected a comma-separated list of [a-z_]+ names" \
+  "unchanged: the invalid axes are named as a broken contract"
+check "unchanged: invalid axes are rejected without billing" \
+  "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "0"
+
+script_calls
 run_unchanged good.html VISUAL_UNCHANGED_SSIM=0.99
 check "unchanged: a render identical to the champion passes the round" "$?" "0"
 gt "unchanged: SSIM against the champion is ~1" \
@@ -758,6 +766,14 @@ run_infra_gate() {  # $1 = FAKE_PY_MODE
       FAKE_PY_MODE="$1" bash "$CREATIVE/visual-gate.sh" ) > "$ROOT/infra-$1.log" 2>&1
 }
 INFRA="$ROOT/infra/.harness/visual-score.json"
+
+( cd "$ROOT/infra" && env -u VISUAL_LIVE PATH="$FAKES:$PATH" HARNESS_DIR="$HARNESS" \
+    VISUAL_REPO=infra VISUAL_PY="$FAKES/fake-python" VCHECK_PY=true \
+    FAKE_PY_MODE=no-browser VISUAL_AXES=Layout-Integrity \
+    bash "$CREATIVE/visual-gate.sh" ) > "$ROOT/infra-invalid-axes.log" 2>&1
+check "config: invalid axes fail even when the critic is off" "$?" "2"
+file_has "$INFRA" "expected a comma-separated list of [a-z_]+ names" \
+  "config: the axis grammar failure is recorded in the score"
 
 run_infra_gate no-browser
 check "infra: a browser that will not launch is not a failed render" "$?" "3"

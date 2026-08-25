@@ -219,6 +219,20 @@ case "$VISUAL_CLOCK" in
   frozen|real) ;;
   *) die 2 "$VISUAL_CONF sets VISUAL_CLOCK='$VISUAL_CLOCK' — expected frozen or real" ;;
 esac
+# Axis names become JSON schema keys and jq paths. Validate the contract here,
+# even when the critic is disabled or an unchanged render will skip it, so the
+# same configuration cannot pass or fail depending on which render branch runs.
+if [ -n "$VISUAL_AXES" ]; then
+  case "$VISUAL_AXES" in
+    ,*|*,|*,,*) die 2 "$VISUAL_CONF sets VISUAL_AXES='$VISUAL_AXES' — expected a comma-separated list of [a-z_]+ names" ;;
+  esac
+  IFS=',' read -r -a VISUAL_AXES_ARRAY <<<"$VISUAL_AXES"
+  for axis in "${VISUAL_AXES_ARRAY[@]}"; do
+    case "$axis" in
+      *[!a-z_]*) die 2 "$VISUAL_CONF sets VISUAL_AXES='$VISUAL_AXES' — expected a comma-separated list of [a-z_]+ names" ;;
+    esac
+  done
+fi
 # A threshold in (0,1]: SSIM is a similarity, and 0 would skip the critic on
 # every render including a black frame.
 if [ -n "$VISUAL_UNCHANGED_SSIM" ]; then
