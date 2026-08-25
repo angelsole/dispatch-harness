@@ -22,6 +22,8 @@ _LIB_DIR="$(dirname "${BASH_SOURCE[0]}")/lib"
 . "$_LIB_DIR/common.sh"
 # shellcheck source=lib/profile.sh
 . "$_LIB_DIR/profile.sh"
+# shellcheck source=lib/deps-cache.sh
+. "$_LIB_DIR/deps-cache.sh"
 unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
@@ -1117,10 +1119,35 @@ mkdir -p "$(dirname "$EXCLUDE_FILE")"
 grep -qx '.harness/' "$EXCLUDE_FILE" 2>/dev/null || echo '.harness/' >> "$EXCLUDE_FILE"
 
 # --- 3. Install deps ---------------------------------------------------------
+# Behind the same stage line, two roads: a dependency-cache hit clones a
+# node_modules this exact (lockfile, INSTALL_CMD, node) triple already built —
+# seconds, copy-on-write — and a miss runs the real install and stores the
+# result for the next run. The cache only takes the wheel for INSTALL_CMDs it
+# provably reproduces (see lib/deps-cache.sh); everything else, and
+# HARNESS_DEPS_CACHE=0, is the untouched original path. On a hit,
+# DEPS_CACHE_POST_CMD (pinned in repos.local.sh) runs the remainder of a
+# compound install the cache does not cover — e.g. a nested `flutter pub get`.
 if [ -n "$INSTALL_CMD" ]; then
   stage "setup: installing deps"
-  (cd "$WORKTREE" && bash -c "$INSTALL_CMD") > "$RUN_DIR/install.log" 2>&1 \
-    || fail setup_failed "install failed (see $RUN_DIR/install.log)"
+  DEPS_KEY=""
+  if [ "${HARNESS_DEPS_CACHE:-1}" = "1" ] \
+     && deps_cache_covered "$INSTALL_CMD" "${DEPS_CACHE_POST_CMD:-}"; then
+    DEPS_KEY="$(deps_cache_key "$WORKTREE" "$INSTALL_CMD")" || DEPS_KEY=""
+  fi
+  if [ -n "$DEPS_KEY" ] && deps_cache_restore "$(basename "$REPO")" "$DEPS_KEY" "$WORKTREE"; then
+    echo "[harness] deps: cache hit ($DEPS_KEY) — node_modules cloned, install skipped" \
+      | tee "$RUN_DIR/install.log"
+    if [ -n "${DEPS_CACHE_POST_CMD:-}" ]; then
+      echo "[harness] deps: running DEPS_CACHE_POST_CMD: $DEPS_CACHE_POST_CMD" >> "$RUN_DIR/install.log"
+      (cd "$WORKTREE" && bash -c "$DEPS_CACHE_POST_CMD") >> "$RUN_DIR/install.log" 2>&1 \
+        || fail setup_failed "DEPS_CACHE_POST_CMD failed (see $RUN_DIR/install.log)"
+    fi
+  else
+    [ -n "$DEPS_KEY" ] && echo "[harness] deps: cache miss ($DEPS_KEY) — full install"
+    (cd "$WORKTREE" && bash -c "$INSTALL_CMD") > "$RUN_DIR/install.log" 2>&1 \
+      || fail setup_failed "install failed (see $RUN_DIR/install.log)"
+    [ -n "$DEPS_KEY" ] && deps_cache_store "$(basename "$REPO")" "$DEPS_KEY" "$WORKTREE"
+  fi
 fi
 
 # --- 3b. Gate preflight: repo-specific environment checks (e.g. test DB up) --

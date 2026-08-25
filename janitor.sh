@@ -17,7 +17,8 @@
 # >>> --help >>>
 # Usage:
 #   janitor.sh [--report]        what --clean would do; sweeps and reaps nothing
-#   janitor.sh --clean           sweep those worktrees, reap zombies and processes
+#   janitor.sh --clean           sweep those worktrees, reap zombies and processes,
+#                                evict deps-cache entries unused for 14 days
 #   janitor.sh --install [MODE]  daily LaunchAgent (MODE: --report|--clean)
 #   janitor.sh --uninstall       remove that agent
 #
@@ -63,6 +64,8 @@ _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
 # shellcheck source=lib/common.sh
 . "$_COMMON_LIB_PATH"
+# shellcheck source=lib/deps-cache.sh
+. "$(dirname "$_COMMON_LIB_PATH")/deps-cache.sh"
 unset _COMMON_LIB_PATH
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -81,6 +84,7 @@ PROC_AGE="${JANITOR_PROC_AGE:-7200}"            # seconds one may live (2h)
 GH_TIMEOUT="${JANITOR_GH_TIMEOUT:-20}"          # seconds allowed per gh call
 OUTCOME_MAX_AGE="${JANITOR_OUTCOME_MAX_AGE:-14}"  # days a terminal outcome stays refreshed
 ZOMBIE_HOURS="${JANITOR_ZOMBIE_HOURS:-12}"       # hours a non-terminal status may age unattended
+DEPS_CACHE_DAYS="${JANITOR_DEPS_CACHE_DAYS:-14}"  # days an unused deps-cache entry may stay
 # The one knob that does NOT swallow an empty value into its default: an
 # accidentally-empty `JANITOR_PROC_MATCH=$SOMETHING` has to be refused out loud
 # rather than quietly reaping the default's processes instead.
@@ -100,6 +104,7 @@ case "$PROC_AGE" in ''|*[!0-9]*) fail "JANITOR_PROC_AGE must be whole seconds �
 case "$GH_TIMEOUT" in ''|*[!0-9]*) fail "JANITOR_GH_TIMEOUT must be whole seconds — got [$GH_TIMEOUT]" ;; esac
 case "$OUTCOME_MAX_AGE" in ''|*[!0-9]*) fail "JANITOR_OUTCOME_MAX_AGE must be whole days — got [$OUTCOME_MAX_AGE]" ;; esac
 case "$ZOMBIE_HOURS" in ''|*[!0-9]*) fail "JANITOR_ZOMBIE_HOURS must be whole hours — got [$ZOMBIE_HOURS]" ;; esac
+case "$DEPS_CACHE_DAYS" in ''|*[!0-9]*) fail "JANITOR_DEPS_CACHE_DAYS must be whole days — got [$DEPS_CACHE_DAYS]" ;; esac
 # An empty process name is never a valid reaping policy.
 [ -n "$PROC_MATCH" ] || fail "JANITOR_PROC_MATCH must not be empty"
 
@@ -763,6 +768,31 @@ reap_procs() {  # $1 = report | clean
 }
 
 # ---------------------------------------------------------------------------
+# The deps-cache prune
+# ---------------------------------------------------------------------------
+# run-task.sh stores one node_modules per (lockfile, install command, node)
+# under $HARNESS_DIR/cache/deps and touches an entry every time it restores
+# from it, so an entry's mtime IS its last use. A lockfile that changed leaves
+# its predecessor's entry behind forever — nothing dispatch-side ever looks
+# back — which makes it this script's business, like the worktrees.
+deps_line() {  # $1 = report|clean verb context, $2 = entry path, $3 = size in KB
+  local verb=evict; [ "$1" = clean ] && verb=evicted
+  line "$verb" "$(basename "$(dirname "$2")")" "unused > ${DEPS_CACHE_DAYS}d ($(human_kb "$3"))" "$2"
+}
+
+prune_deps_cache() {  # $1 = report | clean
+  say "deps cache: entries unused for more than ${DEPS_CACHE_DAYS} days"
+  DEPS_CACHE_PRUNED=0; DEPS_CACHE_KEPT=0
+  deps_cache_prune "$1" "$DEPS_CACHE_DAYS" deps_line
+  if [ "$1" = clean ]; then
+    say "  $DEPS_CACHE_PRUNED evicted, $DEPS_CACHE_KEPT in use kept"
+  else
+    say "  $DEPS_CACHE_PRUNED to evict, $DEPS_CACHE_KEPT in use kept"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # One pass
 # ---------------------------------------------------------------------------
 pass() {  # $1 = report | clean
@@ -782,6 +812,8 @@ pass() {  # $1 = report | clean
   reap_zombies "$mode"
   echo
   reap_procs "$mode"
+  echo
+  prune_deps_cache "$mode"
   if [ "$mode" != clean ]; then
     echo
     say "--report swept and reaped nothing (outcome.json is still refreshed). janitor.sh --clean does the above."

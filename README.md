@@ -104,7 +104,7 @@ sequenceDiagram
     F->>U: brief.md — criteria + verify commands
     U->>F: approve (± create a ticket)
     F->>S: launch run (background)
-    S->>S: worktree from origin/<base><br/>copy .env · install deps
+    S->>S: worktree from origin/<base><br/>copy .env · install deps<br/>(node_modules cloned CoW on a lockfile-cache hit)
     S->>O: brief.md<br/>+ factory keys, if MCP_CONFIG is pinned
     O->>O: design + implement + commit<br/>(cheaper subagents explore)
 

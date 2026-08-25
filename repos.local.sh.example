@@ -59,6 +59,16 @@
 #                  prompts then get the greenfield posture (remove obsolete paths
 #                  instead of keeping compatibility layers, fallbacks or
 #                  migrations; simplest thing that fully meets the requirements)
+#   DEPS_CACHE_POST_CMD  the part of a compound INSTALL_CMD the dependency cache
+#                  does not reproduce. The harness caches the root node_modules
+#                  per lockfile hash and skips the install on a hit (seconds
+#                  instead of minutes, copy-on-write on APFS) — but only for
+#                  INSTALL_CMDs it can fully account for. A plain "npm ci" needs
+#                  nothing; a compound pin becomes cacheable by naming its
+#                  remainder here, run on every hit:
+#                    INSTALL_CMD="npm ci && (cd app && flutter pub get)"
+#                    DEPS_CACHE_POST_CMD="cd app && flutter pub get"
+#                  Export HARNESS_DEPS_CACHE=0 to bypass the cache entirely.
 
 repo_config_local() {
   # $1 = absolute repo/worktree path, $2 = its basename

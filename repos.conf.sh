@@ -6,7 +6,14 @@
 # repo_config <repo-or-worktree-path> sets:
 #   BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD VISUAL_SCOPE_GLOBS \
 #   MCP_CONFIG ENV_SUBDIRS DEV_CMD PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD \
-#   IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL
+#   IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL DEPS_CACHE_POST_CMD
+#
+# DEPS_CACHE_POST_CMD is pin-only, never auto-detected: it declares the part of
+# a compound INSTALL_CMD the dependency cache does not reproduce (anything
+# beyond the root node_modules — a nested `flutter pub get`, a codegen step),
+# and pinning it is what makes such an INSTALL_CMD cacheable at all. On a cache
+# hit the harness restores node_modules and runs ONLY this command; on a miss
+# it runs the full INSTALL_CMD as always. See lib/deps-cache.sh.
 #
 # IMPLEMENTER_PROVIDER is the policy knob of the three: a repo is the boundary
 # for which vendors may see its code, so a pin here outranks the machine's
@@ -61,6 +68,7 @@ repo_config() {
   BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
   VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
   ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
+  DEPS_CACHE_POST_CMD=""
 
   # User pins first (if repos.local.sh defined the hook); auto-detection then
   # fills only the fields the hook left blank, so a pin can set just one value.
