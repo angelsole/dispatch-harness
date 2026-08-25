@@ -124,6 +124,11 @@ MARGIN=$(awk -v m="$CRITIC_TIEBREAK_MARGIN" \
 # not a matter of taste: reject anything that is not [a-z_]+ here rather than
 # letting it reach the CLI as an invalid schema or a silently missing number.
 AXIS_LIST=""
+# Bash's `read -a` discards a trailing empty field, so reject separator shapes
+# that necessarily contain an empty name before splitting the remaining list.
+case "$AXES" in
+  ''|,*|*,|*,,*) echo "critic.sh: --axes name '' is not [a-z_]+" >&2; exit 2 ;;
+esac
 IFS=',' read -r -a AXES_ARRAY <<<"$AXES"
 for axis in "${AXES_ARRAY[@]}"; do
   case "$axis" in

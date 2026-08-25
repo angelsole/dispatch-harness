@@ -920,6 +920,17 @@ file_has "$ROOT/critic-axes-bad.log" "is not [a-z_]+" "axes: naming the offendin
 check "axes: and nothing was billed for it" \
   "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "0"
 
+script_calls
+env CLAUDE_BIN="$FAKES/claude" bash "$CREATIVE/critic.sh" \
+  --challenger "$ROOT/sheet.png" --axes 'layout_integrity,' \
+  --out "$ROOT/axes-trailing-empty.json" \
+  > "$ROOT/critic-axes-trailing-empty.log" 2>&1
+check "axes: a trailing comma is an empty axis name" "$?" "2"
+file_has "$ROOT/critic-axes-trailing-empty.log" "name '' is not [a-z_]+" \
+  "axes: the trailing empty name is reported"
+check "axes: and a trailing empty name is rejected before billing" \
+  "$(grep -c '^critic$' "$CRITIC_CALLS" | tr -d ' ')" "0"
+
 # The rubric fallback is the caller's too: critic.sh is told which file to fall
 # back to rather than being told which kind of picture this is.
 script_calls
