@@ -2533,6 +2533,9 @@ run_refute_pass() {  # $1 = prompt
 # holds; anything printed is why it does not.
 review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
   local rel="$1" excerpt="$2" body
+  # Apply every path policy to its repository-relative spelling. Git accepts a
+  # leading ./, but it must not turn orchestration metadata into reviewable code.
+  while [ "${rel#./}" != "$rel" ]; do rel=${rel#./}; done
   case "$rel" in
     '') printf 'the verdict carried no evidence block'; return 0 ;;
     /*) printf 'the cited path is absolute'; return 0 ;;

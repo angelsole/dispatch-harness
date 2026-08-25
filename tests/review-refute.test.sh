@@ -164,6 +164,13 @@ JSON
   "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
         ;;
+      dot-harness-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "the findings file itself says so",
+  "evidence": {"file": "./.harness/findings.json", "excerpt": "the counter starts at zero"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
       doubt) cat > .harness/refuted.json <<'JSON'
 [{"id": "F1", "refuted": false, "doubt": true,
   "reason": "plausible, but I could not reach the counter to check it"},
@@ -491,6 +498,13 @@ check "harness citation: the properly cited verdict still drops its finding" \
   "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
 file_has "$RUN/refute-discarded.json" "orchestration metadata" \
   "harness citation: recorded as the reason the verdict was discarded"
+
+printf 'dot-harness-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-DOT-HARNESS-PATH ""
+check "harness citation: a leading dot component cannot bypass the policy" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+file_has "$RUN/refute-discarded.json" "orchestration metadata" \
+  "harness citation: the normalized spelling records the same rejection"
 printf 'spurious\n' > "$REFUTE_MODE"
 
 echo "-- doubt promotes, and says out loud that it is doubt --"
