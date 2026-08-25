@@ -138,7 +138,8 @@ about one failure mode and its structural cause; it is not a claim that this
 review is better than a benchmarked one, and a review can be worse in a hundred
 ways that have nothing to do with capitulation. The rules above also buy their
 guarantee with a cost: a correct refutation whose author quotes carelessly is
-discarded, and the pipeline pays for that in an unnecessary edit.
+discarded, costing another review in the fix pass and risking an unnecessary
+edit.
 
 Measuring binary against evidence-verified refutation on a public benchmark is
 work that has not been done here. There is a
