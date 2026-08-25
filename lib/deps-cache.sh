@@ -161,8 +161,12 @@ $(find "$root" -mindepth 2 -maxdepth 2 -type d 2>/dev/null)
 EOF
   # Repo dirs left empty by eviction go too; -mindepth spares the root itself.
   [ "$mode" = clean ] && find "$root" -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null
-  # Outputs read by the caller (janitor.sh's summary line), invisible from here.
+  # Outputs read by the caller (janitor.sh's summary line), invisible from
+  # here. One assignment per directive: a disable covers the next COMMAND, not
+  # the next line, so two assignments sharing a line leaves the second exposed.
   # shellcheck disable=SC2034
-  DEPS_CACHE_PRUNED="$n_stale"; DEPS_CACHE_KEPT="$n_kept"
+  DEPS_CACHE_PRUNED="$n_stale"
+  # shellcheck disable=SC2034
+  DEPS_CACHE_KEPT="$n_kept"
   return 0
 }
