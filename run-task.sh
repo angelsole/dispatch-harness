@@ -2532,7 +2532,7 @@ run_refute_pass() {  # $1 = prompt
 # harness owns the worktree, so it can go and look. Empty output = the citation
 # holds; anything printed is why it does not.
 review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
-  local rel="$1" excerpt="$2" body
+  local rel="$1" excerpt="$2" body index_entry
   # Apply every path policy to its repository-relative spelling. Git accepts a
   # leading ./, but it must not turn orchestration metadata into reviewable code.
   while [ "${rel#./}" != "$rel" ]; do rel=${rel#./}; done
@@ -2542,8 +2542,14 @@ review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
     ..|../*|*/..|*/../*) printf 'the cited path leaves the worktree'; return 0 ;;
     .harness/*) printf 'the cited path is orchestration metadata, not reviewed code'; return 0 ;;
   esac
-  git -C "$WORKTREE" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 \
+  index_entry=$(git -C "$WORKTREE" ls-files -s --error-unmatch -- "$rel" 2>/dev/null) \
     || { printf '%s is not a tracked file on this branch' "$rel"; return 0; }
+  # A tracked symlink's worktree bytes come from its target, which need not be
+  # in the repository. Evidence must be owned by this checkout, so do not follow
+  # links when deciding whether a refutation can discard a finding.
+  case "$index_entry" in
+    120000\ *) printf '%s is a symlink, not a worktree-owned evidence file' "$rel"; return 0 ;;
+  esac
   [ "$(printf '%s' "$excerpt" | tr -d '[:space:]' | wc -c | tr -d ' ')" -ge 10 ] \
     || { printf 'the excerpt is under ten characters of code'; return 0; }
   body=$(cat "$WORKTREE/$rel" 2>/dev/null) \

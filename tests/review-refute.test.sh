@@ -82,7 +82,11 @@ git init -q --bare "$BARE"
 git clone -q "$BARE" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name  t
-git -C "$REPO" commit -q --allow-empty -m init
+OUTSIDE_EVIDENCE="$ROOT/outside-evidence.txt"
+printf 'external text can never verify reviewed code\n' > "$OUTSIDE_EVIDENCE"
+ln -s "$OUTSIDE_EVIDENCE" "$REPO/evidence-link"
+git -C "$REPO" add evidence-link
+git -C "$REPO" commit -q -m init
 git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
 
@@ -167,6 +171,13 @@ JSON
       dot-harness-evidence) cat > .harness/refuted.json <<'JSON'
 [{"id": "F1", "refuted": true, "reason": "the findings file itself says so",
   "evidence": {"file": "./.harness/findings.json", "excerpt": "the counter starts at zero"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      symlink-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "an external file claims the counter is correct",
+  "evidence": {"file": "evidence-link", "excerpt": "external text can never verify reviewed code"}},
  {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
   "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
@@ -505,6 +516,17 @@ check "harness citation: a leading dot component cannot bypass the policy" \
   "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
 file_has "$RUN/refute-discarded.json" "orchestration metadata" \
   "harness citation: the normalized spelling records the same rejection"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- tracked symlinks cannot import evidence from outside the worktree --"
+printf 'symlink-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-SYMLINK ""
+check "symlink citation: external target content cannot drop a finding" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "symlink citation: an ordinary tracked file remains valid evidence" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+file_has "$RUN/refute-discarded.json" "symlink" \
+  "symlink citation: the escape is recorded as the rejection reason"
 printf 'spurious\n' > "$REFUTE_MODE"
 
 echo "-- doubt promotes, and says out loud that it is doubt --"
