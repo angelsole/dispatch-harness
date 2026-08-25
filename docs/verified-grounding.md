@@ -4,8 +4,7 @@
 
 An agentic code review is only as good as the disagreements inside it. This is
 a note about one small mechanism — making a refutation cite code the harness can
-check — and about the week it spent being attacked by the process it was built
-to improve.
+check — and about how it was attacked by the process it was built to improve.
 
 ## Half of what a review says is wrong
 
