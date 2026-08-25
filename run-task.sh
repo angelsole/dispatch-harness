@@ -2532,7 +2532,7 @@ run_refute_pass() {  # $1 = prompt
 # harness owns the worktree, so it can go and look. Empty output = the citation
 # holds; anything printed is why it does not.
 review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
-  local rel="$1" excerpt="$2" body index_entry
+  local rel="$1" excerpt="$2" body_hex excerpt_hex index_entry
   # Apply every path policy to its repository-relative spelling. Git accepts a
   # leading ./, but it must not turn orchestration metadata into reviewable code.
   while [ "${rel#./}" != "$rel" ]; do rel=${rel#./}; done
@@ -2552,13 +2552,15 @@ review_evidence_reject() {  # $1 = cited path, $2 = trimmed excerpt
   esac
   [ "$(printf '%s' "$excerpt" | tr -d '[:space:]' | wc -c | tr -d ' ')" -ge 10 ] \
     || { printf 'the excerpt is under ten characters of code'; return 0; }
-  body=$(cat "$WORKTREE/$rel" 2>/dev/null) \
+  [ -r "$WORKTREE/$rel" ] \
     || { printf '%s could not be read' "$rel"; return 0; }
-  # Quoted inside the pattern so refuter-supplied text is matched literally, and
-  # matched against the whole file at once: a per-line match would accept an
-  # excerpt stitched together from lines that never touch.
-  case "$body" in
-    *"$excerpt"*) ;;
+  # Hex keeps every byte representable in shell variables, including NUL. Match
+  # the whole file at once: a per-line match would accept an excerpt stitched
+  # together from lines that never touch.
+  body_hex=$(od -An -v -tx1 "$WORKTREE/$rel" 2>/dev/null | tr -d '[:space:]')
+  excerpt_hex=$(printf '%s' "$excerpt" | od -An -v -tx1 | tr -d '[:space:]')
+  case "$body_hex" in
+    *"$excerpt_hex"*) ;;
     *) printf 'the excerpt is not a contiguous verbatim slice of %s' "$rel" ;;
   esac
 }

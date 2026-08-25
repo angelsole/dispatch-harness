@@ -85,7 +85,8 @@ git -C "$REPO" config user.name  t
 OUTSIDE_EVIDENCE="$ROOT/outside-evidence.txt"
 printf 'external text can never verify reviewed code\n' > "$OUTSIDE_EVIDENCE"
 ln -s "$OUTSIDE_EVIDENCE" "$REPO/evidence-link"
-git -C "$REPO" add evidence-link
+printf 'abcdefghij\0klmnopqrst' > "$REPO/binary-evidence"
+git -C "$REPO" add evidence-link binary-evidence
 git -C "$REPO" commit -q -m init
 git -C "$REPO" branch -M main
 git -C "$REPO" push -q -u origin main
@@ -178,6 +179,13 @@ JSON
       symlink-evidence) cat > .harness/refuted.json <<'JSON'
 [{"id": "F1", "refuted": true, "reason": "an external file claims the counter is correct",
   "evidence": {"file": "evidence-link", "excerpt": "external text can never verify reviewed code"}},
+ {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
+  "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
+JSON
+        ;;
+      nul-bridged-evidence) cat > .harness/refuted.json <<'JSON'
+[{"id": "F1", "refuted": true, "reason": "the binary fixture appears to contain this text",
+  "evidence": {"file": "binary-evidence", "excerpt": "abcdefghijklmnopqrst"}},
  {"id": "F2", "refuted": true, "reason": "other.txt:1 closes the handle in a finally block",
   "evidence": {"file": "impl.txt", "excerpt": "11\n12\n13\n14\n15"}}]
 JSON
@@ -527,6 +535,17 @@ check "symlink citation: an ordinary tracked file remains valid evidence" \
   "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
 file_has "$RUN/refute-discarded.json" "symlink" \
   "symlink citation: the escape is recorded as the rejection reason"
+printf 'spurious\n' > "$REFUTE_MODE"
+
+echo "-- a NUL byte remains part of the file during excerpt matching --"
+printf 'nul-bridged-evidence\n' > "$REFUTE_MODE"
+dispatch RR-REFUTE-NUL-BRIDGE ""
+check "binary citation: text separated by NUL is not contiguous evidence" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/promoted.json")" "F1"
+check "binary citation: valid text evidence still drops its own finding" \
+  "$(jq -r '[.[].id] | join(",")' "$RUN/refuted.json")" "F2"
+file_has "$RUN/refute-discarded.json" "contiguous verbatim slice" \
+  "binary citation: the byte mismatch is recorded as the rejection reason"
 printf 'spurious\n' > "$REFUTE_MODE"
 
 echo "-- doubt promotes, and says out loud that it is doubt --"
