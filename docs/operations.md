@@ -529,6 +529,7 @@ like `schedule.sh` — `--report` and `--clean` themselves run anywhere.
 | `JANITOR_GH_TIMEOUT` | Seconds allowed for each `gh` call | `20` |
 | `JANITOR_OUTCOME_MAX_AGE` | Days after which a terminal PR's `outcome.json` stops being refreshed | `14` |
 | `JANITOR_ZOMBIE_HOURS` | Hours after which a non-terminal status with no live process is reaped | `12` |
+| `JANITOR_DEAD_ZOMBIE_MINS` | Minutes after which a run **proven** dead is reaped — its `driver.pid` names no live process *and* its `heartbeat` is cold. `JANITOR_ZOMBIE_HOURS` stays long because `pgrep` alone cannot tell "no process" from "not started yet"; two independent liveness signals can, so that run needs no twelve-hour grace. The reap now also writes a `result.json` with status `driver_failed`, so metrics and the wall see a terminated attempt rather than an attempt that never ended | `10` |
 
 What leaves the machine: one read-only `gh pr view` per run that has a PR, plus
 — while that PR's outcome is still being refreshed — one read-only `gh api` call

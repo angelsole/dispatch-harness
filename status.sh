@@ -44,7 +44,19 @@ watch_render() {
     case "$started" in ''|*[!0-9]*) started="$ts" ;; esac
     act=''; [ -f "$dir/activity" ] && { IFS= read -r act < "$dir/activity" || true; }
     harness_actor "$stagetext"
-    case "$stagetext" in done:*) inst="-" ;; *) inst="$(fmt $((now - ts)))" ;; esac
+    # A stage timer only means something while something is working: run_alive
+    # (driver.pid + heartbeat, lib/common.sh) separates a slow gate from a dead
+    # driver, which used to render identically. "Cannot tell" (a run dir from
+    # before those files existed) renders exactly as it always did.
+    case "$stagetext" in
+      done:*) inst="-" ;;
+      deferred:*|waiting*|'sync failed'*) inst="$(fmt $((now - ts)))" ;;
+      *)
+        if run_alive "$dir"; then inst="$(fmt $((now - ts)))"
+        elif [ $? -eq 1 ]; then inst="DEAD $(fmt $((now - ts)))"
+        else inst="$(fmt $((now - ts)))"; fi
+        ;;
+    esac
     printf '%-24s %s%-11s%s %-34s %s%-30s%s %-9s %s\n' \
       "${name:0:24}" "$HARNESS_ACTOR_COLOR" "$HARNESS_ACTOR" "$C_RESET" \
       "${stagetext:0:34}" "$C_DIM" "${act:0:30}" "$C_RESET" \
@@ -93,7 +105,7 @@ fi
 
 [ -d "$RUNS" ] || { echo "no runs yet"; exit 0; }
 
-if [ $# -eq 1 ]; then
+if [ $# -eq 1 ] && [ "${1:-}" != "--doctor" ]; then
   dir="$RUNS/$1"
   [ -d "$dir" ] || { echo "no run named $1" >&2; exit 1; }
   echo "== $1 timeline =="
@@ -112,8 +124,57 @@ if [ $# -eq 1 ]; then
   exit 0
 fi
 
+# The exact command that resumes a dead run, derived from what the run dir
+# already records. The worktree is "<repo>-<run-id lowercased>", so the repo is
+# the worktree minus that suffix; the branch comes from result.json or, absent
+# that, from the worktree's own HEAD.
+redispatch_command() {  # $1 = run dir, $2 = run name
+  local wt branch lc repo
+  wt=$(jq -r '.worktree // empty' "$1/result.json" 2>/dev/null)
+  [ -n "$wt" ] || wt=$(cat "$1/worktree" 2>/dev/null)
+  branch=$(jq -r '.branch // empty' "$1/result.json" 2>/dev/null)
+  [ -n "$branch" ] || branch=$(git -C "${wt:-/nonexistent}" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  lc=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+  repo="${wt%-$lc}"
+  if [ -n "$repo" ] && [ "$repo" != "$wt" ] && [ -n "$branch" ]; then
+    printf '  %s/run-task.sh %s %s %s\n' "$HARNESS_DIR" "$2" "$repo" "$branch"
+  else
+    printf '  %s — cannot derive the re-dispatch args (see %s)\n' "$2" "$1"
+  fi
+}
+
+dead_footer() {  # $1 = space-separated dead run names
+  [ -n "$1" ] || return 0
+  echo
+  echo "STALLED — no driver process and no heartbeat. The worktree and the worker"
+  echo "session survive, so a re-dispatch resumes where it stopped:"
+  local name
+  for name in $1; do redispatch_command "$RUNS/$name" "$name"; done
+}
+
+# --doctor: every run with a stage, no driver and a cold heartbeat, with the
+# exact command that resumes it. Read-only on purpose: the janitor is the only
+# thing that rewrites another process's status file.
+if [ "${1:-}" = "--doctor" ]; then
+  now=$(date +%s)
+  dead=""
+  # shellcheck disable=SC2045
+  for name in $(ls -t "$RUNS" 2>/dev/null); do
+    dir="$RUNS/$name"
+    [ -f "$dir/status" ] || continue
+    read -r ts stagetext < "$dir/status"
+    case "$stagetext" in done:*|deferred:*|waiting*|'sync failed'*) continue ;; esac
+    run_alive "$dir"; [ $? -eq 1 ] || continue
+    dead="$dead $name"
+    printf '%-26s %-46s dead %s\n' "$name" "$stagetext" "$(fmt $((now - ts)))"
+  done
+  if [ -n "$dead" ]; then dead_footer "$dead"; else echo "no dead runs"; fi
+  exit 0
+fi
+
 now=$(date +%s)
 found=0
+dead=""
 printf '%-26s %-46s %-12s %-9s %s\n' "RUN" "STAGE" "IN STAGE" "TOTAL" "SCORE"
 # Newest-first: run-id dir names are ticket IDs / adhoc slugs (no whitespace),
 # so word-splitting ls -t output is safe here.
@@ -128,8 +189,29 @@ for name in $(ls -t "$RUNS" 2>/dev/null); do
   # is every run before this existed, and every run whose verifier was off.
   score=$(jq -r '.metrics.verifier.score // empty' "$dir/result.json" 2>/dev/null || echo "")
   case "$stagetext" in
-    done:*) printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "-" "$(fmt $((ts - started)))" "$score" ;;
-    *)      printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "$(fmt $((now - ts)))" "$(fmt $((now - started)))" "$score" ;;
+    # No process is expected to be alive for any of these, and for `waiting` /
+    # `sync failed` the growing timer is the point (how long it has been
+    # blocked). `sync failed` is non-terminal on purpose — but it is not a
+    # stalled stage either.
+    done:*)     printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "-" "$(fmt $((ts - started)))" "$score" ;;
+    deferred:*) printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "armed" "$(fmt $((now - started)))" "$score" ;;
+    waiting*|'sync failed'*)
+                printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "$(fmt $((now - ts)))" "$(fmt $((now - started)))" "$score" ;;
+    *)
+      # A stage timer only means something while something is working. run_alive
+      # (driver.pid + heartbeat, lib/common.sh): 0 alive, 1 dead, 2 cannot tell
+      # — and "cannot tell" (a run dir from before those files existed) renders
+      # exactly as it always did rather than being slandered as dead.
+      if run_alive "$dir"; then
+        printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "$(fmt $((now - ts)))" "$(fmt $((now - started)))" "$score"
+      elif [ $? -eq 1 ]; then
+        printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "DEAD $(fmt $((now - ts)))" "$(fmt $((now - started)))" "$score"
+        dead="$dead $name"
+      else
+        printf '%-26s %-46s %-12s %-9s %s\n' "$name" "$stagetext" "$(fmt $((now - ts)))" "$(fmt $((now - started)))" "$score"
+      fi
+      ;;
   esac
 done
 [ $found -eq 1 ] || echo "no runs yet"
+dead_footer "$dead"
