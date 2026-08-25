@@ -34,7 +34,8 @@
 #
 # Usage:
 #   critic.sh --challenger SHEET.png [--champion SHEET.png] [--refs DIR]
-#             [--rubric FILE] --out VERDICT.json
+#             [--rubric FILE] [--rubric-default FILE] [--axes a,b,c]
+#             --out VERDICT.json
 # Env:
 #   CLAUDE_BIN             the CLI (default: claude on PATH)
 #   CRITIC_MODEL           default claude-opus-5 (the harness's reviewer tier)
@@ -75,19 +76,28 @@ CRITIC_ORDERS="${CRITIC_ORDERS:-2}"
 CRITIC_TIEBREAK_MARGIN="${CRITIC_TIEBREAK_MARGIN:-0.5}"
 RUBRIC_MAX_LINES=200   # the rubric is repo input; bound what reaches the model
 
-CHALLENGER=""; CHAMPION=""; REFS=""; RUBRIC="$SELF_DIR/rubric.md"; OUT=""
+# The six pixel-art axes this script has always graded on. A caller that grades
+# something else — an app frontend, say — passes its own set with --axes and the
+# rubric that names them; this script knows nothing about either, only that the
+# names it is handed become JSON schema keys.
+DEFAULT_AXES="palette_discipline,grid_discipline,silhouette_readability,composition,animation_continuity,style_match_to_reference"
+
+CHALLENGER=""; CHAMPION=""; REFS=""; RUBRIC=""; OUT=""
+RUBRIC_DEFAULT="$SELF_DIR/rubric.md"; AXES="$DEFAULT_AXES"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --challenger) CHALLENGER="${2:-}"; shift 2 ;;
-    --champion)   CHAMPION="${2:-}";   shift 2 ;;
-    --refs)       REFS="${2:-}";       shift 2 ;;
-    --rubric)     RUBRIC="${2:-}";     shift 2 ;;
-    --out)        OUT="${2:-}";        shift 2 ;;
+    --challenger)     CHALLENGER="${2:-}";     shift 2 ;;
+    --champion)       CHAMPION="${2:-}";       shift 2 ;;
+    --refs)           REFS="${2:-}";           shift 2 ;;
+    --rubric)         RUBRIC="${2:-}";         shift 2 ;;
+    --rubric-default) RUBRIC_DEFAULT="${2:-}"; shift 2 ;;
+    --axes)           AXES="${2:-}";           shift 2 ;;
+    --out)            OUT="${2:-}";            shift 2 ;;
     *) echo "critic.sh: unknown option $1" >&2; exit 2 ;;
   esac
 done
 [ -n "$CHALLENGER" ] && [ -n "$OUT" ] || {
-  echo "usage: critic.sh --challenger SHEET.png --out VERDICT.json [--champion S] [--refs D] [--rubric F]" >&2
+  echo "usage: critic.sh --challenger SHEET.png --out VERDICT.json [--champion S] [--refs D] [--rubric F] [--rubric-default F] [--axes a,b,c]" >&2
   exit 2
 }
 [ -f "$CHALLENGER" ] || { echo "critic.sh: no challenger sheet at $CHALLENGER" >&2; exit 2; }
@@ -95,7 +105,8 @@ done
   echo "critic.sh: no champion sheet at $CHAMPION" >&2
   exit 2
 }
-[ -f "$RUBRIC" ] || RUBRIC="$SELF_DIR/rubric.md"
+if [ -z "$RUBRIC" ] || [ ! -f "$RUBRIC" ]; then RUBRIC="$RUBRIC_DEFAULT"; fi
+[ -f "$RUBRIC" ] || { echo "critic.sh: no rubric at $RUBRIC" >&2; exit 2; }
 case "$CRITIC_ORDERS" in
   1|2) ;;
   *) echo "critic.sh: CRITIC_ORDERS must be 1 or 2 (got '$CRITIC_ORDERS')" >&2; exit 2 ;;
@@ -109,13 +120,24 @@ MARGIN=$(awk -v m="$CRITIC_TIEBREAK_MARGIN" \
   exit 2
 }
 
+# An axis name becomes a JSON schema key and a jq path, so the character set is
+# not a matter of taste: reject anything that is not [a-z_]+ here rather than
+# letting it reach the CLI as an invalid schema or a silently missing number.
+AXIS_LIST=""
+IFS=',' read -r -a AXES_ARRAY <<<"$AXES"
+for axis in "${AXES_ARRAY[@]}"; do
+  case "$axis" in
+    *[!a-z_]*|'') echo "critic.sh: --axes name '$axis' is not [a-z_]+" >&2; exit 2 ;;
+  esac
+  AXIS_LIST="$AXIS_LIST$axis"$'\n'
+done
+
 # The schema is stated to the CLI, which enforces it, AND summarised in the
 # prompt, which is what makes the model fill it in with meaning rather than
 # with something that merely validates. Composed with jq rather than written
 # out twice: the one-image and two-image schemas must not drift apart, because
 # the axes they share are the numbers the tiebreak subtracts.
-AXIS_NAMES='["palette_discipline","grid_discipline","silhouette_readability",
-             "composition","animation_continuity","style_match_to_reference"]'
+AXIS_NAMES=$(printf '%s' "$AXIS_LIST" | jq -Rnc '[inputs]')
 AXES_SCHEMA=$(jq -nc --argjson names "$AXIS_NAMES" \
   '{type:"object",
     properties: ($names | map({(.): {type:"integer", minimum:1, maximum:5}}) | add),
@@ -155,7 +177,7 @@ fi
 POSTURE="You are the visual critic of an automated pipeline. Another agent rendered the images below; you had no hand in them and you are grading someone else's work. The person who asked for this grade wants the truth, not encouragement — do not soften, do not congratulate, and do not assume the work is good because it is finished."
 SHEET_NOTE="Each sheet is a contact sheet: consecutive frames of the same shot(s), one per tile, with the frame name printed under each tile. Refer to tiles by that name."
 RUBRIC_TEXT=$(sed -n "1,${RUBRIC_MAX_LINES}p" "$RUBRIC")
-AXES_NOTE="  - axes — each of the six, 1 (broken) to 5 (excellent). Score what you can see, not what you assume was intended.
+AXES_NOTE="  - axes — each of the $(printf '%s' "$AXIS_NAMES" | jq -r 'length') ($(printf '%s' "$AXIS_NAMES" | jq -r 'join(", ")')), 1 (broken) to 5 (excellent). Score what you can see, not what you assume was intended.
   - worst_axis — the axis you scored lowest.
   - evidence — what IN THE IMAGE justifies that lowest score. Name the tile and the element. \"It feels unpolished\" is not evidence.
   - one_fix — the single most impactful change, one sentence, specific enough to implement. Camera, light and composition before more objects.
