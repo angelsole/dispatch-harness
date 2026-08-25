@@ -1,12 +1,77 @@
 # Design notes
 
-Why some of the pipeline's stranger behaviours exist: the incidents that
-produced them, the numbers from the run corpus, and how to read the harness's
-report on itself.
+Why the pipeline has the shape it has, and why some of its stranger behaviours
+exist: the argument for the cross-vendor split, the incidents that produced the
+self-recovery rules, the numbers from the run corpus, and how to read the
+harness's report on itself.
 
-Nothing here is needed to use the harness. It is the record of what went wrong
-before a rule existed, kept because a rule whose reason is lost gets deleted by
-the next person who finds it annoying.
+None of it is needed to use the harness. It is the record of what the shape is
+for, and of what went wrong before a rule existed — kept because a rule whose
+reason is lost gets deleted by the next person who finds it annoying.
+
+## Why it's built this way
+
+**Cross-vendor implement/review split.** The implementer (Anthropic's Opus,
+`claude-opus-5` by default) writes and commits; the reviewer (OpenAI's Codex,
+`gpt-5.6-sol` by default) reads the diff cold and fixes what it finds. Neither
+sees the other's reasoning — only the committed result. A self-review by the
+same model rationalizes its own choices; a different lab's model does not. Which
+vendor implements is itself a pinned knob: `IMPLEMENTER_PROVIDER=zai` runs the
+implementer on Zhipu's GLM Coding Plan and moves nothing else
+([GLM as the implementer](reference.md#glm-as-the-implementer)).
+
+**A deterministic gate between the models.** Between implement and review runs a
+plain test gate — your repo's own `lint`/`type-check`/`test` commands, no model
+in the loop. It is the objective checkpoint: green or red, no narrative. Because
+a model *could* make the gate green by weakening the tests, the reviewer's
+**first and highest-priority checklist item is anti-gate-gaming**: it hunts for
+weakened or deleted tests, skipped cases, loosened assertions, hardcoded values
+and edited fixtures, and restores proper tests instead. A green gate counts only
+if the tests earning it weren't touched.
+
+**Finding is not the same job as fixing.** A reviewer that does both in one
+breath turns every false positive into an edit to code that already passed the
+gate — and roughly half of what a review reports does not survive checking. So
+the stage is three passes: the reviewer writes down what a correct change must
+do *before* it opens the diff and then reports findings without touching
+anything; a fresh session that has not seen the diff tries to **disprove** each
+one; and only the survivors are fixed, one commit per finding. What was dropped,
+and the evidence it was dropped on, is in `review-notes.md` and in
+`review_findings` — see
+[Find, refute, fix](reference.md#find-refute-fix).
+
+**The guarantee: every arm reviews or holds.** Cross-vendor is the preference;
+a review is the requirement, and no path in `run-task.sh` opens a PR on a diff
+nothing read. When Codex is out of credits, crashed or absent, the same review
+prompt falls through to a second Codex account and then to a fresh Claude
+session — never the implementer's own, so still a cold read — and the arm is
+recorded (`claude_only`, `reviewed_claude`) rather than dressed up as
+cross-vendor. That last tier is the honest label for an Anthropic implementer;
+behind a `zai` one it happens to be cross-vendor anyway. If even that leaves no
+evidence the run ends `review_failed` with
+`review: failed_silent` and pushes nothing. The one exception is an operator
+asking for the unreviewed baseline on purpose (`HARNESS_SKIP_REVIEW=1`) — see [When Codex dies mid-run](operations.md#when-codex-dies-mid-run-out-of-credits).
+
+**Subscription economics.** The expensive, low-volume work — research and the
+brief — runs in your orchestrator session. The expensive, *high-volume* work —
+implementing and reviewing, which burn the most tokens — runs on flat-rate
+**subscriptions** (Claude and ChatGPT) you already pay for, and the glue between
+stages is deterministic shell that costs nothing. Frontier models on the
+token-heavy stages, without metered token bills for them. The planner is the one
+stage the harness does not pin, and it is worth spending on: we've gotten the
+best results with **Claude Fable 5** there (sharper briefs up front mean fewer
+`needs_input` stops and review fixes downstream); an Opus session on a Claude
+subscription also works, and then the whole pipeline runs on flat-rate plans.
+
+**`needs_input`: stop, don't guess.** When the implementer hits a fork the brief
+doesn't resolve — a genuine product or priority decision — it does **not**
+guess. It writes the specific question(s) to `QUESTIONS.md` and stops the run
+with status `needs_input`. Worker sessions are **resumable**: append answers to
+the brief, re-dispatch the same command, and the worker continues with its full
+context intact rather than starting over. Per-model attribution works the same
+way: `opus_head` records the boundary between the two models' commits in the
+run's metadata, never in the commit messages
+([the run directory](reference.md#the-run-directory)).
 
 ## What the corpus taught the pipeline
 
