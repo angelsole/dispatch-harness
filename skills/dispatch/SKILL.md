@@ -284,10 +284,15 @@ holds, and `result.json` records how it actually went in `review`:
 
 The review runs as three passes — find, refute, fix — and only a finding a
 second, independent session failed to disprove earns an edit. `review_findings`
-in result.json carries `{found, refuted, promoted, fixed, refute}`, and
+in result.json carries `{found, refuted, promoted, doubted, fixed, refute}`, and
 `review-notes.md` ends with both lists: what was fixed, and what was dropped
-with the evidence it was dropped on. Read the refuted list — a finding dropped
-on a bad refutation is a defect nobody edited. When `refute` is anything but
+with the evidence it was dropped on. A refutation only drops a finding when it
+cites a tracked file and quotes a contiguous verbatim slice of it that the
+harness verified — one that did not verify is listed as discarded and its
+finding was promoted instead. `doubted` is the subset of `promoted` the refuter
+could not confirm; the fix pass had to confirm those itself before editing, so a
+doubted finding with no commit is expected, not a miss. Read the refuted list —
+a finding dropped on a bad refutation is a defect nobody edited. When `refute` is anything but
 `ok` (`failed` — the pass crashed or timed out; `off` — the knob), EVERY finding
 was promoted unchecked, so the fixes are a reviewer's unverified claims and
 deserve the scrutiny a single-pass review's would. The field is absent when the
