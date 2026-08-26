@@ -86,73 +86,51 @@ safety net that skill removes.
 ## How a run goes
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor U as You
-    participant F as Planner<br/>API
-    participant S as run-task.sh<br/>script · free
-    participant O as Implementer<br/>Opus · Claude sub
-    participant C as Reviewer · optional<br/>Codex · ChatGPT sub
+flowchart LR
+    U(["👤 You<br/>/dispatch a ticket or a description"])
+    B["📝 Brief<br/>acceptance criteria + verify commands<br/>you approve it"]
+    I["🤖 Implementer<br/>Claude, alone in a fresh git worktree"]
+    G{"✅ Deterministic gate<br/>your repo's lint · types · tests<br/>no model in the loop"}
+    P["📬 Draft PR<br/>both models' notes in the body"]
+    M(["🎉 You merge<br/>the pipeline never does"])
 
-    U->>F: /dispatch PROJ-1234 or free-form idea
-    F->>F: research repo (Explore subagents)
-    F->>U: brief.md — criteria + verify commands
-    U->>F: approve (± create a ticket)
-    F->>S: launch run (background)
-    S->>S: worktree from origin/<base><br/>copy .env · install deps<br/>(node_modules cloned CoW on a lockfile-cache hit)
-    S->>O: brief.md<br/>+ factory keys, if MCP_CONFIG is pinned
-    O->>O: design + implement + commit<br/>(cheaper subagents explore)
-
-    opt MCP_CONFIG is pinned (repos with an asset factory)
-        O->>O: PixelLab / Retro Diffusion via MCP or factory.py<br/>then the mandatory post-pass
+    subgraph REV ["🔎 Review — three passes, never the model that wrote the code"]
+        direction LR
+        F["🔍 Find<br/>a different vendor reads the diff cold<br/>reports, fixes nothing"]
+        R["⚖️ Refute<br/>a fresh session tries to disprove every finding"]
+        X["🔧 Fix<br/>survivors only, one commit per finding"]
+        F --> R --> X
     end
 
-    alt brief doesn't resolve a fork
-        O->>F: QUESTIONS.md — needs_input ⏸
-        F->>U: product forks only (arch: answers itself)
-        U->>F: decisions
-        F->>O: brief + answers — session resumes
-    end
+    U --> B --> I --> G
+    G -->|"green"| F
+    G -->|"red — back to the implementer"| I
+    I -.->|"a fork the brief didn't answer"| U
+    X --> P --> M
 
-    S->>S: test gate #1 (per-repo cmds)
-    opt the visual profile applies (repos judged by eye)
-        S->>S: visual gate: render fixed shots<br/>model-free checks · contact sheet
-        S->>S: critic (fresh, no shell): rubric<br/>+ pairwise vs champion
-        alt worse than the champion, or a check failed
-            S->>C: visual fix round — frames + one_fix<br/>(Claude fallback when Codex is unavailable)
-            C->>S: fix commits, then re-render
-        end
-    end
+    N["📎 A refutation only counts if it cites code<br/>the harness verifies byte-for-byte"]
+    R -.- N
 
-    S->>C: diff + brief + gate log<br/>+ contact-sheet.png + visual-score.json
-    C->>C: find: expected properties before the diff, then<br/>gate-gaming · logic · blind spots<br/>reuse · hardcoding · quality — fixes nothing
-
-    alt fundamental flaw
-        C->>F: REJECTED.md
-        F->>O: sharpened brief — re-dispatch
-    else findings
-        C->>S: findings.json
-        S->>C: refute — fresh session, disprove each
-        C->>S: refuted.json — only survivors are promoted
-        S->>C: fix — promoted findings only
-        C->>S: one commit per finding + review-notes.md<br/>(gate re-runs, max 2 rounds)
-    end
-
-    S->>S: verify — third-vendor trajectory score (best-effort)
-    S->>S: push + draft PR (notes in body)
-    S->>F: result.json — ready
-    F->>U: verdict · preview.sh if frontend
-    U->>F: approve
-    F->>S: gh pr ready + cleanup.sh
-    S->>U: PR ready for review · worktree cleaned
+    classDef you fill:#c9d6e4,stroke:#54677d,color:#1a1a1a
+    classDef implementer fill:#d9cfe9,stroke:#6f5f92,color:#1a1a1a
+    classDef reviewer fill:#f2d9c0,stroke:#a5764a,color:#1a1a1a
+    classDef script fill:#c8ddc9,stroke:#4f7f5b,color:#1a1a1a
+    classDef callout fill:#efe4c2,stroke:#96814a,color:#1a1a1a
+    class U,B,M you
+    class I implementer
+    class F,R,X reviewer
+    class G,P script
+    class N callout
 ```
 
-The same diagram, plus the monitoring one, is in [`FLOW.md`](FLOW.md), and a
-printable one-page version in [`harness-flow.html`](harness-flow.html). Each run
-gets its own git worktree (`<repo>-<ticket>`), so tickets run in parallel without
-colliding, and everything the pipeline knows about a run — the brief, the
-questions, the notes, the metrics — lives in a git-excluded `.harness/` directory
-inside it that never ships in a commit or PR
+The same pipeline stage by stage — every branch, plus the two optional stages
+this one leaves out — is the sequence diagram in [`FLOW.md`](FLOW.md), next to
+the monitoring one; a printable one-page version is in
+[`harness-flow.html`](harness-flow.html). Each run gets its own git worktree
+(`<repo>-<ticket>`), so tickets run in parallel without colliding, and
+everything the pipeline knows about a run — the brief, the questions, the notes,
+the metrics — lives in a git-excluded `.harness/` directory inside it that never
+ships in a commit or PR
 ([the run directory](docs/reference.md#the-run-directory)).
 
 ## Prerequisites
