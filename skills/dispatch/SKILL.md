@@ -256,6 +256,16 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   listed in the dispatch output; `git -C <worktree> status` shows them live.
   Re-dispatch: the resumed session is handed the list and asked to commit or
   discard each path, then the run continues from the gate.
+- **driver_failed** — the driver process was killed mid-stage (SIGTERM/HUP/INT,
+  or an exit that reached no other verdict); `<run>/died` names the signal and
+  when. Nothing about the work is lost: the worktree, the committed diff and the
+  worker session all survive, so re-dispatching the exact same command resumes
+  from where it stopped. Read `died` and the tail of `dispatch.log` first — if a
+  human stopped it, just re-dispatch; if it died on its own, diagnose before
+  spending another pass. Runs now detach into their own session, so a killed
+  launcher can no longer cause this; the deliberate way to stop a run is
+  `kill -- -$(cat <run>/driver.pid)`, which fires the same trap and records the
+  outcome instead of leaving the run looking alive.
 - **gate_failed / implementer_failed / setup_failed / push_failed / pr_failed** —
   read only the tail of the relevant log (`opus.log`, `gate-*.log`, `codex-*.log`
   or `claude-*.log`, `install.log`, `push.log`). Diagnose, then either fix the

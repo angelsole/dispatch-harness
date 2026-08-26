@@ -38,12 +38,13 @@ RESULT="$RUN_DIR/result.json"
 # group; stopping the task would kill the merge, the resolver and the gate
 # mid-flight with nothing recorded. Take a session of our own first.
 # HARNESS_DETACH=0 for the test suites, which assert on the foreground exit code.
-if [ "${HARNESS_DETACH:-1}" = 1 ] && [ "${HARNESS_DETACHED:-0}" != 1 ]; then
+: "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
+if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ]; then
   SELF_PATH="$(cd "$(dirname "$0")" && pwd)/${0##*/}"
   echo "[sync-pr] syncing $TICKET — detached, this shell no longer owns it"
   echo "[sync-pr]   stages   $HARNESS_DIR/status.sh $TICKET"
   echo "[sync-pr]   driver   tail -f $RUN_DIR/dispatch.log"
-  HARNESS_DETACHED=1 nohup /usr/bin/perl -MPOSIX -e \
+  DISPATCH_DETACHED=1 nohup /usr/bin/perl -MPOSIX -e \
       'exit 0 if fork; POSIX::setsid(); exec @ARGV or die "exec: $!\n"' \
       "${BASH:-/bin/bash}" "$SELF_PATH" "$TICKET" \
       >> "$RUN_DIR/dispatch.log" 2>&1 &

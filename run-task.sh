@@ -25,7 +25,7 @@ _LIB_DIR="$(dirname "${BASH_SOURCE[0]}")/lib"
 # gate pins HARNESS_DETACH=0 for the suites it runs; this covers a suite run by
 # hand, where nothing sets the knob. A real dispatch leaves HARNESS_DIR unset
 # and common.sh fills in ~/.claude/harness.
-_HARNESS_DIR_FROM_ENV="${HARNESS_DIR:-}"
+_INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 # shellcheck source=lib/common.sh
 . "$_LIB_DIR/common.sh"
 # shellcheck source=lib/profile.sh
@@ -130,14 +130,15 @@ unset _LIVE_PID
 # the test suites run run-task.sh in the foreground and assert on its exit
 # status, and schedule.sh's launchd wrapper must stay the parent so its
 # `launchctl bootout` still owns the run.
-if [ "${HARNESS_DETACH:-1}" = 1 ] && [ "${HARNESS_DETACHED:-0}" != 1 ] \
-   && [ -z "$_HARNESS_DIR_FROM_ENV" ]; then
+: "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
+if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
+   && [ -z "$_INSTALL_DIR_FROM_ENV" ]; then
   echo "[harness] dispatched $TICKET — detached, this shell no longer owns it"
   echo "[harness]   stages   $HARNESS_DIR/status.sh $TICKET"
   echo "[harness]   live     tail -f $RUN_DIR/feed.log"
   echo "[harness]   driver   tail -f $RUN_DIR/dispatch.log"
   echo "[harness]   stop it  kill -- -\$(cat $RUN_DIR/driver.pid)"
-  HARNESS_DETACHED=1 nohup /usr/bin/perl -MPOSIX -e \
+  DISPATCH_DETACHED=1 nohup /usr/bin/perl -MPOSIX -e \
       'exit 0 if fork; POSIX::setsid(); exec @ARGV or die "exec: $!\n"' \
       "${BASH:-/bin/bash}" "$SELF_DIR/${0##*/}" "$TICKET" "$REPO" "$BRANCH" \
       >> "$RUN_DIR/dispatch.log" 2>&1 &
@@ -425,6 +426,11 @@ REVIEW_CLASS=""
 REVIEW_ACCOUNT=""
 REVIEW_OK=1  # 0 = the stage ran and NO backend left review evidence: review_failed
 VERDICT_WRITTEN=0  # 1 once write_result has run — the death traps below key off it
+# Set by the pre-flight aborts that refuse to START a dispatch (an attempt-rotation
+# collision, say). Those must leave the previous attempt's result.json exactly as it
+# was: nothing ran, so no verdict is owed, and overwriting it with driver_failed would
+# destroy the very evidence the refusal exists to protect.
+NO_VERDICT_OWED=0
 
 # Gather per-run quantitative metrics from the artefacts on disk. Every field is
 # best-effort: called on EVERY exit path (including early failures), it emits
@@ -885,6 +891,7 @@ harness_record_death() {  # $1 = signal name, or "" for a bare exit
   local rc=$?
   local sig="${1:-}" why
   [ "${VERDICT_WRITTEN:-0}" = 0 ] || return "$rc"
+  [ "${NO_VERDICT_OWED:-0}" = 0 ] || return "$rc"
   if [ -n "$sig" ]; then why="killed by SIG$sig"
   else why="driver exited $rc with no verdict"; fi
   printf '%s %s %s\n' "$(date +%s)" "${sig:-EXIT}" "$why" > "$RUN_DIR/died" 2>/dev/null || true
@@ -1171,6 +1178,7 @@ PREV_ATTEMPT=$(invocations_so_far)
 if [ "$PREV_ATTEMPT" -gt 0 ]; then
   attempt_dir="$RUN_DIR/attempts/$PREV_ATTEMPT"
   if ! mkdir -p "$attempt_dir"; then
+    NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
     echo "FATAL: cannot preserve attempt $PREV_ATTEMPT telemetry at $attempt_dir" >&2
     exit 1
   fi
@@ -1189,13 +1197,15 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
   # none of these files behind must rotate to nothing, not abort the run.
   for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if [ -e "$attempt_dir/$(basename "$f")" ]; then
-      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
+      NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
+    echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
       exit 1
     fi
   done
   for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if ! mv "$f" "$attempt_dir/$(basename "$f")"; then
-      echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
+      NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
+    echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
       exit 1
     fi
   done
@@ -2453,7 +2463,13 @@ run_codex() {  # $1 = round label, $2 = prompt
   # retry used to reuse the same possibly-half-written home within the same
   # second — which is why both attempts always failed identically. review_home
   # rebuilds it from scratch on the next attempt.
-  if [ "$rc" -ne 0 ] && [ $(( $(date +%s) - started_at )) -le 1 ]; then
+  # …but a diagnosed failure is never a startup crash, however fast it arrived.
+  # An out-of-credits refusal comes back in well under a second too, and calling
+  # that a crash would cost the run its account switch and its "out of credits"
+  # stage line — the one message that tells a human to go top up. Speed only
+  # classifies a death that said nothing for itself.
+  if [ "$rc" -ne 0 ] && [ $(( $(date +%s) - started_at )) -le 1 ] \
+     && ! codex_out_of_credits "$log"; then
     CODEX_START_FAILED=1
     echo "[harness] codex round $1 crashed at startup (rc $rc, <1s) — see codex-$1.stderr.log" \
       | tee -a "$log"
