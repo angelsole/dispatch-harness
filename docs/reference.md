@@ -164,7 +164,7 @@ error against Anthropic. An Anthropic implementer also clears these z.ai-only
 variables inside its spawn, so a shell used for `attach.sh` cannot leak the
 compatible endpoint into a later Anthropic handoff. One nice consequence: with
 a `zai` implementer even the *Claude* review tier is a cross-vendor read, so the
-fallback described in [the review guarantee](../README.md#why-its-built-this-way)
+fallback described in [the review guarantee](design-notes.md#why-its-built-this-way)
 loses nothing.
 
 **Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,

@@ -9,6 +9,52 @@ deterministic gate + script glue (free).
 ## Main pipeline
 
 ```mermaid
+flowchart LR
+    U(["👤 You<br/>/dispatch a ticket or a description"])
+    B["📝 Brief<br/>acceptance criteria + verify commands<br/>you approve it"]
+    I["🤖 Implementer<br/>Claude, alone in a fresh git worktree"]
+    G{"✅ Deterministic gate<br/>your repo's lint · types · tests<br/>no model in the loop"}
+    P["📬 Draft PR<br/>both models' notes in the body"]
+    M(["🎉 You merge<br/>the pipeline never does"])
+
+    subgraph REV ["🔎 Review — three passes, never the model that wrote the code"]
+        direction LR
+        F["🔍 Find<br/>a different vendor reads the diff cold<br/>reports, fixes nothing"]
+        R["⚖️ Refute<br/>a fresh session tries to disprove every finding"]
+        X["🔧 Fix<br/>survivors only, one commit per finding"]
+        F --> R --> X
+    end
+
+    U --> B --> I --> G
+    G -->|"green"| F
+    G -->|"red — back to the implementer"| I
+    I -.->|"a fork the brief didn't answer"| U
+    X --> P --> M
+
+    N["📎 A refutation only counts if it cites code<br/>the harness verifies byte-for-byte"]
+    R -.- N
+
+    classDef you fill:#c9d6e4,stroke:#54677d,color:#1a1a1a
+    classDef implementer fill:#d9cfe9,stroke:#6f5f92,color:#1a1a1a
+    classDef reviewer fill:#f2d9c0,stroke:#a5764a,color:#1a1a1a
+    classDef script fill:#c8ddc9,stroke:#4f7f5b,color:#1a1a1a
+    classDef callout fill:#efe4c2,stroke:#96814a,color:#1a1a1a
+    class U,B,M you
+    class I implementer
+    class F,R,X reviewer
+    class G,P script
+    class N callout
+```
+
+The same block is inlined in [`README.md`](README.md); `tests/docs.test.sh`
+asserts the two stay byte-identical.
+
+## The same pipeline, step by step
+
+Every stage and every branch, including the two optional stages the hero above
+leaves out:
+
+```mermaid
 sequenceDiagram
     autonumber
     actor U as You
@@ -69,9 +115,6 @@ sequenceDiagram
     F->>S: gh pr ready + cleanup.sh
     S->>U: PR ready for review · worktree cleaned
 ```
-
-The same block is inlined in [`README.md`](README.md); `tests/docs.test.sh`
-asserts the two stay byte-identical.
 
 ## The visual gate (repos the visual profile applies to)
 
