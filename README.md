@@ -26,7 +26,8 @@ reviewer are fixed by the pipeline. This page is the product; the manuals are
 under [`docs/`](docs/) — [Operations](docs/operations.md) ·
 [Reference](docs/reference.md) · [Ghost Shift](docs/wall.md) ·
 [The wall's data contract](docs/wall-contract.md) ·
-[Design notes](docs/design-notes.md).
+[Design notes](docs/design-notes.md) ·
+[Trust me, said the reviewer](docs/verified-grounding.md).
 
 ## Why it's built this way
 
