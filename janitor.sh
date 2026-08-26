@@ -84,6 +84,11 @@ PROC_AGE="${JANITOR_PROC_AGE:-7200}"            # seconds one may live (2h)
 GH_TIMEOUT="${JANITOR_GH_TIMEOUT:-20}"          # seconds allowed per gh call
 OUTCOME_MAX_AGE="${JANITOR_OUTCOME_MAX_AGE:-14}"  # days a terminal outcome stays refreshed
 ZOMBIE_HOURS="${JANITOR_ZOMBIE_HOURS:-12}"       # hours a non-terminal status may age unattended
+# When driver.pid + heartbeat PROVE the driver is dead (run_alive = 1), waiting
+# 12 hours is pointless — the long window only exists because pgrep alone cannot
+# distinguish "no process" from "not started yet". Proof of death is proof of
+# death: minutes, not hours.
+DEAD_ZOMBIE_MINS="${JANITOR_DEAD_ZOMBIE_MINS:-10}"
 DEPS_CACHE_DAYS="${JANITOR_DEPS_CACHE_DAYS:-14}"  # days an unused deps-cache entry may stay
 # The one knob that does NOT swallow an empty value into its default: an
 # accidentally-empty `JANITOR_PROC_MATCH=$SOMETHING` has to be refused out loud
@@ -104,6 +109,7 @@ case "$PROC_AGE" in ''|*[!0-9]*) fail "JANITOR_PROC_AGE must be whole seconds �
 case "$GH_TIMEOUT" in ''|*[!0-9]*) fail "JANITOR_GH_TIMEOUT must be whole seconds — got [$GH_TIMEOUT]" ;; esac
 case "$OUTCOME_MAX_AGE" in ''|*[!0-9]*) fail "JANITOR_OUTCOME_MAX_AGE must be whole days — got [$OUTCOME_MAX_AGE]" ;; esac
 case "$ZOMBIE_HOURS" in ''|*[!0-9]*) fail "JANITOR_ZOMBIE_HOURS must be whole hours — got [$ZOMBIE_HOURS]" ;; esac
+case "$DEAD_ZOMBIE_MINS" in ''|*[!0-9]*) fail "JANITOR_DEAD_ZOMBIE_MINS must be whole minutes — got [$DEAD_ZOMBIE_MINS]" ;; esac
 case "$DEPS_CACHE_DAYS" in ''|*[!0-9]*) fail "JANITOR_DEPS_CACHE_DAYS must be whole days — got [$DEPS_CACHE_DAYS]" ;; esac
 # An empty process name is never a valid reaping policy.
 [ -n "$PROC_MATCH" ] || fail "JANITOR_PROC_MATCH must not be empty"
@@ -635,7 +641,16 @@ reap_zombies() {  # $1 = report | clean
 
     age=$(status_age "$d/status" "$first")
     [ -n "$age" ] || { n_left=$((n_left + 1)); continue; }
-    [ "$age" -gt $((ZOMBIE_HOURS * 3600)) ] || { n_fresh=$((n_fresh + 1)); continue; }
+    # Two thresholds: proof of death (driver.pid + heartbeat, run_alive = 1)
+    # earns the minutes-scale reap; everything else keeps the conservative
+    # hours-scale window, because pgrep alone cannot distinguish "no process"
+    # from "not started yet".
+    run_alive "$d"; _ra=$?
+    if [ "$_ra" -eq 1 ]; then
+      [ "$age" -gt $((DEAD_ZOMBIE_MINS * 60)) ] || { n_fresh=$((n_fresh + 1)); continue; }
+    else
+      [ "$age" -gt $((ZOMBIE_HOURS * 3600)) ] || { n_fresh=$((n_fresh + 1)); continue; }
+    fi
 
     # Match the scheduler's ticket alphabet. The dot is escaped in the process
     # pattern below so it remains a literal ticket character.
@@ -696,6 +711,17 @@ reap_zombies() {  # $1 = report | clean
     fi
     if printf '%s %s\n' "$(date +%s)" "$new" > "$d/status" 2>/dev/null; then
       line reaped "$id" "stale $(human_secs "$age") — $new" "$d"
+      # A reaped run also gets a verdict file, so metrics.sh and the wall see a
+      # terminated attempt instead of a run that never ended. Only when none
+      # exists — a real verdict (ready, gate_failed, …) is never rewritten by
+      # the janitor. The status mirrors the reaped stage text: a merged PR is
+      # ready, everything else died driving.
+      if [ ! -f "$d/result.json" ]; then
+        case "$new" in "done: ready"*) _rs="ready" ;; *) _rs="driver_failed" ;; esac
+        jq -n --arg t "$id" --arg s "$_rs" --arg pr "$pr" --arg dir "$d" \
+          '{ticket:$t,status:$s,pr_url:$pr,logs:$dir,reaped:true}' \
+          > "$d/result.json" 2>/dev/null || true
+      fi
     else
       reap_history_restore "$d" || :
       n_reap=$((n_reap - 1))

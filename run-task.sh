@@ -18,6 +18,14 @@ set -u -o pipefail
 _LIB_DIR="$(dirname "${BASH_SOURCE[0]}")/lib"
 [ -r "$_LIB_DIR/common.sh" ] \
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# Captured BEFORE common.sh defaults it: a caller-supplied HARNESS_DIR means a
+# fixture, not a dispatch. Every test suite points it at a temp tree and then
+# runs this script in the foreground, asserting on its exit status — which a
+# detaching driver would answer with an instant 0 from the launcher half. The
+# gate pins HARNESS_DETACH=0 for the suites it runs; this covers a suite run by
+# hand, where nothing sets the knob. A real dispatch leaves HARNESS_DIR unset
+# and common.sh fills in ~/.claude/harness.
+_INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 # shellcheck source=lib/common.sh
 . "$_LIB_DIR/common.sh"
 # shellcheck source=lib/profile.sh
@@ -60,9 +68,14 @@ fail() { echo "FATAL: $*" >&2; write_result "$1" ""; stage "done: $1"; exit 1; }
 # The previous invocation's last stage, read before anything below rewrites the
 # status file — the dirty-worktree resume prompt keys off it.
 PREV_STATUS=$(cut -d' ' -f2- < "$RUN_DIR/status" 2>/dev/null || echo "")
-if [ "${HARNESS_REDISPATCH:-0}" != 1 ] && [ -f "$RUN_DIR/status" ]; then
-  PREV_STAGE=$PREV_STATUS
-  if [ "$PREV_STAGE" = "done: ready" ]; then
+# The guard keys off result.json, not the status file: sync-pr.sh rewrites the
+# status file of a run that already shipped ("done: PR branch synced …"), which
+# used to blind this guard and reopen exactly the five-runs-burned scenario the
+# comment above describes. result.json's status is written once, at the verdict,
+# and nothing else touches it.
+PREV_RESULT=$(jq -r '.status // ""' "$RUN_DIR/result.json" 2>/dev/null || echo "")
+if [ "${HARNESS_REDISPATCH:-0}" != 1 ]; then
+  if [ "$PREV_RESULT" = "ready" ] || [ "$PREV_STATUS" = "done: ready" ]; then
     PREV_PR=$(jq -r '.pr_url // ""' "$RUN_DIR/result.json" 2>/dev/null || echo "")
     echo "[harness] $TICKET already finished as 'done: ready' — not dispatching it again"
     [ -n "$PREV_PR" ] && echo "[harness]   PR: $PREV_PR"
@@ -71,6 +84,88 @@ if [ "${HARNESS_REDISPATCH:-0}" != 1 ] && [ -f "$RUN_DIR/status" ]; then
     exit 0
   fi
 fi
+
+# --- Guard: a run that is already being driven --------------------------------
+# Detaching (below) makes the launcher return instantly, which makes it easy to
+# fire the same dispatch twice before the first one has visibly done anything.
+# driver.pid makes the refusal cheap and correct: a live process whose argv
+# names this run IS this run, and a second driver would fight it for the
+# worktree, the status file and the branch.
+_LIVE_PID=$(cat "$RUN_DIR/driver.pid" 2>/dev/null) || _LIVE_PID=""
+case "$_LIVE_PID" in ''|*[!0-9]*) _LIVE_PID="" ;; esac
+if [ -n "$_LIVE_PID" ] && [ "$_LIVE_PID" != "$$" ] && kill -0 "$_LIVE_PID" 2>/dev/null \
+   && ps -o command= -p "$_LIVE_PID" 2>/dev/null \
+      | grep -q "run-task\.sh $TICKET\([[:space:]]\|\$\)"; then
+  echo "[harness] $TICKET already has a live driver (pid $_LIVE_PID) — not dispatching a second one"
+  echo "[harness]   watch it   $HARNESS_DIR/status.sh $TICKET"
+  echo "[harness]   stop it    kill -- -$_LIVE_PID"
+  exit 0
+fi
+unset _LIVE_PID
+
+# --- Detach: the pipeline must outlive whatever launched it -------------------
+# A dispatch is normally a background task of an orchestrator session
+# (`zsh -c '.../run-task.sh …'`). Nothing here ever called setsid(2), so that
+# shell and every process this script spawns shared ONE process group — the
+# launcher's. Stopping the task signals the whole group (`kill -- -<pgid>`), so
+# a stop aimed at the launcher killed the driver, both model workers, tee, jq
+# and the gate's npm at once, mid-stage, with no verdict written. Two runs died
+# that way and status.sh showed a growing IN STAGE timer for hours.
+#
+# Note what was NOT the problem: the launcher merely EXITING is harmless (these
+# processes have no controlling terminal, so no SIGHUP), and an orphan
+# reparented to launchd runs to completion. It is the group signal that kills.
+#
+# So take a session of our own before anything expensive starts. macOS ships no
+# setsid(1); /usr/bin/perl is always present and is already this repo's shim of
+# choice (lib/common.sh's with_timeout, mirror.sh's timeout). The fork BEFORE
+# setsid() is what makes it unconditional: setsid(2) fails EPERM for a process
+# group leader, and a run-task.sh started from an interactive shell is one.
+#
+# The launcher still gets the banner synchronously, so the orchestrator knows
+# where to watch. After the re-exec, this script's stdout goes to dispatch.log;
+# status, timeline, activity and feed.log are byte-identical to before.
+#
+# HARNESS_DETACH=0 keeps the old foreground behaviour, and TWO callers need it:
+# the test suites run run-task.sh in the foreground and assert on its exit
+# status, and schedule.sh's launchd wrapper must stay the parent so its
+# `launchctl bootout` still owns the run.
+: "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
+if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
+   && [ -z "$_INSTALL_DIR_FROM_ENV" ]; then
+  echo "[harness] dispatched $TICKET — detached, this shell no longer owns it"
+  echo "[harness]   stages   $HARNESS_DIR/status.sh $TICKET"
+  echo "[harness]   live     tail -f $RUN_DIR/feed.log"
+  echo "[harness]   driver   tail -f $RUN_DIR/dispatch.log"
+  echo "[harness]   stop it  kill -- -\$(cat $RUN_DIR/driver.pid)"
+  DISPATCH_DETACHED=1 nohup /usr/bin/perl -MPOSIX -e \
+      'exit 0 if fork; POSIX::setsid(); exec @ARGV or die "exec: $!\n"' \
+      "${BASH:-/bin/bash}" "$SELF_DIR/${0##*/}" "$TICKET" "$REPO" "$BRANCH" \
+      >> "$RUN_DIR/dispatch.log" 2>&1 &
+  exit 0
+fi
+
+# --- Liveness: who is driving this run, and is it still breathing -------------
+# status.sh had no way to tell a slow gate from a dead driver, so a killed run
+# rendered as "in stage, 104m" forever. Two signals, because one is not enough:
+# the pid is authoritative on this machine and meaningless in a run dir
+# mirrored from another (HARNESS_MIRROR), where only an mtime travels. Both are
+# read back by run_alive (lib/common.sh), which status.sh, statusline.sh and
+# janitor.sh now share.
+DRIVER_PID_FILE="$RUN_DIR/driver.pid"
+printf '%s\n' "$$" > "$DRIVER_PID_FILE"
+touch "$RUN_DIR/heartbeat"
+# Same self-terminating idiom as mirror_loop (mirror.sh): the ticker follows the
+# driver's pid, so a driver killed outright — no trap, SIGKILL — leaves nothing
+# behind past one interval. $$ inside a subshell is still the driver's pid;
+# passed explicitly so that is not a thing anyone has to know.
+_DRIVER_PID=$$
+( trap 'exit 0' TERM INT
+  while kill -0 "$_DRIVER_PID" 2>/dev/null; do
+    sleep "${HARNESS_HEARTBEAT_SECS:-20}"
+    touch "$RUN_DIR/heartbeat" 2>/dev/null || exit 0
+  done ) &
+HEARTBEAT_PID=$!
 
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
@@ -330,6 +425,12 @@ REVIEW_CLASS=""
 # label, never a path.
 REVIEW_ACCOUNT=""
 REVIEW_OK=1  # 0 = the stage ran and NO backend left review evidence: review_failed
+VERDICT_WRITTEN=0  # 1 once write_result has run — the death traps below key off it
+# Set by the pre-flight aborts that refuse to START a dispatch (an attempt-rotation
+# collision, say). Those must leave the previous attempt's result.json exactly as it
+# was: nothing ran, so no verdict is owed, and overwriting it with driver_failed would
+# destroy the very evidence the refusal exists to protect.
+NO_VERDICT_OWED=0
 
 # Gather per-run quantitative metrics from the artefacts on disk. Every field is
 # best-effort: called on EVERY exit path (including early failures), it emits
@@ -704,6 +805,11 @@ write_result() {
     jq --argjson extra "$extra" '. + $extra' "$RUN_DIR/result.json" > "$RUN_DIR/result.json.tmp" \
       && mv "$RUN_DIR/result.json.tmp" "$RUN_DIR/result.json"
   fi
+  # Every legitimate exit path in this script comes through here — fail(), the
+  # needs_input pause, both capacity branches, dirty_worktree, the terminal
+  # write. So "this did not run" is the exact test for a death, and it is what
+  # the death traps below key off.
+  VERDICT_WRITTEN=1
 }
 
 # Live stage tracking: status (current), timeline (history), macOS notification
@@ -763,6 +869,59 @@ $2"
       "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$HARNESS_NTFY_TOPIC" >/dev/null 2>&1 || true
   fi
 }
+
+# --- No run may end without a verdict ------------------------------------------
+# Before this, a killed driver left `status` frozen on the stage it was in and
+# no result.json at all — so status.sh rendered a growing IN STAGE timer for a
+# run with no process, indistinguishable from slow progress, and metrics.sh saw
+# an attempt that never ended.
+#
+# SIGKILL cannot be caught: the detach above is what actually protects a run,
+# and this is the backstop for every signal that can be caught plus any early
+# exit that slips past the explicit paths. The status TEXT deliberately spells
+# `driver_failed`: wall/stage-vocab.json's `^done:.*(fail|reject)` row matches
+# the WORD "fail", so this needs no new row there and no new arm in
+# statusline.sh.
+#
+# Installed HERE, after stage() closes, on purpose: this is the earliest point
+# where everything the handler calls (collect_metrics, record_attempt,
+# write_result, stage) has been executed into existence, and it is still before
+# capacity_preflight and "setup: worktree" — so it covers everything expensive.
+harness_record_death() {  # $1 = signal name, or "" for a bare exit
+  local rc=$?
+  local sig="${1:-}" why
+  [ "${VERDICT_WRITTEN:-0}" = 0 ] || return "$rc"
+  [ "${NO_VERDICT_OWED:-0}" = 0 ] || return "$rc"
+  if [ -n "$sig" ]; then why="killed by SIG$sig"
+  else why="driver exited $rc with no verdict"; fi
+  printf '%s %s %s\n' "$(date +%s)" "${sig:-EXIT}" "$why" > "$RUN_DIR/died" 2>/dev/null || true
+  STATUS="driver_failed"
+  write_result "$STATUS" "${PR_URL:-}" 2>/dev/null || true
+  stage "done: driver_failed ($why — re-dispatch to resume)" \
+        "the driver died mid-stage; the worktree and the worker session are intact"
+  return "$rc"
+}
+harness_on_exit() {
+  local rc=$?
+  if [ -n "${HEARTBEAT_PID:-}" ]; then
+    kill "$HEARTBEAT_PID" 2>/dev/null
+    wait "$HEARTBEAT_PID" 2>/dev/null
+    HEARTBEAT_PID=""
+  fi
+  harness_record_death "" || true
+  # A run that dies holding the gate lock must not park it on the repo.
+  harness_gate_lock_release "${GATE_LOCK_KEY:-}" 2>/dev/null || true
+  rm -f "${DRIVER_PID_FILE:-/dev/null}" 2>/dev/null || true
+  # mirror_start (mirror.sh) installs its own EXIT trap and this one replaces
+  # it, so call it by hand or a mirrored run leaks its sync loop past the
+  # invocation.
+  if declare -F mirror_stop >/dev/null 2>&1; then mirror_stop >/dev/null 2>&1 || true; fi
+  return "$rc"
+}
+trap 'harness_record_death TERM; exit 143' TERM
+trap 'harness_record_death INT;  exit 130' INT
+trap 'harness_record_death HUP;  exit 129' HUP
+trap harness_on_exit EXIT
 
 # --- Capacity preflight: defer rather than burn a launch on an empty window ---
 # Two dispatches once died instantly on "You've hit your session limit · resets
@@ -1007,7 +1166,7 @@ zai_setup_rejected() {
 #
 # The attempt number is the count of `__invocation__` markers in the
 # append-only stages.log, so it survives everything except deleting the run dir.
-ATTEMPT_FILES="opus-stream.jsonl gate-rounds.log opus.log verify.json verify.log"
+ATTEMPT_FILES="opus-stream.jsonl gate-rounds.log opus.log verify.json verify.log dispatch.log"
 invocations_so_far() {
   local n=0
   [ -f "$RUN_DIR/stages.log" ] && n=$(awk '$2 == "__invocation__" { n++ } END { print n + 0 }' \
@@ -1019,6 +1178,7 @@ PREV_ATTEMPT=$(invocations_so_far)
 if [ "$PREV_ATTEMPT" -gt 0 ]; then
   attempt_dir="$RUN_DIR/attempts/$PREV_ATTEMPT"
   if ! mkdir -p "$attempt_dir"; then
+    NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
     echo "FATAL: cannot preserve attempt $PREV_ATTEMPT telemetry at $attempt_dir" >&2
     exit 1
   fi
@@ -1037,13 +1197,15 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
   # none of these files behind must rotate to nothing, not abort the run.
   for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if [ -e "$attempt_dir/$(basename "$f")" ]; then
-      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
+      NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
+    echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
       exit 1
     fi
   done
   for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if ! mv "$f" "$attempt_dir/$(basename "$f")"; then
-      echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
+      NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
+    echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
       exit 1
     fi
   done
@@ -1970,8 +2132,31 @@ gate_write_latest() {  # $1 = round, $2 = pass|fail, $3 = failed step, $4 = sour
   rm -f "$body" "$clip_count"
 }
 
+# The one visible face of the gate lock: the run says WHO it is waiting for
+# instead of leaving a silent gap in the timeline. The text starts with
+# "test gate", so statusline.sh's existing arm and stage-vocab.json's existing
+# row both already own it — no new mapping needed.
+_GATE_LOCK_ROUND=""
+gate_lock_waiting() {  # $1 = the holder's run id
+  stage "test gate #${_GATE_LOCK_ROUND} (waiting for gate lock — $1 is testing this repo)"
+}
+
 run_gate() {
   local rc started secs step script
+  # Serialize the gate per repo: two runs on this repo share one local test
+  # database (every olyxbase worktree points at the same Postgres), and gating
+  # them concurrently produced deadlocks, seeder unique-constraint failures and
+  # 52 phantom failures. Only the gate takes the lock — implementer and review
+  # stages stay parallel. On a wedged holder the acquire gives up after
+  # HARNESS_GATE_LOCK_WAIT and the gate runs unserialized rather than parking
+  # the run forever.
+  GATE_LOCK_KEY=$(harness_gate_lock_key "$REPO")
+  _GATE_LOCK_ROUND="$1"
+  if ! harness_gate_lock_acquire "$GATE_LOCK_KEY" "$TICKET" gate_lock_waiting; then
+    [ "${HARNESS_GATE_LOCK:-1}" = 0 ] \
+      || echo "[harness] gate lock unavailable after ${HARNESS_GATE_LOCK_WAIT}s — gating unserialized"
+    GATE_LOCK_KEY=""
+  fi
   stage "test gate #$1 (deterministic — no model)"
   step="$RUN_DIR/gate-$1.step"
   : > "$step"
@@ -1997,6 +2182,10 @@ $GATE_CMD"
   # unaffected; the step is tab-separated because a command contains spaces.
   printf '%s %s %s\t%s\n' "$1" "$GATE_STATUS" "$secs" "$GATE_FAILED_STEP" \
     >> "$RUN_DIR/gate-rounds.log"
+  # Release on the round's own path; the EXIT trap is the backstop for a driver
+  # that dies mid-gate. Owner-checked, so releasing an empty key is a no-op.
+  harness_gate_lock_release "$GATE_LOCK_KEY"
+  GATE_LOCK_KEY=""
   return $rc
 }
 
@@ -2245,13 +2434,21 @@ run_codex() {  # $1 = round label, $2 = prompt
       | tee -a "$log"
     return 1
   fi
-  with_timeout "$CODEX_TIMEOUT" \
-    ${home[@]+"${home[@]}"} \
-    "$CODEX_BIN" exec -C "$WORKTREE" \
-    ${sandbox[@]+"${sandbox[@]}"} \
-    -c "model=\"$CODEX_MODEL\"" \
-    -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
-    "$2" </dev/null 2>&1 \
+  # stderr is teed to its own file ON TOP of the merged stream, not instead of
+  # it: the merged log is what codex_out_of_credits and review_evidence read,
+  # and a startup crash used to vanish into it looking like "the reviewer had
+  # nothing to say". The .stderr.log keeps the actual error with its context
+  # for the next 0-second death. (Inside the subshell, tee's stdout inherits
+  # the pipe, so the merged stream is byte-for-byte what it always was.)
+  local started_at
+  started_at=$(date +%s)
+  ( with_timeout "$CODEX_TIMEOUT" \
+      ${home[@]+"${home[@]}"} \
+      "$CODEX_BIN" exec -C "$WORKTREE" \
+      ${sandbox[@]+"${sandbox[@]}"} \
+      -c "model=\"$CODEX_MODEL\"" \
+      -c "model_reasoning_effort=\"$CODEX_EFFORT\"" \
+      "$2" </dev/null 2> >(tee "$RUN_DIR/codex-$1.stderr.log") ) \
     | tee -a "$log" \
     | while IFS= read -r l; do
         [ -n "$l" ] || continue
@@ -2259,6 +2456,25 @@ run_codex() {  # $1 = round label, $2 = prompt
         feed '◆ codex' "$l"
       done
   rc="${PIPESTATUS[0]}"
+  # A near-instant nonzero exit is a startup crash, not an empty review — both
+  # observed instances died inside one wall-clock second, before the CLI
+  # printed anything of its own. Classify it as codex_start_failed (the tier
+  # chain already knows that word) and remove the isolated home, because the
+  # retry used to reuse the same possibly-half-written home within the same
+  # second — which is why both attempts always failed identically. review_home
+  # rebuilds it from scratch on the next attempt.
+  # …but a diagnosed failure is never a startup crash, however fast it arrived.
+  # An out-of-credits refusal comes back in well under a second too, and calling
+  # that a crash would cost the run its account switch and its "out of credits"
+  # stage line — the one message that tells a human to go top up. Speed only
+  # classifies a death that said nothing for itself.
+  if [ "$rc" -ne 0 ] && [ $(( $(date +%s) - started_at )) -le 1 ] \
+     && ! codex_out_of_credits "$log"; then
+    CODEX_START_FAILED=1
+    echo "[harness] codex round $1 crashed at startup (rc $rc, <1s) — see codex-$1.stderr.log" \
+      | tee -a "$log"
+    if [ -n "$rhome" ]; then rm -rf "$rhome" 2>/dev/null || true; rhome=""; fi
+  fi
   # Hand a token this attempt refreshed straight back to the account it belongs
   # to, rather than leaving it in the harness's directory until the next run.
   [ "$REVIEW_NETWORK" != 0 ] && [ -n "$rhome" ] \
@@ -2925,7 +3141,14 @@ if [ "${HARNESS_GATE_INTEGRITY:-1}" != 0 ] && [ -r "$HARNESS_DIR/lib/gate-integr
   # shellcheck source=lib/gate-integrity.sh
   . "$HARNESS_DIR/lib/gate-integrity.sh"
   echo "[harness] gate integrity: replaying this branch's tests against base (script — no model)"
+  # The replay runs this branch's tests from inside lib/gate-integrity.sh — the
+  # one test execution that does not go through run_gate — so it takes the same
+  # per-repo lock the gate rounds do, for the same shared-database reason.
+  GATE_LOCK_KEY=$(harness_gate_lock_key "$REPO")
+  harness_gate_lock_acquire "$GATE_LOCK_KEY" "$TICKET" || GATE_LOCK_KEY=""
   gate_integrity_check "$WORKTREE" "$BASE_REF" "$RUN_DIR" "$BRIEF" "$GATE_STATUS" || true
+  harness_gate_lock_release "$GATE_LOCK_KEY"
+  GATE_LOCK_KEY=""
   GI_SECTION_TEXT=$(gate_integrity_section "$RUN_DIR/gate-integrity.json" || true)
   if [ -n "$GI_SECTION_TEXT" ]; then
     GATE_INTEGRITY_SECTION="

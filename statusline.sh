@@ -137,6 +137,23 @@ harness_run_lines() {
     read -r ts stagetext < "$dir/status" || true
     case "$ts" in ''|*[!0-9]*) continue ;; esac
     case "$stagetext" in done:*|'') continue ;; esac
+    # A dead run renders as ✗ instead of being hidden: the 6h stale cutoff used
+    # to be the only defense, so a killed driver sat in the statusline as a
+    # growing timer for six hours and then silently vanished — neither state
+    # said "this needs a re-dispatch". run_alive (driver.pid + heartbeat,
+    # lib/common.sh) answers in O(1); "cannot tell" (a pre-liveness run dir)
+    # falls through to the old cutoff behaviour.
+    case "$stagetext" in
+      deferred:*|waiting*|'sync failed'*) : ;;   # no process expected — not dead
+      *)
+        run_alive "$dir"; _ra=$?
+        if [ "$_ra" -eq 1 ]; then
+          printf '%s✗ %s dead in stage (%dm) — re-dispatch to resume%s\n' \
+            "$C_RED" "$name" "$(((now - ts) / 60))" "$C_RESET"
+          continue
+        fi
+        ;;
+    esac
     [ "$((now - ts))" -le "$HARNESS_STALE_SECS" ] || continue
 
     started=$(harness_first_line "$dir/started")

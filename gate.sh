@@ -23,12 +23,23 @@ fi
 # never asked for. Eleven suites failed that way, all of them reporting
 # setup_failed for reasons nothing in their own fixture explains. A suite that
 # wants one of these sets it itself; none of them may inherit one.
+#
+# HARNESS_DETACH=0 is the one knob set rather than cleared. run-task.sh now
+# re-execs itself into its own session before doing anything expensive, so a
+# stopped launcher can no longer take a live pipeline down with it. Every suite
+# here runs a fixture run-task.sh in the FOREGROUND and asserts on its exit
+# status and its stdout — against a detaching driver each of those would read
+# an instant 0 from the launcher half and assert on a pipeline that had not
+# started yet. Pinned here, in the one place that already owns the suites'
+# environment, rather than in each of the twenty suites that would have to
+# remember it.
 GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
           -u REVIEWER_MODEL -u REVIEWER_EFFORT -u HARNESS_OWNER
           -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES
           -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH
           -u HARNESS_ESCALATION -u HARNESS_ESCALATION_STEPS
-          -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS)
+          -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS
+          HARNESS_DETACH=0)
 
 # Bash expands the glob in filename order and includes new suites before their
 # first commit. Only a failing suite prints its transcript; a green one is worth

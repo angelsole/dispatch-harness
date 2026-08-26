@@ -191,6 +191,12 @@ $(env_snapshot)
 EOF
     cat <<'EOF'
 
+# The wrapper below captures run-task.sh's exit status and then boots this job
+# out of launchd. Both require it to stay our child, so never let the snapshot's
+# HARNESS_DETACH detach it — under launchd the run already has its own session
+# and needs no protection from a killed launcher.
+export HARNESS_DETACH=0
+
 # launchd has no Year field, so an absolute date more than a year away may
 # produce an earlier annual calendar match. Leave the schedule armed until the
 # requested epoch; a missed target still fires on wake because now is then

@@ -33,6 +33,37 @@ RUN_DIR="$HARNESS_DIR/runs/$TICKET"
 RESULT="$RUN_DIR/result.json"
 [ -f "$RESULT" ] || { echo "FATAL: no result.json at $RESULT" >&2; exit 1; }
 
+# --- Detach: same contract as run-task.sh, for the same reason -----------------
+# A sync launched as an orchestrator background task shares that shell's process
+# group; stopping the task would kill the merge, the resolver and the gate
+# mid-flight with nothing recorded. Take a session of our own first.
+# HARNESS_DETACH=0 for the test suites, which assert on the foreground exit code.
+: "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
+if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ]; then
+  SELF_PATH="$(cd "$(dirname "$0")" && pwd)/${0##*/}"
+  echo "[sync-pr] syncing $TICKET — detached, this shell no longer owns it"
+  echo "[sync-pr]   stages   $HARNESS_DIR/status.sh $TICKET"
+  echo "[sync-pr]   driver   tail -f $RUN_DIR/dispatch.log"
+  DISPATCH_DETACHED=1 nohup /usr/bin/perl -MPOSIX -e \
+      'exit 0 if fork; POSIX::setsid(); exec @ARGV or die "exec: $!\n"' \
+      "${BASH:-/bin/bash}" "$SELF_PATH" "$TICKET" \
+      >> "$RUN_DIR/dispatch.log" 2>&1 &
+  exit 0
+fi
+
+# Liveness, shared with run-task.sh: driver.pid + heartbeat feed run_alive
+# (lib/common.sh), so status.sh can tell a slow gate from a dead sync.
+DRIVER_PID_FILE="$RUN_DIR/driver.pid"
+printf '%s\n' "$$" > "$DRIVER_PID_FILE"
+touch "$RUN_DIR/heartbeat"
+_DRIVER_PID=$$
+( trap 'exit 0' TERM INT
+  while kill -0 "$_DRIVER_PID" 2>/dev/null; do
+    sleep "${HARNESS_HEARTBEAT_SECS:-20}"
+    touch "$RUN_DIR/heartbeat" 2>/dev/null || exit 0
+  done ) &
+HEARTBEAT_PID=$!
+
 WORKTREE=$(jq -r .worktree "$RESULT")
 BRANCH=$(jq -r .branch "$RESULT")
 TICKET_LC=$(echo "$TICKET" | tr '[:upper:]' '[:lower:]')
@@ -68,7 +99,40 @@ stage() {
     osascript -e "display notification \"$1\" with title \"sync-pr $TICKET\"" 2>/dev/null || true
   fi
 }
-fail() { stage "sync failed: $1"; exit 1; }
+fail() { stage "sync failed: $1"; TERMINAL_WRITTEN=1; exit 1; }
+
+# --- No sync may end without a word --------------------------------------------
+# Same backstop as run-task.sh's death traps: a killed sync used to leave the
+# status file frozen mid-stage with no record that anything died. `sync failed:`
+# is already a stage-vocab row, so no table changes anywhere.
+TERMINAL_WRITTEN=0
+sync_record_death() {  # $1 = signal name, or "" for a bare exit
+  local rc=$?
+  local sig="${1:-}" why
+  [ "${TERMINAL_WRITTEN:-0}" = 0 ] || return "$rc"
+  if [ -n "$sig" ]; then why="driver killed (SIG$sig)"
+  else why="driver exited $rc mid-stage"; fi
+  printf '%s %s %s\n' "$(date +%s)" "${sig:-EXIT}" "$why" > "$RUN_DIR/died" 2>/dev/null || true
+  TERMINAL_WRITTEN=1
+  stage "sync failed: $why — re-run sync-pr.sh to resume"
+  return "$rc"
+}
+sync_on_exit() {
+  local rc=$?
+  if [ -n "${HEARTBEAT_PID:-}" ]; then
+    kill "$HEARTBEAT_PID" 2>/dev/null; wait "$HEARTBEAT_PID" 2>/dev/null
+    HEARTBEAT_PID=""
+  fi
+  sync_record_death "" || true
+  harness_gate_lock_release "${GATE_LOCK_KEY:-}" 2>/dev/null || true
+  rm -f "${DRIVER_PID_FILE:-/dev/null}" 2>/dev/null || true
+  if declare -F mirror_stop >/dev/null 2>&1; then mirror_stop >/dev/null 2>&1 || true; fi
+  return "$rc"
+}
+trap 'sync_record_death TERM; exit 143' TERM
+trap 'sync_record_death INT;  exit 130' INT
+trap 'sync_record_death HUP;  exit 129' HUP
+trap sync_on_exit EXIT
 
 # --- 1. Worktree (recreate from origin if cleaned up) -------------------------
 git -C "$REPO" fetch origin --quiet || fail "git fetch failed"
@@ -90,6 +154,7 @@ fi
 # Nothing to do?
 if git -C "$WORKTREE" merge-base --is-ancestor "$BASE_REF" HEAD 2>/dev/null; then
   stage "already up to date with $BASE_REF — nothing to sync"
+  TERMINAL_WRITTEN=1
   exit 0
 fi
 
@@ -130,11 +195,27 @@ fi
 
 GATE_STATUS="not_run"
 run_gate() {
+  # Same per-repo gate lock as run-task.sh, same reason: this repo's worktrees
+  # share one local test database, and a sync gating beside a run's gate
+  # produced deadlocks and phantom failures.
+  GATE_LOCK_KEY=$(harness_gate_lock_key "$REPO")
+  _GATE_LOCK_ROUND="$1"
+  if ! harness_gate_lock_acquire "$GATE_LOCK_KEY" "$TICKET" sync_gate_lock_waiting; then
+    [ "${HARNESS_GATE_LOCK:-1}" = 0 ] \
+      || echo "[sync-pr] gate lock unavailable after ${HARNESS_GATE_LOCK_WAIT}s — gating unserialized"
+    GATE_LOCK_KEY=""
+  fi
   stage "test gate ($1) — deterministic, no model"
   (cd "$WORKTREE" && bash -c "$GATE_CMD") > "$RUN_DIR/gate-$1.log" 2>&1
   local rc=$?
   if [ $rc -eq 0 ]; then GATE_STATUS="pass"; else GATE_STATUS="fail"; fi
+  harness_gate_lock_release "$GATE_LOCK_KEY"
+  GATE_LOCK_KEY=""
   return $rc
+}
+_GATE_LOCK_ROUND=""
+sync_gate_lock_waiting() {  # $1 = the holder's run id
+  stage "test gate (${_GATE_LOCK_ROUND}) (waiting for gate lock — $1 is testing this repo)"
 }
 
 GIT_COMMON=$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)
@@ -354,6 +435,7 @@ fi
 stage "push (script — no model)"
 git -C "$WORKTREE" push origin "$BRANCH" > "$RUN_DIR/sync-push.log" 2>&1 || fail "push failed (see $RUN_DIR/sync-push.log)"
 stage "done: PR branch synced with $BASE_BRANCH, gate green, pushed"
+TERMINAL_WRITTEN=1
 echo "[sync-pr] worktree kept at $WORKTREE — run cleanup.sh $TICKET when the PR merges"
 }
 
