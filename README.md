@@ -180,6 +180,7 @@ This page is the front door; everything else lives under [`docs/`](docs/).
 | [Operations](docs/operations.md) | Running the harness when nobody is at the desk: scheduling, capacity deferral, attempts, the Quartermaster, the janitor, ticket sync, mirroring, Claude-only mode, and what the review stage does when a reviewer dies mid-run |
 | [Reference](docs/reference.md) | Every environment variable and repo-pin field, the review stage's three passes, profiles, the verifier, the run directory and the metrics schema |
 | [Design notes](docs/design-notes.md) | Why it is built this way, the incidents behind the self-recovery rules, and how to read the pipeline's own vitals |
+| [Trust me, said the reviewer](docs/verified-grounding.md) | Why refutations must cite repository code that the harness verifies byte-for-byte |
 | [Security](docs/security.md) | The threat model of an unattended, code-executing pipeline, and the deny list that bounds the worker |
 | [Development](docs/development.md) | This repo's own gate, its suites (`tests/*.test.sh`), and the docs-as-tests pass that keeps these pages honest |
 | [Ghost Shift](docs/wall.md) | The big-screen wall: the city, the district, the ledger and the ops console |
