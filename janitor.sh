@@ -613,7 +613,7 @@ reap_history_restore() {  # $1 = run dir
 
 reap_zombies() {  # $1 = report | clean
   local mode="$1"
-  local d id id_pattern first current text age new pr pgrep_rc
+  local d id id_pattern first current text age new pr pgrep_rc _ra _rs
   local n_reap=0 n_live=0 n_fresh=0 n_left=0
 
   # The guard cannot run without pgrep, and a reap that cannot prove the

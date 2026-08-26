@@ -125,13 +125,14 @@ to before — this is instrumentation, not a redesign.
 | `HARNESS_ESCALATION` | `on` \| `off` — whether a gate failure on the cheap implementer buys one pass on the Claude subscription ([Escalation](#escalation)). Defaults to `on` wherever the implementer is not already `anthropic`, `off` when it is (there is nothing to escalate to). An unrecognised value falls back to that default, says so once, and re-pins. | `on` on `zai`, `off` on `anthropic` |
 | `HARNESS_ESCALATION_STEPS` | Comma-separated classes of failing gate step that may escalate: `test`, `lint`, `type-check`, `build`, `unknown`, or `all`. A value naming a class that does not exist falls back to the default and says which one. | `test,lint,type-check` |
 | `HARNESS_SKIP_REVIEW` | `1` skips the review stage **and** its fix rounds — the `no_review` arm, and the only arm that ships without a review. The gate still runs (a failing gate still yields `gate_failed`), and base-sync conflict resolution still runs (it is PR mechanics, not quality review — on codex when it is installed, otherwise on a Claude worker). A machine with no `codex` CLI pins `claude_only` instead and reviews on the Claude tier: see [Claude-only mode](operations.md#claude-only-mode). | unset (`full` arm) |
-| `HARNESS_DETACH` | `0` keeps the driver in the foreground. By default `run-task.sh` re-execs itself into its own session (fork + `setsid`) before anything expensive starts, so a stopped or killed launcher can no longer take the pipeline down with it — the failure that used to leave a run dead mid-stage with no verdict and a still-growing `IN STAGE` timer. Set `0` where the caller must stay the parent: `gate.sh` pins it for the suites, and `schedule.sh`'s launchd wrapper needs `launchctl bootout` to keep owning the run. A caller-supplied `HARNESS_DIR` (every test fixture) also suppresses the detach on its own. | unset (detach) |
+| `HARNESS_DETACH` | `0` keeps the driver in the foreground. By default `run-task.sh` re-execs itself into its own session (fork + `setsid`) before anything expensive starts, so a stopped or killed launcher can no longer take the pipeline down with it — the failure that used to leave a run dead mid-stage with no verdict and a still-growing `IN STAGE` timer. Set `0` where the caller must stay the parent: `gate.sh` pins it for the suites, and `schedule.sh`'s launchd wrapper needs `launchctl bootout` to keep owning the run. A caller-supplied `HARNESS_DIR` (every test fixture) also suppresses the detach on its own, says so on stderr when it does, and is overridden by an explicit `HARNESS_DETACH=1` — `HARNESS_DIR` is also the documented way to install elsewhere, so a value exported in a shell profile must not silently turn detaching off for every dispatch on the machine. | unset (detach) |
 | `HARNESS_DEAD_AFTER` | Seconds of heartbeat silence after which `status.sh` and `statusline.sh` call a run dead rather than slow. The driver touches `heartbeat` every `HARNESS_HEARTBEAT_SECS`, so this only has to outlast one interval plus a stalled disk. A run whose dir predates these files answers "cannot tell" and renders exactly as it always did. | `120` |
 | `HARNESS_HEARTBEAT_SECS` | How often the driver's ticker touches `<run>/heartbeat`. The ticker follows the driver's pid, so a driver killed outright leaves nothing behind past one interval. | `20` |
 | `HARNESS_GATE_LOCK` | `0` runs the deterministic gate unserialized. By default every gate round takes an exclusive per-repository lock, because two runs on one repo share that repo's test database: gating them concurrently produced Postgres deadlocks, seeder unique-constraint failures and dozens of phantom test failures that belonged to neither branch. Only the gate rounds serialize — implementer and review stages still run in parallel. | unset (serialize) |
 | `HARNESS_GATE_LOCK_KEY` | Overrides the lock key, which defaults to the repo directory's basename so that two parallel checkouts of the same repo (`workspace-1/api`, `workspace-2/api`) contend with each other — they share one local database. Set it to separate two checkouts that genuinely have their own, or to join two that share one under different names. | repo basename |
-| `HARNESS_GATE_LOCK_WAIT` | Seconds a run waits for the gate lock before giving up and gating unserialized (saying so). While it waits the stage text names the holder, so a paused-looking run explains itself. | `5400` |
-| `HARNESS_GATE_LOCK_POLL` | Seconds between attempts while waiting for the gate lock. | `10` |
+| `HARNESS_GATE_LOCK_WAIT` | Seconds a run waits for the gate lock before giving up and gating unserialized (saying so). While it waits the stage text names the holder, so a paused-looking run explains itself. | `3600` |
+| `HARNESS_GATE_LOCK_POLL` | Seconds between attempts while waiting for the gate lock. | `5` |
+| `HARNESS_GATE_LOCK_SUSPECT` | Seconds a lock held by a live pid the harness cannot *recognise* is tolerated before it is treated as a recycled pid and stolen. The lock records its holder's run id, so the usual check is `kill -0` **plus** an argv match — but `ps` can be absent, restricted or truncating, and a check that answered "recycled" whenever it could not read the argv would turn every wait into a steal and destroy the mutual exclusion the lock exists to provide. An unrecognised holder is therefore merely suspect: waited on like any other, just not for the full `HARNESS_GATE_LOCK_WAIT`. | `60` |
 
 ```bash
 # Baseline arm: same brief, no cross-vendor review, on Sonnet
@@ -869,7 +870,16 @@ Wire the statusline once and monitoring is ambient; skip it and
   while they run, so its wall shows them too:
   [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror).
 - **`status.sh`** — one-shot table of all runs; `status.sh <RUN-ID>` prints a
-  run's full timeline and result.
+  run's full timeline and result. A run whose driver is gone carries a `DEAD`
+  marker in the `IN STAGE` column instead of a timer that keeps climbing, and
+  the table ends with the exact re-dispatch command for each one.
+- **`status.sh --doctor`** — only the stalled runs, one line each, followed by
+  the command that resumes each of them. Read-only: it never rewrites another
+  process's status file, so it is safe to run against live runs. This is the
+  fast answer to "is anything stuck?" without reading the whole table. A run is
+  listed when it has a non-terminal stage, no live driver process **and** a cold
+  heartbeat — never on one signal alone, and never for a run that is legitimately
+  paused (`waiting`, `deferred:`, `sync failed`), where no driver is expected.
 - **`feed.log`** — a live transcript across both model stages
   (`tail -f ~/.claude/harness/runs/<RUN-ID>/feed.log`): the implementer's tool
   calls and thinking, then the reviewer's output prefixed `◆ codex`.

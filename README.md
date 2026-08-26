@@ -64,7 +64,9 @@ removes the worktree.
 diff was reviewed, and a **draft PR** is open with the implementer's notes and
 the reviewer's in its body. `needs_input` — the implementer stopped to ask;
 answer in the brief and re-dispatch the same command. Anything else is an honest
-failure named for its stage (`gate_failed`, `review_failed`, `capacity_failed`).
+failure named for its stage (`gate_failed`, `review_failed`, `capacity_failed`,
+or `driver_failed` when the driver itself was killed mid-stage — nothing is lost,
+the worktree and worker session survive, and the same command resumes it).
 Underneath sits the guarantee that **every arm reviews or holds**: no path opens
 a PR on a diff nothing read, a review that falls back to a same-vendor cold read
 is recorded as `claude_only` rather than dressed up as cross-vendor, and a run

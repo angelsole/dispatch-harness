@@ -124,7 +124,7 @@ harness_diffstat() {  # $1 = worktree, $2 = base ref -> "+N-M" or nothing
 }
 
 harness_run_lines() {
-  local runs="$HARNESS_DIR/runs" now name dir ts stagetext started act wt base diff line
+  local runs="$HARNESS_DIR/runs" now name dir ts stagetext started act wt base diff line _ra
   [ -d "$runs" ] || return 0
   now=$(date +%s)
   # Newest-first, like status.sh: run-id dir names are ticket IDs / adhoc slugs

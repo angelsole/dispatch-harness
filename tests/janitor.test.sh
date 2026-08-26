@@ -880,6 +880,60 @@ out=$(jan "JANITOR_ZOMBIE_HOURS=1" --report)
 check "knob: a 1h window still respects the live guard" "$(verb "$out" zombie-live)" "live"
 
 # ---------------------------------------------------------------------------
+echo "== proof of death, and what it is not proof of =="
+# ---------------------------------------------------------------------------
+# JANITOR_DEAD_ZOMBIE_MINS reaps in MINUTES what JANITOR_ZOMBIE_HOURS waits half
+# a day for, on the strength of run_alive: no live driver AND a cold heartbeat.
+# The trap is that harness_on_exit leaves a heartbeat behind whenever a driver
+# exits CLEANLY — which is exactly what a run does when it stops to ask the
+# human a question. A paused run therefore wore the signature of a dead one, and
+# this reap replaced the loudest alarm on the wall with a dim `done: reaped` ten
+# minutes after the question was asked. Same for a `deferred:` run armed 90
+# minutes out, and for `sync failed`, which the vocab keeps non-terminal so it
+# stays a live panel. run_alive now excludes those stages by name, so the reap,
+# status.sh and statusline.sh agree by construction.
+#
+# These fixtures land AFTER every count assertion above on purpose: they are
+# four more runs in the same sweep, and folding them into the shared population
+# would move totals that are themselves part of this suite's contract.
+ZDEAD=$(date +%s); ZDEAD=$((ZDEAD - 1800))   # 30 min: past 10, far short of 12h
+mkdead() {  # $1 = id, $2 = stage — a cleanly-exited run: heartbeat, no pid, no verdict
+  mkrun "$1" "$2" "" ""
+  printf '%s %s\n' "$ZDEAD" "$2" > "$RUNS/$1/status"
+  touch "$RUNS/$1/heartbeat"
+  touch -t "$(date -r "$ZDEAD" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$ZDEAD" '+%Y%m%d%H%M.%S')" \
+    "$RUNS/$1/heartbeat"
+  rm -f "$RUNS/$1/driver.pid" "$RUNS/$1/result.json"   # mid-flight: no verdict yet
+}
+mkdead dead-waiting  "waiting — implementer needs your input (QUESTIONS.md)"
+mkdead dead-deferred "deferred: capacity resets 1:30pm"
+mkdead dead-syncfail "sync failed: conflicts unresolved"
+# The control: same age, same signature, but a stage that DOES expect a driver.
+mkdead dead-proven   "implementing — Opus (Claude sub)"
+
+out=$(jan "" --report)
+check "proven dead: a stage that expects a driver is reaped in minutes" \
+  "$(verb "$out" dead-proven)" "reap"
+check "paused: a run waiting on the human is not reaped in minutes" \
+  "$(verb "$out" dead-waiting)"  ""
+check "paused: nor is one deferred to a later window" \
+  "$(verb "$out" dead-deferred)" ""
+check "paused: nor is a non-terminal sync failure" \
+  "$(verb "$out" dead-syncfail)" ""
+
+out=$(jan "" --clean)
+check "proven dead: and the clean pass reaps it" "$(verb "$out" dead-proven)" "reaped"
+check "proven dead: with a verdict file, so metrics see an attempt that ENDED" \
+  "$(jq -r .status "$RUNS/dead-proven/result.json" 2>/dev/null)" "driver_failed"
+check "paused: the waiting run still says it is waiting, not done" \
+  "$(cut -d' ' -f2- < "$RUNS/dead-waiting/status")" \
+  "waiting — implementer needs your input (QUESTIONS.md)"
+check "paused: and the deferred one is still armed" \
+  "$(cut -d' ' -f2- < "$RUNS/dead-deferred/status")" "deferred: capacity resets 1:30pm"
+absent "paused: no verdict was invented for a run that never died" \
+  "$RUNS/dead-waiting/result.json"
+
+# ---------------------------------------------------------------------------
 echo "== --install / --uninstall: the daily agent =="
 # ---------------------------------------------------------------------------
 PLIST="$AGENTS/com.olyx.janitor.plist"
