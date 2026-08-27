@@ -215,17 +215,28 @@ run_alive() {  # $1 = run dir -> 0 alive, 1 dead, 2 cannot tell
     harness_stage_expects_no_driver "${_stage:-}" && return 2
   fi
   # The heartbeat first: it is the cheapest answer and the common one for a live
-  # run, and statusline.sh pays for this on every prompt.
-  hb=$(harness_mtime "$1/heartbeat") || hb=""
-  case "$hb" in ''|*[!0-9]*) hb="" ;; esac
+  # run. Both reads are guarded by a `[ -f ]` builtin and the pid is read with
+  # `read` rather than `cat`, because statusline.sh pays for this on EVERY
+  # prompt in every Claude session on the machine, once per live run. The
+  # guards matter most for the runs that have neither file — every run dir
+  # written before this existed — where the unguarded version spent two doomed
+  # `stat` forks and a `cat` to learn nothing.
+  hb=""
+  if [ -f "$1/heartbeat" ]; then
+    hb=$(harness_mtime "$1/heartbeat") || hb=""
+    case "$hb" in ''|*[!0-9]*) hb="" ;; esac
+  fi
   if [ -n "$hb" ]; then
     age=$(( $(date +%s) - hb ))
     [ "$age" -le "$HARNESS_DEAD_AFTER" ] && return 0
   fi
   # A cold or absent heartbeat is not proof on its own — a stopped ticker, a
   # clock that moved, a run dir from before this existed. The pid decides.
-  pid=$(cat "$1/driver.pid" 2>/dev/null) || pid=""
-  case "$pid" in ''|*[!0-9]*) pid="" ;; esac
+  pid=""
+  if [ -f "$1/driver.pid" ]; then
+    read -r pid < "$1/driver.pid" 2>/dev/null || pid=""
+    case "$pid" in ''|*[!0-9]*) pid="" ;; esac
+  fi
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     # A recycled pid must not vouch for a dead run: check the process really is
     # this run's driver, the way janitor.sh's zombie guard checks with pgrep.
