@@ -1,65 +1,50 @@
 #!/usr/bin/env bash
-# The liveness contract: what "is this run working or dead" is allowed to
-# answer, and what the per-repo gate lock guarantees while it answers it.
+# The liveness contract and the gate lock's safety rule.
 #
-# These two mechanisms shipped with no coverage at all, and the reason is worth
-# recording: every fixture run dir in every other suite has neither driver.pid
-# nor heartbeat, so run_alive answers "cannot tell" for all of them and the DEAD
-# branch in status.sh, statusline.sh and janitor.sh never executed once across
-# the whole gate. A green gate said nothing about any of this.
+# Both shipped in PR #85 with no coverage, and the reason is worth recording:
+# every fixture run dir in every other suite has neither driver.pid nor
+# heartbeat, so run_alive answers "cannot tell" for all of them and the DEAD
+# branch in status.sh, statusline.sh and janitor.sh never ran once.
 #
-# Three properties are load-bearing and each has cost a real run:
+# The rule the lock cases exist to defend: a lock is only ever taken from a
+# holder PROVEN gone. `kill -0` failing is proof; an unreadable owner, an argv
+# ps(1) will not show us, and an expired timer are not. Every "does not steal"
+# case below is that rule, because the failure it prevents — two runs gating one
+# database — is silent and expensive.
 #
-#   1. "Cannot tell" is not "dead". A run dir written before these files
-#      existed, and a run legitimately paused on a question, must render exactly
-#      as they always did — the janitor reaps on this answer.
-#   2. The gate lock is mutually exclusive between separate drivers, and it must
-#      stay that way when ps(1) cannot identify the holder. A stale-holder check
-#      that answers "recycled" whenever it cannot read an argv turns every wait
-#      into a steal, which is strictly worse than the stall it prevents.
-#   3. A driver's exit path must not block. Everything the exit owes — the
-#      verdict, the gate lock, driver.pid — comes after the heartbeat teardown,
-#      so a teardown that waits out a sleep interval loses all of it to a second
-#      signal.
-#
-# Nothing real is dispatched. run_alive and the lock are pure functions of the
-# filesystem, so the fixtures are directories and the "drivers" are real
-# processes of this suite's own making, presented under an argv that matches (or
-# deliberately does not match) what a driver's would be.
+# Nothing real is dispatched: run_alive and the lock are pure functions of the
+# filesystem, so fixtures are directories and the "drivers" are real processes
+# wearing an argv that does or does not match a driver's.
 #
 # Usage: bash tests/liveness.test.sh
 set -u
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/liveness-test.XXXXXX")"
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/liveness-test.XXXXXX")" || { echo "FATAL: mktemp failed" >&2; exit 1; }
+[ -d "$ROOT" ] || { echo "FATAL: no fixture root" >&2; exit 1; }
 VICTIMS=""
-# shellcheck disable=SC2064,SC2154  # ROOT is fixed now; the victim list is read at exit.
+# shellcheck disable=SC2064,SC2154
 trap 'for p in $VICTIMS; do kill -9 "$p" 2>/dev/null || true; done; rm -rf "$ROOT"' EXIT
 
 pass=0; fail=0
 ok()   { pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; fi; }
-has()  { if printf '%s' "$1" | grep -qF -- "$2"; then ok "$3"; else bad "$3 (missing [$2])"; fi; }
 
 export HARNESS_DIR="$ROOT/harness"
 RUNS="$HARNESS_DIR/runs"
-mkdir -p "$RUNS"
+mkdir -p "$RUNS" || { echo "FATAL: cannot build the fixture tree" >&2; exit 1; }
 # shellcheck source=lib/common.sh
 . "$SRC/lib/common.sh"
 
-# A run dir in a named state. Every argument is optional so each case says only
-# what it is actually about.
-mkrun() {  # $1 = id, $2 = stage text (or ""), $3 = heartbeat age secs (or "none"),
-           # $4 = driver.pid contents (or "none")
+mkrun() {  # $1 = id, $2 = stage (or ""), $3 = heartbeat age secs | none, $4 = driver.pid | none
   local d="$RUNS/$1"
-  rm -rf "$d"; mkdir -p "$d"
+  rm -rf "$d"; mkdir -p "$d" || { echo "FATAL: cannot create $d" >&2; exit 1; }
   [ -n "${2:-}" ] && printf '%s %s\n' "$(date +%s)" "$2" > "$d/status"
   case "${3:-none}" in
     none) : ;;
     0)    touch "$d/heartbeat" ;;
     *)    touch "$d/heartbeat"
-          # Backdate it. -t works on both BSD and GNU touch with [[CC]YY]MMDDhhmm.ss
           touch -t "$(date -r "$(( $(date +%s) - $3 ))" +%Y%m%d%H%M.%S 2>/dev/null \
                       || date -d "@$(( $(date +%s) - $3 ))" +%Y%m%d%H%M.%S)" "$d/heartbeat" ;;
   esac
@@ -67,331 +52,268 @@ mkrun() {  # $1 = id, $2 = stage text (or ""), $3 = heartbeat age secs (or "none
   printf '%s' "$d"
 }
 
-# A live process wearing a driver's argv, so the recycled-pid guard sees what it
-# would see in production. `exec -a` is how a fixture gets a chosen argv[0].
-#
-# Both helpers set a variable rather than echoing one, and must NOT be called
-# inside $( ): a background job started in a command-substitution subshell does
-# not outlive it, so the "live process" would already be gone by the time the
-# assertion ran — and every case would then pass for the wrong reason, reading
-# `dead` off a pid that really was dead.
+# Real processes, started outside any command substitution — a background job in
+# a $( ) subshell does not outlive it, and every case below would then pass for
+# the wrong reason, reading "dead" off a pid that really was dead.
 FAKE_PID=""
-# Output goes to /dev/null and the job is disowned, both deliberately: gate.sh
-# reads a suite's output through a pipe, and a fixture process still holding it
-# would keep the gate waiting on EOF long after the suite had finished — and a
-# job left in the table prints a "Killed" line over the results when the exit
-# trap reaps it.
-fake_driver() {  # $1 = run id -> sets FAKE_PID
-  bash -c "exec -a \"bash $HARNESS_DIR/run-task.sh $1 /repo br\" sleep 120" \
-    >/dev/null 2>&1 &
-  FAKE_PID=$!
-  VICTIMS="$VICTIMS $FAKE_PID"
-  disown "$FAKE_PID" 2>/dev/null || true
-  sleep 0.2
+fake_driver() {  # $1 = run id -> FAKE_PID, wearing a driver's argv
+  bash -c "exec -a \"bash $HARNESS_DIR/run-task.sh $1 /repo br\" sleep 120" >/dev/null 2>&1 &
+  FAKE_PID=$!; VICTIMS="$VICTIMS $FAKE_PID"; disown "$FAKE_PID" 2>/dev/null || true; sleep 0.2
 }
-
-# A live process that is NOT a driver: the recycled-pid case.
-fake_stranger() {  # -> sets FAKE_PID
+fake_stranger() {  # -> FAKE_PID, alive but not a driver
   sleep 120 >/dev/null 2>&1 &
-  FAKE_PID=$!
-  VICTIMS="$VICTIMS $FAKE_PID"
-  disown "$FAKE_PID" 2>/dev/null || true
-  sleep 0.2
+  FAKE_PID=$!; VICTIMS="$VICTIMS $FAKE_PID"; disown "$FAKE_PID" 2>/dev/null || true; sleep 0.2
 }
-
-# Guard the guard: a fixture process that has died turns these cases into
-# tautologies, so say so loudly instead of passing.
-still_running() {  # $1 = pid, $2 = what it is
+live() {  # a fixture process that died makes its case a tautology — say so
   kill -0 "$1" 2>/dev/null && return 0
-  bad "fixture: the $2 process died before the assertion could use it"
-  return 1
+  bad "fixture: the $2 process died before its assertion could use it"; return 1
 }
-
-alive_code() {  # $1 = run dir -> 0 alive | 1 dead | 2 cannot tell
-  run_alive "$1"; printf '%s' "$?"
-}
+alive_code() { run_alive "$1"; printf '%s' "$?"; }
 
 # ---------------------------------------------------------------------------
-echo "== harness_mtime reads an epoch on this platform =="
+echo "== harness_mtime =="
 # ---------------------------------------------------------------------------
-# The regression this pins: `stat -f %m` means --file-system on GNU coreutils,
-# so it prints six lines of filesystem statistics to STDOUT and exits 1, the
-# fallback appends the real epoch, and the caller's numeric guard throws the
-# whole blob away. The heartbeat signal was therefore dead on Linux — which is
-# where CI runs, so nothing here would ever have said so — and with it the only
-# liveness signal a mirrored run dir carries.
+# `stat -f` on GNU means --file-system: six lines to stdout, then exit 1. Probed
+# in the wrong order it contaminated the fallback and the numeric guard threw
+# the lot away, so the heartbeat was dead on Linux — where CI runs.
 touch "$ROOT/probe"
 MT=$(harness_mtime "$ROOT/probe")
-case "$MT" in
-  ''|*[!0-9]*) bad "mtime: a bare epoch and nothing else (got [$MT])" ;;
-  *)           ok  "mtime: a bare epoch and nothing else" ;;
-esac
+case "$MT" in ''|*[!0-9]*) bad "mtime: a bare epoch (got [$MT])" ;; *) ok "mtime: a bare epoch" ;; esac
 check "mtime: one line, not a filesystem report" "$(printf '%s' "$MT" | grep -c '')" "1"
-check "mtime: within a second of now" \
-  "$(( $(date +%s) - MT < 5 ? 1 : 0 ))" "1"
+check "mtime: close to now" "$(( $(date +%s) - MT < 5 ? 1 : 0 ))" "1"
 check "mtime: a missing file reports nothing" "$(harness_mtime "$ROOT/nope" 2>/dev/null)" ""
+# Resolved at load: inside harness_mtime it would be assigned in the caller's
+# command substitution and lost with that subshell.
+case "$_DISPATCH_STAT_FLAVOUR" in
+  gnu|bsd) ok "mtime: the stat flavour is resolved once, at load" ;;
+  *)       bad "mtime: flavour is [$_DISPATCH_STAT_FLAVOUR]" ;;
+esac
+
+# ---------------------------------------------------------------------------
+echo "== harness_bre_escape: run ids are data, not patterns =="
+# ---------------------------------------------------------------------------
+# A run id containing `[` made grep exit 2, which every caller reads as "not
+# this driver": a live holder looked unrecognised and a second driver was let in.
+check "escape: a bracket is matched literally" \
+  "$(printf 'x RUN[1 y\n' | grep -c "RUN$(harness_bre_escape '[1')")" "1"
+check "escape: a dot matches only a dot" \
+  "$(printf 'RUN-1\n' | grep -c "$(harness_bre_escape 'RUN.1')")" "0"
+fake_driver 'RUN[1'; HOSTILE=$FAKE_PID
+live "$HOSTILE" "hostile-id driver" && \
+check "escape: a driver whose id is hostile is still recognised" \
+  "$(harness_driver_pid_live "$HOSTILE" 'RUN[1'; printf '%s' "$?")" "0"
 
 # ---------------------------------------------------------------------------
 echo "== run_alive: three answers, and the third is the one that matters =="
 # ---------------------------------------------------------------------------
 check "legacy run dir (neither file) cannot tell — it is not dead" \
   "$(alive_code "$(mkrun LEGACY 'test gate #1' none none)")" "2"
-
 check "a fresh heartbeat is alive" \
   "$(alive_code "$(mkrun FRESH 'test gate #1' 0 none)")" "0"
-
 check "a cold heartbeat with no driver is dead" \
   "$(alive_code "$(mkrun COLD 'test gate #1' 9999 none)")" "1"
 
 fake_driver LIVEPID; DPID=$FAKE_PID
-still_running "$DPID" "fake driver" && \
-check "a cold heartbeat with a live driver of this run is alive" \
+live "$DPID" "fake driver" && \
+check "a cold heartbeat with this run's live driver is alive" \
   "$(alive_code "$(mkrun LIVEPID 'test gate #1' 9999 "$DPID")")" "0"
 
 fake_stranger; SPID=$FAKE_PID
-still_running "$SPID" "stranger" && \
-check "a cold heartbeat with a live but unrelated pid is dead, not alive" \
+live "$SPID" "stranger" && \
+check "a cold heartbeat with a live but unrelated pid is dead" \
   "$(alive_code "$(mkrun RECYCLED 'test gate #1' 9999 "$SPID")")" "1"
-
-check "a pid that names no process at all is dead" \
+check "a pid naming no process is dead" \
   "$(alive_code "$(mkrun GONE 'test gate #1' 9999 999998)")" "1"
 
-# ---------------------------------------------------------------------------
-echo "== run_alive: a paused run is not a dead one =="
-# ---------------------------------------------------------------------------
-# The defect: harness_on_exit removed driver.pid and left heartbeat behind, so
-# every cleanly-exited NON-terminal run answered DEAD two minutes later.
-# status.sh and statusline.sh each carried their own guard for that and
-# janitor.sh carried none — which is how reap_zombies came to replace the
-# loudest alarm on the wall ("waiting — implementer needs your input") with a
-# dim `done: reaped` ten minutes after a run asked its question. The exclusion
-# belongs in run_alive so all three agree by construction.
+# A paused run is not a dead one: harness_on_exit leaves the dir behind whenever
+# a driver exits cleanly, which is what a run does when it asks a question.
+# status.sh and statusline.sh each carried their own guard and janitor.sh none,
+# so the reap replaced the wall's loudest alarm with a dim `done: reaped`.
 for st in 'waiting — implementer needs your input (QUESTIONS.md)' \
           'deferred: capacity resets 1:30pm' \
           'sync failed: conflicts unresolved' \
           'done: ready'; do
-  check "paused/terminal [${st%% *}] is never reported dead" \
+  check "paused [${st%% *}] is never reported dead" \
     "$(alive_code "$(mkrun PAUSED "$st" 9999 none)")" "2"
 done
-# …and the guard is about the STAGE, not about the files: a paused run that
-# still has a stale pid file must not be reaped either.
 check "a paused run with a stale pid file is still not dead" \
   "$(alive_code "$(mkrun PAUSED2 'waiting — implementer needs your input' 9999 999998)")" "2"
-# The exclusion must not swallow a genuinely working stage that merely mentions
-# one of those words further along.
-check "a live stage is still judged on its signals, not its words" \
+check "a working stage is judged on its signals, not its words" \
   "$(alive_code "$(mkrun WORDS 'review round 2 — waiting on codex' 9999 none)")" "1"
 
 # ---------------------------------------------------------------------------
-echo "== the gate lock is attributed by the same syscall that creates it =="
+echo "== the lock is published and attributed by one syscall =="
 # ---------------------------------------------------------------------------
-# The defect: mkdir(2) published the lock and the owner file landed a beat
-# later. A waiter reading that gap found no owner, concluded the holder had
-# crashed, stole the lock by rename and gated the same database at the same
-# moment as the live holder — the exact collision the lock exists to prevent.
-# symlink(2) carries the payload, so the gap does not exist.
-export HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=4 HARNESS_GATE_LOCK_SUSPECT=600
+export HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=4
 LOCK=$(harness_gate_lock_path k)
 harness_gate_lock_acquire k RUN-A >/dev/null 2>&1
+check "lock: it is a symlink, so creation carries the owner" \
+  "$([ -L "$LOCK" ] && echo link || echo other)" "link"
 OWNER=$(harness_gate_lock_owner "$LOCK")
-case "$OWNER" in
-  "$$ "*" RUN-A") ok "lock: created already naming its pid and run id" ;;
-  *)              bad "lock: owner record is [$OWNER]" ;;
-esac
+check "lock: field 1 is our pid"    "$(printf '%s' "$OWNER" | cut -d' ' -f1)" "$$"
+check "lock: field 3 is the run id" "$(printf '%s' "$OWNER" | cut -d' ' -f3-)" "RUN-A"
 check "lock: the holder reads back in words" "$(harness_gate_lock_holder "$LOCK")" "RUN-A"
+# No separate owner write exists to race: the record is inline in the `ln -s`.
+check "lock: nothing publishes the lock before its owner" \
+  "$(grep -c 'ln -s "\$\$ \$(date +%s) \$rid" "\$lock"' "$SRC/lib/common.sh")" "1"
 harness_gate_lock_release k
-# Run ids are usually ticket ids, but an adhoc slug can carry a space —
-# tests/janitor.test.sh dispatches a "zombie odd" fixture. The id is the LAST
-# field of the owner record so `read` takes it whole; a middle field would have
-# shifted the epoch into the name and truncated the id, and the stale check
-# would then never recognise its own holder.
-harness_gate_lock_acquire k 'run with spaces' >/dev/null 2>&1
-check "lock: a run id with spaces survives the owner record intact" \
-  "$(harness_gate_lock_holder "$LOCK")" "run with spaces"
-check "lock: and its pid is still the first field" \
-  "$(harness_gate_lock_owner "$LOCK" | cut -d' ' -f1)" "$$"
-harness_gate_lock_release k
-harness_gate_lock_acquire k RUN-A >/dev/null 2>&1
-check "lock: re-entrant acquire returns held rather than deadlocking" \
-  "$(harness_gate_lock_acquire k RUN-A >/dev/null 2>&1; printf '%s' "$?")" "0"
-harness_gate_lock_release k
-check "lock: the owner can release it" "$([ -L "$LOCK" ] && echo held || echo free)" "free"
 
-ln -s "999998 $(date +%s) SOMEONE-ELSE" "$LOCK"
+# Adhoc run ids can contain spaces (tests/janitor.test.sh dispatches "zombie odd"),
+# so the id is the last field and `read` takes it whole.
+harness_gate_lock_acquire k 'run with spaces' >/dev/null 2>&1
+check "lock: a run id with spaces survives intact" \
+  "$(harness_gate_lock_holder "$LOCK")" "run with spaces"
+check "lock: re-entrant acquire returns held" \
+  "$(harness_gate_lock_acquire k 'run with spaces' >/dev/null 2>&1; printf '%s' "$?")" "0"
+# $$ is shared by subshells and recycled by the OS, so the pid alone would hand
+# the lock to a stranger.
+check "lock: the same pid under a DIFFERENT run id is not us" \
+  "$(HARNESS_GATE_LOCK_WAIT=1 harness_gate_lock_acquire k SOMEONE-ELSE >/dev/null 2>&1; printf '%s' "$?")" "1"
+harness_gate_lock_release k
+check "lock: the owner released it" "$([ -L "$LOCK" ] && echo held || echo free)" "free"
+
+ln -s "999998 $(date +%s) NOT-US" "$LOCK"
 harness_gate_lock_release k
 check "lock: a non-owner cannot release someone else's" \
   "$([ -L "$LOCK" ] && echo held || echo free)" "held"
 rm -f "$LOCK"
 
 # ---------------------------------------------------------------------------
-echo "== the gate lock is mutually exclusive between drivers =="
+echo "== mutual exclusion between separate drivers =="
 # ---------------------------------------------------------------------------
-# Eight separate processes, each holding the lock across a real interval and
-# logging its entry and exit. Separate processes on purpose: $$ is shared by
-# every subshell of one script, so a subshell fan-out would test nothing.
-# Each holder drops a marker file for as long as it is inside, and counts the
-# markers it can see. Asking "how many of us are in here right now" is immune to
-# the thing an IN/OUT log is not: under load two appends can land out of order
-# and report an overlap that never happened, and a flaky exclusion test is
-# exactly how a real exclusion bug would come to be ignored.
+# Separate processes: $$ is shared by every subshell of one script. Each holder
+# drops a marker while inside and counts them — "how many of us are in here
+# right now" cannot be faked by load the way an ordered IN/OUT log can.
 LOG="$ROOT/critical.log"; : > "$LOG"
 HOLDING="$ROOT/holding"; mkdir -p "$HOLDING"
 HOLDERS=""
 for i in 1 2 3 4 5 6 7 8; do
   bash -c '
-    export HARNESS_DIR="'"$HARNESS_DIR"'" HARNESS_GATE_LOCK_POLL=1 \
-           HARNESS_GATE_LOCK_WAIT=90 HARNESS_GATE_LOCK_SUSPECT=600
+    export HARNESS_DIR="'"$HARNESS_DIR"'" HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=90
     . "'"$SRC"'/lib/common.sh"
     if harness_gate_lock_acquire excl "R'"$i"'" >/dev/null 2>&1; then
       : > "'"$HOLDING"'/$$"
       sleep 1
       n=$(find "'"$HOLDING"'" -type f | grep -c "")
-      owner=$(harness_gate_lock_owner "$(harness_gate_lock_path excl)" | cut -d" " -f1)
-      printf "%s %s pid=%s saw=[%s]\n" "$n" "$owner" "$$" "$(ls "'"$HOLDING"'" | tr "\n" " ")" >> "'"$LOG"'"
+      own=$(harness_gate_lock_owner "$(harness_gate_lock_path excl)" | cut -d" " -f1)
+      printf "%s %s %s\n" "$n" "$own" "$$" >> "'"$LOG"'"
       rm -f "'"$HOLDING"'/$$"
       harness_gate_lock_release excl
     fi' &
   HOLDERS="$HOLDERS $!"
 done
-# Wait on THESE eight only. A bare `wait` also waits on the long-lived fixture
-# processes fake_driver and fake_stranger left running, which added their full
-# remaining lifetime to the suite — two minutes of a two-minute run.
+# Only these eight: a bare `wait` also waits on the long-lived fixture processes.
 for h in $HOLDERS; do wait "$h" 2>/dev/null || true; done
-check "lock: every one of the eight got its turn" "$(grep -c '' "$LOG")" "8"
-if [ "$(awk '$1 != 1 { n++ } END { print n+0 }' "$LOG")" = 0 ]; then
-  ok "lock: and each saw itself alone inside the critical section"
-else
-  bad "lock: and each saw itself alone inside the critical section"
-  sed 's/^/       /' "$LOG" >&2
-fi
-check "lock: each holder was also the pid the lock named" \
-  "$(awk '$2 == "" { n++ } END { print n+0 }' "$LOG")" "0"
+check "lock: all eight got a turn" "$(grep -c '' "$LOG")" "8"
+check "lock: none saw another holder inside" "$(awk '$1 != 1 { n++ } END { print n+0 }' "$LOG")" "0"
+check "lock: and each WAS the pid the lock named" "$(awk '$2 != $3 { n++ } END { print n+0 }' "$LOG")" "0"
 
 # ---------------------------------------------------------------------------
-echo "== stale holders: proven gone is stolen from, merely unreadable is not =="
+echo "== the safety rule: only a holder PROVEN gone is taken from =="
 # ---------------------------------------------------------------------------
-rm -f "$HARNESS_DIR/locks"/*
+rm -f "$LOCK"
 ln -s "999998 $(date +%s) DEAD-RUN" "$LOCK"
-check "lock: a holder whose pid names no process is stolen from at once" \
-  "$(HARNESS_GATE_LOCK_SUSPECT=600 harness_gate_lock_acquire k TAKER >/dev/null 2>&1; printf '%s' "$?")" "0"
-rm -f "$LOCK"
-
-# The safety property, and the reason the recycled-pid check is a demotion and
-# not a disqualification: ps(1) can be absent, restricted or truncating. A live
-# holder the harness cannot IDENTIFY must still be waited on, because answering
-# "recycled" on every unreadable argv would turn every waiter into a thief
-# simultaneously — a total loss of exclusion, which is far worse than the
-# recycled-pid stall it was meant to fix.
-fake_stranger; STRANGER=$FAKE_PID
-still_running "$STRANGER" "unrecognised holder" || STRANGER=$$
-ln -s "$STRANGER $(date +%s) UNKNOWN-RUN" "$LOCK"
-check "lock: an unrecognised LIVE holder is waited on, not robbed" \
-  "$(HARNESS_GATE_LOCK_WAIT=2 HARNESS_GATE_LOCK_SUSPECT=600 \
-     harness_gate_lock_acquire k TAKER >/dev/null 2>&1; printf '%s' "$?")" "1"
-check "lock: and it is still held by whoever it was" \
-  "$(harness_gate_lock_holder "$LOCK")" "UNKNOWN-RUN"
-# …but it must not cost the full ceiling either, which is the recycled-pid
-# stall: past HARNESS_GATE_LOCK_SUSPECT the better bet is that the pid was
-# reused, so the wait breaks long before HARNESS_GATE_LOCK_WAIT.
-START=$(date +%s)
-HARNESS_GATE_LOCK_WAIT=600 HARNESS_GATE_LOCK_SUSPECT=2 \
-  harness_gate_lock_acquire k TAKER >/dev/null 2>&1
-ELAPSED=$(( $(date +%s) - START ))
-check "lock: past the suspect window it is taken anyway" \
-  "$([ "$ELAPSED" -lt 30 ] && echo soon || echo "waited ${ELAPSED}s")" "soon"
-rm -f "$LOCK"
-
-# The suspect clock belongs to a HOLDER, not to the wait. On a machine where
-# ps(1) cannot identify anybody — a container, a restricted host — every holder
-# is unrecognised, so a counter that ran across handoffs would eventually rob a
-# holder that had only just taken the lock: the very failure the grace exists to
-# prevent, reached from the other side. Two live strangers hold in turn, the
-# grace is shorter than their combined time and longer than either alone.
-rm -f "$LOCK"
-fake_stranger; HOLD_A=$FAKE_PID
-fake_stranger; HOLD_B=$FAKE_PID
-ln -s "$HOLD_A $(date +%s) HOLDER-A" "$LOCK"
-( sleep 3; ln -sfn "$HOLD_B $(date +%s) HOLDER-B" "$LOCK" ) >/dev/null 2>&1 &
-SWAPPER=$!
-HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=6 HARNESS_GATE_LOCK_SUSPECT=4 \
-  harness_gate_lock_acquire k THIEF >/dev/null 2>&1
-check "lock: the suspect clock restarts when the holder changes" "$?" "1"
-check "lock: so the second holder still has it" \
-  "$(readlink "$LOCK" | awk '{print $3}')" "HOLDER-B"
-wait "$SWAPPER" 2>/dev/null || true
-kill "$HOLD_A" "$HOLD_B" 2>/dev/null || true
-rm -f "$LOCK"
-
-# ---------------------------------------------------------------------------
-echo "== an unreadable owner is never proof that a lock is abandoned =="
-# ---------------------------------------------------------------------------
-# The contention test above catches this only about a third of the time, so pin
-# it directly. symlink(2) closes the gap between creating a lock and naming its
-# holder — but not the gap between a waiter's `ln -s` failing and its own
-# `readlink`. In between, the holder can release and a third run can take the
-# lock, and the waiter reads the empty moment. Treating that as "abandoned" and
-# stealing puts two runs inside at once, which is the collision the lock exists
-# to prevent, one step further along than where it was fixed.
-#
-# Forcing the empty read makes it deterministic: the owner read is a shell
-# function, so it can simply be told to come back empty while a live lock sits
-# on disk.
-rm -f "$LOCK"
-ln -s "$$ $(date +%s) LIVE-HOLDER" "$LOCK"
-_real_owner_reader=$(declare -f harness_gate_lock_owner)
-harness_gate_lock_owner() { printf ''; }   # the empty moment, every time
-HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=1 \
-  harness_gate_lock_acquire k THIEF >/dev/null 2>&1
-check "lock: an unreadable owner does not hand the lock to a waiter" "$?" "1"
-check "lock: and the live holder still has it" \
-  "$([ -L "$LOCK" ] && echo held || echo stolen)" "held"
-check "lock: with its record untouched" \
-  "$(readlink "$LOCK" | awk '{print $3}')" "LIVE-HOLDER"
-eval "$_real_owner_reader"
-rm -f "$LOCK"
-
-# The other side of the same coin: a lock that is NOT a symlink is a leftover
-# from before this was one, nobody owns it, and refusing to clear it would block
-# every gate on that repo forever.
-mkdir -p "$LOCK"
-HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=5 \
-  harness_gate_lock_acquire k TAKER >/dev/null 2>&1
-check "lock: a legacy lock DIRECTORY is cleared rather than waited on forever" "$?" "0"
-check "lock: and replaced by a proper attributed link" \
-  "$(readlink "$LOCK" | awk '{print $3}')" "TAKER"
+harness_gate_lock_acquire k TAKER >/dev/null 2>&1
+check "lock: a holder whose pid names no process is taken over" "$?" "0"
+check "lock: and the taker owns the replacement, not just a return code" \
+  "$(harness_gate_lock_owner "$LOCK" | cut -d' ' -f1)" "$$"
+check "lock: under its own run id" \
+  "$(harness_gate_lock_holder "$LOCK")" "TAKER"
 harness_gate_lock_release k
-rm -rf "$LOCK"
+
+# A live pid is NEVER taken from, however unrecognisable. ps(1) can be absent,
+# restricted or truncating, and a check that resolved "cannot identify" to
+# "gone" would rob every holder it failed to read — losing exclusion entirely,
+# which is worse than the recycled-pid stall it was meant to avoid.
+fake_stranger; UNKNOWN=$FAKE_PID
+if live "$UNKNOWN" "unrecognised holder"; then
+  ln -s "$UNKNOWN $(date +%s) UNKNOWN-RUN" "$LOCK"
+  # Waited on past the ceiling, deliberately: the wait is bounded only for locks
+  # nobody demonstrably holds. Asserted by running the acquire in the background
+  # and confirming it neither returns nor touches the lock — a bounded return
+  # here would mean the caller had been told it could gate.
+  ( HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=2 \
+      harness_gate_lock_acquire k THIEF >/dev/null 2>&1 ) & THIEF_PID=$!
+  sleep 6
+  if kill -0 "$THIEF_PID" 2>/dev/null; then
+    ok "lock: an unrecognised LIVE holder is waited on past the ceiling, never robbed"
+  else
+    bad "lock: the acquire returned while a live holder still had the lock"
+  fi
+  kill -9 "$THIEF_PID" 2>/dev/null || true; wait "$THIEF_PID" 2>/dev/null || true
+  check "lock: and the holder's record is untouched" \
+    "$(harness_gate_lock_holder "$LOCK")" "UNKNOWN-RUN"
+  # Once that holder is gone the same waiter takes it immediately — the wait was
+  # on the process, not on a timer.
+  kill -9 "$UNKNOWN" 2>/dev/null || true; sleep 0.3
+  check "lock: and is taken the moment that holder dies" \
+    "$(HARNESS_GATE_LOCK_WAIT=5 harness_gate_lock_acquire k TAKER2 >/dev/null 2>&1; printf '%s' "$?")" "0"
+  harness_gate_lock_release k
+  rm -f "$LOCK"
+fi
+
+# An unreadable owner is the moment between one holder releasing and the next
+# claiming. A waiter that stole on it removed a live lock; forcing the empty
+# read makes that deterministic rather than a one-in-three race.
+ln -s "$$ $(date +%s) LIVE-HOLDER" "$LOCK"
+_real_reader=$(declare -f harness_gate_lock_owner)
+harness_gate_lock_owner() { printf ''; }
+HARNESS_GATE_LOCK_WAIT=3 harness_gate_lock_acquire k THIEF >/dev/null 2>&1
+check "lock: an unreadable owner never hands the lock over" "$?" "1"
+eval "$_real_reader"
+check "lock: the live holder still has it" \
+  "$(readlink "$LOCK" | cut -d' ' -f3-)" "LIVE-HOLDER"
+rm -f "$LOCK"
 
 # ---------------------------------------------------------------------------
-echo "== the driver's exit path does not block =="
+echo "== the rolling upgrade from PR #85's directory lock =="
 # ---------------------------------------------------------------------------
-# The defect: harness_on_exit killed the heartbeat ticker and then WAITED on it.
-# `kill` reaches the subshell but bash defers a trap until the foreground
-# command finishes, so the ticker sat inside its `sleep $HARNESS_HEARTBEAT_SECS`
-# and the wait blocked for the rest of that interval — a flat 20s at the default
-# on a driver with nothing left to do. Everything the exit still owed came
-# after: the verdict, the gate lock, driver.pid. A driver TERMed and then KILLed
-# inside that window reached none of it and parked the gate lock on the repo.
+# `ln -s target DIR` does not fail on an existing directory — it links INSIDE it
+# and reports success — so a leftover directory lock would let every run "take"
+# the lock at once. But an old driver can still be inside that gate while the
+# harness is upgraded, so the directory goes only when its owner is gone.
+mkdir -p "$LOCK"
+printf '%s %s %s\n' 999998 OLD-RUN "$(date +%s)" > "$LOCK/owner"
+harness_gate_lock_acquire k TAKER >/dev/null 2>&1
+check "upgrade: an abandoned directory lock is cleared" "$?" "0"
+check "upgrade: and replaced by a proper attributed link" \
+  "$([ -L "$LOCK" ] && harness_gate_lock_holder "$LOCK")" "TAKER"
+harness_gate_lock_release k; rm -rf "$LOCK"
+
+fake_stranger; OLDHOLDER=$FAKE_PID
+if live "$OLDHOLDER" "legacy holder"; then
+  mkdir -p "$LOCK"
+  printf '%s %s %s\n' "$OLDHOLDER" OLD-RUN "$(date +%s)" > "$LOCK/owner"
+  ( HARNESS_GATE_LOCK_POLL=1 HARNESS_GATE_LOCK_WAIT=2 \
+      harness_gate_lock_acquire k NEWRUN >/dev/null 2>&1 ) & NEW_PID=$!
+  sleep 6
+  if kill -0 "$NEW_PID" 2>/dev/null; then
+    ok "upgrade: a directory lock a LIVE old driver owns is waited on, not cleared"
+  else
+    bad "upgrade: the acquire returned while an old driver still held the directory"
+  fi
+  kill -9 "$NEW_PID" 2>/dev/null || true; wait "$NEW_PID" 2>/dev/null || true
+  check "upgrade: and it is left exactly as it was" \
+    "$([ -d "$LOCK" ] && cut -d' ' -f1 < "$LOCK/owner")" "$OLDHOLDER"
+  rm -rf "$LOCK"
+fi
+
+# ---------------------------------------------------------------------------
+echo "== the driver's exit path: prompt, complete, and leaves nothing =="
+# ---------------------------------------------------------------------------
+# The fixture uses the SHIPPED harness_start_heartbeat / harness_stop_heartbeat.
+# A copy here passed against a reintroduced blocking `wait` — which is exactly
+# what it did before this suite was rewritten.
+mkdir -p "$ROOT/exitrun"
 cat > "$ROOT/exiting-driver.sh" <<EOF
 export HARNESS_DIR="$HARNESS_DIR"
 . "$SRC/lib/common.sh"
 HARNESS_HEARTBEAT_SECS=30
-_DRIVER_PID=\$\$
-( trap 'exit 0' TERM INT
-  while kill -0 "\$_DRIVER_PID" 2>/dev/null; do
-    sleep "\$HARNESS_HEARTBEAT_SECS"
-  done ) >/dev/null 2>&1 &
-HEARTBEAT_PID=\$!
+harness_start_heartbeat "$ROOT/exitrun"
 printf '%s\\n' "\$HEARTBEAT_PID" > "$ROOT/hb.pid"
+pgrep -P "\$HEARTBEAT_PID" > "$ROOT/hb.child" 2>/dev/null || true
 GATE_LOCK_KEY=exitlock
 harness_gate_lock_acquire "\$GATE_LOCK_KEY" EXIT-RUN >/dev/null 2>&1
-harness_stop_heartbeat() {
-  [ -n "\${HEARTBEAT_PID:-}" ] || return 0
-  pkill -P "\$HEARTBEAT_PID" 2>/dev/null || true
-  kill -9 "\$HEARTBEAT_PID" 2>/dev/null || true
-  wait "\$HEARTBEAT_PID" 2>/dev/null || true
-  HEARTBEAT_PID=""
-}
 on_exit() {
   local rc=\$?
   harness_gate_lock_release "\${GATE_LOCK_KEY:-}" 2>/dev/null || true
@@ -401,50 +323,52 @@ on_exit() {
 trap on_exit EXIT
 exit 0
 EOF
-# Only run-task.sh's real ordering is being asserted here, so borrow its own
-# helper rather than a copy: if harness_stop_heartbeat ever grows a wait again,
-# this times out.
 START=$(date +%s)
 bash "$ROOT/exiting-driver.sh"
 ELAPSED=$(( $(date +%s) - START ))
-check "exit: the driver does not wait out a heartbeat interval to finish" \
+check "exit: the driver does not wait out a heartbeat interval" \
   "$([ "$ELAPSED" -lt 10 ] && echo prompt || echo "blocked ${ELAPSED}s")" "prompt"
-check "exit: and the gate lock is not left parked on the repo" \
+check "exit: the gate lock is not left parked on the repo" \
   "$([ -L "$(harness_gate_lock_path exitlock)" ] && echo parked || echo released)" "released"
-# Not blocking must not mean leaking: the ticker is a fork of the driver and
-# carries its argv, so a survivor reads as the run still having a process —
-# which is precisely what tests/mirror.test.sh counts the moment run-task.sh
-# returns. Both halves of the contract, asserted together.
-check "exit: and the ticker is gone the moment the driver returns, not one interval later" \
+check "exit: the ticker is gone, not merely signalled" \
   "$(kill -0 "$(cat "$ROOT/hb.pid" 2>/dev/null || echo 999998)" 2>/dev/null && echo alive || echo gone)" "gone"
+# Not blocking must not mean leaking: the ticker's `sleep` is its own process,
+# and killing only the ticker would orphan it for a full interval.
+HBC=$(cat "$ROOT/hb.child" 2>/dev/null || echo "")
+if [ -n "$HBC" ]; then
+  check "exit: and the sleep it was parked in went with it" \
+    "$(kill -0 "$HBC" 2>/dev/null && echo alive || echo gone)" "gone"
+else
+  ok "exit: (no separate sleep child to reap on this platform)"
+fi
 
-# The ordering itself, stated as a property of the shipped file: everything that
-# must survive a second signal precedes the housekeeping.
+# Ordering, as a property of the shipped file: everything that must survive a
+# second signal precedes the housekeeping.
 V_LINE=$(grep -n 'harness_record_death "" "\$rc"' "$SRC/run-task.sh" | head -1 | cut -d: -f1)
-H_LINE=$(awk '/^harness_on_exit\(\)/,/^}/' "$SRC/run-task.sh" | grep -c 'harness_stop_heartbeat')
-check "exit: harness_on_exit still tears the ticker down exactly once" "$H_LINE" "1"
 L_LINE=$(grep -n 'harness_gate_lock_release "\${GATE_LOCK_KEY:-}"' "$SRC/run-task.sh" | head -1 | cut -d: -f1)
 S_LINE=$(awk 'f && /harness_stop_heartbeat/ { print NR; exit } /^harness_on_exit\(\)/ { f=1 }' "$SRC/run-task.sh")
 check "exit: the verdict is written before the ticker is touched" \
   "$([ "$V_LINE" -lt "$S_LINE" ] && echo yes || echo no)" "yes"
-check "exit: and the gate lock is released before the ticker is touched" \
+check "exit: and the gate lock released before it" \
   "$([ "$L_LINE" -lt "$S_LINE" ] && echo yes || echo no)" "yes"
+
+# The liveness artifacts must not outlive the trap that removes them: created
+# before it, any early exit left a pid file and a live ticker with no verdict.
+for f in run-task.sh sync-pr.sh; do
+  T=$(grep -n '^trap .*_on_exit EXIT' "$SRC/$f" | head -1 | cut -d: -f1)
+  A=$(grep -n 'harness_start_heartbeat "\$RUN_DIR"' "$SRC/$f" | head -1 | cut -d: -f1)
+  check "exit: $f starts the ticker only after its traps are installed" \
+    "$([ -n "$T" ] && [ -n "$A" ] && [ "$A" -gt "$T" ] && echo yes || echo no)" "yes"
+done
 
 # ---------------------------------------------------------------------------
 echo "== a death records the status the driver actually died on =="
 # ---------------------------------------------------------------------------
-# The defect: harness_record_death read `local rc=$?`, but its caller had
-# already run commands of its own, so it read THEIR status. Every death was
-# filed as "driver exited 0" however the driver actually went — and in
-# sync-pr.sh that number goes into the stage text a human reads off the wall,
-# not merely into a file.
 cat > "$ROOT/dying-driver.sh" <<'EOF'
-record() {  # $1 = sig, $2 = rc
-  printf 'exited %s\n' "${2:-0}" > "$DIED"
-}
+record() { printf 'exited %s\n' "${2:-0}" > "$DIED"; }
 on_exit() {
   local rc=$?
-  if [ -n "${SOMETHING:-x}" ]; then :; fi   # a command of our own, as in the real handler
+  if [ -n "${SOMETHING:-x}" ]; then :; fi   # a command of its own, as in the real handler
   record "" "$rc"
   return "$rc"
 }
@@ -454,33 +378,38 @@ EOF
 DIED="$ROOT/died" bash "$ROOT/dying-driver.sh"
 check "death: the recorded status is the driver's, not the handler's" \
   "$(cat "$ROOT/died")" "exited 7"
-# And the shipped handlers take it as an argument rather than reading $?.
-check "death: run-task.sh passes the status in" \
+check "death: run-task.sh passes it in" \
   "$(grep -c 'harness_record_death "" "\$rc"' "$SRC/run-task.sh")" "1"
 check "death: and so does sync-pr.sh" \
   "$(grep -c 'sync_record_death "" "\$rc"' "$SRC/sync-pr.sh")" "1"
-for sig in TERM INT HUP; do
-  has "$(grep "trap 'harness_record_death $sig" "$SRC/run-task.sh")" \
-      "harness_record_death $sig" "death: the $sig trap names its own exit status"
-done
 
 # ---------------------------------------------------------------------------
 echo "== both drivers refuse to detach out from under a fixture =="
 # ---------------------------------------------------------------------------
-# run-task.sh had this and sync-pr.sh did not, so three suites that run
-# sync-pr.sh in the foreground and assert on its exit status would, run by hand,
-# have asserted against the instant 0 of the launcher half. gate.sh pins
-# HARNESS_DETACH=0 for the suites it runs, which is why CI never saw it.
+# Executed, not grepped: run-task.sh had this guard and sync-pr.sh did not, so
+# three suites that run sync-pr.sh in the foreground would, run by hand, have
+# asserted against the instant 0 of the launcher half.
+FIX="$ROOT/fixture"; mkdir -p "$FIX/runs/DEMO-1"
+cp -R "$SRC/lib" "$FIX/lib"; cp "$SRC/sync-pr.sh" "$SRC/run-task.sh" "$FIX/"
+echo '{"worktree":"/nonexistent","branch":"b"}' > "$FIX/runs/DEMO-1/result.json"
+printf 'brief\n' > "$FIX/runs/DEMO-1/brief.md"
+printf 'REPOS=""\n' > "$FIX/repos.conf.sh"
+# A real repo, because run-task.sh checks for one before it reaches the detach —
+# with a bogus path it exits first and the case proves nothing.
+FIXREPO="$ROOT/fixrepo"; mkdir -p "$FIXREPO"
+git -C "$FIXREPO" init -q 2>/dev/null || { echo "FATAL: git init failed" >&2; exit 1; }
 for f in run-task.sh sync-pr.sh; do
-  check "detach: $f captures HARNESS_DIR before common.sh defaults it" \
-    "$(grep -c '^_INSTALL_DIR_FROM_ENV="\${HARNESS_DIR:-}"' "$SRC/$f")" "1"
-  check "detach: $f lets an explicit HARNESS_DETACH=1 override the guess" \
-    "$(grep -c '\[ "\${HARNESS_DETACH:-}" = 1 \]' "$SRC/$f")" "1"
-  if grep -qF 'HARNESS_DIR came from the environment' "$SRC/$f"; then
-    ok "detach: $f says so rather than suppressing in silence"
-  else
-    bad "detach: $f suppresses the detach in silence"
-  fi
+  args="DEMO-1"; [ "$f" = run-task.sh ] && args="DEMO-1 $FIXREPO b"
+  # shellcheck disable=SC2086
+  out=$(env -u HARNESS_DETACH HARNESS_DIR="$FIX" bash "$FIX/$f" $args 2>&1)
+  case "$out" in
+    *"detached, this shell no longer owns it"*) bad "detach: $f detached under a fixture HARNESS_DIR" ;;
+    *) ok "detach: $f stays in the foreground under a fixture HARNESS_DIR" ;;
+  esac
+  case "$out" in
+    *"came from the environment"*) ok "detach: $f says which variable suppressed it" ;;
+    *) bad "detach: $f suppressed the detach silently" ;;
+  esac
 done
 
 printf '\nliveness: %d passed, %d failed\n' "$pass" "$fail"

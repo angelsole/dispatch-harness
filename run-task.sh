@@ -95,7 +95,7 @@ _LIVE_PID=$(cat "$RUN_DIR/driver.pid" 2>/dev/null) || _LIVE_PID=""
 case "$_LIVE_PID" in ''|*[!0-9]*) _LIVE_PID="" ;; esac
 if [ -n "$_LIVE_PID" ] && [ "$_LIVE_PID" != "$$" ] && kill -0 "$_LIVE_PID" 2>/dev/null \
    && ps -o command= -p "$_LIVE_PID" 2>/dev/null \
-      | grep -q "run-task\.sh $TICKET\([[:space:]]\|\$\)"; then
+      | grep -q "run-task\.sh $(harness_bre_escape "$TICKET")\([[:space:]]\|\$\)"; then
   echo "[harness] $TICKET already has a live driver (pid $_LIVE_PID) — not dispatching a second one"
   echo "[harness]   watch it   $HARNESS_DIR/status.sh $TICKET"
   echo "[harness]   stop it    kill -- -$_LIVE_PID"
@@ -131,13 +131,10 @@ unset _LIVE_PID
 # status, and schedule.sh's launchd wrapper must stay the parent so its
 # `launchctl bootout` still owns the run.
 : "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
-# A caller-supplied HARNESS_DIR is a good guess at "this is a fixture" and a bad
-# thing to obey in silence: it is also the documented way to install the harness
-# somewhere else, so a HARNESS_DIR exported in a shell profile would turn the
-# detach off for every dispatch on that machine and nothing would say so — the
-# run would simply go back to dying with its launcher. Two changes make that
-# safe: an explicit HARNESS_DETACH=1 overrides the guess outright, and when the
-# guess does suppress the detach it says which variable did it.
+# An implicit HARNESS_DIR suppresses the detach for fixtures, and says so:
+# it is also the supported way to install elsewhere, so a value exported in a
+# shell profile must not silently stop every dispatch detaching. An explicit
+# HARNESS_DETACH wins either way.
 if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
    && [ -n "$_INSTALL_DIR_FROM_ENV" ] && [ -z "${HARNESS_DETACH:-}" ]; then
   echo "[harness] HARNESS_DIR came from the environment — treating this as a fixture and NOT detaching (HARNESS_DETACH=1 forces it, =0 silences this)" >&2
@@ -156,33 +153,6 @@ if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
   exit 0
 fi
 
-# --- Liveness: who is driving this run, and is it still breathing -------------
-# status.sh had no way to tell a slow gate from a dead driver, so a killed run
-# rendered as "in stage, 104m" forever. Two signals, because one is not enough:
-# the pid is authoritative on this machine and meaningless in a run dir
-# mirrored from another (HARNESS_MIRROR), where only an mtime travels. Both are
-# read back by run_alive (lib/common.sh), which status.sh, statusline.sh and
-# janitor.sh now share.
-DRIVER_PID_FILE="$RUN_DIR/driver.pid"
-printf '%s\n' "$$" > "$DRIVER_PID_FILE"
-touch "$RUN_DIR/heartbeat"
-# Same self-terminating idiom as mirror_loop (mirror.sh): the ticker follows the
-# driver's pid, so a driver killed outright — no trap, SIGKILL — leaves nothing
-# behind past one interval. $$ inside a subshell is still the driver's pid;
-# passed explicitly so that is not a thing anyone has to know.
-_DRIVER_PID=$$
-# stdout and stderr go to /dev/null, and that is load-bearing rather than tidy:
-# the ticker inherits whatever the driver was launched with, and nothing waits
-# for it any more (waiting cost the exit path a whole sleep interval). In the
-# foreground arm every test suite uses, the driver's stdout is a PIPE the gate
-# is reading — so a ticker still holding it would keep that pipe open, and the
-# gate would block on EOF for up to one interval after the run had finished.
-( trap 'exit 0' TERM INT
-  while kill -0 "$_DRIVER_PID" 2>/dev/null; do
-    sleep "${HARNESS_HEARTBEAT_SECS:-20}"
-    touch "$RUN_DIR/heartbeat" 2>/dev/null || exit 0
-  done ) >/dev/null 2>&1 &
-HEARTBEAT_PID=$!
 
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
@@ -922,27 +892,7 @@ harness_record_death() {  # $1 = signal name, or "" for a bare exit; $2 = rc
   return 0
 }
 
-# Stop the heartbeat ticker WITHOUT waiting out its sleep. Two signals, because
-# one is not enough. `kill` alone is deferred: bash runs a trap only once the
-# foreground command returns, so the subshell sits inside its
-# `sleep $HARNESS_HEARTBEAT_SECS` and a `wait` here blocks for the rest of that
-# interval — measured at a flat 20s on a driver with 0.2s of work left, and
-# everything this exit path still owes (the verdict, the gate lock, driver.pid)
-# comes after it, so a driver TERMed and then KILLed inside the window reached
-# none of it. Dropping the wait instead is no answer either: the ticker is a
-# fork of this script and carries its argv, so it reads as the run still having
-# a process (tests/mirror.test.sh counts exactly that).
-#
-# So kill the sleep the ticker is parked in, then SIGKILL the ticker itself —
-# SIGKILL is the one signal that is never deferred — and the wait returns at
-# once. The ticker has no cleanup to lose: its whole body is `touch`.
-harness_stop_heartbeat() {
-  [ -n "${HEARTBEAT_PID:-}" ] || return 0
-  pkill -P "$HEARTBEAT_PID" 2>/dev/null || true
-  kill -9 "$HEARTBEAT_PID" 2>/dev/null || true
-  wait "$HEARTBEAT_PID" 2>/dev/null || true
-  HEARTBEAT_PID=""
-}
+
 
 harness_on_exit() {
   local rc=$?
@@ -952,11 +902,9 @@ harness_on_exit() {
   # A run that dies holding the gate lock must not park it on the repo.
   harness_gate_lock_release "${GATE_LOCK_KEY:-}" 2>/dev/null || true
   rm -f "${DRIVER_PID_FILE:-/dev/null}" 2>/dev/null || true
-  # The heartbeat file goes with the pid file. Leaving it behind is what made
-  # run_alive call every cleanly-exited paused run — `waiting`, `deferred:`,
-  # `sync failed` — dead two minutes later, and the janitor reap it ten minutes
-  # after that. run_alive now also excludes those stages by name; removing the
-  # file keeps the two signals honest rather than relying on that alone.
+  # Both liveness files go, not just the pid: a heartbeat left behind made every
+  # cleanly-exited paused run read as dead. The stage exclusion in run_alive is
+  # the second guard, not the only one.
   rm -f "$RUN_DIR/heartbeat" 2>/dev/null || true
   harness_stop_heartbeat
   # mirror_start (mirror.sh) installs its own EXIT trap and this one replaces
@@ -969,6 +917,14 @@ trap 'harness_record_death TERM 143; exit 143' TERM
 trap 'harness_record_death INT  130; exit 130' INT
 trap 'harness_record_death HUP  129; exit 129' HUP
 trap harness_on_exit EXIT
+
+# Only now: driver.pid, the heartbeat and the ticker exist exactly as long as the
+# trap that removes them. Created before the traps — where they used to be — any
+# early exit in between left all three behind with no verdict, and a run that had
+# already stopped went on advertising a live driver.
+DRIVER_PID_FILE="$RUN_DIR/driver.pid"
+printf '%s\n' "$$" > "$DRIVER_PID_FILE"
+harness_start_heartbeat "$RUN_DIR"
 
 # --- Capacity preflight: defer rather than burn a launch on an empty window ---
 # Two dispatches once died instantly on "You've hit your session limit · resets
@@ -1270,7 +1226,6 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
       exit 1
     fi
   done
-  # Copy then truncate, keeping the inode the detached driver still holds open.
   for f in $ATTEMPT_COPY_FILES; do
     [ -f "$RUN_DIR/$f" ] || continue
     if ! cp "$RUN_DIR/$f" "$attempt_dir/$f"; then
