@@ -41,6 +41,8 @@
       "Task",
       "TodoWrite",
       "Read(~/.claude/harness/linear-api-key)",
+      "Read(~/.claude/harness/linear-agent-credentials)",
+      "Read(~/.claude/harness/linear-agent-token)",
       "Read(~/.claude/harness/notify.conf)",
       "Read(~/.claude/harness/auth/**)"
     ]
