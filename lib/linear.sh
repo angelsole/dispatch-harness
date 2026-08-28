@@ -114,8 +114,9 @@ linear_agent_token() {  # $1 = "force" to bypass the cache
   rm -f "$hdr"
   tok=$(printf '%s' "$resp" | jq -r '.access_token // empty' 2>/dev/null) || tok=""
   if [ -z "$tok" ]; then
-    # Only a response with no token in it may be logged verbatim.
-    printf 'LINEAR ERROR oauth/token: %s\n' "$resp" >> "$RUN_DIR/ticket-sync.log"
+    # A malformed response can still contain a credential that jq could not
+    # extract, so OAuth response bodies never belong in the log.
+    printf 'LINEAR ERROR oauth/token: invalid response\n' >> "$RUN_DIR/ticket-sync.log"
     return 1
   fi
   life=$(printf '%s' "$resp" | jq -r '.expires_in // empty' 2>/dev/null) || life=""
