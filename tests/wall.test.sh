@@ -7010,6 +7010,10 @@ for route in /v1/metrics /v1/logs /v1/traces; do
 done
 check "route: a body that is not JSON is 400" \
   "$(post_code "$ING_PORT" /api/ingest/stage 'not json at all' "$ING_TOKEN")" "400"
+for route in /v1/logs /v1/traces; do
+  check "route: invalid JSON on $route is 400 before discard" \
+    "$(post_code "$ING_PORT" "$route" 'not json at all' "$ING_TOKEN")" "400"
+done
 check "route: a JSON array is not a report either" \
   "$(post_code "$ING_PORT" /api/ingest/stage '[1,2,3]' "$ING_TOKEN")" "400"
 BIG="$ROOT/too-big.json"

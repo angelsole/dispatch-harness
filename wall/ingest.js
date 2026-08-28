@@ -447,15 +447,15 @@ function handle(req, res, pathname) {
   return readBody(req, (err, text) => {
     if (err === 'too-large') return send(res, 413, 'wall: report too large\n');
     if (err) return undefined;   // the client hung up; there is nobody to answer
-    // /v1/logs and /v1/traces are accepted and discarded: a misconfigured
-    // exporter should stop retrying rather than fill a run's stderr with 404s.
-    if (pathname === '/v1/logs' || pathname === '/v1/traces') {
-      return send(res, 200, '{}', 'application/json; charset=utf-8');
-    }
     let body;
     try { body = JSON.parse(text); } catch { return send(res, 400, 'wall: bad JSON\n'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return send(res, 400, 'wall: bad JSON\n');
+    }
+    // /v1/logs and /v1/traces are accepted and discarded: a misconfigured
+    // exporter should stop retrying rather than fill a run's stderr with 404s.
+    if (pathname === '/v1/logs' || pathname === '/v1/traces') {
+      return send(res, 200, '{}', 'application/json; charset=utf-8');
     }
     try {
       if (pathname === '/api/ingest/stage') { ingestStage(body); return send(res, 204); }
