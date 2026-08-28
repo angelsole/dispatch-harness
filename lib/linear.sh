@@ -264,7 +264,7 @@ linear_session() {
   iid=$(linear_issue_uuid) || { rmdir "$lock" 2>/dev/null || true; return 1; }
   link=$(linear_run_link) || link=""
   gql=$(jq -cn --arg id "$iid" --arg link "$link" \
-    '{query:"mutation($input: AgentSessionCreateOnIssueInput!){ agentSessionCreateOnIssue(input: $input){ success agentSession { id externalLinks { label url } } } }",
+    '{query:"mutation($input: AgentSessionCreateOnIssue!){ agentSessionCreateOnIssue(input: $input){ success agentSession { id externalLinks { label url } } } }",
       variables:{input: ({issueId:$id}
         + (if $link == "" then {} else {externalUrls:[{label:"Dispatch run",url:$link}]} end))}}')
   resp=$(linear_agent_call agentSessionCreateOnIssue "$gql") \

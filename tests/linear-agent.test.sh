@@ -372,6 +372,10 @@ echo "== the session: one per run, reused across dispatches =="
 reset_modes; agent_on; rm -f "$TOKEN_FILE"
 dispatch OLYX-120 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
 check "session: created exactly once" "$(calls agentSessionCreateOnIssue)" "1"
+file_has "$CURL_LOG" 'mutation($input: AgentSessionCreateOnIssue!)' \
+  "session: creation uses Linear's declared input type"
+file_has_not "$CURL_LOG" 'AgentSessionCreateOnIssueInput' \
+  "session: creation does not use the nonexistent Input-suffixed type"
 file_has "$RUNS/OLYX-120/linear-session" "sess-1" "session: its id is kept in the run dir"
 file_has "$CURL_LOG" '"externalUrls":[{"label":"Dispatch run","url":"http://mini:4711/console#OLYX-120"}]' \
   "session: opened with the run's deep link on the wall"
