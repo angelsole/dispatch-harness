@@ -7192,6 +7192,23 @@ check "otlp: what is kept is the session and the model" \
 # A launchd restart on the office machine must not blank the board, and a run
 # nobody has reported for a week must not stand on it forever.
 echo "== wall: the ingest store survives a restart =="
+SHUT_STORE="$ROOT/shutdown-ingest.json"
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$SHUT_STORE"
+serve "$ING_RUNS" "$ROOT/ingest-shutdown.log"; SHUT_PORT="$PORT_OUT"
+SHUT_PID="${PIDS##* }"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$SHUT_PORT" ]; then
+  post_code "$SHUT_PORT" /api/ingest/stage \
+    '{"run":"SHUTDOWN-1","stage":"setup: worktree","at":200,"host":"mini"}' \
+    "$ING_TOKEN" > /dev/null
+  kill -TERM "$SHUT_PID"
+  wait "$SHUT_PID" 2>/dev/null || true
+  check "persist: shutdown flushes a report before its debounce fires" \
+    "$(jq -r 'has("SHUTDOWN-1")' "$SHUT_STORE" 2>/dev/null)" "true"
+else
+  bad "persist: server starts for the shutdown flush check"
+fi
+
 KEEP_STORE="$ROOT/keep-ingest.json"
 NOW=$(date +%s)
 jq -n --argjson now "$NOW" --argjson old "$((NOW - 8 * 86400))" '

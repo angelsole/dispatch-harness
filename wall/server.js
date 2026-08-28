@@ -1439,7 +1439,11 @@ if (require.main === module) {
   });
 
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => { server.close(); process.exit(0); });
+    process.on(sig, () => {
+      server.close();
+      if (Ingest.enabled()) Ingest.writeNow();
+      process.exit(0);
+    });
   }
 }
 
