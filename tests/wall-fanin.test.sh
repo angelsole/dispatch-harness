@@ -191,7 +191,7 @@ dispatch() {
 
 result()      { jq -r "$1 // \"\"" "$RUN/result.json" 2>/dev/null; }
 stage_posts() { grep -c '/api/ingest/stage' "$INGEST_LOG" 2>/dev/null | tr -d ' '; }
-stage_bodies(){ sed 's|^[^\t]*\t||' "$INGEST_LOG"; }
+stage_bodies(){ cut -f 2- "$INGEST_LOG"; }
 env_of()      { cat "$ROOT/env-$1.txt" 2>/dev/null; }
 # Every stage() call, minus the invocation markers stage() does not write.
 stages_written() {
