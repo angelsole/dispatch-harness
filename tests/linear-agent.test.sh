@@ -419,6 +419,16 @@ check "OAuth race: both mint calls use a header file" \
   "$(printf '%s\n' "$OAUTH_HDRS" | sed '/^$/d' | wc -l | tr -d ' ')" "2"
 check "OAuth race: concurrent mint calls use distinct header files" \
   "$(printf '%s\n' "$OAUTH_HDRS" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')" "2"
+if jq -e '.access_token and .expires_at' "$TOKEN_FILE" >/dev/null 2>&1; then
+  ok "OAuth race: concurrent publishers leave one complete token cache"
+else
+  bad "OAuth race: concurrent publishers left a malformed token cache"
+fi
+if compgen -G "$HARNESS/.linear-agent-token.*" >/dev/null; then
+  bad "OAuth race: a temporary token cache survived"
+else
+  ok "OAuth race: no temporary token cache survives"
+fi
 if compgen -G "$OAUTH_RUN/.linear-oauth-hdr.*" >/dev/null; then
   bad "OAuth race: a temporary authorization header survived"
 else

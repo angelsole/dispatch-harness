@@ -91,7 +91,7 @@ linear_post() {  # $1 = header file, $2 = JSON body
 # what a 401 asks for. Returns 1 when the agent layer is off or a mint failed.
 linear_agent_token() {  # $1 = "force" to bypass the cache
   linear_agent_on || return 1
-  local now tok exp id secret hdr resp life
+  local now tok exp id secret hdr resp life tmp
   now=$(date +%s)
   if [ "${1:-}" != force ] && [ -s "$LINEAR_AGENT_TOKEN_FILE" ]; then
     tok=$(jq -r '.access_token // empty' "$LINEAR_AGENT_TOKEN_FILE" 2>/dev/null) || tok=""
@@ -127,8 +127,13 @@ linear_agent_token() {  # $1 = "force" to bypass the cache
   if [ -e "$LINEAR_AGENT_TOKEN_FILE" ]; then
     chmod 600 "$LINEAR_AGENT_TOKEN_FILE" || return 1
   fi
-  ( umask 077; jq -n --arg t "$tok" --argjson e "$((now + life))" \
-      '{access_token:$t,expires_at:$e}' > "$LINEAR_AGENT_TOKEN_FILE" ) || return 1
+  tmp=$(mktemp "$HARNESS_DIR/.linear-agent-token.XXXXXX") || return 1
+  if ! ( umask 077; jq -n --arg t "$tok" --argjson e "$((now + life))" \
+      '{access_token:$t,expires_at:$e}' > "$tmp" ) ||
+     ! mv "$tmp" "$LINEAR_AGENT_TOKEN_FILE"; then
+    rm -f "$tmp"
+    return 1
+  fi
   printf 'oauth/token: minted, %s seconds\n' "$life" >> "$RUN_DIR/ticket-sync.log"
   printf '%s' "$tok"
 }
