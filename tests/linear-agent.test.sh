@@ -129,6 +129,10 @@ if [ -s "$MODES/http-401" ]; then
   printf '{"errors":[{"message":"Authentication required"}]}\n401'
   exit 0
 fi
+if [ -s "$MODES/response-http-500" ] && [[ "\$body" = *'"type":"response"'* ]]; then
+  printf '{"data":{"agentActivityCreate":{"success":true}}}\n500'
+  exit 0
+fi
 case "\$body" in
   *agentSessionCreateOnIssue*)
     printf '{"data":{"agentSessionCreateOnIssue":{"success":true,"agentSession":{"id":"sess-1","externalLinks":[{"label":"Dispatch run","url":"$LINK_BASE/console#OLYX-77"}]}}}}\n200' ;;
@@ -251,7 +255,7 @@ agent_off()  { rm -f "$CREDS" "$TOKEN_FILE"; }
 reset_modes() {
   : > "$MODES/curl-exit"; : > "$MODES/http-401"
   : > "$MODES/activity-errors"; : > "$MODES/activity-unsuccessful"
-  : > "$MODES/token-fail"
+  : > "$MODES/response-http-500"; : > "$MODES/token-fail"
   rm -f "$MODES/mint-count" "$MODES/token-life"
   printf 'ok\n' > "$CLAUDE_MODE"; printf 'exit 0\n' > "$GATE_MODE"
 }
@@ -532,6 +536,13 @@ dispatch OLYX-152 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
 check "unsuccessful: today's comment goes out instead" "$(calls commentCreate)" "1"
 file_has "$RUNS/OLYX-152/ticket-sync.log" "LINEAR ERROR agentActivityCreate:" \
   "unsuccessful: the rejected mutation is on the record"
+
+reset_modes; agent_on
+printf '1\n' > "$MODES/response-http-500"
+dispatch OLYX-153 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+check "HTTP failure: today's comment goes out instead" "$(calls commentCreate)" "1"
+file_has "$RUNS/OLYX-153/ticket-sync.log" "LINEAR ERROR agentActivityCreate: HTTP 500" \
+  "HTTP failure: the failed mutation is on the record"
 
 # ---------------------------------------------------------------------------
 echo "== failures are logged and nothing else =="
