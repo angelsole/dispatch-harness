@@ -1016,39 +1016,19 @@ body[data-idle="rest"] .rest { display: block; }
   animation: klaxon-text 2.8s var(--ease-io) infinite;
 }
 
-/* The plot still is a camera decision, then a focus decision. The skyline and
-   neighbouring blocks become a single low-value background plane; the shipped
-   building gets the edge light, facade light and beam that make its complete
-   silhouette the foreground. This changes no ordinary wide or cinema shot. */
+/* The plot still is a camera decision, then a focus decision. The finished
+   building moves in front of the live skyline it just joined, while its
+   neighbours and the traffic keep enough value to locate it on a real street.
+   This changes no ordinary wide or cinema shot. */
 body[data-shot="plot"] .district { z-index: 8; }
-body[data-shot="plot"] .city { opacity: 0.12; }
-body[data-shot="plot"] .block { opacity: 0.14; }
+body[data-shot="plot"] .city { opacity: 0.24; }
+body[data-shot="plot"] .block { opacity: 0.24; }
 body[data-shot="plot"] .block[data-plot="1"] {
   z-index: 5 !important;
   opacity: 1;
-  filter: brightness(3.2) saturate(0.88)
-          drop-shadow(0 0 1.4rem rgba(190, 232, 255, 0.58));
+  filter: brightness(1.14) saturate(0.92);
 }
-body[data-shot="plot"] .block[data-plot="1"]::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -0.4rem;
-  z-index: -1;
-  width: 360%;
-  height: 92vh;
-  transform: translateX(-50%);
-  clip-path: polygon(34% 100%, 66% 100%, 54% 0, 46% 0);
-  background: linear-gradient(0deg,
-    rgba(190, 232, 255, 0.22), rgba(168, 218, 255, 0.07) 48%, transparent 86%);
-}
-body[data-shot="plot"] .block[data-plot="1"] .block__mass {
-  box-shadow: 0 0 0 1px rgba(222, 248, 255, 0.72),
-              0 0 2.8rem rgba(168, 218, 255, 0.46);
-}
-body[data-shot="plot"] .block[data-plot="1"] .block__windows,
-body[data-shot="plot"] .block[data-plot="1"] .block__shop { opacity: 1; }
-body[data-shot="plot"] .life { opacity: 0.32; }
+body[data-shot="plot"] .life { opacity: 0.54; }
 
 /* --- the week's district: what has already shipped, standing ----------------
    The skyline in front of this is live and leaves nothing behind. This layer is
