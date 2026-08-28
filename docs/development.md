@@ -27,7 +27,7 @@ transcript right under its line, `  skip ` lines kept. Two things the gate sets
 for every suite: `HARNESS_DETACH=0`, so a fixture `run-task.sh` stays in the
 foreground where the suite can assert on it, and `HARNESS_PREFLIGHT=off`, so a
 fixture run does not spend seconds asking `npx ccusage` about a config dir that
-has no logs — the two suites that test the preflight switch it back on.
+has no logs — the four suites whose fixtures need it switch it back on.
 
 `tests/docs.test.sh` is the docs-as-tests suite: [README's
 Prerequisites](../README.md#prerequisites) name every binary the scripts need,

@@ -57,7 +57,8 @@ GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
 # HARNESS_PREFLIGHT=off: the capacity preflight shells out to `npx ccusage@latest`
 # — a registry round-trip of 3-6 s — and 21 suites never fake npx, so every one
 # of their fixture runs paid it for a config dir that has no logs to account.
-# The two suites that TEST the preflight set HARNESS_PREFLIGHT=on themselves.
+# The four suites whose fixtures depend on it (the preflight itself, and the
+# capacity deferrals it triggers) set HARNESS_PREFLIGHT=on themselves.
 
 suites=()
 for t in tests/*.test.sh; do [ -e "$t" ] && suites+=("$t"); done
