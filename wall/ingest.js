@@ -376,6 +376,7 @@ function ingestMetrics(body) {
 function telemetryFor(id) {
   if (!enabled()) return null;
   load();
+  prune(Math.floor(Date.now() / 1000));
   const entry = store.get(id);
   if (!entry) return null;
   const otel = entry.otel;
@@ -398,6 +399,7 @@ function telemetryFor(id) {
 function remoteEntries(localIds) {
   if (!enabled()) return [];
   load();
+  prune(Math.floor(Date.now() / 1000));
   const out = [];
   for (const [id, entry] of store) if (!localIds.has(id)) out.push({ id, entry });
   return out;

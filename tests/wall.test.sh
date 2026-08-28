@@ -7132,6 +7132,12 @@ const cumulative = (value, at) => {
 I.ingestMetrics(cumulative(150, 200));
 I.ingestMetrics(cumulative(100, 100));
 out.push('otlp-newest=' + I.telemetryFor('ORDER-OTLP').tokens_in);
+const realNow = Date.now;
+const quietStart = realNow();
+I.ingestStage({ run: 'QUIET-STALE', stage: 'review', at: Math.floor(quietStart / 1000) });
+Date.now = () => quietStart + (8 * 86400 * 1000);
+out.push('quiet-pruned=' + !I.remoteEntries(new Set()).some(({ id }) => id === 'QUIET-STALE'));
+Date.now = realNow;
 I.ingestMetrics(body());
 out.push('once=' + shot());
 I.ingestMetrics(body());
@@ -7167,6 +7173,8 @@ check "hooks: delayed events keep the newest tool and event time" \
   "$(otlp hook-newest)" "2,Edit,200"
 check "otlp: an older cumulative export cannot reduce a total" \
   "$(otlp otlp-newest)" "150"
+check "persist: quiet read paths prune entries after seven days" \
+  "$(otlp quiet-pruned)" "true"
 check "otlp: the fixture's tokens, cost and session count" \
   "$(otlp once)" "1200,340,98000,0.25,1"
 check "otlp: feeding the identical body again changes nothing" \
