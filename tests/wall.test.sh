@@ -7046,7 +7046,7 @@ check "privacy: and is the body it was before the report" \
   "$(printf '%s' "$AFTER_PUBLIC" | jq -S 'del(.at)')" \
   "$(printf '%s' "$BEFORE_PUBLIC" | jq -S 'del(.at)')"
 check "privacy: the city never sees a reported run" \
-  "$(printf '%s' "$CONSOLE_ING" | jq '[.towers[].runIds[]] | index("REMOTE-7") // "absent"')" \
+  "$(printf '%s' "$CONSOLE_ING" | jq -r '[.towers[].runIds[]] | index("REMOTE-7") // "absent"')" \
   "absent"
 
 # --- the same run on disk and reporting is one row ------------------------------
