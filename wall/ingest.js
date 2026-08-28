@@ -65,6 +65,19 @@ function epoch(value) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : Math.floor(Date.now() / 1000);
 }
 
+function nano(value) {
+  const text = String(value === undefined ? '' : value);
+  if (!/^\d+$/.test(text)) return '';
+  return text.replace(/^0+(?=\d)/, '');
+}
+
+function newerNano(candidate, previous) {
+  if (!previous) return true;
+  if (!candidate) return false;
+  return candidate.length > previous.length ||
+    (candidate.length === previous.length && candidate >= previous);
+}
+
 const META = ['host', 'owner', 'repo', 'provider', 'model', 'worktree',
   'branch', 'base', 'pr_url', 'status'];
 
@@ -132,7 +145,9 @@ function adopt(raw, at) {
       if (!seen || typeof seen !== 'object') continue;
       const n = Number(seen.value);
       if (!Number.isFinite(n)) continue;
-      entry.otel.latest[key] = { kind: str(seen.kind), field: str(seen.field), value: n };
+      entry.otel.latest[key] = {
+        kind: str(seen.kind), field: str(seen.field), value: n, at: nano(seen.at),
+      };
     }
   }
   return entry;
@@ -284,9 +299,11 @@ function pointsOf(metric) {
 // while a second session is still an addition.
 // One series' running total, replacing whatever the same series reported last.
 // The key exists only to be unique; nothing ever parses it back apart.
-function remember(entry, kind, session, model, field, value) {
+function remember(entry, kind, session, model, field, value, at) {
   const key = [kind, session, model, field].join('|');
-  entry.otel.latest[key] = { kind, field, value };
+  const previous = entry.otel.latest[key];
+  if (previous && !newerNano(at, previous.at)) return;
+  entry.otel.latest[key] = { kind, field, value, at };
 }
 
 function recompute(entry) {
@@ -330,15 +347,16 @@ function ingestMetrics(body) {
           const attrs = attrsOf(point.attributes);
           const session = attrs['session.id'] || '';
           const model = attrs.model || '';
+          const at = nano(point.timeUnixNano);
           if (model && !entry.otel.models.includes(model)) entry.otel.models.push(model);
           if (name === 'claude_code.token.usage') {
             const field = TOKEN_KEY[attrs.type];
             if (!field) continue;
-            remember(entry, 'token', session, model, field, value);
+            remember(entry, 'token', session, model, field, value, at);
           } else if (name === 'claude_code.cost.usage') {
-            remember(entry, 'cost', session, model, 'usd', value);
+            remember(entry, 'cost', session, model, 'usd', value, at);
           } else if (name === 'claude_code.session.count') {
-            remember(entry, 'session', session, model, 'count', value);
+            remember(entry, 'session', session, model, 'count', value, at);
           }
         }
       }

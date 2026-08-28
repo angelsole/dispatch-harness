@@ -7118,6 +7118,20 @@ I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Ed
 I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Read', at: 100 });
 const hook = I.telemetryFor('ORDER-HOOK');
 out.push('hook-newest=' + [hook.tools, hook.last_tool, hook.last_event_at].join(','));
+const cumulative = (value, at) => {
+  const report = body();
+  report.resourceMetrics[0].resource.attributes
+    .find((a) => a.key === 'run.id').value.stringValue = 'ORDER-OTLP';
+  const point = report.resourceMetrics[0].scopeMetrics
+    .flatMap((scope) => scope.metrics)
+    .find((metric) => metric.name === 'claude_code.token.usage').sum.dataPoints[0];
+  point.asInt = String(value);
+  point.timeUnixNano = String(at);
+  return report;
+};
+I.ingestMetrics(cumulative(150, 200));
+I.ingestMetrics(cumulative(100, 100));
+out.push('otlp-newest=' + I.telemetryFor('ORDER-OTLP').tokens_in);
 I.ingestMetrics(body());
 out.push('once=' + shot());
 I.ingestMetrics(body());
@@ -7151,6 +7165,8 @@ check "stage: an older delayed report cannot regress the run" \
   "$(otlp stage-newest)" "done: ready"
 check "hooks: delayed events keep the newest tool and event time" \
   "$(otlp hook-newest)" "2,Edit,200"
+check "otlp: an older cumulative export cannot reduce a total" \
+  "$(otlp otlp-newest)" "150"
 check "otlp: the fixture's tokens, cost and session count" \
   "$(otlp once)" "1200,340,98000,0.25,1"
 check "otlp: feeding the identical body again changes nothing" \
