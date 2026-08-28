@@ -7070,6 +7070,26 @@ check "merge: and the same number of rows as before any report" \
   "$(get "$ING_PORT" /api/runs | jq '.runs | length')" \
   "$(printf '%s' "$BEFORE_PUBLIC" | jq '.runs | length')"
 
+# A finished run beyond the emitted-history cap is still local. Reporting it
+# must not bring it back as a remote row after snapshot() deliberately omitted it.
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$ROOT/capped-ingest.json"
+serve "$CROWDED" "$ROOT/ingest-capped.log"; CAPPED_PORT="$PORT_OUT"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$CAPPED_PORT" ]; then
+  CAPPED_BEFORE="$(get "$CAPPED_PORT" '/api/runs?view=console')"
+  CAPPED_ID="$(jq -nr --argjson api "$CAPPED_BEFORE" \
+    '[range(1; 26) | "DONE-\(.)"] - [$api.runs[].id] | .[0]')"
+  post_code "$CAPPED_PORT" /api/ingest/stage \
+    "$(jq -nc --arg run "$CAPPED_ID" --argjson at "$ING_NOW" \
+      '{run:$run,stage:"done: ready",at:$at,host:"mini",repo:"greenapp"}')" \
+    "$ING_TOKEN" > /dev/null
+  check "merge: capped local history is not reintroduced as remote" \
+    "$(get "$CAPPED_PORT" '/api/runs?view=console' \
+      | jq --arg id "$CAPPED_ID" '[.runs[] | select(.id==$id)] | length')" "0"
+else
+  bad "merge: server starts for capped local history"
+fi
+
 # --- the hook channel -----------------------------------------------------------
 echo "== wall: the hook channel counts what a worker did =="
 hook_post() {  # $1 = event name, $2 = tool name, $3 = reason

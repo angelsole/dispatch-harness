@@ -1258,9 +1258,8 @@ function payload() {
   // and a row for each run that is only somewhere else.
   const towers = buildTowers(runs, at);
   const summary = summaryOf(scanned, now.getTime());
-  const local = new Set();
+  const local = new Set(scanned.map(({ id }) => id));
   for (const run of runs) {
-    local.add(run.id);
     const telemetry = Ingest.telemetryFor(run.id);
     if (telemetry) run.telemetry = telemetry;
   }
