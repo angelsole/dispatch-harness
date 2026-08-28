@@ -856,14 +856,14 @@ wall_report_stage() {  # $1 = stage text
   [ -n "$WALL_URL" ] || return 0
   local body
   body=$(jq -n -c \
-    --arg run "$TICKET" --arg stage "$1" --argjson at "$(date +%s)" \
+    --arg run "$TICKET" --arg stage_text "$1" --argjson at "$(date +%s)" \
     --arg host "$WALL_HOSTNAME" --arg owner "${HARNESS_OWNER:-}" \
     --arg repo "$WALL_REPO" \
     --arg provider "${IMPLEMENTER_PROVIDER:-}" --arg model "${IMPLEMENTER_MODEL:-}" \
     --arg worktree "${WORKTREE:-}" --arg branch "${BRANCH:-}" \
     --arg base "${BASE_BRANCH:-}" --arg pr_url "${PR_URL:-}" \
     --arg status "${STATUS:-}" \
-    '{run:$run,stage:$stage,at:$at,host:$host,owner:$owner,repo:$repo,
+    '{run:$run,stage:$stage_text,at:$at,host:$host,owner:$owner,repo:$repo,
       provider:$provider,model:$model,worktree:$worktree,branch:$branch,
       base:$base,pr_url:$pr_url,status:$status}' 2>/dev/null) || return 0
   ( rc=0

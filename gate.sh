@@ -51,13 +51,17 @@ fi
 # HARNESS_WALL_URL/_TOKEN are cleared for a second reason: a station that fans
 # its runs in to a wall would otherwise have every fixture run-task.sh here post
 # its fake stages to the operator's real board.
+#
+# HARNESS_GATE_STEP belongs to this gate invocation's outer tracer. A nested
+# fixture gate may have its own failing-step file, but must not overwrite the
+# outer one (notably on macOS Bash 3.2, whose ERR trap does not restore it).
 GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
           -u REVIEWER_MODEL -u REVIEWER_EFFORT -u HARNESS_OWNER
           -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES
           -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH
           -u HARNESS_ESCALATION -u HARNESS_ESCALATION_STEPS
           -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS
-          -u HARNESS_WALL_URL -u HARNESS_WALL_TOKEN
+          -u HARNESS_WALL_URL -u HARNESS_WALL_TOKEN -u HARNESS_GATE_STEP
           HARNESS_DETACH=0 HARNESS_PREFLIGHT=off)
 # HARNESS_PREFLIGHT=off: the capacity preflight shells out to `npx ccusage@latest`
 # — a registry round-trip of 3-6 s — and 21 suites never fake npx, so every one
