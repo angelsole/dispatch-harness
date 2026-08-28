@@ -75,6 +75,10 @@ check "targets: a private topic equal to the global collapses to one push" \
 check "targets: no global configured means the owner's phone only" \
   "$(HARNESS_NTFY_TOPIC_ANGEL=angel-feed ntfy_targets angel)" "angel-feed"
 
+check "targets: a global set to empty means the owner's phone only too" \
+  "$(HARNESS_NTFY_TOPIC_ANGEL=angel-feed HARNESS_NTFY_TOPIC='' ntfy_targets angel)" \
+  "angel-feed"
+
 # --- fixture: a repo, a harness dir, fake workers, a recording curl ----------
 FHOME="$ROOT/home"; FAKES="$ROOT/bin"
 HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"

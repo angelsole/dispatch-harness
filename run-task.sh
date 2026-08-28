@@ -871,10 +871,9 @@ $2"
       extra+=(-H "Priority: high" -H "Tags: warning")
       ;;
   esac
-  # One identical push per topic ntfy_targets lists for the run's pinned
-  # owner: their own phone first, then the room feed. A machine that
-  # configures no topic gets an empty list and sends nothing — today's
-  # behaviour when HARNESS_NTFY_TOPIC is empty.
+  # The same body and headers to every topic ntfy_targets lists for the run's
+  # pinned owner. An empty list sends nothing, which is what an unconfigured
+  # HARNESS_NTFY_TOPIC has always done.
   # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
   # treats an empty array as unbound under `set -u` and would abort the run on
   # the first stage that adds no headers.
