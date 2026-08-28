@@ -242,9 +242,11 @@ linear_session() {
   printf '%s' "$sid"
 }
 
-linear_content() {  # $1 = thought|elicitation|response|error, $2 = body
-  local body="${2-}"
-  jq -cn --arg t "$1" --arg b "${body:0:$LINEAR_BODY_MAX}" '{type:$t,body:$b}'
+linear_content() {  # $1 = thought|elicitation|response|error, $2 = body, $3 = required suffix
+  local body="${2-}" suffix="${3-}" limit
+  limit=$((LINEAR_BODY_MAX - ${#suffix}))
+  [ "$limit" -ge 0 ] || limit=0
+  jq -cn --arg t "$1" --arg b "${body:0:$limit}$suffix" '{type:$t,body:$b}'
 }
 
 linear_content_action() {  # $1 = action, $2 = parameter
@@ -301,14 +303,15 @@ linear_file_body() {  # $1 = path, $2 = fallback text
 # pipeline emits. `done: ready` posts nothing — ticket_sync already sent the
 # response that carries the PR link, and it runs first.
 linear_session_stage() {  # $1 = stage text
-  local sid body
+  local sid body instructions
   sid=$(linear_session) || return 0
   case "$1" in
     "done: ready") return 0 ;;
     "waiting —"*|"done: needs_input")
       body=$(linear_file_body "$RUN_DIR/QUESTIONS.md" "$1")
-      linear_activity "$sid" "$(linear_content elicitation "$body
-Answer in the run's brief and re-dispatch, or \`attach.sh $TICKET\`.")"
+      instructions="
+Answer in the run's brief and re-dispatch, or \`attach.sh $TICKET\`."
+      linear_activity "$sid" "$(linear_content elicitation "$body" "$instructions")"
       ;;
     deferred:*)
       linear_activity "$sid" "$(linear_content thought "$1")"

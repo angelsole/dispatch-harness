@@ -175,6 +175,10 @@ case "\$prompt" in
         mkdir -p .harness
         printf 'Should the card carry the branch or the worktree path?\n' > .harness/QUESTIONS.md
         ;;
+      longquestions)
+        mkdir -p .harness
+        head -c 10000 /dev/zero | tr '\0' q > .harness/QUESTIONS.md
+        ;;
       slow)
         date > fixture.txt; git add fixture.txt; git commit -q -m "feat: fixture change"
         sleep 4
@@ -458,6 +462,13 @@ file_has "$CURL_LOG" "Should the card carry the branch or the worktree path?" \
   "waiting: carrying the questions themselves"
 file_has "$CURL_LOG" 'attach.sh OLYX-140' "waiting: and how to answer them"
 check "waiting: nothing was mistaken for an error" "$(calls '"type":"error"')" "0"
+
+reset_modes; agent_on
+printf 'longquestions\n' > "$CLAUDE_MODE"
+dispatch OLYX-144 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+check "long waiting: one elicitation" "$(calls '"type":"elicitation"')" "1"
+file_has "$CURL_LOG" 'attach.sh OLYX-144' \
+  "long waiting: the answer instructions survive truncation"
 
 reset_modes; agent_on
 printf 'reject\n' > "$CLAUDE_MODE"
