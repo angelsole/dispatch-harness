@@ -84,7 +84,7 @@ git -C "$REPO" push -q -u origin main
 
 # --- canned Linear ------------------------------------------------------------
 cat > "$ISSUE_JSON" <<'EOF'
-{"data":{"issue":{"id":"uuid-77","identifier":"OLYX-77","team":{"states":{"nodes":[{"id":"st-todo","name":"Todo","type":"unstarted"},{"id":"st-rev","name":"In Review","type":"started"},{"id":"st-done","name":"Done","type":"completed"}]}}}}}
+{"data":{"issue":{"id":"uuid-77","identifier":"OLYX-77","team":{"states":{"nodes":[{"id":"st-todo","name":"Todo","type":"unstarted"},{"id":"st-errors","name":"errors","type":"unstarted"},{"id":"st-rev","name":"In Review","type":"started"},{"id":"st-done","name":"Done","type":"completed"}]}}}}}
 EOF
 
 # --- fakes -------------------------------------------------------------------
@@ -298,6 +298,10 @@ check "inert: no activities either" "$(calls agentActivityCreate)" "0"
 file_has "$CURL_LOG" 'Draft PR ready for review: https://github.com/olyx/greenapp/pull/9 (`fix/OLYX-101`)' \
   "inert: the comment body is the one main has always sent"
 file_has "$CURL_LOG" "st-rev" "inert: and the ticket still moves to In Review"
+file_has "$RUNS/OLYX-101/ticket-sync.log" '"name":"errors"' \
+  "inert: a workflow state named errors is retained as valid data"
+file_has_not "$RUNS/OLYX-101/ticket-sync.log" "LINEAR ERROR issue lookup:" \
+  "inert: nested data named errors is not a GraphQL failure"
 file_has_not "$RUNS/OLYX-101/ticket-sync.log" "LINEAR ERROR" "inert: nothing failed"
 absent "inert: no session file" "$RUNS/OLYX-101/linear-session"
 
