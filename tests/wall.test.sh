@@ -7116,6 +7116,15 @@ HOOKED="$(get "$ING_PORT" '/api/runs?view=console' \
            | "\(.tools)|\(.last_tool)|\(.last_event_at)"')"
 check "hooks: two tool calls, the second one named, and when" \
   "$HOOKED" "2|Edit|$ING_NOW"
+HOOK_STATE=""
+for _ in $(seq 1 40); do
+  HOOK_STATE="$(jq -r '.["HOOKED-1"].hooks
+    | "\(.stops)|\(.ended)|\(.sessions | length)"' "$ING_FILE" 2>/dev/null || true)"
+  [ -n "$HOOK_STATE" ] && break
+  sleep 0.05
+done
+check "hooks: the stop, end reason, and unique session are stored" \
+  "$HOOK_STATE" "1|clear|1"
 fi
 
 # --- the store's own arithmetic -------------------------------------------------
