@@ -322,7 +322,7 @@ printf '0\n' > "$CURL_MODE"
 echo "== a URL with no token is legal, and says so once =="
 # ---------------------------------------------------------------------------
 dispatch WALL-NOTOKEN "HARNESS_NTFY_TOPIC=\"\"
-HARNESS_WALL_URL=\"$WALL_URL\""
+HARNESS_WALL_URL=\"$WALL_URL\"" OTEL_EXPORTER_OTLP_HEADERS='Api-Key=vendor-secret'
 check "no token: the warning is printed exactly once" \
   "$(printf '%s\n' "$OUT" | grep -c 'HARNESS_WALL_URL is set without HARNESS_WALL_TOKEN' | tr -d ' ')" \
   "1"

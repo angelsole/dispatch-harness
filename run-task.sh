@@ -1469,8 +1469,11 @@ apply_wall_env() {  # $1 = which worker this is: implement | review
   export OTEL_LOGS_EXPORTER=none
   export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
   export OTEL_EXPORTER_OTLP_ENDPOINT="$WALL_URL"
-  [ -z "$WALL_TOKEN" ] \
-    || export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $WALL_TOKEN"
+  if [ -n "$WALL_TOKEN" ]; then
+    export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $WALL_TOKEN"
+  else
+    unset OTEL_EXPORTER_OTLP_HEADERS
+  fi
   export OTEL_METRIC_EXPORT_INTERVAL=10000
   export OTEL_RESOURCE_ATTRIBUTES="run.id=$TICKET,owner=${HARNESS_OWNER:-},repo=$WALL_REPO,host=$WALL_HOSTNAME,stage=${1:-implement}"
 }
