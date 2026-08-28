@@ -32,6 +32,8 @@ _INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 . "$_LIB_DIR/profile.sh"
 # shellcheck source=lib/deps-cache.sh
 . "$_LIB_DIR/deps-cache.sh"
+# shellcheck source=lib/notify.sh
+. "$_LIB_DIR/notify.sh"
 unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
@@ -831,43 +833,49 @@ stage() {  # $1 = stage text, $2 = optional extra line for the phone push only
   if [ "${HARNESS_NOTIFY:-1}" = "1" ] && command -v osascript >/dev/null 2>&1; then
     osascript -e "display notification \"$1\" with title \"dispatch $TICKET\"" 2>/dev/null || true
   fi
-  if [ -n "${HARNESS_NTFY_TOPIC:-}" ]; then
-    # The phone push is the only artifact of an unattended run its owner sees
-    # before sitting back down, so the stages they must act on carry more than
-    # the stage text: a terminal stage attaches the PR link (body + tap
-    # target), and the blocked-on-a-human stages escalate so they survive a
-    # silenced phone. Everything else stays a low-priority background tick.
-    # The optional extra line ($2) is the push body's alone: status,
-    # stages.log, timeline and activity stay byte-identical, so every
-    # stage-text contract (statusline, wall, metrics) is untouched.
-    local body="$1"; local -a extra=()
-    [ -n "${2:-}" ] && body="$1
+  # The phone push is the only artifact of an unattended run its owner sees
+  # before sitting back down, so the stages they must act on carry more than
+  # the stage text: a terminal stage attaches the PR link (body + tap
+  # target), and the blocked-on-a-human stages escalate so they survive a
+  # silenced phone. Everything else stays a low-priority background tick.
+  # The optional extra line ($2) is the push body's alone: status,
+  # stages.log, timeline and activity stay byte-identical, so every
+  # stage-text contract (statusline, wall, metrics) is untouched.
+  local body="$1"; local -a extra=()
+  [ -n "${2:-}" ] && body="$1
 $2"
-    case "$1" in
-      "done: needs_input"|"done: review_failed")
-        # The other ways a run stops on a human: base-sync conflicts the
-        # resolver could not finish (never passes the waiting stage below),
-        # and a review no backend could complete (out of credits). The
-        # contract is the same — a stage that blocks the run must survive a
-        # silenced phone.
-        extra+=(-H "Priority: high" -H "Tags: warning")
-        ;;
-      done:*)
-        if [ -n "${PR_URL:-}" ]; then
-          body="$body"$'\n'"$PR_URL"
-          extra+=(-H "Click: $PR_URL" -H "Actions: view, Open PR, $PR_URL")
-        fi
-        ;;
-      waiting*)
-        extra+=(-H "Priority: high" -H "Tags: warning")
-        ;;
-    esac
-    # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
-    # treats an empty array as unbound under `set -u` and would abort the run on
-    # the first stage that adds no headers.
+  case "$1" in
+    "done: needs_input"|"done: review_failed")
+      # The other ways a run stops on a human: base-sync conflicts the
+      # resolver could not finish (never passes the waiting stage below),
+      # and a review no backend could complete (out of credits). The
+      # contract is the same — a stage that blocks the run must survive a
+      # silenced phone.
+      extra+=(-H "Priority: high" -H "Tags: warning")
+      ;;
+    done:*)
+      if [ -n "${PR_URL:-}" ]; then
+        body="$body"$'\n'"$PR_URL"
+        extra+=(-H "Click: $PR_URL" -H "Actions: view, Open PR, $PR_URL")
+      fi
+      ;;
+    waiting*)
+      extra+=(-H "Priority: high" -H "Tags: warning")
+      ;;
+  esac
+  # One identical push per topic ntfy_targets lists for the run's pinned
+  # owner: their own phone first, then the room feed. A machine that
+  # configures no topic gets an empty list and sends nothing — today's
+  # behaviour when HARNESS_NTFY_TOPIC is empty.
+  # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
+  # treats an empty array as unbound under `set -u` and would abort the run on
+  # the first stage that adds no headers.
+  local ntfy_topic
+  while IFS= read -r ntfy_topic; do
+    [ -n "$ntfy_topic" ] || continue
     curl -s -m 5 -H "Title: dispatch $TICKET" ${extra[@]+"${extra[@]}"} -d "$body" \
-      "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$HARNESS_NTFY_TOPIC" >/dev/null 2>&1 || true
-  fi
+      "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$ntfy_topic" >/dev/null 2>&1 || true
+  done < <(ntfy_targets "${HARNESS_OWNER:-}")
 }
 
 # --- No run may end without a verdict ------------------------------------------
