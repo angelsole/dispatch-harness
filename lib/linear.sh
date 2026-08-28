@@ -237,19 +237,42 @@ linear_issue_uuid() {
 # The run's session on its issue, created once and reused: a re-dispatch
 # continues the same timeline rather than opening a second one.
 linear_session() {
-  local f="$RUN_DIR/linear-session" iid link gql resp sid
+  local f="$RUN_DIR/linear-session" lock="$RUN_DIR/.linear-session.lock"
+  local iid link gql resp sid tmp tries=0
   if [ -s "$f" ]; then cat "$f"; return 0; fi
   linear_agent_on || return 1
-  iid=$(linear_issue_uuid) || return 1
+
+  while ! mkdir "$lock" 2>/dev/null; do
+    if [ -s "$f" ]; then cat "$f"; return 0; fi
+    tries=$((tries + 1))
+    [ "$tries" -lt 300 ] || return 1
+    sleep 0.1
+  done
+  if [ -s "$f" ]; then
+    rmdir "$lock" 2>/dev/null || true
+    cat "$f"
+    return 0
+  fi
+
+  iid=$(linear_issue_uuid) || { rmdir "$lock" 2>/dev/null || true; return 1; }
   link=$(linear_run_link) || link=""
   gql=$(jq -cn --arg id "$iid" --arg link "$link" \
     '{query:"mutation($input: AgentSessionCreateOnIssueInput!){ agentSessionCreateOnIssue(input: $input){ success agentSession { id externalLinks { label url } } } }",
       variables:{input: ({issueId:$id}
         + (if $link == "" then {} else {externalUrls:[{label:"Dispatch run",url:$link}]} end))}}')
-  resp=$(linear_agent_call agentSessionCreateOnIssue "$gql") || return 1
+  resp=$(linear_agent_call agentSessionCreateOnIssue "$gql") \
+    || { rmdir "$lock" 2>/dev/null || true; return 1; }
   sid=$(printf '%s' "$resp" | jq -r '.data.agentSessionCreateOnIssue.agentSession.id // empty')
-  [ -n "$sid" ] || return 1
-  printf '%s\n' "$sid" > "$f"
+  [ -n "$sid" ] || { rmdir "$lock" 2>/dev/null || true; return 1; }
+  tmp=$(mktemp "$RUN_DIR/.linear-session.XXXXXX") \
+    || { rmdir "$lock" 2>/dev/null || true; return 1; }
+  printf '%s\n' "$sid" > "$tmp" && mv "$tmp" "$f"
+  if [ ! -s "$f" ]; then
+    rm -f "$tmp"
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
+  rmdir "$lock" 2>/dev/null || true
   printf '%s' "$sid"
 }
 

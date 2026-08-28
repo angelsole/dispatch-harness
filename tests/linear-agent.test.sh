@@ -135,6 +135,7 @@ if [ -s "$MODES/response-http-500" ] && [[ "\$body" = *'"type":"response"'* ]]; 
 fi
 case "\$body" in
   *agentSessionCreateOnIssue*)
+    [ ! -s "$MODES/session-delay" ] || sleep 1
     printf '{"data":{"agentSessionCreateOnIssue":{"success":true,"agentSession":{"id":"sess-1","externalLinks":[{"label":"Dispatch run","url":"$LINK_BASE/console#OLYX-77"}]}}}}\n200' ;;
   *agentActivityCreate*)
     if [ -s "$MODES/activity-errors" ]; then
@@ -259,7 +260,8 @@ agent_off()  { rm -f "$CREDS" "$TOKEN_FILE"; }
 reset_modes() {
   : > "$MODES/curl-exit"; : > "$MODES/http-401"
   : > "$MODES/activity-errors"; : > "$MODES/activity-unsuccessful"
-  : > "$MODES/response-http-500"; : > "$MODES/token-fail"
+  : > "$MODES/response-http-500"; : > "$MODES/session-delay"
+  : > "$MODES/token-fail"
   rm -f "$MODES/mint-count" "$MODES/token-life"
   printf 'ok\n' > "$CLAUDE_MODE"; printf 'exit 0\n' > "$GATE_MODE"
 }
@@ -387,6 +389,32 @@ check "session: a second dispatch of the same run creates none" \
   "$(calls agentSessionCreateOnIssue)" "0"
 check "session: and re-uses the cached issue — no second lookup" "$(calls 'states(first: 50)')" "0"
 check "session: it still reports its stages" "$(calls '"type":"action"')" "$(action_stages OLYX-120)"
+
+# Two dispatch processes can reach the first eligible stage together. The
+# session lock makes the second reuse the id created by the first.
+reset_modes; agent_on
+SESSION_RUN="$RUNS/OLYX-122"; mkdir -p "$SESSION_RUN"
+cp "$ISSUE_JSON" "$SESSION_RUN/linear-issue.json"
+jq -n --argjson e "$(( $(date +%s) + 2592000 ))" \
+  '{access_token:"app_tok_concurrent",expires_at:$e}' > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+printf '1\n' > "$MODES/session-delay"
+: > "$CURL_LOG"
+session_worker() {
+  ( HARNESS_DIR="$HARNESS" RUN_DIR="$SESSION_RUN" TICKET="OLYX-122"
+    LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
+    HARNESS_RUN_LINK_BASE="$LINK_BASE"; export PATH="$FAKES:$PATH"
+    # shellcheck source=../lib/linear.sh
+    . "$SRC/lib/linear.sh"
+    linear_session >/dev/null )
+}
+session_worker & SESSION_ONE=$!
+session_worker & SESSION_TWO=$!
+wait "$SESSION_ONE"; wait "$SESSION_TWO"
+check "session race: concurrent creators make one session" \
+  "$(calls agentSessionCreateOnIssue)" "1"
+file_has "$SESSION_RUN/linear-session" "sess-1" \
+  "session race: both processes converge on the persisted id"
 
 # Without a wall the session is still opened — it just has nothing to link to.
 reset_modes; agent_on
