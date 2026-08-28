@@ -630,6 +630,17 @@ else
   bad "secrets: a header file was readable by someone else"
 fi
 absent "secrets: no GraphQL header file survives the run" "$RUNS/OLYX-180/.linear-hdr"
+if compgen -G "$RUNS/OLYX-180/.linear-hdr.*" >/dev/null; then
+  bad "secrets: a unique GraphQL header file survived the run"
+else
+  ok "secrets: no unique GraphQL header file survives the run"
+fi
+GRAPHQL_HDRS=$(awk '/api.linear.app\/graphql/ { for (i=1; i<=NF; i++) if ($i ~ /^@.*\.linear-hdr\./) print $i }' "$ARGV_LOG")
+if [ -n "$GRAPHQL_HDRS" ] && [ "$(printf '%s\n' "$GRAPHQL_HDRS" | sort -u | wc -l | tr -d ' ')" = "$(printf '%s\n' "$GRAPHQL_HDRS" | wc -l | tr -d ' ')" ]; then
+  ok "secrets: concurrent calls receive distinct header files"
+else
+  bad "secrets: a GraphQL header file was reused"
+fi
 absent "secrets: no OAuth header file either" "$RUNS/OLYX-180/.linear-oauth-hdr"
 file_has_not "$RUNS/OLYX-180/ticket-sync.log" "$SECRET" "secrets: the log holds no client secret"
 file_has_not "$RUNS/OLYX-180/ticket-sync.log" "app_tok" "secrets: and no token"

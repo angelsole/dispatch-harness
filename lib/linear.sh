@@ -179,11 +179,12 @@ linear_record() {  # $1 = label, $2 = response, $3 = curl exit, $4 = HTTP status
 # One GraphQL call: authenticate, post, log, and re-mint once on a 401 before
 # retrying. Prints the response; returns 1 on a curl failure or a GraphQL error.
 linear_call() {  # $1 = label, $2 = JSON body, $3 = "personal" to require the operator key
-  local hdr="$RUN_DIR/.linear-hdr" resp rc=0
+  local hdr resp rc=0
+  hdr=$(mktemp "$RUN_DIR/.linear-hdr.XXXXXX") || return 1
   if [ "${3:-}" = personal ]; then
-    linear_personal_auth_hdr "$hdr" >/dev/null || return 1
+    linear_personal_auth_hdr "$hdr" >/dev/null || { rm -f "$hdr"; return 1; }
   else
-    linear_auth_hdr "$hdr" >/dev/null || return 1
+    linear_auth_hdr "$hdr" >/dev/null || { rm -f "$hdr"; return 1; }
   fi
   linear_post "$hdr" "$2" >/dev/null || rc=$?
   resp=$LINEAR_RESPONSE
