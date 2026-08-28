@@ -72,7 +72,10 @@ function blank(at) {
   const entry = {
     stage: { text: '', at: 0 },
     first_seen: at, last_seen: at,
-    hooks: { tools: 0, last_tool: '', last_at: 0, stops: 0, ended: null, sessions: [] },
+    hooks: {
+      tools: 0, last_tool: '', last_tool_at: 0, last_at: 0,
+      stops: 0, ended: null, sessions: [],
+    },
     otel: {
       tokens: { input: 0, output: 0, cache_read: 0, cache_creation: 0 },
       cost_usd: 0, sessions: 0, models: [], last_at: 0,
@@ -101,6 +104,7 @@ function adopt(raw, at) {
   entry.hooks = {
     tools: Number(hooks.tools) || 0,
     last_tool: str(hooks.last_tool),
+    last_tool_at: Number(hooks.last_tool_at) || 0,
     last_at: Number(hooks.last_at) || 0,
     stops: Number(hooks.stops) || 0,
     ended: typeof hooks.ended === 'string' ? hooks.ended.slice(0, CLIP) : null,
@@ -219,7 +223,10 @@ function ingestHook(event) {
   switch (str(event.hook_event_name)) {
     case 'PostToolUse':
       hooks.tools += 1;
-      hooks.last_tool = str(event.tool_name);
+      if (at >= hooks.last_tool_at) {
+        hooks.last_tool = str(event.tool_name);
+        hooks.last_tool_at = at;
+      }
       break;
     case 'Stop':
       hooks.stops += 1;
@@ -230,7 +237,7 @@ function ingestHook(event) {
     default:
       break;
   }
-  hooks.last_at = at;
+  hooks.last_at = Math.max(hooks.last_at, at);
   prune(Math.floor(Date.now() / 1000));
   persist();
 }

@@ -7114,6 +7114,10 @@ I.ingestStage({ run: 'ORDER-STAGE', stage: 'done: ready', at: 200 });
 I.ingestStage({ run: 'ORDER-STAGE', stage: 'review', at: 100 });
 out.push('stage-newest=' + I.remoteEntries(new Set())
   .find(({ id }) => id === 'ORDER-STAGE').entry.stage.text);
+I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Edit', at: 200 });
+I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Read', at: 100 });
+const hook = I.telemetryFor('ORDER-HOOK');
+out.push('hook-newest=' + [hook.tools, hook.last_tool, hook.last_event_at].join(','));
 I.ingestMetrics(body());
 out.push('once=' + shot());
 I.ingestMetrics(body());
@@ -7145,6 +7149,8 @@ OTLP_OUT="$(node "$OTLP_PROBE" "$SRC" "$SRC/tests/fixtures/otlp-metrics.json" \
 otlp() { printf '%s' "$OTLP_OUT" | sed -n "s/^$1=//p"; }
 check "stage: an older delayed report cannot regress the run" \
   "$(otlp stage-newest)" "done: ready"
+check "hooks: delayed events keep the newest tool and event time" \
+  "$(otlp hook-newest)" "2,Edit,200"
 check "otlp: the fixture's tokens, cost and session count" \
   "$(otlp once)" "1200,340,98000,0.25,1"
 check "otlp: feeding the identical body again changes nothing" \
