@@ -193,7 +193,7 @@ function ingestStage(report) {
   if (!id) return;
   const at = epoch(report.at);
   const entry = entryFor(id, at);
-  entry.stage = { text: str(report.stage), at };
+  if (at >= entry.stage.at) entry.stage = { text: str(report.stage), at };
   // An empty field never overwrites what an earlier report established: the
   // stage reports sent before the PR exists must not blank a later pr_url.
   for (const key of META) {

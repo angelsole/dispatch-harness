@@ -7110,6 +7110,10 @@ const shot = () => {
   return [t.tokens_in, t.tokens_out, t.cache_read, t.cost_usd, t.sessions].join(',');
 };
 const out = [];
+I.ingestStage({ run: 'ORDER-STAGE', stage: 'done: ready', at: 200 });
+I.ingestStage({ run: 'ORDER-STAGE', stage: 'review', at: 100 });
+out.push('stage-newest=' + I.remoteEntries(new Set())
+  .find(({ id }) => id === 'ORDER-STAGE').entry.stage.text);
 I.ingestMetrics(body());
 out.push('once=' + shot());
 I.ingestMetrics(body());
@@ -7139,6 +7143,8 @@ JS
 OTLP_OUT="$(node "$OTLP_PROBE" "$SRC" "$SRC/tests/fixtures/otlp-metrics.json" \
   "$ROOT/otlp-store.json" 2>&1)"
 otlp() { printf '%s' "$OTLP_OUT" | sed -n "s/^$1=//p"; }
+check "stage: an older delayed report cannot regress the run" \
+  "$(otlp stage-newest)" "done: ready"
 check "otlp: the fixture's tokens, cost and session count" \
   "$(otlp once)" "1200,340,98000,0.25,1"
 check "otlp: feeding the identical body again changes nothing" \
