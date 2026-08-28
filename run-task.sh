@@ -3004,7 +3004,7 @@ Review: $REVIEW_CLASS")"; then
   if [ "$responded" = 0 ]; then
     gql=$(jq -n --arg id "$iid" --arg c "Draft PR ready for review: $PR_URL (\`$BRANCH\`)" \
       '{query:"mutation($id: String!, $c: String!){ commentCreate(input: {issueId: $id, body: $c}){ success } }",variables:{id:$id,c:$c}}')
-    linear_call comment "$gql" >/dev/null || true
+    linear_call comment "$gql" personal >/dev/null || true
   fi
   # The team's own state names are the truth: "In Review" by name first,
   # else the started-type state that mentions review. No match = comment only.

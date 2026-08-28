@@ -540,6 +540,11 @@ check "fallback: the run's exit code is untouched" "$RC" "0"
 check "fallback: today's comment goes out instead" "$(calls commentCreate)" "1"
 file_has "$CURL_LOG" 'Draft PR ready for review: https://github.com/olyx/greenapp/pull/9 (`fix/OLYX-151`)' \
   "fallback: with the PR link on it"
+if grep -F 'commentCreate' "$CURL_LOG" | grep -qF 'Authorization: lin_api_PERSONALKEY'; then
+  ok "fallback: the comment retries through the personal key"
+else
+  bad "fallback: the comment did not use the personal key"
+fi
 check "fallback: and the ticket still moves" "$(calls issueUpdate)" "1"
 file_has "$RUNS/OLYX-151/ticket-sync.log" "LINEAR ERROR agentActivityCreate:" \
   "fallback: every rejected activity is on the record"
