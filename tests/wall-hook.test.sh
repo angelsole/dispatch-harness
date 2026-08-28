@@ -11,6 +11,7 @@ set -u
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$SRC/lib/wall-hook.sh"
+BASH_BIN="$(command -v bash)"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/wall-hook-test.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
 
@@ -160,7 +161,7 @@ check "shape: and an empty tool_input projection" \
 EVENT='{"session_id":"s","hook_event_name":"Stop"}'
 : > "$CURL_LOG"
 OUT=$(printf '%s' "$EVENT" | env PATH="$ROOT/empty-path" \
-  HARNESS_WALL_URL=http://wall.invalid HARNESS_RUN_ID=T-6 bash "$HOOK" 2>/dev/null)
+  HARNESS_WALL_URL=http://wall.invalid HARNESS_RUN_ID=T-6 "$BASH_BIN" "$HOOK" 2>/dev/null)
 RC=$?
 check "deps: no jq and no curl on PATH exits 0" "$RC" "0"
 check "deps: silently" "$OUT" ""
