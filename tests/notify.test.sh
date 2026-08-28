@@ -147,6 +147,11 @@ SRV="https://ntfy-fixture"
 ROOM="r00m-f33d-4a7c"
 OWNED="0wn3rs-ph0ne-9f2d"
 
+# The number of stage() calls a fixture made. stages.log also carries one
+# "<epoch> __invocation__" marker per dispatch (run-task.sh's own resume
+# bookkeeping, written without a push), so those lines are not stages.
+stage_count() { grep -c -v '__invocation__' "$1" 2>/dev/null | tr -d ' '; }
+
 RUN=""
 dispatch() {  # $1 = ticket, $2 = VAR=VAL overrides (may be empty)
   local ticket="$1"
@@ -175,7 +180,7 @@ echo "== global topic only: one push per stage, the exact URL, nothing else =="
 # ---------------------------------------------------------------------------
 T=adhoc-notify-room
 dispatch "$T" "HARNESS_NTFY_SERVER=$SRV HARNESS_NTFY_TOPIC=$ROOM"
-STAGES=$(grep -c '' "$RUNS/$T/stages.log" 2>/dev/null | tr -d ' ')
+STAGES=$(stage_count "$RUNS/$T/stages.log")
 check "room: the run reaches a terminal state" "$(jq -r .status "$RUNS/$T/result.json" 2>/dev/null)" "rejected"
 check "room: the run dispatched unowned" "$(cat "$RUNS/$T/owner")" ""
 check "room: exactly one push per stage handoff (not more, not fewer)" \
@@ -195,7 +200,7 @@ echo "== an owned run: the owner's phone and the room feed both hear it =="
 # ---------------------------------------------------------------------------
 T=adhoc-notify-owner
 dispatch "$T" "HARNESS_OWNER=zed HARNESS_NTFY_SERVER=$SRV HARNESS_NTFY_TOPIC_ZED=$OWNED HARNESS_NTFY_TOPIC=$ROOM"
-STAGES=$(grep -c '' "$RUNS/$T/stages.log" 2>/dev/null | tr -d ' ')
+STAGES=$(stage_count "$RUNS/$T/stages.log")
 check "owner: the run reaches the same terminal state" \
   "$(jq -r .status "$RUNS/$T/result.json" 2>/dev/null)" "rejected"
 check "owner: the run pins zed as its owner" "$(cat "$RUNS/$T/owner")" "zed"
