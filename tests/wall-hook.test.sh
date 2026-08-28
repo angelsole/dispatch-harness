@@ -53,7 +53,7 @@ EVENT='{"session_id":"sess-9","cwd":"/repo/greenapp-t1","prompt_id":"p-4",
 # polling the log, since the wrapper returns before it finishes.
 run_hook() {
   : > "$CURL_LOG"; rm -f "$BODY_FILE"
-  OUT=$(printf '%s' "$EVENT" | env PATH="$FAKES:$PATH" "$@" bash "$HOOK" 2>/dev/null)
+  OUT=$(printf '%s' "$EVENT" | env "$@" PATH="$FAKES:$PATH" bash "$HOOK" 2>/dev/null)
   RC=$?
   local i=0
   while [ "$i" -lt 40 ] && [ ! -s "$CURL_LOG" ]; do sleep 0.05; i=$((i + 1)); done
@@ -71,7 +71,7 @@ check "off: never runs curl" "$CALLS" "0"
 
 # The other half of the guard: a station with the URL exported must not turn a
 # worker the harness never launched into a run-less report.
-run_hook HARNESS_WALL_URL=http://wall.invalid HARNESS_RUN_ID= -u HARNESS_WALL_TOKEN
+run_hook -u HARNESS_WALL_TOKEN HARNESS_WALL_URL=http://wall.invalid HARNESS_RUN_ID=
 check "off: an empty run id exits 0 even with a URL set" "$RC" "0"
 check "off: and still never runs curl" "$CALLS" "0"
 check "off: and still says nothing" "$OUT" ""
@@ -117,7 +117,7 @@ LONG=$(node -e 'process.stdout.write("x".repeat(900))' 2>/dev/null \
        || printf 'x%.0s' $(seq 1 900))
 EVENT="{\"session_id\":\"s\",\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Bash\",
         \"tool_input\":{\"command\":\"$LONG\",\"file_path\":\"$LONG\",\"description\":\"$LONG\"}}"
-run_hook HARNESS_WALL_URL=http://wall.invalid HARNESS_RUN_ID=T-2 -u HARNESS_WALL_TOKEN
+run_hook -u HARNESS_WALL_TOKEN HARNESS_WALL_URL=http://wall.invalid HARNESS_RUN_ID=T-2
 check "clip: the command is capped at 200 characters" \
   "$(printf '%s' "$BODY" | jq -r '.tool_input.command | length')" "200"
 check "clip: and so is the file path" \
