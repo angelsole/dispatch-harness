@@ -34,6 +34,9 @@ LINEAR_TOKEN_DEFAULT_LIFE=2592000
 LINEAR_BODY_MAX=10000
 # Set by linear_post from curl's -w; empty when the responder ignored it.
 LINEAR_STATUS=""
+# Set alongside LINEAR_STATUS so callers do not need a command substitution,
+# which would discard both assignments in a subshell.
+LINEAR_RESPONSE=""
 # Set by linear_auth_hdr: agent or personal. Only an app token can be re-minted.
 LINEAR_IDENTITY=""
 
@@ -69,12 +72,14 @@ linear_hdr_file() {  # $1 = dest path, $2 = header value
 linear_post() {  # $1 = header file, $2 = JSON body
   local out last
   LINEAR_STATUS=""
+  LINEAR_RESPONSE=""
   out=$(curl -s -m 10 -H @"$1" -H 'Content-Type: application/json' \
         -w '\n%{http_code}' -d "$2" "$LINEAR_URL") || return $?
   last=${out##*$'\n'}
   case "$last" in
     [0-9][0-9][0-9]) LINEAR_STATUS="$last"; out=${out%$'\n'*} ;;
   esac
+  LINEAR_RESPONSE="$out"
   printf '%s' "$out"
 }
 
@@ -161,10 +166,12 @@ linear_record() {  # $1 = label, $2 = raw response, $3 = curl exit
 linear_call() {  # $1 = label, $2 = JSON body
   local hdr="$RUN_DIR/.linear-hdr" resp rc=0
   linear_auth_hdr "$hdr" >/dev/null || return 1
-  resp=$(linear_post "$hdr" "$2") || rc=$?
+  linear_post "$hdr" "$2" >/dev/null || rc=$?
+  resp=$LINEAR_RESPONSE
   if [ "$rc" -eq 0 ] && [ "$LINEAR_STATUS" = 401 ] && [ "$LINEAR_IDENTITY" = agent ]; then
     if linear_agent_token force >/dev/null && linear_auth_hdr "$hdr" >/dev/null; then
-      resp=$(linear_post "$hdr" "$2") || rc=$?
+      linear_post "$hdr" "$2" >/dev/null || rc=$?
+      resp=$LINEAR_RESPONSE
     fi
   fi
   rm -f "$hdr"
