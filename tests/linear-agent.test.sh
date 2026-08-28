@@ -26,7 +26,7 @@ ok()   { pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3] got [$2])"; fi; }
 exists()   { if [ -e "$2" ]; then ok "$1"; else bad "$1 ($2 is missing)"; fi; }
-absent()   { if [ -e "$2" ]; then bad "$1 ($2 is still there)"; else ok "$1"; fi; }
+absent()   { if [ -e "$2" ] || [ -L "$2" ]; then bad "$1 ($2 is still there)"; else ok "$1"; fi; }
 file_has() { if grep -qF -- "$2" "$1" 2>/dev/null; then ok "$3"; else bad "$3 (missing [$2] in $1)"; fi; }
 file_has_not() { if grep -qF -- "$2" "$1" 2>/dev/null; then bad "$3 (found [$2] in $1)"; else ok "$3"; fi; }
 at_least() { if [ "$2" -ge "$3" ] 2>/dev/null; then ok "$1"; else bad "$1 (want >= $3 got $2)"; fi; }
@@ -491,6 +491,26 @@ check "session race: concurrent creators make one session" \
 file_has "$SESSION_RUN/linear-session" "sess-1" \
   "session race: both processes converge on the persisted id"
 absent "session race: the owned lock is released" \
+  "$SESSION_RUN/.linear-session.lock"
+
+# Ownership exists at the instant the lock appears. A second creator must wait
+# while that PID is alive, even if it has been paused before doing API work.
+reset_modes; agent_on
+SESSION_RUN="$RUNS/OLYX-125"; mkdir -p "$SESSION_RUN"
+cp "$ISSUE_JSON" "$SESSION_RUN/linear-issue.json"
+: > "$CURL_LOG"
+sleep 5 & LIVE_LOCK_OWNER=$!
+ln -s "$LIVE_LOCK_OWNER" "$SESSION_RUN/.linear-session.lock"
+session_worker & LIVE_LOCK_WAITER=$!
+sleep 1.2
+check "live session lock: a waiter does not steal the creator's lock" \
+  "$(calls agentSessionCreateOnIssue)" "0"
+kill "$LIVE_LOCK_OWNER" 2>/dev/null || true
+wait "$LIVE_LOCK_OWNER" 2>/dev/null || true
+wait "$LIVE_LOCK_WAITER"
+check "live session lock: the waiter proceeds after its owner exits" \
+  "$(calls agentSessionCreateOnIssue)" "1"
+absent "live session lock: the recovered lock is released" \
   "$SESSION_RUN/.linear-session.lock"
 
 # A process that dies inside the API call cannot run its cleanup. Its recorded

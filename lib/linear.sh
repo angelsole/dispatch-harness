@@ -292,41 +292,48 @@ linear_issue_uuid() {
 
 # --- The agent session ---------------------------------------------------------
 
-# Remove only a session lock this process still owns. A stale owner and a new
-# creator can cross between checks, so an unconditional rmdir is not safe.
-linear_session_unlock() {  # $1 = lock directory
-  local me="${BASHPID:-$$}" owner
-  owner=$(cat "$1/owner" 2>/dev/null) || owner=""
-  [ "$owner" = "$me" ] || return 0
-  rm -f "$1/owner"
-  rmdir "$1" 2>/dev/null || true
+# A symlink publishes ownership in the same atomic operation that creates the
+# lock. Directory locks from an older run are still understood for recovery.
+linear_lock_owner() {  # $1 = lock path
+  if [ -L "$1" ]; then
+    readlink "$1" 2>/dev/null
+  else
+    cat "$1/owner" 2>/dev/null
+  fi
 }
 
-# The run's session on its issue, created once and reused: a re-dispatch
-# continues the same timeline rather than opening a second one.
-linear_session() {
-  local f="$RUN_DIR/linear-session" lock="$RUN_DIR/.linear-session.lock"
-  local iid link gql resp sid tmp owner me="${BASHPID:-$$}" tries=0 ownerless=0
-  if [ -s "$f" ]; then cat "$f"; return 0; fi
-  linear_agent_on || return 1
+linear_lock_remove() {  # $1 = lock path, $2 = expected owner
+  local owner
+  owner=$(linear_lock_owner "$1") || owner=""
+  [ "$owner" = "$2" ] || return 0
+  if [ -L "$1" ]; then
+    rm -f "$1"
+  else
+    rm -f "$1/owner"
+    rmdir "$1" 2>/dev/null || true
+  fi
+}
 
-  while ! mkdir "$lock" 2>/dev/null; do
-    if [ -s "$f" ]; then cat "$f"; return 0; fi
-    owner=$(cat "$lock/owner" 2>/dev/null) || owner=""
+linear_lock_acquire() {  # $1 = lock path, $2 = completed file (optional)
+  local me="${BASHPID:-$$}" owner tries=0
+  while :; do
+    # ln treats an existing directory as a destination. Skip known legacy
+    # directories, and verify the path itself became our symlink in case an old
+    # creator made a directory between this check and ln.
+    if { [ ! -d "$1" ] || [ -L "$1" ]; } && ln -s "$me" "$1" 2>/dev/null; then
+      owner=$(linear_lock_owner "$1") || owner=""
+      if [ -L "$1" ] && [ "$owner" = "$me" ]; then return 0; fi
+      if [ -L "$1/$me" ] && [ "$(readlink "$1/$me" 2>/dev/null)" = "$me" ]; then
+        rm -f "$1/$me"
+      fi
+    fi
+    if [ -n "${2:-}" ] && [ -s "$2" ]; then return 2; fi
+    owner=$(linear_lock_owner "$1") || owner=""
     case "$owner" in
-      ''|*[!0-9]*)
-        ownerless=$((ownerless + 1))
-        if [ "$ownerless" -ge 10 ]; then
-          rm -f "$lock/owner" 2>/dev/null || true
-          rmdir "$lock" 2>/dev/null || true
-          ownerless=0
-        fi
-        ;;
+      ''|*[!0-9]*) ;;
       *)
-        ownerless=0
         if ! kill -0 "$owner" 2>/dev/null; then
-          rm -f "$lock/owner" 2>/dev/null || true
-          rmdir "$lock" 2>/dev/null || true
+          linear_lock_remove "$1" "$owner"
         fi
         ;;
     esac
@@ -334,35 +341,49 @@ linear_session() {
     [ "$tries" -lt 300 ] || return 1
     sleep 0.1
   done
-  if ! printf '%s\n' "$me" > "$lock/owner"; then
-    rmdir "$lock" 2>/dev/null || true
-    return 1
-  fi
+}
+
+linear_lock_release() {  # $1 = lock path
+  linear_lock_remove "$1" "${BASHPID:-$$}"
+}
+
+# The run's session on its issue, created once and reused: a re-dispatch
+# continues the same timeline rather than opening a second one.
+linear_session() {
+  local f="$RUN_DIR/linear-session" lock="$RUN_DIR/.linear-session.lock"
+  local iid link gql resp sid tmp lock_rc
+  if [ -s "$f" ]; then cat "$f"; return 0; fi
+  linear_agent_on || return 1
+
+  linear_lock_acquire "$lock" "$f"
+  lock_rc=$?
+  if [ "$lock_rc" -eq 2 ]; then cat "$f"; return 0; fi
+  [ "$lock_rc" -eq 0 ] || return 1
   if [ -s "$f" ]; then
-    linear_session_unlock "$lock"
+    linear_lock_release "$lock"
     cat "$f"
     return 0
   fi
 
-  iid=$(linear_issue_uuid) || { linear_session_unlock "$lock"; return 1; }
+  iid=$(linear_issue_uuid) || { linear_lock_release "$lock"; return 1; }
   link=$(linear_run_link) || link=""
   gql=$(jq -cn --arg id "$iid" --arg link "$link" \
     '{query:"mutation($input: AgentSessionCreateOnIssue!){ agentSessionCreateOnIssue(input: $input){ success agentSession { id externalLinks { label url } } } }",
       variables:{input: ({issueId:$id}
         + (if $link == "" then {} else {externalUrls:[{label:"Dispatch run",url:$link}]} end))}}')
   resp=$(linear_agent_call agentSessionCreateOnIssue "$gql") \
-    || { linear_session_unlock "$lock"; return 1; }
+    || { linear_lock_release "$lock"; return 1; }
   sid=$(printf '%s' "$resp" | jq -r '.data.agentSessionCreateOnIssue.agentSession.id // empty')
-  [ -n "$sid" ] || { linear_session_unlock "$lock"; return 1; }
+  [ -n "$sid" ] || { linear_lock_release "$lock"; return 1; }
   tmp=$(mktemp "$RUN_DIR/.linear-session.XXXXXX") \
-    || { linear_session_unlock "$lock"; return 1; }
+    || { linear_lock_release "$lock"; return 1; }
   printf '%s\n' "$sid" > "$tmp" && mv "$tmp" "$f"
   if [ ! -s "$f" ]; then
     rm -f "$tmp"
-    linear_session_unlock "$lock"
+    linear_lock_release "$lock"
     return 1
   fi
-  linear_session_unlock "$lock"
+  linear_lock_release "$lock"
   printf '%s' "$sid"
 }
 
