@@ -458,6 +458,32 @@ exists "heartbeat: the last beat's epoch is on disk" "$HB_RUN/linear-heartbeat"
 check "heartbeat: no session, no beat — it never opens one" \
   "$(calls agentSessionCreateOnIssue)" "0"
 
+HB_RETRY_RUN="$RUNS/OLYX-134"; mkdir -p "$HB_RETRY_RUN"
+reset_modes; agent_on
+jq -n --argjson e "$(( $(date +%s) + 2592000 ))" \
+  '{access_token:"app_tok_heartbeat",expires_at:$e}' > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+printf 'sess-1\n' > "$HB_RETRY_RUN/linear-session"
+printf 'implementing — retry heartbeat\n' > "$HB_RETRY_RUN/activity"
+printf '7\n' > "$MODES/curl-exit"
+: > "$CURL_LOG"
+( set -u
+  HARNESS_DIR="$HARNESS" RUN_DIR="$HB_RETRY_RUN" TICKET="OLYX-134"
+  LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
+  export PATH="$FAKES:$PATH"
+  # shellcheck source=../lib/linear.sh
+  . "$SRC/lib/linear.sh"
+  HARNESS_LINEAR_HEARTBEAT_SECS=300
+  linear_heartbeat
+  [ -e "$RUN_DIR/linear-heartbeat" ] || : > "$RUN_DIR/failed-beat-left-no-mark"
+  linear_heartbeat )
+exists "heartbeat retry: a failed send does not advance the marker" \
+  "$HB_RETRY_RUN/failed-beat-left-no-mark"
+check "heartbeat retry: the next tick retries immediately" \
+  "$(calls '"type":"thought"')" "2"
+exists "heartbeat retry: the successful retry records its epoch" \
+  "$HB_RETRY_RUN/linear-heartbeat"
+
 # And the same thing wired into the driver's ticker, on a run slow enough to tick.
 reset_modes; agent_on; rm -f "$TOKEN_FILE"
 printf 'slow\n' > "$CLAUDE_MODE"

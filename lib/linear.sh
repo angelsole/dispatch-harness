@@ -395,7 +395,8 @@ linear_heartbeat() {
   [ "$((now - last))" -ge "${HARNESS_LINEAR_HEARTBEAT_SECS:-300}" ] || return 0
   body=$(cat "$RUN_DIR/activity" 2>/dev/null) || body=""
   [ -n "$body" ] || return 0
-  printf '%s\n' "$now" > "$mark"
-  linear_activity "$(cat "$f")" "$(linear_content thought "$body")" ephemeral
+  if linear_activity "$(cat "$f")" "$(linear_content thought "$body")" ephemeral; then
+    printf '%s\n' "$now" > "$mark"
+  fi
   return 0
 }
