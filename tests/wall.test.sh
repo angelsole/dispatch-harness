@@ -7293,6 +7293,14 @@ if [ -n "$KEEP_PORT" ]; then
        | .telemetry | "\(.tokens_in) \(.cost_usd) \(.tools)"')" "5 1.25 3"
   check "persist: an entry nothing has updated for eight days is gone" \
     "$(printf '%s' "$KEEP_API" | jq '[.runs[] | select(.id=="STALE-1")] | length')" "0"
+  STALE_STORED="true"
+  for _ in $(seq 1 40); do
+    STALE_STORED="$(jq -r 'has("STALE-1")' "$KEEP_STORE" 2>/dev/null)"
+    [ "$STALE_STORED" = "false" ] && break
+    sleep 0.05
+  done
+  check "persist: read-time pruning is written back to the store" \
+    "$STALE_STORED" "false"
 else
   bad "persist: server starts against a store written earlier"
 fi

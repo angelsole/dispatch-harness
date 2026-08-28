@@ -154,25 +154,30 @@ function adopt(raw, at) {
 }
 
 function load() {
-  if (loaded) return;
+  if (loaded) return false;
   loaded = true;
   let text;
-  try { text = fs.readFileSync(STORE_FILE, 'utf8'); } catch { return; }
+  try { text = fs.readFileSync(STORE_FILE, 'utf8'); } catch { return false; }
   let raw;
-  try { raw = JSON.parse(text); } catch { return; }
-  if (!raw || typeof raw !== 'object') return;
+  try { raw = JSON.parse(text); } catch { return false; }
+  if (!raw || typeof raw !== 'object') return false;
   const at = Math.floor(Date.now() / 1000);
   for (const id of Object.keys(raw)) {
     if (!id) continue;
     store.set(id.slice(0, CLIP), adopt(raw[id], at));
   }
-  prune(at);
+  return prune(at);
 }
 
 function prune(at) {
+  let changed = false;
   for (const [id, entry] of store) {
-    if (at - (entry.last_seen || 0) > PRUNE_S) store.delete(id);
+    if (at - (entry.last_seen || 0) > PRUNE_S) {
+      store.delete(id);
+      changed = true;
+    }
   }
+  return changed;
 }
 
 function writeNow() {
@@ -378,8 +383,7 @@ function ingestMetrics(body) {
 // left over from an earlier configuration cannot put rows on a read-only wall.
 function telemetryFor(id) {
   if (!enabled()) return null;
-  load();
-  prune(Math.floor(Date.now() / 1000));
+  if (load() || prune(Math.floor(Date.now() / 1000))) persist();
   const entry = store.get(id);
   if (!entry) return null;
   const otel = entry.otel;
@@ -401,8 +405,7 @@ function telemetryFor(id) {
 // lives in server.js and there may only be one copy of it.
 function remoteEntries(localIds) {
   if (!enabled()) return [];
-  load();
-  prune(Math.floor(Date.now() / 1000));
+  if (load() || prune(Math.floor(Date.now() / 1000))) persist();
   const out = [];
   for (const [id, entry] of store) if (!localIds.has(id)) out.push({ id, entry });
   return out;
