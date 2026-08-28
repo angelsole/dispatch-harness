@@ -133,6 +133,14 @@ if [ -s "$MODES/response-http-500" ] && [[ "\$body" = *'"type":"response"'* ]]; 
   printf '{"data":{"agentActivityCreate":{"success":true}}}\n500'
   exit 0
 fi
+if [ -s "$MODES/response-malformed" ] && [[ "\$body" = *'"type":"response"'* ]]; then
+  case "\$(cat "$MODES/response-malformed")" in
+    empty) printf '\n200' ;;
+    html) printf '<html>upstream error</html>\n200' ;;
+    null) printf '{"data":{"agentActivityCreate":null}}\n200' ;;
+  esac
+  exit 0
+fi
 if [ -s "$MODES/app-private-team" ] && [[ "\$hdrs" = *'Bearer '* ]]; then
   case "\$body" in
     *'states(first: 50)'*) printf '{"data":{"issue":null}}\n200' ;;
@@ -267,7 +275,8 @@ agent_off()  { rm -f "$CREDS" "$TOKEN_FILE"; }
 reset_modes() {
   : > "$MODES/curl-exit"; : > "$MODES/http-401"
   : > "$MODES/activity-errors"; : > "$MODES/activity-unsuccessful"
-  : > "$MODES/response-http-500"; : > "$MODES/session-delay"
+  : > "$MODES/response-http-500"; : > "$MODES/response-malformed"
+  : > "$MODES/session-delay"
   : > "$MODES/token-fail"; : > "$MODES/app-private-team"
   rm -f "$MODES/mint-count" "$MODES/token-life"
   printf 'ok\n' > "$CLAUDE_MODE"; printf 'exit 0\n' > "$GATE_MODE"
@@ -741,6 +750,18 @@ dispatch OLYX-153 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
 check "HTTP failure: today's comment goes out instead" "$(calls commentCreate)" "1"
 file_has "$RUNS/OLYX-153/ticket-sync.log" "LINEAR ERROR agentActivityCreate: HTTP 500" \
   "HTTP failure: the failed mutation is on the record"
+
+malformed_ticket=156
+for malformed in empty html null; do
+  reset_modes; agent_on
+  printf '%s\n' "$malformed" > "$MODES/response-malformed"
+  dispatch "OLYX-$malformed_ticket" "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+  check "malformed $malformed response: today's comment goes out instead" \
+    "$(calls commentCreate)" "1"
+  file_has "$RUN/ticket-sync.log" "LINEAR ERROR agentActivityCreate:" \
+    "malformed $malformed response: the invalid success is logged"
+  malformed_ticket=$((malformed_ticket + 1))
+done
 
 # Agent-only installations still have a write-capable identity. A rejected
 # response must fall back through it when there is no operator key.

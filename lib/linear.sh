@@ -155,10 +155,21 @@ linear_personal_auth_hdr() {  # $1 = dest path
 # A curl failure or a top-level GraphQL `errors` array adds the one line an operator
 # greps for — the live test for a mutation Linear rejects is
 # `grep 'LINEAR ERROR' ticket-sync.log`, because no suite can make that call.
-linear_response_failed() {  # $1 = response JSON
-  printf '%s' "$1" | jq -e \
-    '((.errors? // []) | length > 0) or
-     ([.. | objects | select(.success? == false)] | length > 0)' >/dev/null 2>&1
+linear_response_failed() {  # $1 = response JSON, $2 = request JSON
+  # jq succeeding here means the complete response shape is acceptable. Invert
+  # that result so malformed/non-JSON bodies are failures too, rather than
+  # accidentally looking like a predicate that simply did not match.
+  if printf '%s' "$1" | jq -e --arg request "$2" '
+      ($request | fromjson? | .query? // "") as $query
+      | type == "object"
+        and ((.errors? // []) | length == 0)
+        and ([.. | objects | select(.success? == false)] | length == 0)
+        and (($query | startswith("mutation") | not)
+             or ([.. | objects | select(.success? == true)] | length > 0))
+    ' >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
 }
 
 linear_record() {  # $1 = label, $2 = response, $3 = curl exit, $4 = HTTP status, $5 = request
@@ -168,14 +179,14 @@ linear_record() {  # $1 = label, $2 = response, $3 = curl exit, $4 = HTTP status
       printf 'LINEAR ERROR %s: curl exit %s\n' "$1" "$3"
     elif [ -n "${4:-}" ] && [[ ! "$4" = 2[0-9][0-9] ]]; then
       printf 'LINEAR ERROR %s: HTTP %s\n' "$1" "$4"
-    elif linear_response_failed "$2"; then
+    elif linear_response_failed "$2" "$5"; then
       printf 'LINEAR ERROR %s: %s\n' "$1" "$2"
     fi
   } >> "$RUN_DIR/ticket-sync.log"
   printf '%s' "$2"
   [ "$3" -eq 0 ] || return 1
   if [ -n "${4:-}" ] && [[ ! "$4" = 2[0-9][0-9] ]]; then return 1; fi
-  if linear_response_failed "$2"; then
+  if linear_response_failed "$2" "$5"; then
     return 1
   fi
   return 0
