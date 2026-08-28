@@ -128,14 +128,18 @@ cat "$CCUSAGE_JSON"
 EOF
 cat > "$FAKES/curl" <<EOF
 #!/usr/bin/env bash
-# ntfy push stand-in. One line per push, the URL first, so an assertion can
-# demand the exact <server>/<topic> and see that nothing else was reached;
-# the body's newlines fold to spaces so one push is one line.
+# ntfy push stand-in. One line per push: the URL first, then the args with
+# the URL itself left out and the body's newlines folded to spaces — so an
+# assertion can demand the exact <server>/<topic>, and two pushes of one
+# stage differ only in that leading URL.
 url=""
 for a in "\$@"; do case "\$a" in http*://*) url="\$a" ;; esac; done
 {
   printf '%s ' "\$url"
-  for a in "\$@"; do printf '%s ' "\$(printf '%s' "\$a" | tr '\n' ' ')"; done
+  for a in "\$@"; do
+    case "\$a" in http*://*) continue ;; esac
+    printf '%s ' "\$(printf '%s' "\$a" | tr '\n' ' ')"
+  done
   printf '\n'
 } >> "$NTFY_LOG"
 EOF
