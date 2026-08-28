@@ -469,14 +469,14 @@ reset_modes; agent_on; rm -f "$TOKEN_FILE"
   HARNESS_LINEAR_HEARTBEAT_SECS=300
   linear_heartbeat                       # no session yet: must say nothing
   printf 'sess-1\n' > "$RUN_DIR/linear-session"
-  linear_heartbeat                       # the first tick always posts
+  linear_heartbeat                       # the first tick starts the interval
   linear_heartbeat                       # ...and the next one is inside the interval
   HARNESS_LINEAR_HEARTBEAT_SECS=1
   sleep 2
   linear_heartbeat )
-check "heartbeat: three ticks, two beats — the interval is honoured" \
-  "$(calls '"type":"thought"')" "2"
-check "heartbeat: and every one of them is ephemeral" "$(calls '"ephemeral":true')" "2"
+check "heartbeat: three ticks, one due beat — the interval is honoured" \
+  "$(calls '"type":"thought"')" "1"
+check "heartbeat: and it is ephemeral" "$(calls '"ephemeral":true')" "1"
 file_has "$CURL_LOG" '"body":"implementing — Opus (Claude sub)"' \
   "heartbeat: carrying the run's current activity line"
 exists "heartbeat: the last beat's epoch is on disk" "$HB_RUN/linear-heartbeat"
@@ -490,6 +490,7 @@ jq -n --argjson e "$(( $(date +%s) + 2592000 ))" \
 chmod 600 "$TOKEN_FILE"
 printf 'sess-1\n' > "$HB_RETRY_RUN/linear-session"
 printf 'implementing — retry heartbeat\n' > "$HB_RETRY_RUN/activity"
+printf '1\n' > "$HB_RETRY_RUN/linear-heartbeat"
 printf '7\n' > "$MODES/curl-exit"
 : > "$CURL_LOG"
 ( set -u
@@ -502,10 +503,11 @@ printf '7\n' > "$MODES/curl-exit"
   HARNESS_LINEAR_HEARTBEAT_SECS=300
   export HARNESS_LINEAR_HEARTBEAT_SECS
   linear_heartbeat
-  [ -e "$RUN_DIR/linear-heartbeat" ] || : > "$RUN_DIR/failed-beat-left-no-mark"
+  [ "$(cat "$RUN_DIR/linear-heartbeat")" = 1 ] \
+    || : > "$RUN_DIR/failed-beat-advanced-mark"
   linear_heartbeat )
-exists "heartbeat retry: a failed send does not advance the marker" \
-  "$HB_RETRY_RUN/failed-beat-left-no-mark"
+absent "heartbeat retry: a failed send does not advance the marker" \
+  "$HB_RETRY_RUN/failed-beat-advanced-mark"
 check "heartbeat retry: the next tick retries immediately" \
   "$(calls '"type":"thought"')" "2"
 exists "heartbeat retry: the successful retry records its epoch" \
@@ -521,8 +523,8 @@ exists "heartbeat: and records when it last did" "$RUNS/OLYX-131/linear-heartbea
 reset_modes; agent_on; rm -f "$TOKEN_FILE"
 printf 'slow\n' > "$CLAUDE_MODE"
 dispatch OLYX-132 "HARNESS_RUN_LINK_BASE=$LINK_BASE HARNESS_HEARTBEAT_SECS=1"
-at_most "heartbeat: at the default interval a short run beats once at most" \
-  "$(calls '"ephemeral":true')" 1
+check "heartbeat: at the default interval a short run does not beat" \
+  "$(calls '"ephemeral":true')" 0
 
 reset_modes; agent_off
 printf 'slow\n' > "$CLAUDE_MODE"

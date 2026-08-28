@@ -397,8 +397,10 @@ linear_heartbeat() {
   linear_agent_on || return 0
   mark="$RUN_DIR/linear-heartbeat"
   now=$(date +%s)
-  last=$(cat "$mark" 2>/dev/null) || last=0
-  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  last=$(cat "$mark" 2>/dev/null) || last=""
+  case "$last" in
+    ''|*[!0-9]*) printf '%s\n' "$now" > "$mark"; return 0 ;;
+  esac
   [ "$((now - last))" -ge "${HARNESS_LINEAR_HEARTBEAT_SECS:-300}" ] || return 0
   body=$(cat "$RUN_DIR/activity" 2>/dev/null) || body=""
   [ -n "$body" ] || return 0
