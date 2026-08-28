@@ -110,6 +110,9 @@ repo_config_local() {
       INSTALL_CMD="npm ci"
       GATE_CMD="npm run type-check && npm test"
       PREPROD=1
+      # Its gate touches nothing outside the worktree (no shared test DB), so
+      # parallel runs need not queue for the per-repo gate lock.
+      HARNESS_GATE_LOCK=0
       ;;
     my-python-svc|my-python-svc-*)
       BASE_BRANCH=main
