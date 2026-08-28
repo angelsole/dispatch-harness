@@ -541,10 +541,6 @@
         paintTower(T, tower, scene.floors);
         cursor = place(city, T.root, cursor);
       }
-      // A forced plot can only be framed after the first snapshot has built
-      // the district. Re-run on later snapshots as well: the newest ship may
-      // legitimately become a different building while this still is open.
-      if (forcedPlot) parkPlot();
     },
 
     // The plate and the skyline tell the same story twice, so they are lit
@@ -923,15 +919,12 @@
     let w = 0, h = 0, running = false, last = 0;
 
     function spawn(y) {
-      // Keep enough of a drop on screen for the eye to find it again. At the
-      // gate's one-second sampling the old 420..1320 px/s range replaced most
-      // of the field between tiles, so continuous rain read as fresh scatter.
       const depth = random();      // 0 = far, slow and faint; 1 = near and fast
       return {
         x: random() * (w + h * TILT) - h * TILT,
         y,
         len: 12 + depth * 46,
-        speed: 170 + depth * 430,
+        speed: 420 + depth * 900,
         alpha: 0.08 + depth * 0.36,
         width: 0.6 + depth * 1.1,
       };
@@ -1163,41 +1156,6 @@
       x: between(view.w * ax - s * cx, view.w * (1 - s), 0),
       y: between(view.h * ay - s * cy, view.h * (1 - s), 0),
     };
-  }
-
-  // The DOM city has a plot too. `?shot=ship` used to be consumed only by the
-  // canvas world, leaving this world on its ordinary wide frame; the visual
-  // reel therefore contained the establishing shot twice. Park the camera on
-  // the newest named building instead: a little night above it, the whole
-  // frontage, and enough wet street below to ground it. Nothing is rebuilt or
-  // re-parented — the shot is the director's one transform on #stage.
-  function parkPlot() {
-    if (!forcedPlot || !blocks.length) return;
-    let target = null;
-    for (const block of blocks) {
-      if (!block.project) continue;
-      if (!target || Number(block.at || 0) >= Number(target.at || 0)) target = block;
-    }
-    target = target || blocks[blocks.length - 1];
-    const chosen = blockEls.get(target.id);
-    if (!chosen) return;
-
-    for (const [id, B] of blockEls) B.root.dataset.plot = id === target.id ? '1' : '0';
-    document.body.dataset.shot = 'plot';
-    document.body.dataset.cinema = '0';
-
-    const view = { w: stage.clientWidth, h: stage.clientHeight };
-    const cam = cameraNow();
-    const r = stageRect(chosen.root, cam);
-    const rect = {
-      x: r.x - Math.max(r.w * 1.35, 58),
-      y: r.y - Math.max(r.h * 0.42, 34),
-      w: Math.max(r.w * 3.7, 190),
-      h: Math.max(r.h * 2.25, 180),
-    };
-    moveCamera(frameFor(rect, view, {
-      fillW: 0.6, fillH: 0.78, ax: 0.54, ay: 0.55, max: 3.2,
-    }), 0, 'linear');
   }
 
   // Ken Burns. A held frame is never quite still: it creeps a little further in
@@ -1580,14 +1538,6 @@
     if (forcedRoom) {
       document.body.dataset.shot = 'room';
       roomHold(true);
-      return;
-    }
-    // The canvas world owns this still with its engine camera. The DOM world
-    // now owns it with the stage camera, and re-parks after a resize so a fixed
-    // gate shot cannot drift into a crop meant for another viewport.
-    if (forcedPlot) {
-      parkPlot();
-      window.addEventListener('resize', parkPlot);
       return;
     }
     for (const ev of ['pointermove', 'pointerdown', 'wheel', 'touchstart']) {
