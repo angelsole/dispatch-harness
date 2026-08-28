@@ -32,6 +32,8 @@ _INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 . "$_LIB_DIR/profile.sh"
 # shellcheck source=lib/deps-cache.sh
 . "$_LIB_DIR/deps-cache.sh"
+# shellcheck source=lib/linear.sh
+. "$_LIB_DIR/linear.sh"
 unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
@@ -164,6 +166,9 @@ _DRIVER_PID=$$
   while kill -0 "$_DRIVER_PID" 2>/dev/null; do
     sleep "${HARNESS_HEARTBEAT_SECS:-20}"
     touch "$RUN_DIR/heartbeat" 2>/dev/null || exit 0
+    # The same tick keeps the run's Linear session out of `stale`, at its own
+    # much slower interval. Best-effort like everything else in lib/linear.sh.
+    linear_heartbeat || true
   done ) &
 HEARTBEAT_PID=$!
 
@@ -868,6 +873,7 @@ $2"
     curl -s -m 5 -H "Title: dispatch $TICKET" ${extra[@]+"${extra[@]}"} -d "$body" \
       "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$HARNESS_NTFY_TOPIC" >/dev/null 2>&1 || true
   fi
+  linear_stage_report "$1"
 }
 
 # --- No run may end without a verdict ------------------------------------------
@@ -2961,48 +2967,58 @@ review_refute_and_fix() {
 # --- Ticket sync (script — no model, best-effort) ------------------------------
 # An overnight run has no orchestrator session watching for its result: when
 # the draft PR opens, the ticket itself has to say so. If the run id starts
-# with a TEAM-123 identifier and the same Linear key file the quartermaster
-# reads is present, the PR link is commented on the ticket and the ticket moves
-# to its team's "In Review" state. The pipeline still never marks a PR ready
-# and never merges — review stays a human act; this only routes the artifact.
+# with a TEAM-123 identifier and Linear is configured (lib/linear.sh holds the
+# client and the three layers' switches), the PR link reaches the ticket and the
+# ticket moves to its team's "In Review" state. The pipeline still never marks a
+# PR ready and never merges — review stays a human act; this only routes the
+# artifact.
+#
+# This is the single place that decides comment-vs-response. With an agent
+# session open the PR link IS the session's `response` — Linear mirrors it as a
+# comment — and the PR then hangs off the session as an external URL. A response
+# Linear will not take falls back to the comment that has always worked: a
+# ticket must never end without its PR link.
+#
 # Everything is best-effort: failures land in ticket-sync.log and never touch
 # the run's status. HARNESS_TICKET_SYNC=0 turns it off.
-LINEAR_URL="https://api.linear.app/graphql"
-LINEAR_KEY_FILE="${LINEAR_API_KEY_FILE:-$HARNESS_DIR/linear-api-key}"
 ticket_sync() {  # uses TICKET, PR_URL, BRANCH; always returns 0
   [ "${HARNESS_TICKET_SYNC:-1}" = 1 ] || return 0
-  [ -r "$LINEAR_KEY_FILE" ] || return 0
-  local ident hdr gql issue iid sid
-  ident=$(printf '%s' "$TICKET" | grep -oE '^[A-Za-z][A-Za-z0-9]*-[0-9]+') || return 0
-  # Key travels in a 600 header file, never in argv — same trick as the
-  # quartermaster, same reason: ps must never show it.
-  hdr="$RUN_DIR/.linear-hdr"
-  ( umask 077; printf 'Authorization: %s\n' "$(cat "$LINEAR_KEY_FILE")" > "$hdr" ) || return 0
+  linear_agent_on || [ -r "$LINEAR_KEY_FILE" ] || return 0
+  local ident issue iid sid sess gql log="$RUN_DIR/ticket-sync.log" responded=0
+  ident=$(linear_ident "$TICKET") || return 0
   stage "ticket sync — PR link + In Review (script — no model)"
-  {
-    gql=$(jq -n --arg id "$ident" '{query:"query($id: String!){ issue(id: $id){ id identifier team { states(first: 50){ nodes { id name type } } } } }",variables:{id:$id}}')
-    issue=$(curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL")
-    printf 'issue lookup: %s\n' "$issue"
-    iid=$(printf '%s' "$issue" | jq -r '.data.issue.id // empty')
-    if [ -z "$iid" ]; then echo "no Linear issue named $ident — nothing to sync"; rm -f "$hdr"; return 0; fi
+  issue=$(linear_issue_json) || { echo "issue lookup failed — nothing to sync" >> "$log"; return 0; }
+  iid=$(printf '%s' "$issue" | jq -r '.data.issue.id // empty')
+  if [ -z "$iid" ]; then echo "no Linear issue named $ident — nothing to sync" >> "$log"; return 0; fi
+  if sess=$(linear_session); then
+    if linear_activity "$sess" "$(linear_content response \
+        "Draft PR ready for review: $PR_URL (\`$BRANCH\`)
+Review: $REVIEW_CLASS")"; then
+      responded=1
+      gql=$(jq -cn --arg id "$sess" --arg url "$PR_URL" \
+        '{query:"mutation($id: String!, $input: AgentSessionUpdateInput!){ agentSessionUpdate(id: $id, input: $input){ success } }",
+          variables:{id:$id,input:{addedExternalUrls:[{label:"Pull Request",url:$url}]}}}')
+      linear_agent_call agentSessionUpdate "$gql" >/dev/null || true
+    fi
+  fi
+  if [ "$responded" = 0 ]; then
     gql=$(jq -n --arg id "$iid" --arg c "Draft PR ready for review: $PR_URL (\`$BRANCH\`)" \
       '{query:"mutation($id: String!, $c: String!){ commentCreate(input: {issueId: $id, body: $c}){ success } }",variables:{id:$id,c:$c}}')
-    printf 'comment: '; curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL"; echo
-    # The team's own state names are the truth: "In Review" by name first,
-    # else the started-type state that mentions review. No match = comment only.
-    sid=$(printf '%s' "$issue" | jq -r '.data.issue.team.states.nodes // []
-      | (map(select((.name | ascii_downcase) == "in review")) | first)
-        // (map(select(.type == "started" and (.name | test("review"; "i")))) | first)
-        // empty | .id // empty')
-    if [ -n "$sid" ]; then
-      gql=$(jq -n --arg id "$iid" --arg sid "$sid" \
-        '{query:"mutation($id: String!, $sid: String!){ issueUpdate(id: $id, input: {stateId: $sid}){ success } }",variables:{id:$id,sid:$sid}}')
-      printf 'state -> In Review: '; curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL"; echo
-    else
-      echo "no In Review state on this team — commented only"
-    fi
-  } >> "$RUN_DIR/ticket-sync.log" 2>&1
-  rm -f "$hdr"
+    linear_call comment "$gql" >/dev/null || true
+  fi
+  # The team's own state names are the truth: "In Review" by name first,
+  # else the started-type state that mentions review. No match = comment only.
+  sid=$(printf '%s' "$issue" | jq -r '.data.issue.team.states.nodes // []
+    | (map(select((.name | ascii_downcase) == "in review")) | first)
+      // (map(select(.type == "started" and (.name | test("review"; "i")))) | first)
+      // empty | .id // empty')
+  if [ -n "$sid" ]; then
+    gql=$(jq -n --arg id "$iid" --arg sid "$sid" \
+      '{query:"mutation($id: String!, $sid: String!){ issueUpdate(id: $id, input: {stateId: $sid}){ success } }",variables:{id:$id,sid:$sid}}')
+    linear_call 'state -> In Review' "$gql" >/dev/null || true
+  else
+    echo "no In Review state on this team — commented only" >> "$log"
+  fi
   return 0
 }
 
