@@ -213,12 +213,14 @@ function ingestStage(report) {
   if (!id) return;
   const at = epoch(report.at);
   const entry = entryFor(id, at);
-  if (at >= entry.stage.at) entry.stage = { text: str(report.stage), at };
-  // An empty field never overwrites what an earlier report established: the
-  // stage reports sent before the PR exists must not blank a later pr_url.
-  for (const key of META) {
-    const value = str(report[key]);
-    if (value) entry[key] = value;
+  if (at >= entry.stage.at) {
+    entry.stage = { text: str(report.stage), at };
+    // An empty field never overwrites what an earlier report established: the
+    // stage reports sent before the PR exists must not blank a later pr_url.
+    for (const key of META) {
+      const value = str(report[key]);
+      if (value) entry[key] = value;
+    }
   }
   prune(Math.floor(Date.now() / 1000));
   persist();

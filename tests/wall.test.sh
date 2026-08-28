@@ -7151,10 +7151,13 @@ const shot = () => {
   return [t.tokens_in, t.tokens_out, t.cache_read, t.cost_usd, t.sessions].join(',');
 };
 const out = [];
-I.ingestStage({ run: 'ORDER-STAGE', stage: 'done: ready', at: 200 });
-I.ingestStage({ run: 'ORDER-STAGE', stage: 'review', at: 100 });
-out.push('stage-newest=' + I.remoteEntries(new Set())
-  .find(({ id }) => id === 'ORDER-STAGE').entry.stage.text);
+I.ingestStage({ run: 'ORDER-STAGE', stage: 'done: ready', at: 200,
+  host: 'new-mini', branch: 'fix/new' });
+I.ingestStage({ run: 'ORDER-STAGE', stage: 'review', at: 100,
+  host: 'old-laptop', branch: 'fix/old' });
+const newestStage = I.remoteEntries(new Set())
+  .find(({ id }) => id === 'ORDER-STAGE').entry;
+out.push('stage-newest=' + [newestStage.stage.text, newestStage.host, newestStage.branch].join(','));
 I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Edit', at: 200 });
 I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Read', at: 100 });
 const hook = I.telemetryFor('ORDER-HOOK');
@@ -7209,7 +7212,7 @@ OTLP_OUT="$(node "$OTLP_PROBE" "$SRC" "$SRC/tests/fixtures/otlp-metrics.json" \
   "$ROOT/otlp-store.json" 2>&1)"
 otlp() { printf '%s' "$OTLP_OUT" | sed -n "s/^$1=//p"; }
 check "stage: an older delayed report cannot regress the run" \
-  "$(otlp stage-newest)" "done: ready"
+  "$(otlp stage-newest)" "done: ready,new-mini,fix/new"
 check "hooks: delayed events keep the newest tool and event time" \
   "$(otlp hook-newest)" "2,Edit,200"
 check "otlp: an older cumulative export cannot reduce a total" \
