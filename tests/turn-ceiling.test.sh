@@ -244,7 +244,7 @@ dispatch() {  # $1 = run id, $2 = mode, $3 = space-separated VAR=VAL overrides
       -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
-      CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 \
+      CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 HARNESS_PREFLIGHT=on \
       $overrides \
       bash "$SRCDIR/run-task.sh" "$ticket" "$REPO" "fix/$ticket" \
       > "$ROOT/run-$ticket.log" 2>&1

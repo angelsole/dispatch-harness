@@ -162,9 +162,17 @@ touch "$RUN_DIR/heartbeat"
 # behind past one interval. $$ inside a subshell is still the driver's pid;
 # passed explicitly so that is not a thing anyone has to know.
 _DRIVER_PID=$$
-( trap 'exit 0' TERM INT
+# The sleep runs in the background and the loop waits on it, so a TERM from the
+# driver's EXIT trap interrupts the wait and the trap kills the sleep: the ticker
+# is gone in milliseconds. With a foreground sleep the trap could only run once
+# the sleep returned, and harness_on_exit's `wait` paid up to a full interval on
+# EVERY run — twenty seconds of nothing at the end of each fixture run in the
+# suites, minutes per suite, most of an hour per gate.
+( _hb_sleep=""
+  trap 'kill "$_hb_sleep" 2>/dev/null; exit 0' TERM INT
   while kill -0 "$_DRIVER_PID" 2>/dev/null; do
-    sleep "${HARNESS_HEARTBEAT_SECS:-20}"
+    sleep "${HARNESS_HEARTBEAT_SECS:-20}" & _hb_sleep=$!
+    wait "$_hb_sleep" 2>/dev/null || exit 0
     touch "$RUN_DIR/heartbeat" 2>/dev/null || exit 0
     # The same tick keeps the run's Linear session out of `stale`, at its own
     # much slower interval. Best-effort like everything else in lib/linear.sh.
@@ -1419,7 +1427,7 @@ If .harness/specs/ exists, it holds the task's source documents (office files th
 Rules:
 - Implement the brief fully. You own the implementation design; plan as you see fit.
 - Delegate to subagents (Explore — they run on a cheaper model) only for sizeable, genuinely independent exploration such as a wide multi-file investigation. Do not delegate what a few tool calls of your own would answer, and never use subagents to verify or double-check your own work.
-- Leave the tree passing the verify commands from the brief.
+- Leave the tree passing the verify commands from the brief. Run those targeted checks — the suites that cover YOUR change — not the repo's whole test suite: the pipeline's deterministic gate runs the full suite right after you, so re-running all of it yourself only burns turns and hours.
 - Never weaken, skip, or delete tests to make them pass; if a test seems wrong, say so in your notes instead.
 - Comment policy: a comment states a constraint or gotcha the code cannot express — nothing else. Never narrate design rationale, alternatives considered, history, or ticket numbers in comments or doc comments; that context goes in commit messages and .harness/implementer-notes.md. Keep doc comments to a line or two of what the thing is for. Do not imitate verbose comments you find in the surrounding code.
 - Make small conventional commits (type(scope): description). Never mention AI, Claude, or agents in commits.
