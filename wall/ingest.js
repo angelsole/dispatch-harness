@@ -176,6 +176,7 @@ function prune(at) {
 }
 
 function writeNow() {
+  load();
   writePending = false;
   const out = {};
   for (const [id, entry] of store) out[id] = entry;

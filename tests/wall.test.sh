@@ -7233,6 +7233,22 @@ check "otlp: what is kept is the session and the model" \
 # A launchd restart on the office machine must not blank the board, and a run
 # nobody has reported for a week must not stand on it forever.
 echo "== wall: the ingest store survives a restart =="
+QUIET_STORE="$ROOT/quiet-shutdown-ingest.json"
+jq -n --argjson now "$(date +%s)" \
+  '{"QUIET-1": {last_seen:$now,stage:{text:"review",at:$now}}}' > "$QUIET_STORE"
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$QUIET_STORE"
+serve "$ING_RUNS" "$ROOT/ingest-quiet-shutdown.log"; QUIET_PORT="$PORT_OUT"
+QUIET_PID="${PIDS##* }"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$QUIET_PORT" ]; then
+  kill -TERM "$QUIET_PID"
+  wait "$QUIET_PID" 2>/dev/null || true
+  check "persist: shutdown before the first read preserves the existing store" \
+    "$(jq -r 'has("QUIET-1")' "$QUIET_STORE" 2>/dev/null)" "true"
+else
+  bad "persist: server starts for the quiet shutdown check"
+fi
+
 SHUT_STORE="$ROOT/shutdown-ingest.json"
 export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$SHUT_STORE"
 serve "$ING_RUNS" "$ROOT/ingest-shutdown.log"; SHUT_PORT="$PORT_OUT"
