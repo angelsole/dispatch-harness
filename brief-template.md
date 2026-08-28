@@ -70,8 +70,10 @@ one you have resolved costs the run a stop if you leave it out.
 
 ## Verify
 ```bash
-# exact commands the implementer and gate will run
-npm run type-check && npm test
+# the suites/checks that cover THIS change — what the implementer runs before
+# each commit. The pipeline's gate runs the repo's full suite afterwards; the
+# implementer must not spend its turns re-running all of it.
+npm run type-check && npm test -- src/pricing
 ```
 
 ## Demo storyboard
