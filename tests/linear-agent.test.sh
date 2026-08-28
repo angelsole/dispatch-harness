@@ -416,6 +416,25 @@ check "session race: concurrent creators make one session" \
 file_has "$SESSION_RUN/linear-session" "sess-1" \
   "session race: both processes converge on the persisted id"
 
+# A killed writer can leave an old-style partial cache behind. It is ignored
+# and atomically replaced with the next complete lookup response.
+reset_modes; agent_on
+mkdir -p "$RUNS/OLYX-123"
+printf '{"data":' > "$RUNS/OLYX-123/linear-issue.json"
+dispatch OLYX-123 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+check "issue cache: a truncated cache triggers a new lookup" \
+  "$(calls 'states(first: 50)')" "1"
+if jq -e 'has("data")' "$RUNS/OLYX-123/linear-issue.json" >/dev/null 2>&1; then
+  ok "issue cache: the corrupt cache is replaced with a complete response"
+else
+  bad "issue cache: the replacement cache is still invalid"
+fi
+if compgen -G "$RUNS/OLYX-123/.linear-issue.*" >/dev/null; then
+  bad "issue cache: a temporary cache file survived"
+else
+  ok "issue cache: no temporary cache file survives"
+fi
+
 # Without a wall the session is still opened — it just has nothing to link to.
 reset_modes; agent_on
 dispatch OLYX-121 ""
