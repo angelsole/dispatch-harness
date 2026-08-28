@@ -237,7 +237,7 @@ dispatch() {  # $1 = run id, $2 = implementer mode, $3 = gate mode, $4 = overrid
       -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
       HOME="$FHOME" HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
       CLAUDE_BIN="$FAKES/claude" CODEX_BIN="$ROOT/no-such-codex" \
-      CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 \
+      CLAUDE_CONFIG_DIR="$STATION/claude" HARNESS_NOTIFY=0 HARNESS_PREFLIGHT=on \
       HARNESS_GATE_INTEGRITY=0 TEST_GATE_CMD="$TEST_GATE_CMD" \
       PREFLIGHT_CMD="$TEST_PREFLIGHT_CMD" \
       $overrides \
