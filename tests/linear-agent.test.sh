@@ -371,10 +371,12 @@ file_has "$CURL_LOG" "Authorization: Bearer app_tok_1" "token: the cached token 
 # A cache with hours left is not worth carrying into a run that may outlive it.
 jq -n --argjson e "$(( $(date +%s) + 3600 ))" \
   '{access_token:"app_tok_stale",expires_at:$e}' > "$TOKEN_FILE"
-chmod 600 "$TOKEN_FILE"
+chmod 644 "$TOKEN_FILE"
 dispatch OLYX-112 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
 check "token: under a day left is re-minted" "$(mint_count)" "2"
 file_has_not "$CURL_LOG" "app_tok_stale" "token: and the short-lived one is not used"
+check "token: re-mint repairs an existing cache's mode" \
+  "$(ls -l "$TOKEN_FILE" | cut -c1-10)" "-rw-------"
 
 # A 401 is the documented signal that the app token died early.
 printf '1\n' > "$MODES/http-401"

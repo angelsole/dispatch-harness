@@ -122,6 +122,11 @@ linear_agent_token() {  # $1 = "force" to bypass the cache
   fi
   life=$(printf '%s' "$resp" | jq -r '.expires_in // empty' 2>/dev/null) || life=""
   case "$life" in ''|*[!0-9]*) life="$LINEAR_TOKEN_DEFAULT_LIFE" ;; esac
+  # Redirection preserves an existing inode's mode; repair it before placing a
+  # newly minted credential into a stale cache created with broader access.
+  if [ -e "$LINEAR_AGENT_TOKEN_FILE" ]; then
+    chmod 600 "$LINEAR_AGENT_TOKEN_FILE" || return 1
+  fi
   ( umask 077; jq -n --arg t "$tok" --argjson e "$((now + life))" \
       '{access_token:$t,expires_at:$e}' > "$LINEAR_AGENT_TOKEN_FILE" ) || return 1
   printf 'oauth/token: minted, %s seconds\n' "$life" >> "$RUN_DIR/ticket-sync.log"
