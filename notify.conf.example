@@ -4,7 +4,7 @@
 # Push each stage handoff to your phone via ntfy (https://ntfy.sh or self-hosted).
 # Pick a hard-to-guess topic, subscribe to it in the ntfy app, then set it here.
 # This is the room feed: every run dispatched from this machine hits it.
-# Empty (the default) disables phone push.
+# Empty (the default) disables this room feed; per-owner topics below stay active.
 HARNESS_NTFY_TOPIC=""
 
 # Per-owner topic, for machines several people dispatch from: a run whose
