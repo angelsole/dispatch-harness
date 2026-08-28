@@ -120,7 +120,7 @@
       return h('span', { class: 'cost', text, title: Cost.formatCostTooltip(run.cost) });
     }
     const live = Number(run.telemetry && run.telemetry.cost_usd);
-    if (Number.isFinite(live) && live > 0) {
+    if (run.telemetry && Number.isFinite(live) && live >= 0) {
       return h('span', {
         class: 'cost live',
         text: '$' + live.toFixed(2),
@@ -137,7 +137,7 @@
       return h('span', { class: 'turns', text: String(run.turns), title: 'turns' });
     }
     const tools = Number(run.telemetry && run.telemetry.tools);
-    if (Number.isFinite(tools) && tools > 0) {
+    if (run.telemetry && Number.isFinite(tools) && tools >= 0) {
       return h('span', { class: 'turns live', text: String(tools), title: 'tool calls so far' });
     }
     return h('span', { class: 'turns nil', text: '—', title: 'turns' });

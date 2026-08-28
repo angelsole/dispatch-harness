@@ -1816,6 +1816,10 @@ fanin.runs = [
     stage: 'implementing — Opus (Claude sub)', projectLabel: 'GREENAPP',
     provider: 'anthropic', started: 100, since: 120, cost: null, turns: null,
     gateRounds: [], feed: [], telemetry: telemetry('here', 0.42, 7, 'Bash') },
+  { id: 'ZERO-1', state: 'active', actor: 'Opus', actorKey: 'opus',
+    stage: 'implementing — Opus (Claude sub)', projectLabel: 'GREENAPP',
+    provider: 'anthropic', started: 100, since: 120, cost: null, turns: null,
+    gateRounds: [], feed: [], telemetry: telemetry('here', 0, 0, '') },
   ...fanin.runs,
 ];
 stream.emit('snapshot', { data: JSON.stringify(fanin) });
@@ -1826,6 +1830,8 @@ say('local-class', row('LIVE-1').className);
 say('remote-cost', cell('REMOTE-1', '.cost'));
 say('live-cost', cell('LIVE-1', '.cost'));
 say('live-turns', cell('LIVE-1', '.turns'));
+say('zero-cost', cell('ZERO-1', '.cost'));
+say('zero-turns', cell('ZERO-1', '.turns'));
 say('live-cost-class', row('LIVE-1').querySelector('.cost').className);
 row('REMOTE-1').querySelector('.line').fire('click');
 row('LIVE-1').querySelector('.line').fire('click');
@@ -1959,6 +1965,8 @@ check "fan-in: a live run's cost falls back to what its worker reports" \
 check "fan-in: marked as a figure still moving" \
   "$(printf '%s' "$(probe live-cost-class)" | tr ' ' '\n' | grep -c '^live$' | tr -d ' ')" "1"
 check "fan-in: and its turns to the tools that worker has run" "$(probe live-turns)" "7"
+check "fan-in: zero live cost is still a reported figure" "$(probe zero-cost)" '$0.00'
+check "fan-in: zero live tools is still a reported figure" "$(probe zero-turns)" "0"
 check "fan-in: a remote row is priced the same way" "$(probe remote-cost)" '$1.50'
 check "fan-in: a remote row offers the machine, not a paste that cannot work" \
   "$(probe remote-paste)" "mini"
