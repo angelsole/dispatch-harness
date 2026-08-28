@@ -1,0 +1,165 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "service.version", "value": { "stringValue": "2.1.250" } },
+          { "key": "os.type", "value": { "stringValue": "darwin" } },
+          { "key": "host.arch", "value": { "stringValue": "arm64" } },
+          { "key": "run.id", "value": { "stringValue": "FANIN-1" } },
+          { "key": "owner", "value": { "stringValue": "angel" } },
+          { "key": "repo", "value": { "stringValue": "greenapp" } },
+          { "key": "host", "value": { "stringValue": "laptop" } },
+          { "key": "stage", "value": { "stringValue": "implement" } }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": { "name": "com.anthropic.claude_code", "version": "2.1.250" },
+          "metrics": [
+            {
+              "name": "claude_code.session.count",
+              "description": "Count of CLI sessions started",
+              "unit": "count",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1756382000000000000",
+                    "timeUnixNano": "1756382060000000000",
+                    "asInt": "1",
+                    "attributes": [
+                      { "key": "session.id", "value": { "stringValue": "sess-a" } },
+                      { "key": "user.email", "value": { "stringValue": "someone@example.com" } },
+                      { "key": "user.id", "value": { "stringValue": "u-1111" } },
+                      { "key": "user.account_uuid", "value": { "stringValue": "acct-uuid-2222" } },
+                      { "key": "user.account_id", "value": { "stringValue": "acct-3333" } },
+                      { "key": "organization.id", "value": { "stringValue": "org-4444" } },
+                      { "key": "terminal.type", "value": { "stringValue": "iTerm.app" } }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.token.usage",
+              "description": "Number of tokens used",
+              "unit": "tokens",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1756382000000000000",
+                    "timeUnixNano": "1756382060000000000",
+                    "asInt": "1200",
+                    "attributes": [
+                      { "key": "type", "value": { "stringValue": "input" } },
+                      { "key": "model", "value": { "stringValue": "claude-opus-5" } },
+                      { "key": "session.id", "value": { "stringValue": "sess-a" } },
+                      { "key": "user.email", "value": { "stringValue": "someone@example.com" } },
+                      { "key": "user.id", "value": { "stringValue": "u-1111" } },
+                      { "key": "user.account_uuid", "value": { "stringValue": "acct-uuid-2222" } },
+                      { "key": "user.account_id", "value": { "stringValue": "acct-3333" } },
+                      { "key": "organization.id", "value": { "stringValue": "org-4444" } },
+                      { "key": "terminal.type", "value": { "stringValue": "iTerm.app" } }
+                    ]
+                  },
+                  {
+                    "startTimeUnixNano": "1756382000000000000",
+                    "timeUnixNano": "1756382060000000000",
+                    "asInt": "340",
+                    "attributes": [
+                      { "key": "type", "value": { "stringValue": "output" } },
+                      { "key": "model", "value": { "stringValue": "claude-opus-5" } },
+                      { "key": "session.id", "value": { "stringValue": "sess-a" } },
+                      { "key": "user.email", "value": { "stringValue": "someone@example.com" } },
+                      { "key": "organization.id", "value": { "stringValue": "org-4444" } }
+                    ]
+                  },
+                  {
+                    "startTimeUnixNano": "1756382000000000000",
+                    "timeUnixNano": "1756382060000000000",
+                    "asInt": "98000",
+                    "attributes": [
+                      { "key": "type", "value": { "stringValue": "cacheRead" } },
+                      { "key": "model", "value": { "stringValue": "claude-opus-5" } },
+                      { "key": "session.id", "value": { "stringValue": "sess-a" } },
+                      { "key": "user.account_uuid", "value": { "stringValue": "acct-uuid-2222" } }
+                    ]
+                  },
+                  {
+                    "startTimeUnixNano": "1756382000000000000",
+                    "timeUnixNano": "1756382060000000000",
+                    "asInt": "4500",
+                    "attributes": [
+                      { "key": "type", "value": { "stringValue": "cacheCreation" } },
+                      { "key": "model", "value": { "stringValue": "claude-opus-5" } },
+                      { "key": "session.id", "value": { "stringValue": "sess-a" } },
+                      { "key": "terminal.type", "value": { "stringValue": "iTerm.app" } }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.cost.usage",
+              "description": "Cost of the session",
+              "unit": "USD",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1756382000000000000",
+                    "timeUnixNano": "1756382060000000000",
+                    "asDouble": 0.25,
+                    "attributes": [
+                      { "key": "model", "value": { "stringValue": "claude-opus-5" } },
+                      { "key": "session.id", "value": { "stringValue": "sess-a" } },
+                      { "key": "user.email", "value": { "stringValue": "someone@example.com" } },
+                      { "key": "user.id", "value": { "stringValue": "u-1111" } },
+                      { "key": "organization.id", "value": { "stringValue": "org-4444" } }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "os.type", "value": { "stringValue": "darwin" } }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": { "name": "com.anthropic.claude_code" },
+          "metrics": [
+            {
+              "name": "claude_code.cost.usage",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "asDouble": 99.0,
+                    "attributes": [
+                      { "key": "session.id", "value": { "stringValue": "sess-nobody" } }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

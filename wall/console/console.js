@@ -73,7 +73,7 @@
       run.state, run.stage, run.actor, run.actorKey, run.provider, run.activity,
       run.projectLabel, run.title, run.diff, run.turns, run.cost, run.gateRounds,
       run.gate, run.outcome, run.prUrl, run.demoUrl, run.branch, run.blocked,
-      run.reason, (run.feed || []).length,
+      run.reason, run.remote, run.host, run.telemetry, (run.feed || []).length,
       (run.feed || []).map((f) => f.text).join('\\u0000'),
     ]);
   }
@@ -110,13 +110,37 @@
 
   // What the run spent. Cost owns every figure and every string; this file
   // only places the span, so the board cannot disagree with the header.
-  function costCell(cost) {
-    const text = Cost.formatCostCell(cost);
-    return h('span', {
-      class: text === '—' ? 'cost nil' : 'cost',
-      text,
-      title: Cost.formatCostTooltip(cost),
-    });
+  //
+  // A live run has no result.json yet, so Cost has nothing to price. When the
+  // run is reporting OpenTelemetry the CLI's own running cost stands in until
+  // it does — marked `live`, because it is a figure still moving.
+  function costCell(run) {
+    const text = Cost.formatCostCell(run.cost);
+    if (text !== '—') {
+      return h('span', { class: 'cost', text, title: Cost.formatCostTooltip(run.cost) });
+    }
+    const live = Number(run.telemetry && run.telemetry.cost_usd);
+    if (Number.isFinite(live) && live > 0) {
+      return h('span', {
+        class: 'cost live',
+        text: '$' + live.toFixed(2),
+        title: 'live, from the worker\'s own telemetry',
+      });
+    }
+    return h('span', { class: 'cost nil', text, title: Cost.formatCostTooltip(run.cost) });
+  }
+
+  // Turns, or — while the run is live and reporting — how many tools its worker
+  // has run, which is the same shape of number and the only one there is yet.
+  function turnsCell(run) {
+    if (run.turns != null) {
+      return h('span', { class: 'turns', text: String(run.turns), title: 'turns' });
+    }
+    const tools = Number(run.telemetry && run.telemetry.tools);
+    if (Number.isFinite(tools) && tools > 0) {
+      return h('span', { class: 'turns live', text: String(tools), title: 'tool calls so far' });
+    }
+    return h('span', { class: 'turns nil', text: '—', title: 'turns' });
   }
 
   // The implementer's stage string hardcodes "Opus" whatever subscription is
@@ -150,6 +174,14 @@
         title: provider ? 'implementer: ' + provider : 'implementer provider not pinned',
       }),
       h('span', { class: 'stage' }, [
+        // Which machine this run is on. Only ever drawn for a row that is not
+        // on this disk, so the board says where to go rather than implying the
+        // run is here.
+        run.remote ? h('span', {
+          class: 'host mono',
+          text: String(run.host || '?'),
+          title: 'reported from ' + String(run.host || 'an unnamed machine'),
+        }) : null,
         // The hue is looked up rather than written out per actor: the key is
         // always one of ACTORS, so `--a-<key>` is always a property console.css
         // defines, and adding an actor is one line in each file.
@@ -173,12 +205,8 @@
       clock('in-stage', Number(run.since)),
       clock('total', Number(run.started)),
       diffCell(run.diff),
-      h('span', {
-        class: run.turns == null ? 'turns nil' : 'turns',
-        text: run.turns == null ? '—' : String(run.turns),
-        title: 'turns',
-      }),
-      costCell(run.cost),
+      turnsCell(run),
+      costCell(run),
       gateCell(run.gateRounds),
     ];
   }
@@ -200,7 +228,10 @@
   }
 
   function detail(run) {
-    const command = attachCommand(run.id);
+    // attach.sh opens a session on THIS machine, so a run reported from another
+    // one gets the machine's name where the paste would be — the next thing an
+    // operator needs is to go there, not to run a command that cannot work.
+    const command = run.remote ? String(run.host || '') : attachCommand(run.id);
     const copy = h('button', { type: 'button', text: 'copy' });
     copy.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -295,6 +326,8 @@
     }
     entry.article.setAttribute('data-state', String(run.state || ''));
     entry.article.setAttribute('data-waiting', run.actorKey === 'deferred' ? '1' : '0');
+    if (run.remote) entry.article.classList.add('remote');
+    else entry.article.classList.remove('remote');
     if (moved && !first) {
       entry.article.classList.remove('touched');
       void entry.article.offsetWidth;  // restart the animation on a row that flashed a moment ago

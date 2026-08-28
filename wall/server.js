@@ -40,6 +40,11 @@ const ROOM = require('./room.js');
 // so it is required here rather than inlined.
 const Cost = require('./cost.js');
 
+// The wall's inbound half — stage reports, hook events and OTLP metrics POSTed
+// by runs here and on other machines. Off entirely unless WALL_INGEST_TOKEN is
+// set, in which case its four routes are the only POSTs this server answers.
+const Ingest = require('./ingest.js');
+
 // `|| default` would swallow a deliberate 0 — and --port 0 (let the OS pick a
 // free port) is how a second wall, and the test suite, stay out of each other's
 // way.
@@ -1182,6 +1187,56 @@ let lastConsoleBody = '';
 // Towers carry ids, not copies: every run travels once, and the page looks the
 // run up by id. `runs` is the honest snapshot of the disk (live work plus a
 // compact tail of finished runs); `towers` is the skyline, which is live only.
+// A run that only exists in somebody else's report, as a row this board can
+// draw. Its stage text goes through the same vocabulary as a local run's, so a
+// remote `waiting for input` raises the same alarm here as it does at home; the
+// rest of the fields are the honest blanks of a run whose dir is on another
+// disk. Console view only — the city, the towers and the summary never see one.
+function remoteRun(id, entry, telemetry, today) {
+  const stage = entry.stage.text;
+  const { actor, actorKey } = actorOf(stage);
+  const floor = floorOf(stage, actorKey);
+  const project = String(entry.repo || '').trim().toLowerCase();
+  return {
+    id,
+    remote: true,
+    host: entry.host,
+    title: '',
+    owner: entry.owner,
+    ownerKind: ownerKindOf(entry.owner),
+    project,
+    projectLabel: project ? project.toUpperCase() : UNCHARTED,
+    stage,
+    state: stateOf(stage),
+    actor,
+    actorKey,
+    workActorKey: actorKey,
+    floor,
+    floorName: FLOORS[floor] || FLOORS[0],
+    activity: '',
+    started: entry.first_seen || null,
+    since: entry.stage.at || null,
+    gate: '',
+    gateRounds: [],
+    outcome: entry.status,
+    prUrl: entry.pr_url,
+    demoUrl: '',
+    branch: entry.branch,
+    implementer: entry.model,
+    reviewer: '',
+    provider: entry.provider,
+    cost: null,
+    turns: null,
+    diff: null,
+    verifier: null,
+    blocked: '',
+    reason: '',
+    feed: [],
+    telemetry,
+    today,
+  };
+}
+
 function payload() {
   const now = new Date();
   const at = Math.floor(now.getTime() / 1000);
@@ -1197,6 +1252,21 @@ function payload() {
   // put in somebody's room.
   const today = todayOf(now);
   for (const run of runs) run.today = today;
+  // The skyline, the district and the summary are built from the disk alone —
+  // every one of them assumes a run dir exists. What a run reported over HTTP
+  // arrives after they are computed: telemetry beside the runs that are here,
+  // and a row for each run that is only somewhere else.
+  const towers = buildTowers(runs, at);
+  const summary = summaryOf(scanned, now.getTime());
+  const local = new Set();
+  for (const run of runs) {
+    local.add(run.id);
+    const telemetry = Ingest.telemetryFor(run.id);
+    if (telemetry) run.telemetry = telemetry;
+  }
+  for (const { id, entry } of Ingest.remoteEntries(local)) {
+    runs.push(remoteRun(id, entry, Ingest.telemetryFor(id), today));
+  }
   return {
     at,
     today,
@@ -1207,11 +1277,11 @@ function payload() {
     floors: FLOORS,
     completionSeconds: COMPLETION_S,
     signSeconds: SIGN_S,
-    summary: summaryOf(scanned, now.getTime()),
+    summary,
     week,
     city,
     ghost,
-    towers: buildTowers(runs, at),
+    towers,
     runs,
   };
 }
@@ -1219,10 +1289,18 @@ function payload() {
 // The city API predates the ops console and its run-object schema is a public
 // contract. Console-only telemetry is available only when that frontend opts
 // into the enriched representation; plain requests retain the original shape.
+//
+// This is also the wall's privacy boundary: there is no auth on any GET route,
+// so what a run REPORTED — its live cost, its token counts, and the existence
+// of a run on another machine at all — leaves only through the console view.
 function publicPayload(frame) {
   const out = {
     ...frame,
-    runs: frame.runs.map(({ provider: _provider, turns: _turns, cost: _cost, ...run }) => run),
+    runs: frame.runs
+      .filter((run) => !run.remote)
+      .map(({
+        provider: _provider, turns: _turns, cost: _cost, telemetry: _telemetry, ...run
+      }) => run),
   };
   delete out.summary;
   return out;
@@ -1310,6 +1388,9 @@ const server = http.createServer((req, res) => {
     const requestUrl = new URL(req.url || '/', 'http://wall.local');
     const url = requestUrl.pathname;
     const consoleView = requestUrl.searchParams.get('view') === 'console';
+    // Before the GET routing and narrowed to the four ingest paths: every other
+    // method-and-path pair reaches exactly the handler it always did.
+    if (req.method === 'POST' && Ingest.handles(url)) return Ingest.handle(req, res, url);
     if (url === '/api/stream') return stream(req, res, consoleView);
     if (url === '/api/runs') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1353,6 +1434,7 @@ if (require.main === module) {
     const bound = server.address().port;
     console.log(`[wall] serving ${RUNS}`);
     console.log(`[wall] city ledger ${CITY_FILE}`);
+    if (Ingest.enabled()) console.log(`[wall] ingest store ${Ingest.STORE_FILE}`);
     console.log(`[wall] http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${bound}/  (ctrl-c to stop)`);
   });
 
@@ -1371,4 +1453,7 @@ module.exports = {
   // The stage vocabulary, resolved by the real code: tests/stage-vocab.test.sh
   // asks these the same questions a poll does, without staging a run dir per row.
   actorOf, stateOf, floorOf, FLOOR_OF, FLOORS,
+  // The inbound half, so the suites can drive a report and then ask this file
+  // what the console and the anonymous view each make of it.
+  Ingest, payload, remoteRun,
 };

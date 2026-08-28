@@ -159,6 +159,11 @@ main { padding: 14px 16px 4px; }
 .run[data-state="failed"] { border-left-color: var(--bad); }
 .run[data-state="ready"]  { border-left-color: var(--dim); }
 .run[data-waiting="1"]    { border-left-color: var(--wait); }
+/* A run on another machine. Dashed, because there is nothing on this disk
+   behind it: no feed, no diff, and no session to attach to. */
+.run.remote { background: repeating-linear-gradient(
+    135deg, var(--panel), var(--panel) 8px, #12171d 8px, #12171d 16px); }
+.run.remote .line { opacity: 0.92; }
 
 .run .line {
   display: grid;
@@ -217,6 +222,16 @@ main { padding: 14px 16px 4px; }
 .stage { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 .actor { font-weight: 600; white-space: nowrap; }
 .stage-label { color: var(--dim); font-size: 12px; }
+.host {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px dashed var(--faint);
+  border-radius: 2px;
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
 
 .elapsed { color: var(--dim); text-align: right; white-space: nowrap; }
 .elapsed::before {
@@ -234,6 +249,8 @@ main { padding: 14px 16px 4px; }
 .minus { color: var(--bad); }
 .turns { text-align: right; color: var(--dim); }
 .cost { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A figure the run is still reporting, not one the pipeline recorded. */
+.turns.live, .cost.live { color: var(--faint); font-style: italic; }
 .nil { color: var(--faint); }
 
 .pips { display: flex; gap: 3px; }
