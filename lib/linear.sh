@@ -104,9 +104,10 @@ linear_agent_token() {  # $1 = "force" to bypass the cache
   id=$(grep '^client_id=' "$LINEAR_AGENT_CREDS_FILE" | head -1 | cut -d= -f2-)
   secret=$(grep '^client_secret=' "$LINEAR_AGENT_CREDS_FILE" | head -1 | cut -d= -f2-)
   [ -n "$id" ] && [ -n "$secret" ] || return 1
-  hdr="$RUN_DIR/.linear-oauth-hdr"
+  hdr=$(mktemp "$RUN_DIR/.linear-oauth-hdr.XXXXXX") || return 1
   linear_hdr_file "$hdr" \
-    "Basic $(printf '%s:%s' "$id" "$secret" | base64 | tr -d '\n')" >/dev/null || return 1
+    "Basic $(printf '%s:%s' "$id" "$secret" | base64 | tr -d '\n')" >/dev/null \
+    || { rm -f "$hdr"; return 1; }
   resp=$(curl -s -m 10 -H @"$hdr" \
       -H 'Content-Type: application/x-www-form-urlencoded' \
       -d 'grant_type=client_credentials&scope=read,write,app:assignable,app:mentionable' \

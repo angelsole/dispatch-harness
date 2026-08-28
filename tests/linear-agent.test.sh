@@ -377,6 +377,36 @@ file_has "$RUNS/OLYX-113/ticket-sync.log" \
 file_has "$RUNS/OLYX-113/ticket-sync.log" "LINEAR ERROR issue lookup: HTTP 401" \
   "401: the rejected attempt remains an error even though retry succeeds"
 
+# The driver and its heartbeat can decide to mint at the same time. Their Basic
+# authorization files must not share a pathname.
+reset_modes; agent_on; rm -f "$TOKEN_FILE"
+OAUTH_RUN="$RUNS/OLYX-114"; mkdir -p "$OAUTH_RUN"
+: > "$CURL_LOG"; : > "$ARGV_LOG"
+oauth_worker() {
+  ( HARNESS_DIR="$HARNESS" RUN_DIR="$OAUTH_RUN" TICKET="OLYX-114"
+    LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
+    export HARNESS_DIR RUN_DIR TICKET LINEAR_AGENT_CREDENTIALS_FILE
+    export LINEAR_API_KEY_FILE PATH="$FAKES:$PATH"
+    # shellcheck source=../lib/linear.sh
+    . "$SRC/lib/linear.sh"
+    linear_agent_token force >/dev/null )
+}
+oauth_worker & OAUTH_ONE=$!
+oauth_worker & OAUTH_TWO=$!
+wait "$OAUTH_ONE"; wait "$OAUTH_TWO"
+OAUTH_HDRS=$(awk '/oauth\/token/ {
+  for (i=1; i<=NF; i++) if ($i ~ /^@.*\.linear-oauth-hdr\./) print $i
+}' "$ARGV_LOG")
+check "OAuth race: both mint calls use a header file" \
+  "$(printf '%s\n' "$OAUTH_HDRS" | sed '/^$/d' | wc -l | tr -d ' ')" "2"
+check "OAuth race: concurrent mint calls use distinct header files" \
+  "$(printf '%s\n' "$OAUTH_HDRS" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')" "2"
+if compgen -G "$OAUTH_RUN/.linear-oauth-hdr.*" >/dev/null; then
+  bad "OAuth race: a temporary authorization header survived"
+else
+  ok "OAuth race: no temporary authorization header survives"
+fi
+
 # ---------------------------------------------------------------------------
 echo "== the session: one per run, reused across dispatches =="
 # ---------------------------------------------------------------------------
@@ -783,7 +813,11 @@ if [ -n "$GRAPHQL_HDRS" ] && [ "$(printf '%s\n' "$GRAPHQL_HDRS" | sort -u | wc -
 else
   bad "secrets: a GraphQL header file was reused"
 fi
-absent "secrets: no OAuth header file either" "$RUNS/OLYX-180/.linear-oauth-hdr"
+if compgen -G "$RUNS/OLYX-180/.linear-oauth-hdr.*" >/dev/null; then
+  bad "secrets: a unique OAuth header file survived the run"
+else
+  ok "secrets: no unique OAuth header file survives the run"
+fi
 file_has_not "$RUNS/OLYX-180/ticket-sync.log" "$SECRET" "secrets: the log holds no client secret"
 file_has_not "$RUNS/OLYX-180/ticket-sync.log" "app_tok" "secrets: and no token"
 file_has_not "$RUNS/OLYX-180/ticket-sync.log" "lin_api_PERSONALKEY" "secrets: and no personal key"
