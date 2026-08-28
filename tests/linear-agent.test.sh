@@ -363,8 +363,15 @@ dispatch OLYX-113 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
 check "401: one mint for the run plus exactly one re-mint" "$(mint_count)" "4"
 check "401: the rejected call is retried once" "$(calls 'states(first: 50)')" "2"
 check "401: and the run is untouched by it" "$(result_field OLYX-113 status)" "ready"
-file_has_not "$RUNS/OLYX-113/ticket-sync.log" "LINEAR ERROR" \
-  "401: a recovered 401 is not an error"
+check "401: both issue lookup requests are recorded" \
+  "$(grep -c '^issue lookup request:' "$RUNS/OLYX-113/ticket-sync.log" | tr -d ' ')" "2"
+check "401: both issue lookup responses are recorded" \
+  "$(grep -c '^issue lookup response:' "$RUNS/OLYX-113/ticket-sync.log" | tr -d ' ')" "2"
+file_has "$RUNS/OLYX-113/ticket-sync.log" \
+  'issue lookup response: {"errors":[{"message":"Authentication required"}]}' \
+  "401: the raw rejected response is retained"
+file_has "$RUNS/OLYX-113/ticket-sync.log" "LINEAR ERROR issue lookup: HTTP 401" \
+  "401: the rejected attempt remains an error even though retry succeeds"
 
 # ---------------------------------------------------------------------------
 echo "== the session: one per run, reused across dispatches =="

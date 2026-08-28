@@ -189,9 +189,14 @@ linear_call() {  # $1 = label, $2 = JSON body, $3 = "personal" to require the op
   linear_post "$hdr" "$2" >/dev/null || rc=$?
   resp=$LINEAR_RESPONSE
   if [ "$rc" -eq 0 ] && [ "$LINEAR_STATUS" = 401 ] && [ "$LINEAR_IDENTITY" = agent ]; then
+    linear_record "$1" "$resp" "$rc" "$LINEAR_STATUS" "$2" >/dev/null || true
     if linear_agent_token force >/dev/null && linear_auth_hdr "$hdr" >/dev/null; then
       linear_post "$hdr" "$2" >/dev/null || rc=$?
       resp=$LINEAR_RESPONSE
+    else
+      rm -f "$hdr"
+      printf '%s' "$resp"
+      return 1
     fi
   fi
   rm -f "$hdr"
