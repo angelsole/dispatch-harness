@@ -518,6 +518,11 @@ file_has "$CURL_LOG" '"addedExternalUrls":[{"label":"Pull Request","url":"https:
 check "ready: and no duplicate comment — Linear mirrors the response" \
   "$(calls commentCreate)" "0"
 check "ready: the ticket still moves to In Review" "$(calls issueUpdate)" "1"
+if grep -F 'attachmentCreate' "$CURL_LOG" | grep -qF 'Authorization: lin_api_PERSONALKEY'; then
+  ok "ready: the attachment card uses the personal key"
+else
+  bad "ready: the attachment card did not use the personal key"
+fi
 if grep -F 'issueUpdate' "$CURL_LOG" | grep -qF 'Bearer app_tok'; then
   ok "ready: the state move goes out as the app, one identity for the run"
 else

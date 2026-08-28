@@ -144,6 +144,12 @@ linear_auth_hdr() {  # $1 = dest path
   linear_hdr_file "$1" "$(cat "$LINEAR_KEY_FILE")"
 }
 
+linear_personal_auth_hdr() {  # $1 = dest path
+  [ -r "$LINEAR_KEY_FILE" ] || return 1
+  LINEAR_IDENTITY=personal
+  linear_hdr_file "$1" "$(cat "$LINEAR_KEY_FILE")"
+}
+
 # Every request and its raw response land in ticket-sync.log and nowhere else.
 # A curl failure or a GraphQL `errors` array adds the one line an operator
 # greps for — the live test for a mutation Linear rejects is
@@ -172,9 +178,13 @@ linear_record() {  # $1 = label, $2 = response, $3 = curl exit, $4 = HTTP status
 
 # One GraphQL call: authenticate, post, log, and re-mint once on a 401 before
 # retrying. Prints the response; returns 1 on a curl failure or a GraphQL error.
-linear_call() {  # $1 = label, $2 = JSON body
+linear_call() {  # $1 = label, $2 = JSON body, $3 = "personal" to require the operator key
   local hdr="$RUN_DIR/.linear-hdr" resp rc=0
-  linear_auth_hdr "$hdr" >/dev/null || return 1
+  if [ "${3:-}" = personal ]; then
+    linear_personal_auth_hdr "$hdr" >/dev/null || return 1
+  else
+    linear_auth_hdr "$hdr" >/dev/null || return 1
+  fi
   linear_post "$hdr" "$2" >/dev/null || rc=$?
   resp=$LINEAR_RESPONSE
   if [ "$rc" -eq 0 ] && [ "$LINEAR_STATUS" = 401 ] && [ "$LINEAR_IDENTITY" = agent ]; then
@@ -286,7 +296,7 @@ linear_card() {  # $1 = stage text
                               {name:"Owner",value:(if $owner == "" then "unowned" else $owner end)},
                               {name:"Branch",value:$branch},
                               {name:"Host",value:$host}]}}}}')
-  linear_call attachmentCreate "$gql" >/dev/null
+  linear_call attachmentCreate "$gql" personal >/dev/null
   return 0
 }
 
