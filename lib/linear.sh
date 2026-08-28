@@ -148,8 +148,9 @@ linear_auth_hdr() {  # $1 = dest path
 # A curl failure or a GraphQL `errors` array adds the one line an operator
 # greps for — the live test for a mutation Linear rejects is
 # `grep 'LINEAR ERROR' ticket-sync.log`, because no suite can make that call.
-linear_record() {  # $1 = label, $2 = raw response, $3 = curl exit, $4 = HTTP status
-  { printf '%s: %s\n' "$1" "$2"
+linear_record() {  # $1 = label, $2 = response, $3 = curl exit, $4 = HTTP status, $5 = request
+  { printf '%s request: %s\n' "$1" "$5"
+    printf '%s response: %s\n' "$1" "$2"
     if [ "$3" -ne 0 ]; then
       printf 'LINEAR ERROR %s: curl exit %s\n' "$1" "$3"
     elif [ -n "${4:-}" ] && [[ ! "$4" = 2[0-9][0-9] ]]; then
@@ -183,7 +184,7 @@ linear_call() {  # $1 = label, $2 = JSON body
     fi
   fi
   rm -f "$hdr"
-  linear_record "$1" "$resp" "$rc" "$LINEAR_STATUS"
+  linear_record "$1" "$resp" "$rc" "$LINEAR_STATUS" "$2"
 }
 
 # A call that only the app may make: Linear binds session writes to the OAuth

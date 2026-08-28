@@ -589,6 +589,10 @@ file_has "$CURL_LOG" '{"name":"Branch","value":"fix/OLYX-170"}' "card: attribute
 file_has "$CURL_LOG" '{"name":"Host","value":"' "card: attribute — host"
 file_has "$CURL_LOG" '"issueId":"uuid-77"' "card: against the UUID, never the identifier"
 check "card: still exactly one issue lookup for the whole run" "$(calls 'states(first: 50)')" "1"
+file_has "$RUNS/OLYX-170/ticket-sync.log" 'attachmentCreate request:' \
+  "card: the request is recorded for audit"
+file_has "$RUNS/OLYX-170/ticket-sync.log" '"url":"http://mini:4711/console#OLYX-170"' \
+  "card: the recorded request carries its identifying fields"
 
 # ---------------------------------------------------------------------------
 echo "== secrets: not on argv, not left behind, not in the log =="
