@@ -144,6 +144,9 @@ fi
 if [ -s "$MODES/issue-delay" ] && [[ "\$body" = *'states(first: 50)'* ]]; then
   sleep 1
 fi
+if [ -s "$MODES/activity-delay" ] && [[ "\$body" = *'"ephemeral":true'* ]]; then
+  sleep 1
+fi
 if [ -s "$MODES/app-private-team" ] && [[ "\$hdrs" = *'Bearer '* ]]; then
   case "\$body" in
     *'states(first: 50)'*) printf '{"data":{"issue":null}}\n200' ;;
@@ -280,6 +283,7 @@ reset_modes() {
   : > "$MODES/activity-errors"; : > "$MODES/activity-unsuccessful"
   : > "$MODES/response-http-500"; : > "$MODES/response-malformed"
   : > "$MODES/session-delay"; : > "$MODES/issue-delay"
+  : > "$MODES/activity-delay"
   : > "$MODES/token-fail"; : > "$MODES/app-private-team"
   rm -f "$MODES/mint-count" "$MODES/token-life"
   printf 'ok\n' > "$CLAUDE_MODE"; printf 'exit 0\n' > "$GATE_MODE"
@@ -653,6 +657,36 @@ check "heartbeat retry: the next tick retries immediately" \
   "$(calls '"type":"thought"')" "2"
 exists "heartbeat retry: the successful retry records its epoch" \
   "$HB_RETRY_RUN/linear-heartbeat"
+
+# The interval check and send are one critical section. Concurrent tickers that
+# both observe an expired marker still produce one successful heartbeat.
+HB_CONCURRENT_RUN="$RUNS/OLYX-135"; mkdir -p "$HB_CONCURRENT_RUN"
+reset_modes; agent_on
+jq -n --argjson e "$(( $(date +%s) + 2592000 ))" \
+  '{access_token:"app_tok_heartbeat_race",expires_at:$e}' > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+printf 'sess-1\n' > "$HB_CONCURRENT_RUN/linear-session"
+printf 'implementing — concurrent heartbeat\n' > "$HB_CONCURRENT_RUN/activity"
+printf '1\n' > "$HB_CONCURRENT_RUN/linear-heartbeat"
+printf '1\n' > "$MODES/activity-delay"
+: > "$CURL_LOG"
+heartbeat_worker() {
+  ( HARNESS_DIR="$HARNESS" RUN_DIR="$HB_CONCURRENT_RUN" TICKET="OLYX-135"
+    LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
+    HARNESS_LINEAR_HEARTBEAT_SECS=300
+    export HARNESS_DIR RUN_DIR TICKET LINEAR_AGENT_CREDENTIALS_FILE
+    export LINEAR_API_KEY_FILE HARNESS_LINEAR_HEARTBEAT_SECS PATH="$FAKES:$PATH"
+    # shellcheck source=../lib/linear.sh
+    . "$SRC/lib/linear.sh"
+    linear_heartbeat )
+}
+heartbeat_worker & HB_ONE=$!
+heartbeat_worker & HB_TWO=$!
+wait "$HB_ONE"; wait "$HB_TWO"
+check "heartbeat race: concurrent tickers send one due beat" \
+  "$(calls '"ephemeral":true')" "1"
+absent "heartbeat race: the interval lock is released" \
+  "$HB_CONCURRENT_RUN/.linear-heartbeat.lock"
 
 # And the same thing wired into the driver's ticker, on a run slow enough to tick.
 reset_modes; agent_on; rm -f "$TOKEN_FILE"

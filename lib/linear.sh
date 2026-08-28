@@ -516,20 +516,33 @@ linear_stage_report() {  # $1 = stage text
 # stage() owns that — and never posts more than one per interval.
 linear_heartbeat() {
   [ "${HARNESS_TICKET_SYNC:-1}" = 1 ] || return 0
-  local f="$RUN_DIR/linear-session" mark now last body
+  local f="$RUN_DIR/linear-session" mark lock now last body
   [ -s "$f" ] || return 0
   linear_agent_on || return 0
   mark="$RUN_DIR/linear-heartbeat"
+  lock="$RUN_DIR/.linear-heartbeat.lock"
+  linear_lock_acquire "$lock" || return 0
   now=$(date +%s)
   last=$(cat "$mark" 2>/dev/null) || last=""
   case "$last" in
-    ''|*[!0-9]*) printf '%s\n' "$now" > "$mark"; return 0 ;;
+    ''|*[!0-9]*)
+      printf '%s\n' "$now" > "$mark"
+      linear_lock_release "$lock"
+      return 0
+      ;;
   esac
-  [ "$((now - last))" -ge "${HARNESS_LINEAR_HEARTBEAT_SECS:-300}" ] || return 0
+  if [ "$((now - last))" -lt "${HARNESS_LINEAR_HEARTBEAT_SECS:-300}" ]; then
+    linear_lock_release "$lock"
+    return 0
+  fi
   body=$(cat "$RUN_DIR/activity" 2>/dev/null) || body=""
-  [ -n "$body" ] || return 0
+  if [ -z "$body" ]; then
+    linear_lock_release "$lock"
+    return 0
+  fi
   if linear_activity "$(cat "$f")" "$(linear_content thought "$body")" ephemeral; then
     printf '%s\n' "$now" > "$mark"
   fi
+  linear_lock_release "$lock"
   return 0
 }
