@@ -473,7 +473,11 @@ body[data-quiet="1"] .hud { opacity: 0.42; }
   right: 0;
   bottom: var(--ground);
   z-index: 6;
-  height: 74vh;
+  /* Let the live skyline carry the lower two thirds of the frame. At 74vh the
+     five fixture towers all stopped below the plate, leaving the hero stranded
+     in a broad black middle; the extra height restores the strong verticals
+     without taking away the clear night above their crowns. */
+  height: 80vh;
   display: flex;
   align-items: flex-end;
   justify-content: space-evenly;
@@ -898,6 +902,11 @@ body[data-idle="rest"] .rest { display: block; }
   transition: opacity var(--spot-in) var(--ease), transform var(--spot-in) var(--ease);
 }
 .tower[data-spot="1"] .tower__spot { opacity: 1; transform: translateX(-50%) scaleY(1); }
+/* An alarm already owns the red searchlight below. Letting the carousel's cold
+   beam land on the same tower gave the frame two key lights and no single
+   direction to read. The facade and red pool stay lit; only the rival beam
+   leaves. */
+.tower[data-alarm="1"] .tower__spot { opacity: 0; }
 .tower[data-spot="1"] .tower__pool { opacity: 1; }
 /* The beam lands: the building the plate is talking about is the one with its
    windows lit and its name in white. */
@@ -953,13 +962,15 @@ body[data-idle="rest"] .rest { display: block; }
    is the right gesture at the wrong speed: sampled every couple of seconds — a
    contact sheet, a photograph, a room glancing up twice — a beam that reverses
    twice in nine seconds reads as a beam jittering on the spot rather than as a
-   searchlight sweeping. It now travels one way across its arc over
-   twenty-six seconds and picks the arc up again behind the tower, and the
-   opacity that carries it round is in the keyframes so a parked wall (reduced
-   motion, below) still finds the beam drawn. */
+   searchlight sweeping. It now travels one way across its arc over two and a
+   half minutes: slow enough that a six-frame sample keeps one direction even
+   on a software renderer, but still visibly travelling on the office wall. It
+   picks the arc up again behind the tower, and the opacity that carries it
+   round is in the keyframes so a parked wall (reduced motion, below) still
+   finds the beam drawn. */
 .tower[data-alarm="1"] .tower__sweep {
   opacity: 1;
-  animation: sweep 26s linear infinite;
+  animation: sweep 150s linear infinite;
 }
 /* A beam has to land on something. The ceiling over this city is low, so the
    sweep paints a soft patch on the overcast just above the roof it comes out
@@ -983,7 +994,7 @@ body[data-idle="rest"] .rest { display: block; }
 }
 .tower[data-alarm="1"] .tower__ceiling {
   opacity: 1;
-  animation: ceiling 26s linear infinite;
+  animation: ceiling 150s linear infinite;
 }
 .tower__mass::after {
   content: "";
@@ -1002,8 +1013,22 @@ body[data-idle="rest"] .rest { display: block; }
   color: #fff;
   background: var(--alarm);
   text-shadow: none;
-  animation: klaxon-text 1s var(--ease-io) infinite;
+  animation: klaxon-text 2.8s var(--ease-io) infinite;
 }
+
+/* The plot still is a camera decision, then a focus decision. The finished
+   building moves in front of the live skyline it just joined, while its
+   neighbours and the traffic keep enough value to locate it on a real street.
+   This changes no ordinary wide or cinema shot. */
+body[data-shot="plot"] .district { z-index: 8; }
+body[data-shot="plot"] .city { opacity: 0.24; }
+body[data-shot="plot"] .block { opacity: 0.24; }
+body[data-shot="plot"] .block[data-plot="1"] {
+  z-index: 5 !important;
+  opacity: 1;
+  filter: brightness(1.14) saturate(0.92);
+}
+body[data-shot="plot"] .life { opacity: 0.54; }
 
 /* --- the week's district: what has already shipped, standing ----------------
    The skyline in front of this is live and leaves nothing behind. This layer is
@@ -2635,7 +2660,7 @@ body[data-quiet="0"] .block { --work: 0.78; }
   top: 3.1rem;
   left: 1.4rem;
   z-index: 24;
-  max-width: min(46rem, 52vw);
+  max-width: min(44rem, 48vw);
   display: flex;
   gap: 1rem;
   padding: 0.75rem 1.3rem 0.8rem 1rem;
@@ -3101,8 +3126,8 @@ body[data-world="canvas"][data-dive="inside"] .room[data-on="1"] { opacity: 1; }
   100% { opacity: 0; transform: translate3d(var(--reach), 0, 0) scale(1.1); }
 }
 @keyframes tower-klaxon {
-  0%, 100% { opacity: 0.28; }
-  50% { opacity: 1; }
+  0%, 100% { opacity: 0.48; }
+  50% { opacity: 0.82; }
 }
 @keyframes plate-klaxon {
   0%, 100% { opacity: 0.18; }
