@@ -683,6 +683,26 @@ check "HTTP failure: today's comment goes out instead" "$(calls commentCreate)" 
 file_has "$RUNS/OLYX-153/ticket-sync.log" "LINEAR ERROR agentActivityCreate: HTTP 500" \
   "HTTP failure: the failed mutation is on the record"
 
+# Agent-only installations still have a write-capable identity. A rejected
+# response must fall back through it when there is no operator key.
+reset_modes; agent_on
+rm -f "$KEYFILE"
+printf '1\n' > "$MODES/activity-errors"
+dispatch OLYX-154 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+check "agent-only fallback: the run still ends ready" \
+  "$(result_field OLYX-154 status)" "ready"
+check "agent-only fallback: the comment carries the PR link" \
+  "$(calls commentCreate)" "1"
+file_has "$CURL_LOG" \
+  'Draft PR ready for review: https://github.com/olyx/greenapp/pull/9 (`fix/OLYX-154`)' \
+  "agent-only fallback: the fallback body names the PR"
+if grep -F 'commentCreate' "$CURL_LOG" | grep -qF 'Authorization: Bearer app_tok'; then
+  ok "agent-only fallback: the app token sends the comment"
+else
+  bad "agent-only fallback: the comment had no app authorization"
+fi
+printf 'lin_api_PERSONALKEY\n' > "$KEYFILE"; chmod 600 "$KEYFILE"
+
 # ---------------------------------------------------------------------------
 echo "== failures are logged and nothing else =="
 # ---------------------------------------------------------------------------
