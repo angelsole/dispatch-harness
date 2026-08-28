@@ -10,9 +10,9 @@ HARNESS_NTFY_TOPIC=""
 # Per-owner topic, for machines several people dispatch from: a run whose
 # owner has one of these is pushed to it AND to the room feed above (same
 # value in both means one push). <OWNER> is the owner's login uppercased with
-# every other character replaced by `_` (angel.sole -> ANGEL_SOLE below).
+# every other character replaced by `_` (sam.lee -> SAM_LEE below).
 # An owner without one of these gets the room feed only, silently.
-# HARNESS_NTFY_TOPIC_ANGEL_SOLE=""
+# HARNESS_NTFY_TOPIC_SAM_LEE=""
 
 # Self-hosted ntfy server (default is the public service).
 # HARNESS_NTFY_SERVER="https://ntfy.sh"
