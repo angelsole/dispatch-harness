@@ -33,12 +33,17 @@ fi
 # started yet. Pinned here, in the one place that already owns the suites'
 # environment, rather than in each of the twenty suites that would have to
 # remember it.
+#
+# HARNESS_WALL_URL/_TOKEN are cleared for a second reason: a station that fans
+# its runs in to a wall would otherwise have every fixture run-task.sh here post
+# its fake stages to the operator's real board.
 GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
           -u REVIEWER_MODEL -u REVIEWER_EFFORT -u HARNESS_OWNER
           -u HARNESS_MAX_TURNS -u HARNESS_MAX_RESUMES
           -u HARNESS_SKIP_REVIEW -u HARNESS_REDISPATCH
           -u HARNESS_ESCALATION -u HARNESS_ESCALATION_STEPS
           -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS
+          -u HARNESS_WALL_URL -u HARNESS_WALL_TOKEN
           HARNESS_DETACH=0)
 
 # Bash expands the glob in filename order and includes new suites before their

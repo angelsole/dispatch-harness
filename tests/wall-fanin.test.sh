@@ -298,9 +298,13 @@ echo "== a wall that refuses never touches the run =="
 for code in 22 7; do
   printf '%s\n' "$code" > "$CURL_MODE"
   dispatch "WALL-FAIL-$code" "$CONF_ON"
-  # The log is written by the same background subshell that sent the report.
+  # The log is appended by the same background subshell that sent the report,
+  # so it lands a moment after the POST the assertions above already waited for.
   i=0
-  while [ "$i" -lt 60 ] && [ ! -s "$RUN/wall-report.log" ]; do sleep 0.05; i=$((i + 1)); done
+  while [ "$i" -lt 60 ] \
+        && [ "$(grep -c '' "$RUN/wall-report.log" 2>/dev/null | tr -d ' ')" -lt "$(stage_posts)" ]; do
+    sleep 0.05; i=$((i + 1))
+  done
   check "fail $code: the run is unaffected" "$(result .status)" "ready"
   check "fail $code: one line per refused report" \
     "$(grep -c "stage report failed (curl $code)" "$RUN/wall-report.log" | tr -d ' ')" \
