@@ -141,6 +141,9 @@ if [ -s "$MODES/response-malformed" ] && [[ "\$body" = *'"type":"response"'* ]];
   esac
   exit 0
 fi
+if [ -s "$MODES/issue-delay" ] && [[ "\$body" = *'states(first: 50)'* ]]; then
+  sleep 1
+fi
 if [ -s "$MODES/app-private-team" ] && [[ "\$hdrs" = *'Bearer '* ]]; then
   case "\$body" in
     *'states(first: 50)'*) printf '{"data":{"issue":null}}\n200' ;;
@@ -276,7 +279,7 @@ reset_modes() {
   : > "$MODES/curl-exit"; : > "$MODES/http-401"
   : > "$MODES/activity-errors"; : > "$MODES/activity-unsuccessful"
   : > "$MODES/response-http-500"; : > "$MODES/response-malformed"
-  : > "$MODES/session-delay"
+  : > "$MODES/session-delay"; : > "$MODES/issue-delay"
   : > "$MODES/token-fail"; : > "$MODES/app-private-team"
   rm -f "$MODES/mint-count" "$MODES/token-life"
   printf 'ok\n' > "$CLAUDE_MODE"; printf 'exit 0\n' > "$GATE_MODE"
@@ -553,6 +556,31 @@ if compgen -G "$RUNS/OLYX-123/.linear-issue.*" >/dev/null; then
 else
   ok "issue cache: no temporary cache file survives"
 fi
+
+# The cache miss itself is serialized, not just its eventual rename. Two
+# dispatch processes therefore send one query and share the published answer.
+reset_modes; agent_on
+ISSUE_RUN="$RUNS/OLYX-126"; mkdir -p "$ISSUE_RUN"
+printf '1\n' > "$MODES/issue-delay"
+: > "$CURL_LOG"
+issue_worker() {
+  ( HARNESS_DIR="$HARNESS" RUN_DIR="$ISSUE_RUN" TICKET="OLYX-126"
+    LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
+    export HARNESS_DIR RUN_DIR TICKET LINEAR_AGENT_CREDENTIALS_FILE
+    export LINEAR_API_KEY_FILE PATH="$FAKES:$PATH"
+    # shellcheck source=../lib/linear.sh
+    . "$SRC/lib/linear.sh"
+    linear_issue_json >/dev/null )
+}
+issue_worker & ISSUE_ONE=$!
+issue_worker & ISSUE_TWO=$!
+wait "$ISSUE_ONE"; wait "$ISSUE_TWO"
+check "issue lookup race: concurrent readers send one query" \
+  "$(calls 'states(first: 50)')" "1"
+file_has "$ISSUE_RUN/linear-issue.json" '"id":"uuid-77"' \
+  "issue lookup race: both readers share the complete cache"
+absent "issue lookup race: the lookup lock is released" \
+  "$ISSUE_RUN/.linear-issue.lock"
 
 # Without a wall the session is still opened — it just has nothing to link to.
 reset_modes; agent_on

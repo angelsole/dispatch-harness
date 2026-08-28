@@ -251,34 +251,54 @@ linear_agent_call() {  # $1 = label, $2 = JSON body
 # Every mutation passes the UUID: Linear promises identifier acceptance only for
 # agentSessionCreateOnIssue, and an id it rejects fails silently by design.
 linear_issue_json() {
-  local cache="$RUN_DIR/linear-issue.json" ident gql resp tmp
+  local cache="$RUN_DIR/linear-issue.json" lock="$RUN_DIR/.linear-issue.lock"
+  local ident gql resp tmp
   if [ -s "$cache" ] && jq -e 'has("data")' "$cache" >/dev/null 2>&1; then
     cat "$cache"
     return 0
   fi
-  ident=$(linear_ident "$TICKET") || return 1
-  gql=$(jq -cn --arg id "$ident" '{query:"query($id: String!){ issue(id: $id){ id identifier team { states(first: 50){ nodes { id name type } } } } }",variables:{id:$id}}')
+  linear_lock_acquire "$lock" || return 1
+  if [ -s "$cache" ] && jq -e 'has("data")' "$cache" >/dev/null 2>&1; then
+    linear_lock_release "$lock"
+    cat "$cache"
+    return 0
+  fi
+  ident=$(linear_ident "$TICKET") || { linear_lock_release "$lock"; return 1; }
+  gql=$(jq -cn --arg id "$ident" '{query:"query($id: String!){ issue(id: $id){ id identifier team { states(first: 50){ nodes { id name type } } } } }",variables:{id:$id}}') \
+    || { linear_lock_release "$lock"; return 1; }
   if resp=$(linear_call "issue lookup" "$gql"); then
     # An app actor outside a private team can receive issue:null without a
     # GraphQL error. The personal layer must still get its own chance to read.
     if [ -r "$LINEAR_KEY_FILE" ] &&
        ! printf '%s' "$resp" | jq -e '.data.issue != null' >/dev/null 2>&1; then
-      resp=$(linear_call "issue lookup" "$gql" personal) || return 1
+      resp=$(linear_call "issue lookup" "$gql" personal) || {
+        linear_lock_release "$lock"; return 1;
+      }
     fi
   elif [ -r "$LINEAR_KEY_FILE" ]; then
-    resp=$(linear_call "issue lookup" "$gql" personal) || return 1
+    resp=$(linear_call "issue lookup" "$gql" personal) || {
+      linear_lock_release "$lock"; return 1;
+    }
   else
+    linear_lock_release "$lock"
     return 1
   fi
   # Linear's answer is cached even when it is "no such issue" — a run whose
   # ticket does not exist must not re-ask on every stage. A call that never
   # reached Linear is not an answer and is not cached.
-  printf '%s' "$resp" | jq -e 'has("data")' >/dev/null 2>&1 || return 1
-  tmp=$(mktemp "$RUN_DIR/.linear-issue.XXXXXX") || return 1
-  if ! printf '%s' "$resp" > "$tmp" || ! mv "$tmp" "$cache"; then
-    rm -f "$tmp"
+  if ! printf '%s' "$resp" | jq -e 'has("data")' >/dev/null 2>&1; then
+    linear_lock_release "$lock"
     return 1
   fi
+  tmp=$(mktemp "$RUN_DIR/.linear-issue.XXXXXX") || {
+    linear_lock_release "$lock"; return 1;
+  }
+  if ! printf '%s' "$resp" > "$tmp" || ! mv "$tmp" "$cache"; then
+    rm -f "$tmp"
+    linear_lock_release "$lock"
+    return 1
+  fi
+  linear_lock_release "$lock"
   printf '%s' "$resp"
 }
 
