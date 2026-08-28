@@ -75,6 +75,9 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | `HARNESS_SKIP_PUSH_PREFLIGHT` | `1` skips the setup-time push-auth check. Setup does a `git push --dry-run` against `origin` so a missing push credential (`GH_TOKEN`) fails the run in seconds as `setup_failed` instead of after implement → gate → review → verify; an anonymous read (the setup fetch) passes on a public repo, so only the write path proves the credential. Non-auth push errors never block setup — they are left to the real push at the end. Set this for a local-only dispatch whose remote genuinely cannot take a dry-run push. | unset |
 | `HARNESS_TICKET_SYNC` | `0` disables the [ticket sync](operations.md#ticket-sync) that comments the PR and moves the ticket to In Review | `1` |
 | `HARNESS_MIRROR` | ssh target (`host:path`) or local path a live run dir is mirrored to — see [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror) | unset |
+| `HARNESS_WALL_URL` | Base URL of a wall this machine's runs report to, no trailing slash (`http://mini:4711`). Turns on all three fan-in channels — stage handoffs, worker hook events, worker OTel metrics — see [Ingest](wall.md#ingest). Unset means no outbound traffic at all | unset |
+| `HARNESS_WALL_TOKEN` | Shared secret sent to that wall as `Authorization: Bearer`. Empty means the reports carry no credential and the wall refuses them; `run-task.sh` says so once at startup | unset |
+| `HARNESS_RUN_ID` | Not a knob: the ticket id the harness **exports to its workers** when `HARNESS_WALL_URL` is set. `lib/wall-hook.sh` stamps every hook event with it, and refuses to report without one | — |
 
 ### Notifications and monitoring
 
@@ -803,6 +806,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds, final message and segment reports, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
 | `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
+| `wall-report.log` | One line per stage report the [wall](wall.md#ingest) would not take, with `curl`'s exit status — never the token and never the body. Only exists on a run that reported and was refused |
 
 That table is the paper trail for a human. The same directory is also a **wire
 format**: [Ghost Shift](wall.md) reads it live over the shoulder of a running
