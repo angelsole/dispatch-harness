@@ -470,10 +470,11 @@ file_has "$CURL_LOG" '"body":"gate_failed — http://mini:4711/console#OLYX-142"
 check "gate: no PR, so no response" "$(calls '"type":"response"')" "0"
 
 reset_modes; agent_on
-cat > "$CCUSAGE_JSON" <<'EOF'
+RESET_ISO=$(perl -MPOSIX -e 'print strftime("%Y-%m-%dT%H:%M:%S.000Z", gmtime(time + 900))')
+cat > "$CCUSAGE_JSON" <<EOF
 {"blocks":[
   {"id":"b1","isActive":false,"isGap":false,"tokenCounts":{"outputTokens":400000}},
-  {"id":"b2","isActive":true,"isGap":false,"tokenCounts":{"outputTokens":400000}}
+  {"id":"b2","isActive":true,"isGap":false,"endTime":"$RESET_ISO","tokenCounts":{"outputTokens":400000}}
 ]}
 EOF
 dispatch OLYX-143 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
