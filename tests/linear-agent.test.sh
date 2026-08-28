@@ -403,7 +403,9 @@ printf '1\n' > "$MODES/session-delay"
 session_worker() {
   ( HARNESS_DIR="$HARNESS" RUN_DIR="$SESSION_RUN" TICKET="OLYX-122"
     LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
-    HARNESS_RUN_LINK_BASE="$LINK_BASE"; export PATH="$FAKES:$PATH"
+    HARNESS_RUN_LINK_BASE="$LINK_BASE"
+    export HARNESS_DIR RUN_DIR TICKET LINEAR_AGENT_CREDENTIALS_FILE
+    export LINEAR_API_KEY_FILE HARNESS_RUN_LINK_BASE PATH="$FAKES:$PATH"
     # shellcheck source=../lib/linear.sh
     . "$SRC/lib/linear.sh"
     linear_session >/dev/null )
@@ -489,10 +491,12 @@ printf '7\n' > "$MODES/curl-exit"
 ( set -u
   HARNESS_DIR="$HARNESS" RUN_DIR="$HB_RETRY_RUN" TICKET="OLYX-134"
   LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
-  export PATH="$FAKES:$PATH"
+  export HARNESS_DIR RUN_DIR TICKET LINEAR_AGENT_CREDENTIALS_FILE
+  export LINEAR_API_KEY_FILE PATH="$FAKES:$PATH"
   # shellcheck source=../lib/linear.sh
   . "$SRC/lib/linear.sh"
   HARNESS_LINEAR_HEARTBEAT_SECS=300
+  export HARNESS_LINEAR_HEARTBEAT_SECS
   linear_heartbeat
   [ -e "$RUN_DIR/linear-heartbeat" ] || : > "$RUN_DIR/failed-beat-left-no-mark"
   linear_heartbeat )
