@@ -572,7 +572,11 @@ cat > "$CCUSAGE_JSON" <<EOF
   {"id":"b2","isActive":true,"isGap":false,"endTime":"$RESET_ISO","tokenCounts":{"outputTokens":400000}}
 ]}
 EOF
-dispatch OLYX-143 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+# The gate pins HARNESS_PREFLIGHT=off for every suite it runs, and a run that
+# never asks about capacity never defers. This is the one case here that needs
+# the preflight, so it asks for it — the way tests/escalation.test.sh and
+# tests/turn-ceiling.test.sh do.
+dispatch OLYX-143 "HARNESS_RUN_LINK_BASE=$LINK_BASE HARNESS_PREFLIGHT=on"
 check "deferred: the run defers itself" "$(result_field OLYX-143 status)" "deferred_capacity"
 check "deferred: one thought — the run is coming back" "$(calls '"type":"thought"')" "1"
 file_has "$CURL_LOG" 'deferred: capacity, armed for' "deferred: saying what it is waiting for"
