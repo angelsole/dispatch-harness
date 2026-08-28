@@ -133,6 +133,13 @@ if [ -s "$MODES/response-http-500" ] && [[ "\$body" = *'"type":"response"'* ]]; 
   printf '{"data":{"agentActivityCreate":{"success":true}}}\n500'
   exit 0
 fi
+if [ -s "$MODES/app-private-team" ] && [[ "\$hdrs" = *'Bearer '* ]]; then
+  case "\$body" in
+    *'states(first: 50)'*) printf '{"data":{"issue":null}}\n200' ;;
+    *) printf '{"errors":[{"message":"Entity not found"}]}\n200' ;;
+  esac
+  exit 0
+fi
 case "\$body" in
   *agentSessionCreateOnIssue*)
     [ ! -s "$MODES/session-delay" ] || sleep 1
@@ -261,7 +268,7 @@ reset_modes() {
   : > "$MODES/curl-exit"; : > "$MODES/http-401"
   : > "$MODES/activity-errors"; : > "$MODES/activity-unsuccessful"
   : > "$MODES/response-http-500"; : > "$MODES/session-delay"
-  : > "$MODES/token-fail"
+  : > "$MODES/token-fail"; : > "$MODES/app-private-team"
   rm -f "$MODES/mint-count" "$MODES/token-life"
   printf 'ok\n' > "$CLAUDE_MODE"; printf 'exit 0\n' > "$GATE_MODE"
 }
@@ -683,6 +690,24 @@ fi
 check "ready: done: ready posts nothing more — the response already went out" \
   "$(calls '"action":"done: ready"')" "0"
 
+# App actors can have less team access than the operator who configured the
+# independent personal-key layer. A private ticket must still get its card,
+# fallback PR comment, and state move through that working credential.
+reset_modes; agent_on
+printf '1\n' > "$MODES/app-private-team"
+dispatch OLYX-155 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+at_least "private team: the personal lookup restores the card" \
+  "$(calls attachmentCreate)" 1
+check "private team: the PR link falls back to a personal comment" \
+  "$(calls commentCreate)" "1"
+if grep -F 'issueUpdate' "$CURL_LOG" | grep -qF 'Authorization: lin_api_PERSONALKEY'; then
+  ok "private team: the personal key completes the In Review move"
+else
+  bad "private team: the In Review move never retried through the personal key"
+fi
+file_has "$RUNS/OLYX-155/linear-issue.json" '"id":"uuid-77"' \
+  "private team: the visible issue response is cached for every layer"
+
 # A response Linear will not take must never cost the ticket its PR link.
 reset_modes; agent_on
 printf '1\n' > "$MODES/activity-errors"
@@ -749,8 +774,8 @@ check "curl death: exactly one error line" \
   "$(grep -c 'LINEAR ERROR' "$RUNS/OLYX-160/ticket-sync.log" | tr -d ' ')" "1"
 file_has "$RUNS/OLYX-160/ticket-sync.log" "LINEAR ERROR issue lookup: curl exit 7" \
   "curl death: naming the call that died and how"
-check "curl death: the next stage picks the card back up" \
-  "$(calls attachmentCreate)" "$(( $(all_stages OLYX-160) - 1 ))"
+check "curl death: the personal retry preserves every card update" \
+  "$(calls attachmentCreate)" "$(all_stages OLYX-160)"
 
 reset_modes; agent_on
 printf '1\n' > "$MODES/token-fail"

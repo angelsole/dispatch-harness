@@ -208,6 +208,15 @@ linear_call() {  # $1 = label, $2 = JSON body, $3 = "personal" to require the op
   linear_record "$1" "$resp" "$rc" "$LINEAR_STATUS" "$2"
 }
 
+# Preserve the app as the run's normal identity, but do not let its narrower
+# team access disable a personal-key operation that worked before the agent
+# layer was enabled.
+linear_call_personal_fallback() {  # $1 = label, $2 = JSON body
+  linear_call "$1" "$2" && return 0
+  [ -r "$LINEAR_KEY_FILE" ] || return 1
+  linear_call "$1" "$2" personal
+}
+
 # A call that only the app may make: Linear binds session writes to the OAuth
 # app that owns the session, so the personal key must never be tried for one.
 linear_agent_call() {  # $1 = label, $2 = JSON body
@@ -228,7 +237,18 @@ linear_issue_json() {
   fi
   ident=$(linear_ident "$TICKET") || return 1
   gql=$(jq -cn --arg id "$ident" '{query:"query($id: String!){ issue(id: $id){ id identifier team { states(first: 50){ nodes { id name type } } } } }",variables:{id:$id}}')
-  resp=$(linear_call "issue lookup" "$gql") || return 1
+  if resp=$(linear_call "issue lookup" "$gql"); then
+    # An app actor outside a private team can receive issue:null without a
+    # GraphQL error. The personal layer must still get its own chance to read.
+    if [ -r "$LINEAR_KEY_FILE" ] &&
+       ! printf '%s' "$resp" | jq -e '.data.issue != null' >/dev/null 2>&1; then
+      resp=$(linear_call "issue lookup" "$gql" personal) || return 1
+    fi
+  elif [ -r "$LINEAR_KEY_FILE" ]; then
+    resp=$(linear_call "issue lookup" "$gql" personal) || return 1
+  else
+    return 1
+  fi
   # Linear's answer is cached even when it is "no such issue" — a run whose
   # ticket does not exist must not re-ask on every stage. A call that never
   # reached Linear is not an answer and is not cached.

@@ -3027,7 +3027,7 @@ Review: $REVIEW_CLASS")"; then
   if [ -n "$sid" ]; then
     gql=$(jq -n --arg id "$iid" --arg sid "$sid" \
       '{query:"mutation($id: String!, $sid: String!){ issueUpdate(id: $id, input: {stateId: $sid}){ success } }",variables:{id:$id,sid:$sid}}')
-    linear_call 'state -> In Review' "$gql" >/dev/null || true
+    linear_call_personal_fallback 'state -> In Review' "$gql" >/dev/null || true
   else
     echo "no In Review state on this team — commented only" >> "$log"
   fi
