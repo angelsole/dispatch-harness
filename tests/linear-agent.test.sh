@@ -421,6 +421,30 @@ check "session race: concurrent creators make one session" \
   "$(calls agentSessionCreateOnIssue)" "1"
 file_has "$SESSION_RUN/linear-session" "sess-1" \
   "session race: both processes converge on the persisted id"
+absent "session race: the owned lock is released" \
+  "$SESSION_RUN/.linear-session.lock"
+
+# A process that dies inside the API call cannot run its cleanup. Its recorded
+# PID lets the next dispatch distinguish that orphan from a live creator.
+reset_modes; agent_on
+STALE_SESSION_RUN="$RUNS/OLYX-124"; mkdir -p "$STALE_SESSION_RUN/.linear-session.lock"
+cp "$ISSUE_JSON" "$STALE_SESSION_RUN/linear-issue.json"
+printf '99999999\n' > "$STALE_SESSION_RUN/.linear-session.lock/owner"
+: > "$CURL_LOG"
+( HARNESS_DIR="$HARNESS" RUN_DIR="$STALE_SESSION_RUN" TICKET="OLYX-124"
+  LINEAR_AGENT_CREDENTIALS_FILE="$CREDS" LINEAR_API_KEY_FILE="$KEYFILE"
+  HARNESS_RUN_LINK_BASE="$LINK_BASE"
+  export HARNESS_DIR RUN_DIR TICKET LINEAR_AGENT_CREDENTIALS_FILE
+  export LINEAR_API_KEY_FILE HARNESS_RUN_LINK_BASE PATH="$FAKES:$PATH"
+  # shellcheck source=../lib/linear.sh
+  . "$SRC/lib/linear.sh"
+  linear_session >/dev/null )
+check "stale session lock: the next caller creates the session" \
+  "$(calls agentSessionCreateOnIssue)" "1"
+file_has "$STALE_SESSION_RUN/linear-session" "sess-1" \
+  "stale session lock: the recovered session id is persisted"
+absent "stale session lock: the orphaned lock is removed" \
+  "$STALE_SESSION_RUN/.linear-session.lock"
 
 # A killed writer can leave an old-style partial cache behind. It is ignored
 # and atomically replaced with the next complete lookup response.
