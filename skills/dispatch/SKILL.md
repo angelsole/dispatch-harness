@@ -193,7 +193,12 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   routine version when a Linear key file is configured: on `ready` it comments
   the PR link on the ticket and moves it to the team's In Review state
   (`runs/<RUN-ID>/ticket-sync.log` records what it did; `HARNESS_TICKET_SYNC=0`
-  disables). Check that log before acting so you never duplicate its comment.
+  disables). Where the wall's URL is configured it also keeps an attachment
+  card on the issue whose subtitle tracks the live stage, and where the
+  workspace's OAuth app credentials are configured every stage is an activity
+  on a Linear agent session — so the PR link may already be there as the
+  session's `response` rather than as a comment. Check that log before acting
+  so you never duplicate what it posted.
   What remains yours: when a ticket spans several runs, verify every PR is
   ready before treating the ticket as In Review; put any missing links on the
   ticket — attachments if the MCP supports them, otherwise one comment listing
