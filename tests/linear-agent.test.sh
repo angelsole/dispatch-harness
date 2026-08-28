@@ -114,11 +114,11 @@ fi
 
 case "\$url" in
   *oauth/token*)
-    if [ -s "$MODES/token-fail" ]; then printf '{"error":"invalid_client"}\n400'; exit 0; fi
+    if [ -s "$MODES/token-fail" ]; then printf '{"error":"invalid_client"}'; exit 0; fi
     n=\$(cat "$MODES/mint-count" 2>/dev/null || echo 0)
     n=\$((n + 1)); printf '%s\n' "\$n" > "$MODES/mint-count"
     life=\$(cat "$MODES/token-life" 2>/dev/null || echo 2592000)
-    printf '{"access_token":"app_tok_%s","token_type":"Bearer","expires_in":%s}\n200' "\$n" "\$life"
+    printf '{"access_token":"app_tok_%s","token_type":"Bearer","expires_in":%s}' "\$n" "\$life"
     exit 0 ;;
   *api.linear.app*) ;;
   *) exit 0 ;;
