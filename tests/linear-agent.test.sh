@@ -135,6 +135,8 @@ case "\$body" in
   *agentActivityCreate*)
     if [ -s "$MODES/activity-errors" ]; then
       printf '{"errors":[{"message":"Variable input got invalid value"}]}\n200'
+    elif [ -s "$MODES/activity-unsuccessful" ]; then
+      printf '{"data":{"agentActivityCreate":{"success":false}}}\n200'
     else
       printf '{"data":{"agentActivityCreate":{"success":true}}}\n200'
     fi ;;
@@ -248,7 +250,8 @@ agent_on()   { printf 'client_id=lin_app_ID\nclient_secret=%s\n' "$SECRET" > "$C
 agent_off()  { rm -f "$CREDS" "$TOKEN_FILE"; }
 reset_modes() {
   : > "$MODES/curl-exit"; : > "$MODES/http-401"
-  : > "$MODES/activity-errors"; : > "$MODES/token-fail"
+  : > "$MODES/activity-errors"; : > "$MODES/activity-unsuccessful"
+  : > "$MODES/token-fail"
   rm -f "$MODES/mint-count" "$MODES/token-life"
   printf 'ok\n' > "$CLAUDE_MODE"; printf 'exit 0\n' > "$GATE_MODE"
 }
@@ -520,6 +523,15 @@ file_has "$CURL_LOG" 'Draft PR ready for review: https://github.com/olyx/greenap
 check "fallback: and the ticket still moves" "$(calls issueUpdate)" "1"
 file_has "$RUNS/OLYX-151/ticket-sync.log" "LINEAR ERROR agentActivityCreate:" \
   "fallback: every rejected activity is on the record"
+
+# A mutation-level rejection has the same fallback semantics even when Linear
+# returns no top-level GraphQL errors.
+reset_modes; agent_on
+printf '1\n' > "$MODES/activity-unsuccessful"
+dispatch OLYX-152 "HARNESS_RUN_LINK_BASE=$LINK_BASE"
+check "unsuccessful: today's comment goes out instead" "$(calls commentCreate)" "1"
+file_has "$RUNS/OLYX-152/ticket-sync.log" "LINEAR ERROR agentActivityCreate:" \
+  "unsuccessful: the rejected mutation is on the record"
 
 # ---------------------------------------------------------------------------
 echo "== failures are logged and nothing else =="

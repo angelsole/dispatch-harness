@@ -152,13 +152,17 @@ linear_record() {  # $1 = label, $2 = raw response, $3 = curl exit
   { printf '%s: %s\n' "$1" "$2"
     if [ "$3" -ne 0 ]; then
       printf 'LINEAR ERROR %s: curl exit %s\n' "$1" "$3"
-    elif printf '%s' "$2" | grep -q '"errors"'; then
+    elif printf '%s' "$2" | grep -q '"errors"' \
+         || printf '%s' "$2" | jq -e '.. | objects | select(.success? == false)' >/dev/null 2>&1; then
       printf 'LINEAR ERROR %s: %s\n' "$1" "$2"
     fi
   } >> "$RUN_DIR/ticket-sync.log"
   printf '%s' "$2"
   [ "$3" -eq 0 ] || return 1
-  if printf '%s' "$2" | grep -q '"errors"'; then return 1; fi
+  if printf '%s' "$2" | grep -q '"errors"' \
+     || printf '%s' "$2" | jq -e '.. | objects | select(.success? == false)' >/dev/null 2>&1; then
+    return 1
+  fi
   return 0
 }
 
