@@ -78,6 +78,9 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | `HARNESS_RUN_LINK_BASE` | Base URL of the team's wall, no trailing slash (e.g. `http://mini:4711`). Set, and every ticketed run gets an [attachment card](operations.md#ticket-sync) linking to `<base>/console#<RUN-ID>`, and its agent session carries the same link. Unset, no card | unset |
 | `HARNESS_LINEAR_HEARTBEAT_SECS` | Least time between the ephemeral `thought` activities that keep a long stage's agent session out of Linear's `stale` state. Read by the driver's heartbeat ticker, which starts before `notify.conf` is read — so this one has to come from the environment | `300` |
 | `HARNESS_MIRROR` | ssh target (`host:path`) or local path a live run dir is mirrored to — see [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror) | unset |
+| `HARNESS_WALL_URL` | Base URL of a wall this machine's runs report to, no trailing slash (`http://mini:4711`). Turns on all three fan-in channels — stage handoffs, worker hook events, worker OTel metrics — see [Ingest](wall.md#ingest). Unset means no outbound traffic at all | unset |
+| `HARNESS_WALL_TOKEN` | Shared secret sent to that wall as `Authorization: Bearer`. Empty means the reports carry no credential and the wall refuses them; `run-task.sh` says so once at startup | unset |
+| `HARNESS_RUN_ID` | Not a knob: the ticket id the harness **exports to its workers** when `HARNESS_WALL_URL` is set. `lib/wall-hook.sh` stamps every hook event with it, and refuses to report without one | — |
 
 ### Notifications and monitoring
 
@@ -816,6 +819,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
 | `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript — every Linear request, every raw response, and one `LINEAR ERROR <mutation>:` line per failure |
 | `linear-issue.json`, `linear-session`, `linear-heartbeat` | [Ticket sync's](operations.md#ticket-sync) state: the issue lookup, made once per run and re-read by every mutation so they all pass the UUID; the id of the run's agent session, which a re-dispatch reuses rather than opening a second one; and the epoch of the last heartbeat activity |
+| `wall-report.log` | One line per stage report the [wall](wall.md#ingest) would not take, with `curl`'s exit status — never the token and never the body. Only exists on a run that reported and was refused |
 
 That table is the paper trail for a human. The same directory is also a **wire
 format**: [Ghost Shift](wall.md) reads it live over the shoulder of a running

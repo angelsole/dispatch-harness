@@ -652,6 +652,29 @@ The target is a machine you already trust with the run dir: mirroring copies
 briefs, feeds and worker logs onto it, and gives it whatever your ssh key gives
 it. Point it at your own wall, not at a shared box.
 
+### Mirror or ingest?
+
+There are two ways a run on your laptop reaches a wall on another machine, and
+they answer different questions.
+
+| | `HARNESS_MIRROR` | `HARNESS_WALL_URL` ([ingest](wall.md#ingest)) |
+| --- | --- | --- |
+| What travels | the whole run dir — brief, feed, logs, `result.json` | a small JSON report per stage, per tool call, per metrics flush |
+| How | `rsync` over ssh, every two seconds | `POST` to one HTTP route on the wall |
+| Needs | an ssh key on the target and `rsync` | a token both sides share |
+| What the wall can then draw | everything, including the city, the district and the feed | the console's row: stage, actor, host, live cost and tool count |
+| Costs the target | your ssh key's access, and disk | nothing but the row |
+
+Mirroring is the richer picture and the bigger trust: the target gets your
+briefs and your worker logs. Ingest is the cheaper one, and it is the one that
+scales to a team — a shared token, no ssh keys, and a board that shows every
+run's *stage* the moment it moves.
+
+**They compose.** A run that both mirrors and reports appears once: the wall
+matches them by run id, the mirrored run dir wins, and the reported telemetry
+attaches to that same row. Nothing is duplicated, and turning one of them off
+never leaves a stale twin behind.
+
 ## Re-merging the base into a pushed PR
 
 A PR branch that has been open for a while stops merging cleanly. `sync-pr.sh`

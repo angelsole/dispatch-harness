@@ -1,8 +1,9 @@
 # Security
 
 What it means to point an unattended, code-executing pipeline at your
-repositories, and the two boundaries that contain it: the worker's deny list
-and the reviewer's sandbox.
+repositories, the two boundaries that contain it — the worker's deny list and
+the reviewer's sandbox — and the one secret the harness hands a worker that is
+not a vendor credential.
 
 ## The threat model
 
@@ -98,3 +99,27 @@ If your worker loads an MCP server (via `MCP_CONFIG`) exposing destructive tools
 ```
 
 Deny lists are cheap insurance; add to them liberally.
+
+## The wall ingest token
+
+`HARNESS_WALL_TOKEN` ([Ingest](wall.md#ingest)) is the one secret the harness
+puts in a worker's environment on purpose. It has to be there: the CLI's
+OpenTelemetry exporter takes its headers from `OTEL_EXPORTER_OTLP_HEADERS` and
+has no file form, so there is no path-and-permissions dance to do here of the
+kind the z.ai key and the Linear key get.
+
+Size it accordingly. It is a **shared LAN-dashboard secret**, not a vendor
+credential: the only thing holding it buys is the ability to post run rows to a
+board on your own network, and the wall's GET routes have no auth at all. Use a
+value you are willing to have in the environment of every worker on every
+machine that dispatches, do not reuse a token that means anything else, and keep
+the wall off the public internet — which was already the rule.
+
+**What the wall refuses to keep.** The worker's metrics carry the operator's
+identity beside the numbers: `user.email`, `user.id`, `user.account_uuid`,
+`user.account_id`, `organization.id`, `terminal.type`. All six are dropped at
+the ingest boundary and never reach the wall's memory, its `WALL_INGEST_FILE`,
+or any payload it serves. OTel **logs** — which carry prompt and response text —
+are never enabled by the harness at all: `OTEL_LOGS_EXPORTER=none` is part of
+the worker environment, and the wall's `/v1/logs` route accepts a body only to
+discard it.

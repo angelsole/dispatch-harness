@@ -5,7 +5,8 @@ holds no state the pipeline can see — it opens the run dirs `run-task.sh`
 already writes and renders what is on disk. That makes the run dir a **wire
 format between two programs**, and this page is that format written down: every
 file the wall reads, every field it takes out of it, exactly how much
-malformedness it tolerates, and the one file it writes.
+malformedness it tolerates, the reports a run may POST to it instead, and the
+two files it writes.
 
 It exists because the format was, until now, real but unwritten. The stage text
 in particular was parsed by three independent copies of one table, none of which
@@ -24,7 +25,8 @@ run-task.sh may add files and fields freely (see
 - [`result.json`, field by field](#resultjson-field-by-field)
 - [Which project a run belongs to](#which-project-a-run-belongs-to)
 - [Additive by policy](#additive-by-policy)
-- [The one file the wall writes](#the-one-file-the-wall-writes)
+- [The ingest routes](#the-ingest-routes)
+- [The two files the wall writes](#the-two-files-the-wall-writes)
 - [Serving another harness's runs](#serving-another-harnesss-runs)
 - [Not tested](#not-tested)
 
@@ -212,19 +214,66 @@ without a migration. `run-task.sh` says so at the write site, naming this reader
 The same policy is why the wall reads *first lines* out of `status`, `owner`,
 `worktree` and `started` rather than whole files.
 
-## The one file the wall writes
+## The ingest routes
+
+The run dir is one direction. The other is a run **POSTing** what it is doing,
+which is how a wall on the office machine draws a run dispatched on a laptop.
+The operator turns this on per wall with `WALL_INGEST_TOKEN`, and per dispatching
+machine with `HARNESS_WALL_URL` / `HARNESS_WALL_TOKEN`
+([Ingest](wall.md#ingest)). Unset, **the wall is byte-identical to a wall
+without this feature**: every route below is the same 404 as any unknown path,
+and no dispatch sends anything.
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `POST /api/ingest/stage` | `{run, stage, at, host, owner, repo, provider, model, worktree, branch, base, pr_url, status}` — written by `run-task.sh`'s `stage()` | `204` |
+| `POST /api/ingest/hook` | `{run, at, host, session_id, cwd, hook_event_name, prompt_id, tool_name, reason, tool_input:{command, file_path, description}}` — written by `lib/wall-hook.sh` | `204` |
+| `POST /v1/metrics` | OTLP/HTTP JSON `ExportMetricsServiceRequest` from the worker's own exporter | `200 {}` |
+| `POST /v1/logs`, `POST /v1/traces` | anything | `200 {}`, discarded unread |
+
+`Authorization: Bearer <WALL_INGEST_TOKEN>` must match exactly, or `401`. A body
+over 1 MiB is `413`; a body that is not a JSON object is `400`. `GET` on any of
+these paths is the 404 it has always been. The handler is bound by the same rule
+as the disk side — **read what is there, never throw**: a report the wall cannot
+make sense of is dropped, and the wall keeps serving.
+
+Two rules make this additive rather than a change to the format:
+
+- **Console view only.** A run's `telemetry`, and remote rows in their entirety,
+  exist only under `?view=console`. `publicPayload()` strips both, so `/api/runs`
+  and `/api/stream` without the flag return, for the same disk, exactly what they
+  returned before ingest existed — down to the byte once `at` is projected out.
+  The city, the towers, the district and the summary are computed from `scan()`
+  alone and never see a reported run.
+- **One run, one row.** A run present both on disk (mirrored) and in ingest is
+  matched by run id: the disk record wins and the telemetry attaches to it.
+  Never a duplicate.
+
+What the wall keeps out of the OTLP datapoints is part of this contract too:
+`user.email`, `user.id`, `user.account_uuid`, `user.account_id`,
+`organization.id` and `terminal.type` are dropped on ingest and reach neither
+memory, disk, nor any payload ([Security](security.md#the-wall-ingest-token)).
+
+## The two files the wall writes
 
 `wall-city.jsonl` — the district's memory, beside the runs dir by default, moved
-with `--city` / `WALL_CITY`. It is the **only** file the wall writes (plus the
-`.tmp` beside it that Monday's rollover renames over it, and the parent
-directory if it has to make one), and **nothing else in the harness reads it**:
-not `run-task.sh`, not `metrics.sh`, not `cleanup.sh`. It is not a schema
-anybody else may depend on, and its rules, its rollover and what deleting it
-does are on the wall page under
+with `--city` / `WALL_CITY`. **Nothing else in the harness reads it**: not
+`run-task.sh`, not `metrics.sh`, not `cleanup.sh`. It is not a schema anybody
+else may depend on, and its rules, its rollover and what deleting it does are on
+the wall page under
 [The ledger is the city's memory](wall.md#the-ledger-is-the-citys-memory).
 
-The reason it exists at all is this contract's one real asymmetry: a run dir is
-**not permanent**. `cleanup.sh` promotes a run and mirror removal deletes the
+`wall-ingest.json` — what runs have reported, beside the runs dir by default,
+moved with `WALL_INGEST_FILE`. Written at most once a second, read back at boot
+so a restart does not blank the board, and pruned of entries nothing has updated
+for seven days. It exists only on a wall that was given a `WALL_INGEST_TOKEN`,
+and it is as private to the wall as the ledger is.
+
+Those two, plus the `.tmp` each is renamed over and the parent directory if one
+has to be made, are **everything** the wall writes.
+
+The ledger's reason for existing is this contract's one real asymmetry: a run dir
+is **not permanent**. `cleanup.sh` promotes a run and mirror removal deletes the
 mirrored copy off the wall's own machine, so run dirs can only ever be how the
 wall *discovers* a ship. The ledger is how it *remembers* one.
 

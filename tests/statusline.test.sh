@@ -112,8 +112,10 @@ check "runs-only: silent when HARNESS_DIR has no runs dir" "$OUT" ""
 # A rename that outruns statusline.sh's mapping shows up here as "?".
 echo "== stage -> actor mapping (every stage() literal) =="
 STAGES="$ROOT/stages.txt"
-grep -hoE 'stage "[^"]+"' "$SRC/run-task.sh" "$SRC/sync-pr.sh" \
-  | sed -e 's/^stage "//' -e 's/"$//' \
+# Match shell commands, not helper names or jq options such as
+# `wall_report_stage "$1"` and `--arg stage "$1"`.
+grep -hoE '(^|;)[[:space:]]*stage "[^"]+"' "$SRC/run-task.sh" "$SRC/sync-pr.sh" \
+  | sed -E -e 's/^(;)?[[:space:]]*stage "//' -e 's/"$//' \
         -e 's/\$[A-Za-z_][A-Za-z0-9_]*/X/g' -e 's/\$[0-9]/X/g' \
   | sort -u > "$STAGES"
 n=$(grep -c '' < "$STAGES" | tr -d ' ')

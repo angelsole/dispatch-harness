@@ -1287,6 +1287,8 @@ file_has "$PROFILE_IMPL" 'visual_trace_prelude="trap '\''$GATE_TRACE_WRITE'\'' D
   "trace: the visual stage preserves the gate's own failing step"
 file_has "$PROFILE_IMPL" 'script="$visual_trace_prelude' \
   "trace: the visual runner uses its DEBUG-only prelude"
+file_has "$SRC/gate.sh" '-u HARNESS_GATE_STEP' \
+  "trace: a nested visual fixture cannot overwrite the repository gate step"
 
 # ---------------------------------------------------------------------------
 echo "== part B: the stage inside run-task.sh =="

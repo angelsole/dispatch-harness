@@ -44,6 +44,13 @@
 #   WALL_CREW       default roster       (same list as --crew)
 #   WALL_POLL_MS    disk re-read cadence (default: 1000)
 #
+# Fan-in, so runs on other machines reach this board (see docs/wall.md#ingest):
+#   WALL_INGEST_TOKEN  the shared secret runs send as `Authorization: Bearer`.
+#                      Unset (the default) and every ingest route 404s: the wall
+#                      is read-only and accepts nothing at all.
+#   WALL_INGEST_FILE   where reports are kept across a restart
+#                      (default: <runs>/../wall-ingest.json)
+#
 # The same server also serves /console — the functional ops board over the same
 # run data: what each agent is doing right now, what is blocked, and the attach
 # command to step into it. Not a city; a flight board.

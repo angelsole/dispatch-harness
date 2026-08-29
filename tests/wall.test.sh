@@ -1796,6 +1796,48 @@ say('done-distinct', cell('DONE-SYNC-1', '.activity'));
 const newer = JSON.parse(API);
 newer.runs.find((run) => run.id === 'OLYX-1631').activity = '⏺ Edit src/invoices/newer.ts';
 stream.emit('snapshot', { data: JSON.stringify(newer) });
+
+// The fan-in half of the board: a run reported from another machine, and a live
+// local run whose only figures are the ones its worker is still reporting.
+// Prepended to the frame above rather than replacing it, so the fetch race
+// below is still asked about the run it is about.
+const telemetry = (host, cost, tools, tool) => ({
+  host, cost_usd: cost, tools, last_tool: tool,
+  tokens_in: 1200, tokens_out: 340, cache_read: 98000, last_event_at: 1700, sessions: 1,
+});
+const fanin = JSON.parse(JSON.stringify(newer));
+fanin.runs = [
+  { id: 'REMOTE-1', remote: true, host: 'mini', state: 'active', actor: 'Opus',
+    actorKey: 'opus', stage: 'implementing — Opus (Claude sub)', owner: 'ada',
+    projectLabel: 'GREENAPP', provider: 'anthropic', branch: 'fix/remote-1',
+    started: 100, since: 120, cost: null, turns: null, gateRounds: [], feed: [],
+    telemetry: telemetry('mini', 1.5, 12, 'Edit') },
+  { id: 'LIVE-1', state: 'active', actor: 'Opus', actorKey: 'opus',
+    stage: 'implementing — Opus (Claude sub)', projectLabel: 'GREENAPP',
+    provider: 'anthropic', started: 100, since: 120, cost: null, turns: null,
+    gateRounds: [], feed: [], telemetry: telemetry('here', 0.42, 7, 'Bash') },
+  { id: 'ZERO-1', state: 'active', actor: 'Opus', actorKey: 'opus',
+    stage: 'implementing — Opus (Claude sub)', projectLabel: 'GREENAPP',
+    provider: 'anthropic', started: 100, since: 120, cost: null, turns: null,
+    gateRounds: [], feed: [], telemetry: telemetry('here', 0, 0, '') },
+  ...fanin.runs,
+];
+stream.emit('snapshot', { data: JSON.stringify(fanin) });
+say('remote-chip', cell('REMOTE-1', '.host'));
+say('remote-class', row('REMOTE-1').className);
+say('local-chip', row('LIVE-1').querySelector('.host') ? 'chip' : 'none');
+say('local-class', row('LIVE-1').className);
+say('remote-cost', cell('REMOTE-1', '.cost'));
+say('live-cost', cell('LIVE-1', '.cost'));
+say('live-turns', cell('LIVE-1', '.turns'));
+say('zero-cost', cell('ZERO-1', '.cost'));
+say('zero-turns', cell('ZERO-1', '.turns'));
+say('live-cost-class', row('LIVE-1').querySelector('.cost').className);
+row('REMOTE-1').querySelector('.line').fire('click');
+row('LIVE-1').querySelector('.line').fire('click');
+say('remote-paste', row('REMOTE-1').querySelector('code').textContent);
+say('local-paste', row('LIVE-1').querySelector('code').textContent);
+
 resolveFetch({ text: () => Promise.resolve(API) });
 
 // And the stream dropping is a fallback, not a dead page.
@@ -1907,6 +1949,29 @@ check "draws: HTTP result URLs remain available" \
 check "draws: an older fetch cannot overwrite a newer stream frame" \
   "$(probe race)" "⏺ Edit src/invoices/newer.ts"
 check "draws: a dropped stream falls back to polling" "$(probe link)" "polling/polling"
+
+# A row for a run on another machine, and the live figures the fan-in supplies
+# for a run that has no result.json yet. "Does not throw" is not the claim: the
+# board already tolerates missing cost and turns, so each of these is asserted
+# as the markup an operator would actually read.
+check "fan-in: a remote row wears its host as a chip" "$(probe remote-chip)" "mini"
+check "fan-in: and a class that distinguishes it"  \
+  "$(printf '%s' "$(probe remote-class)" | tr ' ' '\n' | grep -c '^remote$' | tr -d ' ')" "1"
+check "fan-in: a local row wears no host chip" "$(probe local-chip)" "none"
+check "fan-in: and is not marked remote" \
+  "$(printf '%s' "$(probe local-class)" | tr ' ' '\n' | grep -c '^remote$' | tr -d ' ')" "0"
+check "fan-in: a live run's cost falls back to what its worker reports" \
+  "$(probe live-cost)" '$0.42'
+check "fan-in: marked as a figure still moving" \
+  "$(printf '%s' "$(probe live-cost-class)" | tr ' ' '\n' | grep -c '^live$' | tr -d ' ')" "1"
+check "fan-in: and its turns to the tools that worker has run" "$(probe live-turns)" "7"
+check "fan-in: zero live cost is still a reported figure" "$(probe zero-cost)" '$0.00'
+check "fan-in: zero live tools is still a reported figure" "$(probe zero-turns)" "0"
+check "fan-in: a remote row is priced the same way" "$(probe remote-cost)" '$1.50'
+check "fan-in: a remote row offers the machine, not a paste that cannot work" \
+  "$(probe remote-paste)" "mini"
+check "fan-in: a local row still offers the attach command" \
+  "$(probe local-paste)" "$ATTACH_SCRIPT 'LIVE-1'"
 
 echo "== wall: ordering =="
 ORDER="$(printf '%s' "$API" | jq -r '.runs[].id' | tr '\n' ' ')"
@@ -6870,6 +6935,411 @@ if [ -n "$PRIOR" ]; then
     "$(grep -c "seeding the city's memory" "$ROOT/prior.log")" "0"
 else
   bad "guard: server starts against the fixtures with a ledger already there"
+fi
+
+# --- ingest: what a run reports to a wall it is not running on ------------------
+# The other direction. Everything here is fail-closed: without WALL_INGEST_TOKEN
+# the wall is byte-identical to a wall that never grew this, and with it every
+# reported fact is a console-view privilege — the anonymous body an office TV
+# gets must not change at all.
+echo "== wall: ingest is closed unless a token opens it =="
+ING_RUNS="$ROOT/ingest-runs"
+ING_NOW=$(date +%s)
+mkdir -p "$ING_RUNS/LOCAL-1"
+printf '%s\n' "$((ING_NOW - 300))" > "$ING_RUNS/LOCAL-1/started"
+printf '/tmp/greenapp-local-1\n' > "$ING_RUNS/LOCAL-1/worktree"
+printf '%s implementing — Opus (Claude sub)\n' "$ING_NOW" > "$ING_RUNS/LOCAL-1/status"
+
+INGEST_ROUTES='/api/ingest/stage /api/ingest/hook /v1/metrics /v1/logs /v1/traces'
+# $1 = port, $2 = path, $3 = body, $4 = bearer token ('' for none)
+post_code() {
+  if [ -n "$4" ]; then
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST \
+      -H 'Content-Type: application/json' -H "Authorization: Bearer $4" \
+      -d "$3" "http://127.0.0.1:$1$2"
+  else
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST \
+      -H 'Content-Type: application/json' -d "$3" "http://127.0.0.1:$1$2"
+  fi
+}
+
+serve "$ING_RUNS" "$ROOT/ingest-off.log"; OFF_PORT="$PORT_OUT"
+if [ -n "$OFF_PORT" ]; then
+  for route in $INGEST_ROUTES; do
+    check "closed: POST $route is the 404 any unknown path is" \
+      "$(post_code "$OFF_PORT" "$route" '{"run":"X"}' '')" "404"
+  done
+  check "closed: and a POST with a bearer is no different" \
+    "$(post_code "$OFF_PORT" /api/ingest/stage '{"run":"X"}' anything)" "404"
+  check "closed: the read-only routes are untouched" \
+    "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$OFF_PORT/api/runs")" \
+    "200"
+else
+  bad "closed: server starts with no ingest token"
+fi
+
+echo "== wall: the ingest routes =="
+ING_TOKEN='wall-ingest-secret-0123456789'
+ING_FILE="$ROOT/wall-ingest.json"
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$ING_FILE"
+serve "$ING_RUNS" "$ROOT/ingest-on.log"; ING_PORT="$PORT_OUT"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -z "$ING_PORT" ]; then
+  bad "ingest: server starts with an ingest token"
+else
+check "ingest: the boot line names the store it will write" \
+  "$(grep -c "ingest store $ING_FILE" "$ROOT/ingest-on.log" | tr -d ' ')" "1"
+for route in $INGEST_ROUTES; do
+  check "auth: $route with no bearer is 401" \
+    "$(post_code "$ING_PORT" "$route" '{}' '')" "401"
+  check "auth: $route with the wrong bearer is 401" \
+    "$(post_code "$ING_PORT" "$route" '{}' "not-$ING_TOKEN")" "401"
+  check "method: GET $route is still 404" \
+    "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$ING_PORT$route")" \
+    "404"
+done
+check "route: a stage report is 204" \
+  "$(post_code "$ING_PORT" /api/ingest/stage '{"run":"PING-1","stage":"setup: worktree"}' "$ING_TOKEN")" \
+  "204"
+check "route: a hook event is 204" \
+  "$(post_code "$ING_PORT" /api/ingest/hook '{"run":"PING-1","hook_event_name":"Stop"}' "$ING_TOKEN")" \
+  "204"
+for route in /v1/metrics /v1/logs /v1/traces; do
+  check "route: $route answers the exporter 200" \
+    "$(post_code "$ING_PORT" "$route" '{}' "$ING_TOKEN")" "200"
+done
+check "route: a body that is not JSON is 400" \
+  "$(post_code "$ING_PORT" /api/ingest/stage 'not json at all' "$ING_TOKEN")" "400"
+for route in /v1/logs /v1/traces; do
+  check "route: invalid JSON on $route is 400 before discard" \
+    "$(post_code "$ING_PORT" "$route" 'not json at all' "$ING_TOKEN")" "400"
+done
+check "route: a JSON array is not a report either" \
+  "$(post_code "$ING_PORT" /api/ingest/stage '[1,2,3]' "$ING_TOKEN")" "400"
+BIG="$ROOT/too-big.json"
+node -e 'require("fs").writeFileSync(process.argv[1],
+  JSON.stringify({ run: "BIG-1", stage: "x".repeat((1 << 20) + 4096) }))' "$BIG"
+check "route: a body over a mebibyte is 413" \
+  "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST \
+     -H 'Content-Type: application/json' -H "Authorization: Bearer $ING_TOKEN" \
+     --data-binary "@$BIG" "http://127.0.0.1:$ING_PORT/api/ingest/stage")" "413"
+
+# --- a reported run becomes a row, in the console view only ---------------------
+echo "== wall: a run that is only somewhere else =="
+BEFORE_PUBLIC="$(get "$ING_PORT" /api/runs)"
+post_code "$ING_PORT" /api/ingest/stage "$(jq -nc --argjson at "$ING_NOW" \
+  '{run:"REMOTE-7",stage:"waiting — implementer needs your input (QUESTIONS.md)",
+    at:$at,host:"mini",owner:"ada",repo:"greenapp",provider:"anthropic",
+    model:"claude-opus-5",worktree:"/w/greenapp-remote-7",branch:"fix/remote-7",
+    base:"main",pr_url:"",status:""}')" "$ING_TOKEN" > /dev/null
+CONSOLE_ING="$(get "$ING_PORT" '/api/runs?view=console')"
+remote_of() { printf '%s' "$CONSOLE_ING" | jq -r '.runs[] | select(.id=="REMOTE-7") | '"$1"; }
+check "remote: the console view lists it"        "$(remote_of .id)" "REMOTE-7"
+check "remote: flagged as not being on this disk" "$(remote_of .remote)" "true"
+check "remote: with the machine it is on"        "$(remote_of .host)" "mini"
+check "remote: and who dispatched it"            "$(remote_of '"\(.owner)/\(.ownerKind)"')" "ada/human"
+check "remote: its provider, branch and PR field" \
+  "$(remote_of '"\(.provider)|\(.branch)|\(.prUrl)"')" "anthropic|fix/remote-7|"
+check "remote: started from when it was first seen" "$(remote_of .started)" "$ING_NOW"
+# The stage text is read by the same vocabulary a local run's is, so a remote
+# alarm raises the alarm here rather than arriving as an unstyled blank.
+check "remote: the stage text keeps its actor"  "$(remote_of .actor)" "needs input"
+check "remote: and its key"                     "$(remote_of .actorKey)" "alarm"
+check "remote: and its state"                   "$(remote_of .state)" "alarm"
+check "remote: and the repo names its tower"    "$(remote_of .projectLabel)" "GREENAPP"
+check "remote: it carries telemetry"            "$(remote_of '.telemetry != null')" "true"
+
+AFTER_PUBLIC="$(get "$ING_PORT" /api/runs)"
+check "privacy: the anonymous body never lists it" \
+  "$(printf '%s' "$AFTER_PUBLIC" | jq '[.runs[] | select(.id=="REMOTE-7")] | length')" "0"
+check "privacy: nor carries telemetry on any run" \
+  "$(printf '%s' "$AFTER_PUBLIC" | jq '[.runs[] | has("telemetry")] | any')" "false"
+check "privacy: and is the body it was before the report" \
+  "$(printf '%s' "$AFTER_PUBLIC" | jq -S 'del(.at)')" \
+  "$(printf '%s' "$BEFORE_PUBLIC" | jq -S 'del(.at)')"
+check "privacy: the city never sees a reported run" \
+  "$(printf '%s' "$CONSOLE_ING" | jq -r '[.towers[].runIds[]] | index("REMOTE-7") // "absent"')" \
+  "absent"
+
+# --- the same run on disk and reporting is one row ------------------------------
+post_code "$ING_PORT" /api/ingest/stage "$(jq -nc --argjson at "$ING_NOW" \
+  '{run:"LOCAL-1",stage:"implementing — Opus (Claude sub)",at:$at,host:"here",
+    owner:"",repo:"greenapp",provider:"",model:"",worktree:"",branch:"",base:"",
+    pr_url:"",status:""}')" "$ING_TOKEN" > /dev/null
+CONSOLE_ING="$(get "$ING_PORT" '/api/runs?view=console')"
+check "merge: the disk run is still exactly one row" \
+  "$(printf '%s' "$CONSOLE_ING" | jq '[.runs[] | select(.id=="LOCAL-1")] | length')" "1"
+check "merge: the disk record wins, so it is not remote" \
+  "$(printf '%s' "$CONSOLE_ING" | jq -r '.runs[] | select(.id=="LOCAL-1") | .remote // false')" \
+  "false"
+check "merge: and the telemetry attaches to it" \
+  "$(printf '%s' "$CONSOLE_ING" | jq -r '.runs[] | select(.id=="LOCAL-1") | .telemetry != null')" \
+  "true"
+check "merge: the anonymous view gets the same run without it" \
+  "$(get "$ING_PORT" /api/runs | jq -r '.runs[] | select(.id=="LOCAL-1") | has("telemetry")')" \
+  "false"
+check "merge: and the same number of rows as before any report" \
+  "$(get "$ING_PORT" /api/runs | jq '.runs | length')" \
+  "$(printf '%s' "$BEFORE_PUBLIC" | jq '.runs | length')"
+
+# A finished run beyond the emitted-history cap is still local. Reporting it
+# must not bring it back as a remote row after snapshot() deliberately omitted it.
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$ROOT/capped-ingest.json"
+serve "$CROWDED" "$ROOT/ingest-capped.log"; CAPPED_PORT="$PORT_OUT"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$CAPPED_PORT" ]; then
+  CAPPED_BEFORE="$(get "$CAPPED_PORT" '/api/runs?view=console')"
+  CAPPED_ID="$(jq -nr --argjson api "$CAPPED_BEFORE" \
+    '[range(1; 26) | "DONE-\(.)"] - [$api.runs[].id] | .[0]')"
+  post_code "$CAPPED_PORT" /api/ingest/stage \
+    "$(jq -nc --arg run "$CAPPED_ID" --argjson at "$ING_NOW" \
+      '{run:$run,stage:"done: ready",at:$at,host:"mini",repo:"greenapp"}')" \
+    "$ING_TOKEN" > /dev/null
+  check "merge: capped local history is not reintroduced as remote" \
+    "$(get "$CAPPED_PORT" '/api/runs?view=console' \
+      | jq --arg id "$CAPPED_ID" '[.runs[] | select(.id==$id)] | length')" "0"
+else
+  bad "merge: server starts for capped local history"
+fi
+
+# --- the hook channel -----------------------------------------------------------
+echo "== wall: the hook channel counts what a worker did =="
+hook_post() {  # $1 = event name, $2 = tool name, $3 = reason
+  post_code "$ING_PORT" /api/ingest/hook "$(jq -nc \
+    --arg e "$1" --arg t "$2" --arg r "$3" --argjson at "$ING_NOW" \
+    '{run:"HOOKED-1",at:$at,host:"mini",session_id:"sess-h",hook_event_name:$e,
+      prompt_id:"p1",tool_name:$t,reason:$r,
+      tool_input:{command:"",file_path:"src/app.ts",description:""}}')" "$ING_TOKEN"
+}
+check "hooks: the first tool call is 204"  "$(hook_post PostToolUse Read '')" "204"
+check "hooks: the second is too"           "$(hook_post PostToolUse Edit '')" "204"
+check "hooks: so is the stop"              "$(hook_post Stop '' '')" "204"
+check "hooks: and the session ending"      "$(hook_post SessionEnd '' clear)" "204"
+HOOKED="$(get "$ING_PORT" '/api/runs?view=console' \
+  | jq -r '.runs[] | select(.id=="HOOKED-1") | .telemetry
+           | "\(.tools)|\(.last_tool)|\(.last_event_at)"')"
+check "hooks: two tool calls, the second one named, and when" \
+  "$HOOKED" "2|Edit|$ING_NOW"
+HOOK_STATE=""
+for _ in $(seq 1 40); do
+  HOOK_STATE="$(jq -r '.["HOOKED-1"].hooks
+    | "\(.stops)|\(.ended)|\(.sessions | length)"' "$ING_FILE" 2>/dev/null || true)"
+  [ -n "$HOOK_STATE" ] && break
+  sleep 0.05
+done
+check "hooks: the stop, end reason, and unique session are stored" \
+  "$HOOK_STATE" "1|clear|1"
+fi
+
+# --- the store's own arithmetic -------------------------------------------------
+# Aggregation, PII and persistence are questions about a body and a file, not
+# about HTTP, so they are asked of the module directly — the same code the
+# routes above run.
+echo "== wall: OTLP aggregation, and what it refuses to keep =="
+OTLP_PROBE="$ROOT/otlp-probe.js"
+cat > "$OTLP_PROBE" <<'JS'
+'use strict';
+const fs = require('node:fs');
+const [SRC, FIXTURE, STORE] = process.argv.slice(2);
+process.env.WALL_INGEST_TOKEN = 'probe';
+process.env.WALL_INGEST_FILE = STORE;
+process.env.WALL_RUNS = '/nonexistent/runs';
+const I = require(SRC + '/wall/ingest.js');
+const body = () => JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+const shot = () => {
+  const t = I.telemetryFor('FANIN-1');
+  return [t.tokens_in, t.tokens_out, t.cache_read, t.cost_usd, t.sessions].join(',');
+};
+const out = [];
+I.ingestStage({ run: 'ORDER-STAGE', stage: 'done: ready', at: 200,
+  host: 'new-mini', branch: 'fix/new' });
+I.ingestStage({ run: 'ORDER-STAGE', stage: 'review', at: 100,
+  host: 'old-laptop', branch: 'fix/old' });
+const newestStage = I.remoteEntries(new Set())
+  .find(({ id }) => id === 'ORDER-STAGE').entry;
+out.push('stage-newest=' + [newestStage.stage.text, newestStage.host, newestStage.branch].join(','));
+I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Edit', at: 200 });
+I.ingestHook({ run: 'ORDER-HOOK', hook_event_name: 'PostToolUse', tool_name: 'Read', at: 100 });
+const hook = I.telemetryFor('ORDER-HOOK');
+out.push('hook-newest=' + [hook.tools, hook.last_tool, hook.last_event_at].join(','));
+const cumulative = (value, at) => {
+  const report = body();
+  report.resourceMetrics[0].resource.attributes
+    .find((a) => a.key === 'run.id').value.stringValue = 'ORDER-OTLP';
+  const point = report.resourceMetrics[0].scopeMetrics
+    .flatMap((scope) => scope.metrics)
+    .find((metric) => metric.name === 'claude_code.token.usage').sum.dataPoints[0];
+  point.asInt = String(value);
+  point.timeUnixNano = String(at);
+  return report;
+};
+I.ingestMetrics(cumulative(150, 200));
+I.ingestMetrics(cumulative(100, 100));
+out.push('otlp-newest=' + I.telemetryFor('ORDER-OTLP').tokens_in);
+const realNow = Date.now;
+const quietStart = realNow();
+I.ingestStage({ run: 'QUIET-STALE', stage: 'review', at: Math.floor(quietStart / 1000) });
+Date.now = () => quietStart + (8 * 86400 * 1000);
+out.push('quiet-pruned=' + !I.remoteEntries(new Set()).some(({ id }) => id === 'QUIET-STALE'));
+Date.now = realNow;
+I.ingestMetrics(body());
+out.push('once=' + shot());
+I.ingestMetrics(body());
+out.push('twice=' + shot());
+// A second session of the same run: cumulative sums are per session, so this
+// one ADDS while the repeat above did not.
+const second = body();
+const swap = (attrs) => {
+  for (const a of attrs || []) if (a.key === 'session.id') a.value.stringValue = 'sess-b';
+};
+for (const sm of second.resourceMetrics[0].scopeMetrics) {
+  for (const m of sm.metrics) for (const p of m.sum.dataPoints) swap(p.attributes);
+}
+I.ingestMetrics(second);
+out.push('two-sessions=' + shot());
+out.push('unowned=' + String(I.telemetryFor('') === null));
+I.writeNow();
+const onDisk = fs.readFileSync(STORE, 'utf8');
+const pii = [...I.PII].filter((key) => onDisk.includes(key));
+out.push('pii-on-disk=' + (pii.join(',') || 'none'));
+out.push('pii-in-payload=' + ([...I.PII]
+  .filter((key) => JSON.stringify(I.telemetryFor('FANIN-1')).includes(key)).join(',') || 'none'));
+out.push('kept=' + ['sess-a', 'sess-b', 'claude-opus-5']
+  .filter((s) => onDisk.includes(s)).join(','));
+process.stdout.write(out.join('\n'));
+JS
+OTLP_OUT="$(node "$OTLP_PROBE" "$SRC" "$SRC/tests/fixtures/otlp-metrics.json" \
+  "$ROOT/otlp-store.json" 2>&1)"
+otlp() { printf '%s' "$OTLP_OUT" | sed -n "s/^$1=//p"; }
+check "stage: an older delayed report cannot regress the run" \
+  "$(otlp stage-newest)" "done: ready,new-mini,fix/new"
+check "hooks: delayed events keep the newest tool and event time" \
+  "$(otlp hook-newest)" "2,Edit,200"
+check "otlp: an older cumulative export cannot reduce a total" \
+  "$(otlp otlp-newest)" "150"
+check "persist: quiet read paths prune entries after seven days" \
+  "$(otlp quiet-pruned)" "true"
+check "otlp: the fixture's tokens, cost and session count" \
+  "$(otlp once)" "1200,340,98000,0.25,1"
+check "otlp: feeding the identical body again changes nothing" \
+  "$(otlp twice)" "1200,340,98000,0.25,1"
+check "otlp: a second session adds to every total" \
+  "$(otlp two-sessions)" "2400,680,196000,0.5,2"
+check "otlp: a resource with no run.id is not this wall's business" \
+  "$(otlp unowned)" "true"
+check "otlp: not one identifying attribute reaches the disk" "$(otlp pii-on-disk)" "none"
+check "otlp: nor the payload" "$(otlp pii-in-payload)" "none"
+check "otlp: what is kept is the session and the model" \
+  "$(otlp kept)" "sess-a,sess-b,claude-opus-5"
+
+# --- persistence ---------------------------------------------------------------
+# A launchd restart on the office machine must not blank the board, and a run
+# nobody has reported for a week must not stand on it forever.
+echo "== wall: the ingest store survives a restart =="
+QUIET_STORE="$ROOT/quiet-shutdown-ingest.json"
+jq -n --argjson now "$(date +%s)" \
+  '{"QUIET-1": {last_seen:$now,stage:{text:"review",at:$now}}}' > "$QUIET_STORE"
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$QUIET_STORE"
+serve "$ING_RUNS" "$ROOT/ingest-quiet-shutdown.log"; QUIET_PORT="$PORT_OUT"
+QUIET_PID="${PIDS##* }"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$QUIET_PORT" ]; then
+  kill -TERM "$QUIET_PID"
+  wait "$QUIET_PID" 2>/dev/null || true
+  check "persist: shutdown before the first read preserves the existing store" \
+    "$(jq -r 'has("QUIET-1")' "$QUIET_STORE" 2>/dev/null)" "true"
+else
+  bad "persist: server starts for the quiet shutdown check"
+fi
+
+SHUT_STORE="$ROOT/shutdown-ingest.json"
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$SHUT_STORE"
+serve "$ING_RUNS" "$ROOT/ingest-shutdown.log"; SHUT_PORT="$PORT_OUT"
+SHUT_PID="${PIDS##* }"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$SHUT_PORT" ]; then
+  post_code "$SHUT_PORT" /api/ingest/stage \
+    '{"run":"SHUTDOWN-1","stage":"setup: worktree","at":200,"host":"mini"}' \
+    "$ING_TOKEN" > /dev/null
+  kill -TERM "$SHUT_PID"
+  wait "$SHUT_PID" 2>/dev/null || true
+  check "persist: shutdown flushes a report before its debounce fires" \
+    "$(jq -r 'has("SHUTDOWN-1")' "$SHUT_STORE" 2>/dev/null)" "true"
+else
+  bad "persist: server starts for the shutdown flush check"
+fi
+
+KEEP_STORE="$ROOT/keep-ingest.json"
+NOW=$(date +%s)
+jq -n --argjson now "$NOW" --argjson old "$((NOW - 8 * 86400))" '
+  def entry($at; $host): {host:$host,owner:"ada",repo:"greenapp",provider:"anthropic",
+    model:"",worktree:"",branch:"fix/x",base:"main",pr_url:"",status:"",
+    stage:{text:"implementing — Opus (Claude sub)",at:$at},
+    first_seen:$at,last_seen:$at,
+    hooks:{tools:3,last_tool:"Edit",last_at:$at,stops:0,ended:null,sessions:["s1"]},
+    otel:{tokens:{input:5,output:6,cache_read:7,cache_creation:8},
+          cost_usd:1.25,sessions:1,models:["claude-opus-5"],last_at:$at,latest:{}}};
+  {"KEPT-1": entry($now; "mini"), "STALE-1": entry($old; "oldbox")}' > "$KEEP_STORE"
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$KEEP_STORE"
+serve "$ING_RUNS" "$ROOT/ingest-restart.log"; KEEP_PORT="$PORT_OUT"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$KEEP_PORT" ]; then
+  KEEP_API="$(get "$KEEP_PORT" '/api/runs?view=console')"
+  check "persist: a fresh wall lists the run the file remembered" \
+    "$(printf '%s' "$KEEP_API" | jq -r '.runs[] | select(.id=="KEPT-1") | "\(.remote) \(.host)"')" \
+    "true mini"
+  check "persist: with the figures it was carrying" \
+    "$(printf '%s' "$KEEP_API" | jq -r '.runs[] | select(.id=="KEPT-1")
+       | .telemetry | "\(.tokens_in) \(.cost_usd) \(.tools)"')" "5 1.25 3"
+  check "persist: an entry nothing has updated for eight days is gone" \
+    "$(printf '%s' "$KEEP_API" | jq '[.runs[] | select(.id=="STALE-1")] | length')" "0"
+  STALE_STORED="true"
+  for _ in $(seq 1 40); do
+    STALE_STORED="$(jq -r 'has("STALE-1")' "$KEEP_STORE" 2>/dev/null)"
+    [ "$STALE_STORED" = "false" ] && break
+    sleep 0.05
+  done
+  check "persist: read-time pruning is written back to the store" \
+    "$STALE_STORED" "false"
+else
+  bad "persist: server starts against a store written earlier"
+fi
+
+# --- the stream ----------------------------------------------------------------
+# A report moves the console's frame the way a disk change does; it must move
+# the anonymous frame not at all.
+echo "== wall: a report is a frame worth pushing, on one view only =="
+export WALL_INGEST_TOKEN="$ING_TOKEN" WALL_INGEST_FILE="$ROOT/sse-ingest.json"
+serve "$ING_RUNS" "$ROOT/ingest-sse.log"; SSE_PORT="$PORT_OUT"
+unset WALL_INGEST_TOKEN WALL_INGEST_FILE
+if [ -n "$SSE_PORT" ]; then
+  ING_SSE="$ROOT/ingest-console.sse"
+  PUB_SSE="$ROOT/ingest-public.sse"
+  curl -sN --max-time 6 "http://127.0.0.1:$SSE_PORT/api/stream?view=console" > "$ING_SSE" 2>/dev/null &
+  ING_SSE_PID=$!
+  curl -sN --max-time 6 "http://127.0.0.1:$SSE_PORT/api/stream" > "$PUB_SSE" 2>/dev/null &
+  PUB_SSE_PID=$!
+  PIDS="$PIDS $ING_SSE_PID $PUB_SSE_PID"
+  sleep 1
+  post_code "$SSE_PORT" /api/ingest/stage \
+    '{"run":"STREAMED-1","stage":"implementing — Opus (Claude sub)","host":"mini","repo":"greenapp"}' \
+    "$ING_TOKEN" > /dev/null
+  sleep 3
+  kill "$ING_SSE_PID" "$PUB_SSE_PID" 2>/dev/null || true
+  wait "$ING_SSE_PID" 2>/dev/null || true
+  wait "$PUB_SSE_PID" 2>/dev/null || true
+  ING_LAST="$(grep '^data: ' "$ING_SSE" | tail -1 | cut -c7-)"
+  check "sse: the console client is pushed the reported run" \
+    "$(printf '%s' "$ING_LAST" | jq -r '[.runs[] | select(.id=="STREAMED-1")] | length')" "1"
+  # Every frame the anonymous client got, modulo the clock, has to be the frame
+  # it already had — one distinct body, and no remote row in it.
+  PUB_BODIES="$(grep '^data: ' "$PUB_SSE" | cut -c7- \
+    | while IFS= read -r line; do printf '%s' "$line" | jq -Sc 'del(.at)'; done | sort -u | grep -c '')"
+  check "sse: the anonymous client is never pushed a different frame" "$PUB_BODIES" "1"
+  check "sse: and never sees the reported run at all" \
+    "$(grep -c 'STREAMED-1' "$PUB_SSE" | tr -d ' ')" "0"
+else
+  bad "sse: server starts for the stream check"
 fi
 
 # --- flags --------------------------------------------------------------------

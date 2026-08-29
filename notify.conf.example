@@ -20,3 +20,10 @@ HARNESS_NTFY_TOPIC=""
 # Local desktop notifications on every stage handoff (macOS `osascript`).
 # 1 = on (default), 0 = silence.
 # HARNESS_NOTIFY=1
+
+# Report this machine's runs to one shared wall (`wall.sh`), so a team watching
+# one board sees every run wherever it was dispatched. The wall must be started
+# with a matching WALL_INGEST_TOKEN; without one it refuses every report.
+# Both unset (the default) means no outbound traffic of any kind.
+# HARNESS_WALL_URL="http://mini:4711"
+# HARNESS_WALL_TOKEN="a-long-random-string-shared-with-the-wall"

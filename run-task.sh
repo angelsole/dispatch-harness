@@ -416,6 +416,7 @@ fi
 # above, which are what a profile decides and configures itself from. A run with
 # no active profile registers nothing more and behaves exactly as it always has.
 hook_register implementer_env  apply_provider_env
+hook_register implementer_env  apply_wall_env
 hook_register pr_body_sections verify_pr_section
 harness_load_profiles "$REPO" "$SELF_DIR/profiles"
 
@@ -837,6 +838,49 @@ write_result() {
 # statusline; add or update the mapping in the same commit.
 # tests/statusline.test.sh asserts every literal maps to a known actor.
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
+
+# --- The wall's fan-in --------------------------------------------------------
+# HARNESS_WALL_URL turns on three outbound report channels — this run's stage
+# handoffs, its worker's hook events (lib/wall-hook.sh) and its worker's OTel
+# metrics — all POSTed to one wall so a team on several machines watches one
+# board. Unset, nothing here does anything at all.
+WALL_URL="${HARNESS_WALL_URL:-}"
+WALL_TOKEN="${HARNESS_WALL_TOKEN:-}"
+WALL_HOSTNAME=$(hostname -s 2>/dev/null) || WALL_HOSTNAME=""
+[ -n "$WALL_HOSTNAME" ] || WALL_HOSTNAME=unknown
+WALL_REPO=$(basename "$REPO")
+WALL_AUTH=()
+[ -z "$WALL_TOKEN" ] || WALL_AUTH=(-H "Authorization: Bearer $WALL_TOKEN")
+if [ -n "$WALL_URL" ] && [ -z "$WALL_TOKEN" ]; then
+  echo "[harness] HARNESS_WALL_URL is set without HARNESS_WALL_TOKEN — the wall will refuse reports"
+fi
+
+# One stage handoff, as the wall's ingest route wants it. Backgrounded and
+# capped at three seconds, so a dead or slow wall never delays a run; `-f` makes
+# the wall's own 401/404 a failure worth writing down. The token and the body
+# stay out of the log on purpose — it is read by whoever runs the dispatch.
+wall_report_stage() {  # $1 = stage text
+  [ -n "$WALL_URL" ] || return 0
+  local body
+  body=$(jq -n -c \
+    --arg run "$TICKET" --arg stage_text "$1" --argjson at "$(date +%s)" \
+    --arg host "$WALL_HOSTNAME" --arg owner "${HARNESS_OWNER:-}" \
+    --arg repo "$WALL_REPO" \
+    --arg provider "${IMPLEMENTER_PROVIDER:-}" --arg model "${IMPLEMENTER_MODEL:-}" \
+    --arg worktree "${WORKTREE:-}" --arg branch "${BRANCH:-}" \
+    --arg base "${BASE_BRANCH:-}" --arg pr_url "${PR_URL:-}" \
+    --arg status "${STATUS:-}" \
+    '{run:$run,stage:$stage_text,at:$at,host:$host,owner:$owner,repo:$repo,
+      provider:$provider,model:$model,worktree:$worktree,branch:$branch,
+      base:$base,pr_url:$pr_url,status:$status}' 2>/dev/null) || return 0
+  ( rc=0
+    curl -sf -m 3 -X POST -H 'Content-Type: application/json' \
+      ${WALL_AUTH[@]+"${WALL_AUTH[@]}"} -d "$body" -o /dev/null \
+      "$WALL_URL/api/ingest/stage" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] || printf '%s stage report failed (curl %s)\n' \
+      "$(date '+%H:%M:%S')" "$rc" >> "$RUN_DIR/wall-report.log" ) &
+}
+
 stage() {  # $1 = stage text, $2 = optional extra line for the phone push only
   echo "$(date +%s) $1" > "$RUN_DIR/status"
   printf '%s %s\n' "$(date +%s)" "$1" >> "$RUN_DIR/stages.log"   # epoch history for metrics
@@ -889,6 +933,7 @@ $2"
       "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$ntfy_topic" >/dev/null 2>&1 || true
   done < <(ntfy_targets "${HARNESS_OWNER:-}")
   linear_stage_report "$1"
+  wall_report_stage "$1"
 }
 
 # --- No run may end without a verdict ------------------------------------------
@@ -1426,6 +1471,32 @@ apply_provider_env() {
   case "$IMPLEMENTER_MODEL" in
     *'[1m]') export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ;;
   esac
+}
+
+# What a Claude worker needs to report to the wall on its own: the run id its
+# hook wrapper stamps every event with, and the CLI's OpenTelemetry exporter
+# pointed at the same wall. Applied inside the worker's subshell like the
+# provider credential above, so the gate, codex, the verifier and the planner
+# never see any of it. Logs export stays off — one one-tool session produced a
+# 63 KB /v1/logs body, and every one of them carries the operator's identity.
+apply_wall_env() {  # $1 = which worker this is: implement | review
+  [ -n "$WALL_URL" ] || return 0
+  export HARNESS_RUN_ID="$TICKET"
+  export HARNESS_WALL_URL="$WALL_URL"
+  export HARNESS_WALL_TOKEN="$WALL_TOKEN"
+  export HARNESS_DIR
+  export CLAUDE_CODE_ENABLE_TELEMETRY=1
+  export OTEL_METRICS_EXPORTER=otlp
+  export OTEL_LOGS_EXPORTER=none
+  export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+  export OTEL_EXPORTER_OTLP_ENDPOINT="$WALL_URL"
+  if [ -n "$WALL_TOKEN" ]; then
+    export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $WALL_TOKEN"
+  else
+    unset OTEL_EXPORTER_OTLP_HEADERS
+  fi
+  export OTEL_METRIC_EXPORT_INTERVAL=10000
+  export OTEL_RESOURCE_ATTRIBUTES="run.id=$TICKET,owner=${HARNESS_OWNER:-},repo=$WALL_REPO,host=$WALL_HOSTNAME,stage=${1:-implement}"
 }
 
 IMPLEMENTER_PROMPT="You are the implementer stage of an automated pipeline.
@@ -2520,7 +2591,7 @@ run_codex() {  # $1 = round label, $2 = prompt
 # whose ambient shell points the CLI at the compatible endpoint, an inherited
 # ANTHROPIC_BASE_URL would silently route this stage there too.
 run_claude_worker() {  # $1 = round label, $2 = prompt
-  (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
+  (cd "$WORKTREE" && apply_wall_env review && with_timeout "$CODEX_TIMEOUT" \
       env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
           -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
           -u CLAUDE_CODE_AUTO_COMPACT_WINDOW \
