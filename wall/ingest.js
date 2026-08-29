@@ -69,6 +69,10 @@ function str(value) {
   return typeof value === 'string' ? value.slice(0, CLIP) : '';
 }
 
+function logLabel(value) {
+  return str(value).replace(/[\r\n\u2028\u2029]/g, ' ');
+}
+
 function epoch(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : Math.floor(Date.now() / 1000);
@@ -497,8 +501,8 @@ function handle(req, res, pathname) {
         return send(res, verdict.code, verdict.code === 400 ? 'wall: bad JSON\n' : '');
       }
       try {
-        console.log('[wall] linear webhook: ' + (str(verdict.payload.type) || '?') +
-          ' ' + (str(verdict.payload.action) || '?'));
+        console.log('[wall] linear webhook: ' + (logLabel(verdict.payload.type) || '?') +
+          ' ' + (logLabel(verdict.payload.action) || '?'));
         return send(res, 200, '{}', 'application/json; charset=utf-8');
       } catch {
         return send(res, 204);

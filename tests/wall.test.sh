@@ -7115,6 +7115,17 @@ check "linear: and so is the trailing slash a proxy may add" \
   "$(lw_post "$LW_PORT" /webhooks/linear/ "$LW_FRESH" "$LW_GOOD")" "200"
 check "linear: each 200 says so on stdout, named by type and action" \
   "$(grep -c '\[wall\] linear webhook: Issue update' "$ROOT/lw-on.log" | tr -d ' ')" "2"
+LW_MULTILINE="$(node -e 'process.stdout.write(JSON.stringify({
+  type: "Issue\nFORGED-TYPE", action: "update\rFORGED-ACTION",
+  webhookTimestamp: Date.now()
+}))')"
+check "linear: a signed delivery with multiline labels is 200" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_MULTILINE" "$(lw_sig "$LW_SECRET" "$LW_MULTILINE")")" "200"
+check "linear: multiline labels stay in one stdout record" \
+  "$(grep -cF '[wall] linear webhook: Issue FORGED-TYPE update FORGED-ACTION' \
+    "$ROOT/lw-on.log" | tr -d ' ')" "1"
+check "linear: multiline labels cannot forge a stdout record" \
+  "$(awk '/^FORGED-/{n++} END{print n+0}' "$ROOT/lw-on.log")" "0"
 LW_ARRAY="[$LW_FRESH]"
 check "linear: a signed body that is a JSON array is 400" \
   "$(lw_post "$LW_PORT" /webhooks/linear "$LW_ARRAY" "$(lw_sig "$LW_SECRET" "$LW_ARRAY")")" "400"
