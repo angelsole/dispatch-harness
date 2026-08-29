@@ -7024,6 +7024,115 @@ check "route: a body over a mebibyte is 413" \
      -H 'Content-Type: application/json' -H "Authorization: Bearer $ING_TOKEN" \
      --data-binary "@$BIG" "http://127.0.0.1:$ING_PORT/api/ingest/stage")" "413"
 
+# --- the Linear webhook: signed by Linear, authorised by nobody else -----------
+# The one ingest route without a bearer. serve() launches wall.sh with the
+# caller's HARNESS_DIR, and on a machine that really runs a team wall that dir
+# may hold a linear-webhook-secret — every serve below gets an empty temp
+# HARNESS_DIR so the unset-secret cases cannot depend on the host.
+# $1 = port, $2 = path, $3 = body, $4 = signature ('' sends no header)
+lw_post() {
+  if [ -n "$4" ]; then
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST \
+      -H 'Content-Type: application/json' -H "Linear-Signature: $4" \
+      -d "$3" "http://127.0.0.1:$1$2"
+  else
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST \
+      -H 'Content-Type: application/json' -d "$3" "http://127.0.0.1:$1$2"
+  fi
+}
+# $1 = secret, $2 = body; prints the lowercase-hex HMAC the route expects
+lw_sig() {
+  node -e 'const c = require("node:crypto");
+    process.stdout.write(c.createHmac("sha256", process.argv[1])
+      .update(process.argv[2], "utf8").digest("hex"))' "$1" "$2"
+}
+
+echo "== wall: the Linear webhook is closed unless a secret configures it =="
+LW_HARNESS="$ROOT/lw-harness"
+mkdir -p "$LW_HARNESS"
+export HARNESS_DIR="$LW_HARNESS"
+serve "$ING_RUNS" "$ROOT/lw-off.log"; LW_OFF="$PORT_OUT"
+unset HARNESS_DIR
+if [ -n "$LW_OFF" ]; then
+  for route in /webhooks/linear /webhooks/linear/; do
+    check "closed: POST $route is the 404 any unknown path is" \
+      "$(lw_post "$LW_OFF" "$route" '{"type":"Issue"}' '')" "404"
+  done
+  check "closed: GET /webhooks/linear is no different" \
+    "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$LW_OFF/webhooks/linear")" \
+    "404"
+  for route in $INGEST_ROUTES; do
+    check "closed: $route stays the 404 it was" \
+      "$(post_code "$LW_OFF" "$route" '{"run":"X"}' '')" "404"
+  done
+else
+  bad "closed: server starts with no Linear webhook secret"
+fi
+
+echo "== wall: the secret file opens it, and the boot log stays quiet =="
+LW_FILE_SECRET='linear-webhook-secret-0123456789abcdef'
+printf '%s\n' "$LW_FILE_SECRET" > "$LW_HARNESS/linear-webhook-secret"
+export HARNESS_DIR="$LW_HARNESS"
+serve "$ING_RUNS" "$ROOT/lw-file.log"; LW_FILE_PORT="$PORT_OUT"
+unset HARNESS_DIR
+if [ -n "$LW_FILE_PORT" ]; then
+  check "file: an unsigned POST reaches a route that now exists" \
+    "$(lw_post "$LW_FILE_PORT" /webhooks/linear '{"type":"Issue"}' '')" "401"
+  check "file: the boot log never echoes the secret" \
+    "$(grep -c "$LW_FILE_SECRET" "$ROOT/lw-file.log" | tr -d ' ')" "0"
+else
+  bad "file: server starts with a Linear webhook secret file"
+fi
+rm -f "$LW_HARNESS/linear-webhook-secret"
+
+echo "== wall: the Linear webhook checks the signature, then the body =="
+LW_SECRET='lw-shared-secret-0123456789abcdef'
+LW_FRESH="{\"type\":\"Issue\",\"action\":\"update\",\"webhookTimestamp\":$(node -e 'process.stdout.write(String(Date.now()))')}"
+LW_STALE="{\"type\":\"Issue\",\"action\":\"update\",\"webhookTimestamp\":$(node -e 'process.stdout.write(String(Date.now() - 120000))')}"
+LW_GOOD="$(lw_sig "$LW_SECRET" "$LW_FRESH")"
+LW_STALE_SIG="$(lw_sig "$LW_SECRET" "$LW_STALE")"
+export HARNESS_DIR="$LW_HARNESS" WALL_LINEAR_WEBHOOK_SECRET="$LW_SECRET"
+serve "$ING_RUNS" "$ROOT/lw-on.log"; LW_PORT="$PORT_OUT"
+unset HARNESS_DIR WALL_LINEAR_WEBHOOK_SECRET
+if [ -z "$LW_PORT" ]; then
+  bad "linear: server starts with a Linear webhook secret"
+else
+check "linear: no Linear-Signature header is 401" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_FRESH" '')" "401"
+check "linear: a signature of the wrong length is 401" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_FRESH" "$(printf '%s' "$LW_GOOD" | cut -c1-32)")" "401"
+check "linear: a signature of the right length but wrong value is 401" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_FRESH" "$(printf '%064d' 0)")" "401"
+check "linear: an uppercase signature is not the hex it asks for" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_FRESH" "$(printf '%s' "$LW_GOOD" | tr 'a-f' 'A-F')")" "401"
+check "linear: a signed body signed with the wrong secret is 401" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_FRESH" "$(lw_sig "not-$LW_SECRET" "$LW_FRESH")")" "401"
+check "linear: a genuine signature over a stale timestamp is 401" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_STALE" "$LW_STALE_SIG")" "401"
+check "linear: a genuine delivery is 200" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_FRESH" "$LW_GOOD")" "200"
+check "linear: and so is the trailing slash a proxy may add" \
+  "$(lw_post "$LW_PORT" /webhooks/linear/ "$LW_FRESH" "$LW_GOOD")" "200"
+check "linear: each 200 says so on stdout, named by type and action" \
+  "$(grep -c '\[wall\] linear webhook: Issue update' "$ROOT/lw-on.log" | tr -d ' ')" "2"
+LW_ARRAY="[$LW_FRESH]"
+check "linear: a signed body that is a JSON array is 400" \
+  "$(lw_post "$LW_PORT" /webhooks/linear "$LW_ARRAY" "$(lw_sig "$LW_SECRET" "$LW_ARRAY")")" "400"
+check "linear: a signed body that is not JSON at all is 400" \
+  "$(lw_post "$LW_PORT" /webhooks/linear 'not json' "$(lw_sig "$LW_SECRET" 'not json')")" "400"
+check "linear: an unsigned body over a mebibyte is 413 — size first" \
+  "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST \
+     -H 'Content-Type: application/json' \
+     --data-binary "@$BIG" "http://127.0.0.1:$LW_PORT/webhooks/linear")" "413"
+check "linear: GET is the 404 of every ingest route on GET" \
+  "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$LW_PORT/webhooks/linear")" \
+  "404"
+check "linear: the bearer alone, with no signature, is still 401" \
+  "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST \
+     -H 'Content-Type: application/json' -H "Authorization: Bearer anything" \
+     -d "$LW_FRESH" "http://127.0.0.1:$LW_PORT/webhooks/linear")" "401"
+fi
+
 # --- a reported run becomes a row, in the console view only ---------------------
 echo "== wall: a run that is only somewhere else =="
 BEFORE_PUBLIC="$(get "$ING_PORT" /api/runs)"
@@ -7121,9 +7230,12 @@ HOOKED="$(get "$ING_PORT" '/api/runs?view=console' \
 check "hooks: two tool calls, the second one named, and when" \
   "$HOOKED" "2|Edit|$ING_NOW"
 HOOK_STATE=""
+# The store is debounced to one write a second, so poll for the entry itself:
+# jq prints nothing while HOOKED-1 is absent (an all-null line would end the
+# loop before the write ever lands).
 for _ in $(seq 1 40); do
-  HOOK_STATE="$(jq -r '.["HOOKED-1"].hooks
-    | "\(.stops)|\(.ended)|\(.sessions | length)"' "$ING_FILE" 2>/dev/null || true)"
+  HOOK_STATE="$(jq -r 'if has("HOOKED-1") then .["HOOKED-1"].hooks
+    | "\(.stops)|\(.ended)|\(.sessions | length)" else empty end' "$ING_FILE" 2>/dev/null || true)"
   [ -n "$HOOK_STATE" ] && break
   sleep 0.05
 done
