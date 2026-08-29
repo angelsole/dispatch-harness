@@ -29,6 +29,11 @@
 # Usage: bash tests/visual-gate.test.sh
 set -u
 
+# This suite deliberately runs visual gates that fail and checks their exit
+# codes. Do not let those nested gates overwrite a parent run_gate() tracer and
+# make an unrelated lint/test failure look like one of these expected failures.
+unset HARNESS_GATE_STEP
+
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="$SRC/profiles/visual"
 CREATIVE="$PROFILE/creative"

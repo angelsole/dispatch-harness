@@ -539,15 +539,88 @@ until something is actually wrong.
 
 ## Ticket sync
 
-An overnight run has no orchestrator watching for its result. When a run
-reaches `ready` and its run id starts with a `TEAM-123` identifier, the
-pipeline comments the draft-PR link on the Linear ticket and moves the ticket
-to its team's **In Review** state (matched against the team's real state
-names, "In Review" by name first, else the `started`-type state mentioning
-"review"). It reads the same `linear-api-key` file the quartermaster uses,
-logs everything to `runs/<RUN-ID>/ticket-sync.log`, and is strictly
-best-effort — a Linear hiccup never fails a run. `HARNESS_TICKET_SYNC=0`
-disables it. Ad-hoc runs (no ticket-shaped id) are skipped automatically.
+An overnight run has no orchestrator watching for its result, and a teammate
+looking at Linear used to have no way to tell that a ticket was being built at
+all — the pipeline's whole footprint was one comment at the very end. Now the
+ticket carries the run while it runs, in three layers you switch on
+independently. All three are gated by the same two things: a run id that starts
+with a `TEAM-123` identifier (ad-hoc runs are skipped automatically) and
+`HARNESS_TICKET_SYNC` left at `1`. All three are best-effort in the strongest
+sense — no Linear failure ever changes a run's status or exit code.
+
+**1. The comment and the state move** (needs `linear-api-key`, the same file the
+quartermaster reads). On `ready`, the draft-PR link is commented on the ticket
+and the ticket moves to its team's **In Review** state — matched against the
+team's real state names, "In Review" by name first, else the `started`-type
+state mentioning "review". This is what the harness has always done.
+
+**2. The attachment card** (needs `linear-api-key` **and**
+`HARNESS_RUN_LINK_BASE`). One attachment on the issue, re-sent on every stage:
+title `Dispatch run <RUN-ID>`, subtitle the stage the run is in right now, and
+provider/owner/branch/host as attributes. Its URL — the run's deep link on the
+wall, `$HARNESS_RUN_LINK_BASE/console#<RUN-ID>` — is also its identity: Linear
+updates the original attachment when the same URL comes back on the same issue,
+so the card tracks the run with no bookkeeping and never accumulates.
+
+**3. The agent session** (needs `linear-agent-credentials`). The run becomes a
+Linear *agent session* on its issue: every stage is an activity on a timeline
+rendered as the app, not as you. Stages map to Linear's five activity shapes —
+an ordinary handoff is an `action`, the implementer's pause is an `elicitation`
+carrying `QUESTIONS.md` (the session shows as awaiting input), a capacity
+deferral is a `thought`, `rejected` and every other failing outcome is an
+`error`, and `ready` is a `response` carrying the PR link, with the PR added to
+the session as an external URL labelled "Pull Request". While a stage runs long,
+the driver's heartbeat posts an *ephemeral* thought carrying the run's current
+activity line at most once per `HARNESS_LINEAR_HEARTBEAT_SECS` (default 300), so
+a long implementer never reaches the 30 minutes after which Linear marks a
+session stale. Agents do not count as billable users.
+
+When layers 2 and 3 are both on, both run: the card is the always-visible
+summary, the session is the timeline. The end-of-run comment is *not* duplicated
+— with a session open the PR link is the session's `response`, which Linear
+mirrors as a comment. If that response is rejected, the old comment goes out
+instead, because a ticket must never end without its PR link.
+
+Everything every layer sends, and everything Linear answers, lands in
+`runs/<RUN-ID>/ticket-sync.log`. A failure adds a line starting
+`LINEAR ERROR <mutation>:` — that grep is the operator's live test:
+
+```bash
+grep 'LINEAR ERROR' ~/.claude/harness/runs/<RUN-ID>/ticket-sync.log
+```
+
+### Registering the agent
+
+Layer 3 needs a Linear OAuth app; layers 1 and 2 do not. The harness is
+push-only — it sits behind Tailscale with no inbound URL — so the app is
+registered with **no webhook** and authenticates with the `client_credentials`
+grant, which returns a 30-day app actor token with no browser step. The harness
+mints it, caches it in `linear-agent-token`, and re-mints it on expiry or a
+`401`.
+
+1. A workspace admin opens `https://linear.app/settings/api/applications/new`.
+   The name and icon are how the agent appears in Linear (the name may not
+   contain "Linear" or "http"). One redirect URI is required even though nothing
+   uses it — `http://localhost/unused` is fine. Distribution: private.
+2. Toggle on **client credentials tokens**. Register **no webhook**.
+3. Put the client id and secret in `~/.claude/harness/linear-agent-credentials`,
+   mode 600, on the machine that dispatches ticketed runs — two `key=value`
+   lines and nothing else:
+
+   ```
+   client_id=<Linear OAuth app client id>
+   client_secret=<Linear OAuth app client secret>
+   ```
+
+4. Set `HARNESS_RUN_LINK_BASE` to the team wall's base URL, no trailing slash
+   (e.g. `http://mini:4711`), so sessions and cards link back to the run.
+5. Dispatch a real ticket and look at the issue. Linear's docs describe the
+   Agent Session UI as appearing once an app subscribes to `AgentSessionEvent`
+   webhooks; whether a *proactively created* session renders without that
+   subscription is not documented, so this step is a live check, not a promise.
+   If the session does not render, the attachment card still does, and
+   subscribing the app to those webhooks would need a public HTTPS endpoint —
+   a separate decision.
 
 ## Runs from any machine (`HARNESS_MIRROR`)
 
