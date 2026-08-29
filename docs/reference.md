@@ -766,7 +766,7 @@ time and never overwrites an existing copy:
 - **`demo.conf.sh`** — object-storage remote (`R2_REMOTE`, `R2_PUBLIC`) for
   uploading PR demo videos.
 
-Four more files are **not** seeded, because they are credentials and you should
+Five more files are **not** seeded, because they are credentials and you should
 create them deliberately, mode 600:
 
 - **`linear-api-key`** (`LINEAR_API_KEY_FILE` to move it), read by
@@ -777,15 +777,20 @@ create them deliberately, mode 600:
   the `client_id=` / `client_secret=` of the workspace's Linear OAuth app, one
   per line. Present, and every ticketed run opens
   [an agent session on its issue](operations.md#registering-the-agent); absent,
-  that layer does not exist. A fifth file, **`linear-agent-token`**, is written
-  *by the harness* beside it: the 30-day app token minted from those
-  credentials, mode 600, re-minted on expiry or a `401`. Delete it freely — it
-  is a cache.
+  that layer does not exist.
+- **`linear-webhook-secret`**, the signing secret of the Linear webhook the
+  wall answers at `/webhooks/linear` — pasted from the webhook's page on the
+  app, first line only. Read by `wall.sh` on the wall machine, never by a run;
+  absent, the route does not exist.
 - **`verifier-api-key`** (`VERIFIER_API_KEY_FILE` to move it), read by
   [the verifier](#the-verifier).
 - **`zai-api-key`** (`ZAI_API_KEY_FILE` to move it), read only by runs pinned to
   [GLM as the implementer](#glm-as-the-implementer). A run pinned to `zai`
   without it ends `setup_failed` before it spawns anything.
+
+A sixth file, **`linear-agent-token`**, is written *by the harness* beside
+those five: the 30-day app token minted from the credentials above, mode 600,
+re-minted on expiry or a `401`. Delete it freely — it is a cache.
 
 ## The run directory
 

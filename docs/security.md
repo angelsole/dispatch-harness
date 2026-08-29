@@ -115,6 +115,15 @@ value you are willing to have in the environment of every worker on every
 machine that dispatches, do not reuse a token that means anything else, and keep
 the wall off the public internet — which was already the rule.
 
+The wall is still not on the internet. Tailscale Funnel publishes exactly one
+path, `/webhooks/linear`
+([Operations](operations.md#exposing-the-webhook-path)), and its only accepted
+caller is a request Linear signed — an HMAC over the body with
+`linear-webhook-secret` on the wall machine. A leaked copy of that secret lets
+someone POST harmless 200s to a route that stores nothing, and it is rotated on
+Linear's side, on the webhook's detail page; nothing in this repo generates or
+renews it.
+
 **What the wall refuses to keep.** The worker's metrics carry the operator's
 identity beside the numbers: `user.email`, `user.id`, `user.account_uuid`,
 `user.account_id`, `organization.id`, `terminal.type`. All six are dropped at

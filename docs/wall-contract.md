@@ -230,12 +230,23 @@ and no dispatch sends anything.
 | `POST /api/ingest/hook` | `{run, at, host, session_id, cwd, hook_event_name, prompt_id, tool_name, reason, tool_input:{command, file_path, description}}` — written by `lib/wall-hook.sh` | `204` |
 | `POST /v1/metrics` | OTLP/HTTP JSON `ExportMetricsServiceRequest` from the worker's own exporter | `200 {}` |
 | `POST /v1/logs`, `POST /v1/traces` | anything | `200 {}`, discarded unread |
+| `POST /webhooks/linear` | a Linear webhook delivery, signed — see below | `200 {}`, kept nowhere |
 
 `Authorization: Bearer <WALL_INGEST_TOKEN>` must match exactly, or `401`. A body
 over 1 MiB is `413`; a body that is not a JSON object is `400`. `GET` on any of
 these paths is the 404 it has always been. The handler is bound by the same rule
 as the disk side — **read what is there, never throw**: a report the wall cannot
 make sense of is dropped, and the wall keeps serving.
+
+`POST /webhooks/linear` is the exception to the bearer: no `Authorization`
+header is asked for or accepted. It authenticates by `Linear-Signature`, an
+HMAC-SHA256 over the raw body keyed by `WALL_LINEAR_WEBHOOK_SECRET`; with that
+secret unset the route is the 404 of an unknown path, and a body over 1 MiB is
+`413` before the signature is even read. A signature that is missing, malformed
+or wrong, or a `webhookTimestamp` more than 60 s from now, is a `401` with an
+empty body; a verified delivery is answered `200 {}`, named on stdout as
+`[wall] linear webhook: <type> <action>`, and stored nowhere — the two-files
+contract below keeps holding.
 
 Two rules make this additive rather than a change to the format:
 

@@ -263,7 +263,11 @@ On each laptop that should report there, from its clone of this repo
 
 `wall-url` defaults to the machine's Tailscale IPv4 and the wall's port; pass
 `--url http://…` to override. `WALL_INGEST_TOKEN` in the environment still wins
-over the file.
+over the file. The Linear webhook secret works the same way:
+`WALL_LINEAR_WEBHOOK_SECRET` in the environment, or the first line of
+`<HARNESS_DIR>/linear-webhook-secret` — pasted by the operator from the
+webhook's page on the Linear app, nothing generates it. With neither,
+`/webhooks/linear` is the 404 of an unknown page.
 
 The wall reads run dirs, and run dirs are on one disk. **Ingest** is the other
 direction: a run POSTs what it is doing to a wall, so four people on four
@@ -284,6 +288,7 @@ delay or fail a run:
 | `POST /api/ingest/stage` | `run-task.sh`, on every stage handoff | the stage text and the run's identity: host, owner, repo, provider, model, worktree, branch, base, PR URL, status |
 | `POST /api/ingest/hook` | `lib/wall-hook.sh`, from the worker's `PostToolUse` / `Stop` / `SessionEnd` hooks | the event name, the session, and the tool name plus its command / file path / description, each capped at 200 characters |
 | `POST /v1/metrics` | the worker's own OpenTelemetry exporter | `claude_code.token.usage`, `claude_code.cost.usage`, `claude_code.session.count` |
+| `POST /webhooks/linear` | Linear itself, not a run — its agent-session events, the subscription that unlocks agent sessions on the app | Linear → wall, signed, nothing stored: verified against the signing secret, answered `200 {}`, discarded |
 
 A run the wall has never seen on disk becomes a **row of its own**, marked
 remote. A run that is *both* on disk (mirrored) and reporting is **one row** —
@@ -314,7 +319,9 @@ returned before ingest existed: no telemetry on any run, and no remote rows at
 all. The city, the towers, the district and the summary are computed from the
 disk alone. There is still no auth on any GET route, and the token is a
 LAN-dashboard secret, not a vendor credential — see
-[Security](security.md#the-wall-ingest-token).
+[Security](security.md#the-wall-ingest-token). The one public path is
+`/webhooks/linear`, and it is authenticated by Linear's HMAC signature, not
+by the bearer — the wall's only internet-facing caller is Linear itself.
 
 ## Which tower a run stands in
 
