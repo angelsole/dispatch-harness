@@ -243,8 +243,9 @@ header is asked for or accepted. It authenticates by `Linear-Signature`, an
 HMAC-SHA256 over the raw body keyed by `WALL_LINEAR_WEBHOOK_SECRET`; with that
 secret unset the route is the 404 of an unknown path, and a body over 1 MiB is
 `413` before the signature is even read. A signature that is missing, malformed
-or wrong, or a `webhookTimestamp` more than 60 s from now, is a `401` with an
-empty body; a verified delivery is answered `200 {}`, named on stdout as
+or wrong, or a `webhookTimestamp` more than 60 s older or newer than the wall's
+clock, is a `401` with an empty body; a verified delivery is answered `200 {}`,
+named on stdout as
 `[wall] linear webhook: <type> <action>`, and stored nowhere — the two-files
 contract below keeps holding.
 
