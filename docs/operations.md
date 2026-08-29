@@ -654,6 +654,10 @@ it. Point it at your own wall, not at a shared box.
 
 ### Mirror or ingest?
 
+Joining a laptop to the team's wall is `wall.sh --init-token` once on the wall's
+machine and `install.sh --team <ssh host>` on the laptop — see
+[the wall's ingest section](wall.md#ingest).
+
 There are two ways a run on your laptop reaches a wall on another machine, and
 they answer different questions.
 

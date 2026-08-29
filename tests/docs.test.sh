@@ -116,7 +116,7 @@ PREREQ_BINS='claude gh jq git bash curl perl lsof uuidgen'
 # open docs/, and README's Prerequisites table is the single answer; letting a
 # binary count as documented because a design note happens to mention it in
 # passing would be a weaker check than the one this replaces.
-DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl magick'
+DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl magick tailscale'
 
 # Guarded at every call site and degrade silently when absent — README owes
 # them nothing.
