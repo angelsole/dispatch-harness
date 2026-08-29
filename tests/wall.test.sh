@@ -7058,6 +7058,10 @@ if [ -n "$LW_OFF" ]; then
     check "closed: POST $route is the 404 any unknown path is" \
       "$(lw_post "$LW_OFF" "$route" '{"type":"Issue"}' '')" "404"
   done
+  check "closed: an oversized webhook body is still rejected size first" \
+    "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST \
+       -H 'Content-Type: application/json' --data-binary "@$BIG" \
+       "http://127.0.0.1:$LW_OFF/webhooks/linear")" "413"
   check "closed: GET /webhooks/linear is no different" \
     "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$LW_OFF/webhooks/linear")" \
     "404"

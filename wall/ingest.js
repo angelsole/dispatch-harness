@@ -492,10 +492,10 @@ function handle(req, res, pathname) {
   // its signature check (the signature needs the body in hand), so it branches
   // out ahead of the enabled/authorised order the report routes keep.
   if (pathname === '/webhooks/linear' || pathname === '/webhooks/linear/') {
-    if (LINEAR_SECRET === '') return send(res, 404, 'wall: no such page\n');
     return readBody(req, (err, text) => {
       if (err === 'too-large') return send(res, 413, 'wall: report too large\n');
       if (err) return undefined;   // the client hung up; there is nobody to answer
+      if (LINEAR_SECRET === '') return send(res, 404, 'wall: no such page\n');
       const verdict = verifyLinear(req, text);
       if (verdict.code) {
         return send(res, verdict.code, verdict.code === 400 ? 'wall: bad JSON\n' : '');
