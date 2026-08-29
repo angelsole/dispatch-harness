@@ -649,16 +649,17 @@ by default — it is
 
 ```bash
 /Applications/Tailscale.app/Contents/MacOS/Tailscale funnel --bg \
-  --set-path /webhooks/linear http://127.0.0.1:4711
+  --set-path /webhooks/linear http://127.0.0.1:4711/webhooks/linear
 ```
 
 The listener is 443 (Funnel allows 443, 8443 and 10000 only); the target is
-the bare local origin, because Funnel forwards the request path and the route
-tolerates the trailing slash a proxy may re-join onto it. `funnel status`
-lists what is published; `funnel off` unpublishes all of it. The command
-above follows the Tailscale KB and is written unverified against a live
-client — check `tailscale funnel --help` on the wall machine if it is
-rejected.
+the wall's matching route because Funnel removes the configured mount prefix
+before proxying. A request for the exact mount therefore reaches
+`/webhooks/linear`, while the route also tolerates the trailing slash Funnel
+may re-join onto it. `funnel status` lists what is published; `funnel off`
+unpublishes all of it. The command above follows the Tailscale KB and is
+written unverified against a live client — check `tailscale funnel --help` on
+the wall machine if it is rejected.
 
 The proof the mapping reached the route is a `curl` from anywhere:
 
