@@ -591,18 +591,29 @@ grep 'LINEAR ERROR' ~/.claude/harness/runs/<RUN-ID>/ticket-sync.log
 
 ### Registering the agent
 
-Layer 3 needs a Linear OAuth app; layers 1 and 2 do not. The harness is
-push-only — it sits behind Tailscale with no inbound URL — so the app is
-registered with **no webhook** and authenticates with the `client_credentials`
-grant, which returns a 30-day app actor token with no browser step. The harness
-mints it, caches it in `linear-agent-token`, and re-mints it on expiry or a
-`401`.
+Layer 3 needs a Linear OAuth app; layers 1 and 2 do not. The app authenticates
+with the `client_credentials` grant, which returns a 30-day app actor token
+with no browser step — the harness mints it, caches it in
+`linear-agent-token`, and re-mints it on expiry or a `401`. Agent sessions are
+gated behind a webhook, though: Linear answers `agentSessionCreateOnIssue`
+with *"Agent sessions are not enabled for this application"* until the app
+enables webhooks and selects **Agent session events**. The wall receives that
+webhook — its one path on the public internet, signed by Linear and answered
+with a 200 and nothing else ([Exposing the webhook
+path](#exposing-the-webhook-path)).
 
 1. A workspace admin opens `https://linear.app/settings/api/applications/new`.
    The name and icon are how the agent appears in Linear (the name may not
    contain "Linear" or "http"). One redirect URI is required even though nothing
    uses it — `http://localhost/unused` is fine. Distribution: private.
-2. Toggle on **client credentials tokens**. Register **no webhook**.
+2. Toggle on **client credentials tokens**. Enable **Webhooks** on the same
+   app: URL `https://<wall-host>.<tailnet>.ts.net/webhooks/linear`, and tick
+   **Agent session events**. Copy the signing secret the page shows into
+   `~/.claude/harness/linear-webhook-secret` (first line, mode 600) **on the
+   wall machine**, then restart the wall so it reads the file. Do this only
+   after the Funnel subsection below — the URL should already answer when
+   Linear first delivers to it (Linear does not document validating the URL on
+   save, so the order is caution, not requirement).
 3. Put the client id and secret in `~/.claude/harness/linear-agent-credentials`,
    mode 600, on the machine that dispatches ticketed runs — two `key=value`
    lines and nothing else:
@@ -614,13 +625,52 @@ mints it, caches it in `linear-agent-token`, and re-mints it on expiry or a
 
 4. Set `HARNESS_RUN_LINK_BASE` to the team wall's base URL, no trailing slash
    (e.g. `http://mini:4711`), so sessions and cards link back to the run.
-5. Dispatch a real ticket and look at the issue. Linear's docs describe the
-   Agent Session UI as appearing once an app subscribes to `AgentSessionEvent`
-   webhooks; whether a *proactively created* session renders without that
-   subscription is not documented, so this step is a live check, not a promise.
-   If the session does not render, the attachment card still does, and
-   subscribing the app to those webhooks would need a public HTTPS endpoint —
-   a separate decision.
+5. Dispatch a real ticket and look at the issue: the session renders, and
+   `runs/<RUN-ID>/ticket-sync.log` has no `LINEAR ERROR
+   agentSessionCreateOnIssue` line. Without the webhook that mutation is
+   refused with *"Agent sessions are not enabled for this application"* —
+   observed 29 Aug 2026 on the first ticketed run, one refusal per stage while
+   it retried. The attachment card works either way; only the session needs
+   the webhook.
+
+#### Exposing the webhook path
+
+Linear delivers to a public HTTPS URL that must answer within 5 s. The wall
+has exactly one such path: `/webhooks/linear`, published with Tailscale
+Funnel on the wall machine. Everything else — the console, `/api/runs`, the
+ingest routes, every GET that has never had auth — stays on the tailnet
+exactly as before: Funnel is granted per path, not per machine.
+
+Prerequisites, once per tailnet: the `funnel` node attribute on the wall
+machine in the tailnet policy file, MagicDNS, and HTTPS certificates (the
+Tailscale Funnel guide covers all three). On macOS the CLI is not on `PATH`
+by default — it is
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale`. Then:
+
+```bash
+/Applications/Tailscale.app/Contents/MacOS/Tailscale funnel --bg \
+  --set-path /webhooks/linear http://127.0.0.1:4711/webhooks/linear
+```
+
+The listener is 443 (Funnel allows 443, 8443 and 10000 only); the target is
+the wall's matching route because Funnel removes the configured mount prefix
+before proxying. A request for the exact mount therefore reaches
+`/webhooks/linear`, while the route also tolerates the trailing slash Funnel
+may re-join onto it. `funnel status` lists what is published; `funnel off`
+unpublishes all of it. The command above follows the Tailscale KB and is
+written unverified against a live client — check `tailscale funnel --help` on
+the wall machine if it is rejected.
+
+The proof the mapping reached the route is a `curl` from anywhere:
+
+```bash
+curl -si https://<wall-host>.<tailnet>.ts.net/webhooks/linear -X POST -d '{}'
+```
+
+**401** is the answer wanted: the route was reached and refused an unsigned
+body. **404** means the request did not arrive as `/webhooks/linear` — or the
+wall was restarted before the secret file existed — and a timeout means
+Funnel itself is not up.
 
 ## Runs from any machine (`HARNESS_MIRROR`)
 

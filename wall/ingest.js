@@ -8,16 +8,23 @@
 // becomes a row on the mini's board; a run that is already on disk gains live
 // telemetry beside it.
 //
-// Fail-closed: with WALL_INGEST_TOKEN unset every route below is a 404 and the
-// wall is the read-only server it has always been. Same philosophy as the disk
-// side — a malformed report is dropped, never thrown.
+// A fourth route, POST /webhooks/linear, is Linear's own: what it delivers is
+// verified against Linear's HMAC signature and kept nowhere — it exists so the
+// app may subscribe to Agent session events, not because anything reads them.
 //
-// node:fs only, like the rest of wall/.
+// Fail-closed: with WALL_INGEST_TOKEN unset every report route below is a 404
+// and the wall is the read-only server it has always been; the Linear webhook
+// fails closed on WALL_LINEAR_WEBHOOK_SECRET the same way. Same philosophy as
+// the disk side — a malformed report is dropped, never thrown.
+//
+// node:fs and node:crypto only, like the rest of wall/.
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const MAX_BODY = 1 << 20;            // 1 MiB, then 413
+const LINEAR_WINDOW_MS = 60 * 1000;  // a Linear delivery older or newer is a replay
 const PRUNE_S = 7 * 24 * 3600;       // an entry nothing has updated for a week
 const WRITE_DEBOUNCE_MS = 1000;      // at most one disk write a second
 const MAX_SESSIONS = 8;              // session ids kept per run, newest last
@@ -40,9 +47,11 @@ const TOKEN_KEY = {
 const ROUTES = new Set([
   '/api/ingest/stage', '/api/ingest/hook',
   '/v1/metrics', '/v1/logs', '/v1/traces',
+  '/webhooks/linear', '/webhooks/linear/',
 ]);
 
 const TOKEN = process.env.WALL_INGEST_TOKEN || '';
+const LINEAR_SECRET = process.env.WALL_LINEAR_WEBHOOK_SECRET || '';
 const RUNS = process.env.WALL_RUNS ||
   path.join(process.env.HOME || '.', '.claude/harness/runs');
 const STORE_FILE = process.env.WALL_INGEST_FILE ||
@@ -58,6 +67,10 @@ let writePending = false;
 
 function str(value) {
   return typeof value === 'string' ? value.slice(0, CLIP) : '';
+}
+
+function logLabel(value) {
+  return str(value).replace(/[\r\n\u2028\u2029]/g, ' ');
 }
 
 function epoch(value) {
@@ -445,9 +458,57 @@ function readBody(req, done) {
   req.on('aborted', () => settle('aborted', ''));
 }
 
+// The Linear webhook's whole auth. Linear signs the raw body with the shared
+// secret; a delivery that fails any check is answered here, explicitly, so no
+// rejection can ever fall through to the catch-below as a 204. Returns
+// { code } to answer, or { payload } for a genuine delivery.
+function verifyLinear(req, body) {
+  const sig = req.headers['linear-signature'];
+  // timingSafeEqual throws on unequal lengths, and Buffer.from never rejects
+  // bad hex — the shape is pinned before either is called.
+  if (typeof sig !== 'string' || !/^[0-9a-f]{64}$/.test(sig)) return { code: 401 };
+  const mac = crypto.createHmac('sha256', LINEAR_SECRET).update(body, 'utf8').digest('hex');
+  if (!crypto.timingSafeEqual(Buffer.from(mac, 'hex'), Buffer.from(sig, 'hex'))) {
+    return { code: 401 };
+  }
+  let payload;
+  try { payload = JSON.parse(body); } catch { return { code: 400 }; }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { code: 400 };
+  }
+  // Only past the HMAC: a forged body must not influence anything, including
+  // the log line.
+  const at = payload.webhookTimestamp;
+  if (typeof at !== 'number' || !Number.isFinite(at) ||
+      Math.abs(Date.now() - at) > LINEAR_WINDOW_MS) return { code: 401 };
+  return { payload };
+}
+
 // One POST. Always answers the request itself; the caller only reaches it for a
 // path handles() claimed.
 function handle(req, res, pathname) {
+  // The Linear webhook is the one route with no bearer: Linear cannot send our
+  // token, so its signature is the auth. Its size check also has to come before
+  // its signature check (the signature needs the body in hand), so it branches
+  // out ahead of the enabled/authorised order the report routes keep.
+  if (pathname === '/webhooks/linear' || pathname === '/webhooks/linear/') {
+    return readBody(req, (err, text) => {
+      if (err === 'too-large') return send(res, 413, 'wall: report too large\n');
+      if (err) return undefined;   // the client hung up; there is nobody to answer
+      if (LINEAR_SECRET === '') return send(res, 404, 'wall: no such page\n');
+      const verdict = verifyLinear(req, text);
+      if (verdict.code) {
+        return send(res, verdict.code, verdict.code === 400 ? 'wall: bad JSON\n' : '');
+      }
+      try {
+        console.log('[wall] linear webhook: ' + (logLabel(verdict.payload.type) || '?') +
+          ' ' + (logLabel(verdict.payload.action) || '?'));
+        return send(res, 200, '{}', 'application/json; charset=utf-8');
+      } catch {
+        return send(res, 204);
+      }
+    });
+  }
   if (!enabled()) return send(res, 404, 'wall: no such page\n');
   if (!authorised(req)) return send(res, 401, 'wall: unauthorised\n');
   return readBody(req, (err, text) => {

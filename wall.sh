@@ -61,6 +61,14 @@
 #                      plist never has to carry the secret.
 #   WALL_INGEST_FILE   where reports are kept across a restart
 #                      (default: <runs>/../wall-ingest.json)
+#   WALL_LINEAR_WEBHOOK_SECRET
+#                      the signing secret of the Linear webhook
+#                      (/webhooks/linear), pasted from the webhook's detail
+#                      page on the app. Unset (the default) and that route is
+#                      the 404 of an unknown page. When unset, the first line
+#                      of <HARNESS_DIR>/linear-webhook-secret is used if that
+#                      file exists — nothing generates it, the operator
+#                      pastes it, and it is never printed.
 #
 # The same server also serves /console — the functional ops board over the same
 # run data: what each agent is doing right now, what is blocked, and the attach
@@ -167,6 +175,11 @@ if [ -z "${WALL_INGEST_TOKEN:-}" ] && [ -r "$TOKEN_FILE" ]; then
   WALL_INGEST_TOKEN=$(head -n 1 "$TOKEN_FILE" | tr -d '[:space:]')
 fi
 
+LINEAR_WEBHOOK_FILE="$HARNESS_DIR/linear-webhook-secret"
+if [ -z "${WALL_LINEAR_WEBHOOK_SECRET:-}" ] && [ -r "$LINEAR_WEBHOOK_FILE" ]; then
+  WALL_LINEAR_WEBHOOK_SECRET=$(head -n 1 "$LINEAR_WEBHOOK_FILE" | tr -d '[:space:]')
+fi
+
 command -v node >/dev/null 2>&1 || {
   echo "wall.sh: node (>= 20) is required — https://nodejs.org" >&2; exit 1
 }
@@ -176,4 +189,5 @@ command -v node >/dev/null 2>&1 || {
 
 exec env WALL_PORT="$PORT" WALL_HOST="$HOST" WALL_RUNS="$RUNS" WALL_CREW="$CREW" \
   WALL_INGEST_TOKEN="${WALL_INGEST_TOKEN:-}" \
+  WALL_LINEAR_WEBHOOK_SECRET="${WALL_LINEAR_WEBHOOK_SECRET:-}" \
   WALL_CITY="$CITY" node "$SRC/wall/server.js"
