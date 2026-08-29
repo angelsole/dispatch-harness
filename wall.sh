@@ -44,7 +44,7 @@
 #                                       <HARNESS_DIR>/wall-url (the Tailscale
 #                                       IP + port unless --url says otherwise),
 #                                       then exit. Laptops join with
-#                                       `install.sh --team <ssh host>`.
+#                                       `./install.sh --team <ssh host>`.
 #
 # Env:
 #   HARNESS_DIR     where runs live      (default: ~/.claude/harness)
@@ -159,7 +159,7 @@ if [ "$INIT_TOKEN" -eq 1 ]; then
   echo "wrote $URL_FILE ($URL)"
   echo
   echo "Restart the wall so it reads the token (launchctl kickstart -k gui/\$(id -u)/<label>, or re-run wall.sh)."
-  echo "On each laptop that should report here:  ~/.claude/harness/install.sh --team <ssh host of this machine>"
+  echo "On each laptop that should report here, from its dispatch-harness checkout:  ./install.sh --team <ssh host of this machine>"
   exit 0
 fi
 

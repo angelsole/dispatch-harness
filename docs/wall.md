@@ -254,10 +254,11 @@ seam is real.
 launchctl kickstart -k gui/$(id -u)/<label>   # or re-run wall.sh: it reads the token file itself
 ```
 
-On each laptop that should report there:
+On each laptop that should report there, from its clone of this repo
+(`install.sh` lives in the checkout, not under `~/.claude/harness`):
 
 ```bash
-~/.claude/harness/install.sh --team <ssh host>   # reads both files over ssh, writes notify.conf
+./install.sh --team <ssh host>   # reads both files over ssh, writes notify.conf
 ```
 
 `wall-url` defaults to the machine's Tailscale IPv4 and the wall's port; pass
