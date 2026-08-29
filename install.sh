@@ -19,6 +19,12 @@
 #   ./install.sh --verifier       also build the opt-in verifier venv (needs python3)
 #   ./install.sh --pixel          also install /dispatch-pixel, the visual planner
 #   ./install.sh --no-pixel       never install it
+#   ./install.sh --team <host>    join the team's wall: read its URL and ingest
+#                                 token over ssh from <host> (where someone ran
+#                                 `wall.sh --init-token`) and write
+#                                 HARNESS_WALL_URL / HARNESS_WALL_TOKEN into
+#                                 notify.conf. Nothing is typed, nothing is
+#                                 pasted; re-running replaces the two lines.
 #
 # /dispatch-pixel is the planner protocol for the visual profile. Without either
 # flag it is installed only on a machine that already does visual work: one that
@@ -46,8 +52,9 @@ MODE=symlink
 STATUSLINE=ask
 VERIFIER=0
 PIXEL=auto
-for arg in "$@"; do
-  case "$arg" in
+TEAM=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --copy)          MODE=copy ;;
     --symlink)       MODE=symlink ;;
     --statusline)    STATUSLINE=yes ;;
@@ -55,9 +62,13 @@ for arg in "$@"; do
     --verifier)      VERIFIER=1 ;;
     --pixel)         PIXEL=yes ;;
     --no-pixel)      PIXEL=no ;;
+    --team)          [ $# -ge 2 ] || { echo "install.sh: --team needs an ssh host" >&2; exit 2; }
+                     TEAM="$2"; shift ;;
+    --team=*)        TEAM="${1#--team=}" ;;
     -h|--help)       usage; exit 0 ;;
-    *)               echo "unknown option: $arg" >&2; echo >&2; usage >&2; exit 2 ;;
+    *)               echo "unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
   esac
+  shift
 done
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -234,6 +245,34 @@ seed() {  # $1 = example file, $2 = dest basename
 seed notify.conf.example    notify.conf
 seed repos.local.sh.example repos.local.sh
 seed demo.conf.sh.example   demo.conf.sh
+
+# Join the team's wall. The two values come over ssh from the machine that runs
+# it — wall.sh --init-token wrote them there — and land in notify.conf as the
+# two knobs run-task.sh reads. The token is never printed; a re-run replaces
+# the lines rather than stacking them.
+team_join() {  # $1 = ssh host of the wall
+  local out url token conf tmp
+  out=$(ssh -o BatchMode=yes "$1" \
+      'd="${HARNESS_DIR:-$HOME/.claude/harness}"; cat "$d/wall-url" && cat "$d/wall-ingest-token"' 2>/dev/null) \
+    || { echo "team  could not read the wall's url and token from $1 over ssh — run 'wall.sh --init-token' there first, and check 'ssh $1' works without a prompt" >&2; return 1; }
+  url=$(printf '%s\n' "$out" | sed -n 1p | tr -d '[:space:]')
+  token=$(printf '%s\n' "$out" | sed -n 2p | tr -d '[:space:]')
+  [ -n "$url" ] && [ -n "$token" ] \
+    || { echo "team  $1 has no wall-url / wall-ingest-token — run 'wall.sh --init-token' there first" >&2; return 1; }
+  conf="$HARNESS_DIR/notify.conf"
+  [ -e "$conf" ] || cp "$SRC/notify.conf.example" "$conf"
+  tmp=$(mktemp "$HARNESS_DIR/.notify.conf.XXXXXX") || return 1
+  if ( umask 077
+       grep -v -E '^#? ?HARNESS_WALL_(URL|TOKEN)=' "$conf"
+       printf 'HARNESS_WALL_URL="%s"\nHARNESS_WALL_TOKEN="%s"\n' "$url" "$token" ) > "$tmp" \
+     && mv "$tmp" "$conf"; then
+    chmod 600 "$conf"
+    echo "team  $conf now reports this machine's runs to $url"
+  else
+    rm -f "$tmp"; echo "team  could not update $conf" >&2; return 1
+  fi
+}
+if [ -n "$TEAM" ]; then team_join "$TEAM" || exit 1; fi
 
 wire_statusline
 

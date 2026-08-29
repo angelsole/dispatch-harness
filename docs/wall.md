@@ -247,6 +247,23 @@ seam is real.
 
 ## Ingest
 
+**Two commands, no secrets typed.** On the machine that runs the team's wall:
+
+```bash
+~/.claude/harness/wall.sh --init-token        # writes wall-ingest-token (600) + wall-url, then exits
+launchctl kickstart -k gui/$(id -u)/<label>   # or re-run wall.sh: it reads the token file itself
+```
+
+On each laptop that should report there:
+
+```bash
+~/.claude/harness/install.sh --team <ssh host>   # reads both files over ssh, writes notify.conf
+```
+
+`wall-url` defaults to the machine's Tailscale IPv4 and the wall's port; pass
+`--url http://…` to override. `WALL_INGEST_TOKEN` in the environment still wins
+over the file.
+
 The wall reads run dirs, and run dirs are on one disk. **Ingest** is the other
 direction: a run POSTs what it is doing to a wall, so four people on four
 machines watch one board. It is off unless the wall is started with a token:

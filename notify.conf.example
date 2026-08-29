@@ -25,5 +25,6 @@ HARNESS_NTFY_TOPIC=""
 # one board sees every run wherever it was dispatched. The wall must be started
 # with a matching WALL_INGEST_TOKEN; without one it refuses every report.
 # Both unset (the default) means no outbound traffic of any kind.
+# `install.sh --team <ssh host>` fills both in from the wall's machine.
 # HARNESS_WALL_URL="http://mini:4711"
 # HARNESS_WALL_TOKEN="a-long-random-string-shared-with-the-wall"

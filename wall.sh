@@ -37,6 +37,14 @@
 #   wall.sh --crew angel,reinier,emre   declare the roster (accepted for
 #                                       compatibility; it adds nothing to the
 #                                       skyline — crew tints are stable already)
+#   wall.sh --init-token [--url URL]    make this the team's wall: write a
+#                                       random ingest token to
+#                                       <HARNESS_DIR>/wall-ingest-token (600)
+#                                       and this wall's URL to
+#                                       <HARNESS_DIR>/wall-url (the Tailscale
+#                                       IP + port unless --url says otherwise),
+#                                       then exit. Laptops join with
+#                                       `install.sh --team <ssh host>`.
 #
 # Env:
 #   HARNESS_DIR     where runs live      (default: ~/.claude/harness)
@@ -47,7 +55,10 @@
 # Fan-in, so runs on other machines reach this board (see docs/wall.md#ingest):
 #   WALL_INGEST_TOKEN  the shared secret runs send as `Authorization: Bearer`.
 #                      Unset (the default) and every ingest route 404s: the wall
-#                      is read-only and accepts nothing at all.
+#                      is read-only and accepts nothing at all. When unset, the
+#                      first line of <HARNESS_DIR>/wall-ingest-token is used if
+#                      that file exists — what --init-token writes, so a launchd
+#                      plist never has to carry the secret.
 #   WALL_INGEST_FILE   where reports are kept across a restart
 #                      (default: <runs>/../wall-ingest.json)
 #
@@ -86,6 +97,10 @@ CREW="${WALL_CREW:-}"
 # rather than silently sending the city's memory back to the default path.
 CITY="${WALL_CITY:-}"
 CITY_GIVEN=0
+INIT_TOKEN=0
+URL=""
+TOKEN_FILE="$HARNESS_DIR/wall-ingest-token"
+URL_FILE="$HARNESS_DIR/wall-url"
 
 # Every flag here takes a value. `shift 2` with only the flag left shifts
 # NOTHING and returns non-zero, so a trailing `wall.sh --port` used to spin this
@@ -102,6 +117,8 @@ while [ $# -gt 0 ]; do
     --runs) need --runs $#; RUNS="$2"; shift 2 ;;
     --city) need --city $#; CITY="$2"; CITY_GIVEN=1; shift 2 ;;
     --crew) need --crew $#; CREW="$2"; shift 2 ;;
+    --init-token) INIT_TOKEN=1; shift ;;
+    --url) need --url $#; URL="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
   esac
@@ -113,6 +130,43 @@ case "$PORT" in ''|*[!0-9]*) echo "wall.sh: --port must be a number" >&2; exit 2
 [ "$CITY_GIVEN" -eq 0 ] || [ -n "$CITY" ] || {
   echo "wall.sh: --city must not be empty" >&2; exit 2; }
 
+# The Tailscale address is the one every teammate's laptop can reach; the CLI
+# lives inside the app bundle on macOS and on PATH on Linux.
+wall_tailscale_ip() {
+  local ts
+  ts=$(command -v tailscale 2>/dev/null) || ts=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  [ -x "$ts" ] || return 1
+  "$ts" ip -4 2>/dev/null | head -n 1 | tr -d '[:space:]'
+}
+
+if [ "$INIT_TOKEN" -eq 1 ]; then
+  mkdir -p "$HARNESS_DIR" || exit 1
+  if [ -s "$TOKEN_FILE" ]; then
+    echo "keep  $TOKEN_FILE (exists — the team's laptops already carry it)"
+  else
+    # 48 hex chars from the kernel; od is POSIX, so no openssl dependency.
+    ( umask 077; head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TOKEN_FILE" \
+        && printf '\n' >> "$TOKEN_FILE" ) \
+      || { echo "wall.sh: could not write $TOKEN_FILE" >&2; exit 1; }
+    chmod 600 "$TOKEN_FILE"
+    echo "wrote $TOKEN_FILE (mode 600)"
+  fi
+  if [ -z "$URL" ]; then
+    ip=$(wall_tailscale_ip) || ip=""
+    URL="http://${ip:-$(hostname -s)}:$PORT"
+  fi
+  printf '%s\n' "$URL" > "$URL_FILE" || { echo "wall.sh: could not write $URL_FILE" >&2; exit 1; }
+  echo "wrote $URL_FILE ($URL)"
+  echo
+  echo "Restart the wall so it reads the token (launchctl kickstart -k gui/\$(id -u)/<label>, or re-run wall.sh)."
+  echo "On each laptop that should report here:  ~/.claude/harness/install.sh --team <ssh host of this machine>"
+  exit 0
+fi
+
+if [ -z "${WALL_INGEST_TOKEN:-}" ] && [ -r "$TOKEN_FILE" ]; then
+  WALL_INGEST_TOKEN=$(head -n 1 "$TOKEN_FILE" | tr -d '[:space:]')
+fi
+
 command -v node >/dev/null 2>&1 || {
   echo "wall.sh: node (>= 20) is required — https://nodejs.org" >&2; exit 1
 }
@@ -121,4 +175,5 @@ command -v node >/dev/null 2>&1 || {
 [ -d "$RUNS" ] || echo "wall.sh: $RUNS does not exist yet — showing the idle screen"
 
 exec env WALL_PORT="$PORT" WALL_HOST="$HOST" WALL_RUNS="$RUNS" WALL_CREW="$CREW" \
+  WALL_INGEST_TOKEN="${WALL_INGEST_TOKEN:-}" \
   WALL_CITY="$CITY" node "$SRC/wall/server.js"
