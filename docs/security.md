@@ -41,6 +41,38 @@ code**, against your repositories. Be clear-eyed about what that means.
   staging/production, and destructive environment-switch tools should be denied
   outright (see above).
 
+## Credentials, and how they travel
+
+Every credential the harness reads is a file you create by hand, mode 600, in
+`HARNESS_DIR` — never a value in a config file the repo ships, never an argument.
+[Local config files](reference.md#local-config-files) lists them all; the Linear
+set is:
+
+- **`linear-api-key`** — your personal Linear key. Reads the ticket, comments the
+  PR link, moves the ticket to In Review.
+- **`linear-agent-credentials`** — the `client_id` / `client_secret` of the
+  workspace's Linear OAuth app, present only where ticketed runs are dispatched.
+  Its blast radius is the whole workspace, so it lives on one machine and is
+  registered by an admin ([Ticket sync](operations.md#ticket-sync)).
+- **`linear-agent-token`** — written by the harness, not by you: the 30-day app
+  actor token minted from those credentials, re-minted on expiry or a `401`. It
+  is a cache; deleting it costs one round trip.
+
+Two rules hold for all of them:
+
+- **Never on argv.** `ps` is world-readable, so a secret handed to `curl` as
+  `-u id:secret` or `-H "Authorization: …"` is visible to every process on the
+  machine. Secrets are written to a mode-600 header file under `umask 077`,
+  passed as `-H @file`, and deleted after the call. GraphQL bodies carry no
+  secret and stay on argv, which is what makes the request logs readable.
+  [`tests/linear-agent.test.sh`](../tests/linear-agent.test.sh) records the full
+  argv of every `curl` the pipeline makes and asserts no credential appears in it.
+- **Never in a log.** `runs/<RUN-ID>/ticket-sync.log` holds every Linear request
+  and its raw response — but a token-minting response is summarised, never
+  echoed. The model stages cannot read any of these files: they are in the `deny`
+  list of `planner-settings.json`, `spec-critic-settings.json` and the visual
+  critic's settings.
+
 ## The worker sandbox and MCP denies
 
 The implementer runs under

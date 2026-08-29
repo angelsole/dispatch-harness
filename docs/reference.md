@@ -73,7 +73,10 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | `HARNESS_OWNER` | Who dispatched the run. Pinned into the run dir on the first dispatch, so a resume from someone else's session never re-attributes it | your login name |
 | `HARNESS_REDISPATCH` | `1` dispatches a run that already reached `done: ready` | unset |
 | `HARNESS_SKIP_PUSH_PREFLIGHT` | `1` skips the setup-time push-auth check. Setup does a `git push --dry-run` against `origin` so a missing push credential (`GH_TOKEN`) fails the run in seconds as `setup_failed` instead of after implement → gate → review → verify; an anonymous read (the setup fetch) passes on a public repo, so only the write path proves the credential. Non-auth push errors never block setup — they are left to the real push at the end. Set this for a local-only dispatch whose remote genuinely cannot take a dry-run push. | unset |
-| `HARNESS_TICKET_SYNC` | `0` disables the [ticket sync](operations.md#ticket-sync) that comments the PR and moves the ticket to In Review | `1` |
+| `HARNESS_TICKET_SYNC` | `0` disables all three [ticket sync](operations.md#ticket-sync) layers: the PR comment and state move, the attachment card, and the agent session | `1` |
+| `LINEAR_AGENT_CREDENTIALS_FILE` | Moves the OAuth app credentials that switch the [agent-session layer](operations.md#ticket-sync) on. Absent file, no layer | `~/.claude/harness/linear-agent-credentials` |
+| `HARNESS_RUN_LINK_BASE` | Base URL of the team's wall, no trailing slash (e.g. `http://mini:4711`). Set, and every ticketed run gets an [attachment card](operations.md#ticket-sync) linking to `<base>/console#<RUN-ID>`, and its agent session carries the same link. Unset, no card | unset |
+| `HARNESS_LINEAR_HEARTBEAT_SECS` | Least time between the ephemeral `thought` activities that keep a long stage's agent session out of Linear's `stale` state. Read by the driver's heartbeat ticker, which starts before `notify.conf` is read — so this one has to come from the environment | `300` |
 | `HARNESS_MIRROR` | ssh target (`host:path`) or local path a live run dir is mirrored to — see [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror) | unset |
 
 ### Notifications and monitoring
@@ -760,13 +763,21 @@ time and never overwrites an existing copy:
 - **`demo.conf.sh`** — object-storage remote (`R2_REMOTE`, `R2_PUBLIC`) for
   uploading PR demo videos.
 
-Three more files are **not** seeded, because they are credentials and you should
+Four more files are **not** seeded, because they are credentials and you should
 create them deliberately, mode 600:
 
 - **`linear-api-key`** (`LINEAR_API_KEY_FILE` to move it), read by
   [the Quartermaster](operations.md#the-quartermaster) and by
   [ticket sync](operations.md#ticket-sync). Without it the quartermaster still
   reports capacity and simply says the queue was unreadable.
+- **`linear-agent-credentials`** (`LINEAR_AGENT_CREDENTIALS_FILE` to move it),
+  the `client_id=` / `client_secret=` of the workspace's Linear OAuth app, one
+  per line. Present, and every ticketed run opens
+  [an agent session on its issue](operations.md#registering-the-agent); absent,
+  that layer does not exist. A fifth file, **`linear-agent-token`**, is written
+  *by the harness* beside it: the 30-day app token minted from those
+  credentials, mode 600, re-minted on expiry or a `401`. Delete it freely — it
+  is a cache.
 - **`verifier-api-key`** (`VERIFIER_API_KEY_FILE` to move it), read by
   [the verifier](#the-verifier).
 - **`zai-api-key`** (`ZAI_API_KEY_FILE` to move it), read only by runs pinned to
@@ -803,7 +814,8 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `segment-report-<n>.md` | In `report` [resume mode](operations.md#turn-ceiling-a-run-that-resumes-itself), the handover the turn-ceiling resume gave segment `<n>+1` about segment `<n>` |
 | `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds, final message and segment reports, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
-| `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
+| `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript — every Linear request, every raw response, and one `LINEAR ERROR <mutation>:` line per failure |
+| `linear-issue.json`, `linear-session`, `linear-heartbeat` | [Ticket sync's](operations.md#ticket-sync) state: the issue lookup, made once per run and re-read by every mutation so they all pass the UUID; the id of the run's agent session, which a re-dispatch reuses rather than opening a second one; and the epoch of the last heartbeat activity |
 
 That table is the paper trail for a human. The same directory is also a **wire
 format**: [Ghost Shift](wall.md) reads it live over the shoulder of a running
