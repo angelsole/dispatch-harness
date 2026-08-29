@@ -78,13 +78,14 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 
 ### Notifications and monitoring
 
-`notify.conf` is the usual home for the first three; the shipped
+`notify.conf` is the usual home for the first four; the shipped
 `notify.conf.example` documents them too.
 
 | Env var | What it does | Default |
 | --- | --- | --- |
-| `HARNESS_NTFY_TOPIC` | ntfy topic every stage handoff is pushed to. Empty disables phone push | empty |
-| `HARNESS_NTFY_SERVER` | Self-hosted ntfy server | the public [ntfy](https://ntfy.sh) service |
+| `HARNESS_NTFY_TOPIC` | ntfy topic every stage handoff is pushed to — the room feed every run dispatched from the machine shares. Empty disables this room feed, not configured per-owner topics | empty |
+| `HARNESS_NTFY_TOPIC_<OWNER>` | Per-owner ntfy topic: a run whose pinned owner has one of these is pushed to it *and* to `HARNESS_NTFY_TOPIC`. `<OWNER>` is the owner's login uppercased with every other character replaced by `_` (`sam.lee` → `SAM_LEE`); an owner without one gets the room feed only, and a value equal to the global topic collapses to one push | unset |
+| `HARNESS_NTFY_SERVER` | Self-hosted ntfy server — one server for every topic above | the public [ntfy](https://ntfy.sh) service |
 | `HARNESS_NOTIFY` | `0` silences the local desktop banners (macOS `osascript`) | `1` |
 | `HARNESS_WATCH_INTERVAL` | Seconds between redraws in `status.sh --watch` | `2` |
 | `HARNESS_STALE_SECS` | How long a run whose status has not moved stays on the statusline | `21600` (6h) |
