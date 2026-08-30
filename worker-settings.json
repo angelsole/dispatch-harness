@@ -50,7 +50,16 @@
       "Bash(mv:*)",
       "Bash(jq:*)",
       "Bash(wc:*)",
-      "Bash(diff:*)"
+      "Bash(diff:*)",
+      "Bash(cargo:*)",
+      "Bash(rustc:*)",
+      "Bash(rustfmt:*)",
+      "Bash(rustup component add:*)",
+      "Bash(bash oracle/run.sh:*)",
+      "Bash(bash oracle/fetch.sh:*)",
+      "Bash(mvn:*)",
+      "Bash(java:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [
       "Bash(git push:*)",

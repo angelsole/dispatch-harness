@@ -256,6 +256,13 @@ has "$ARGV" "--json-schema"    "output: the schema is enforced by the CLI, not a
 has "$ARGV" "--output-format json" "output: and comes back in the CLI's envelope"
 has "$ARGV" "--permission-mode acceptEdits" "confinement: no stage can block on absent hands"
 has "$ARGV" "--max-turns"      "confinement: the pass is turn-capped"
+has "$ARGV" "--model claude-sonnet-5" \
+  "cost: the critic runs on its own model, not the station's default"
+has "$ARGV" "--effort medium" "cost: and at medium effort — it reports, it does not decide"
+( export SPEC_CRITIC_MODEL=claude-opus-5 SPEC_CRITIC_EFFORT=high
+  critic --brief "$BRIEF" --repo "$REPO" >/dev/null )
+has "$(grep '^flags:' "$CLAUDE_LOG" | tail -1)" "--model claude-opus-5 --effort high" \
+  "cost: SPEC_CRITIC_MODEL and SPEC_CRITIC_EFFORT move both"
 has_not "$(cat "$CLAUDE_LOG")" "anthropic:leak-me-not" \
   "confinement: a stray ANTHROPIC_API_KEY cannot bill the critic to the API"
 

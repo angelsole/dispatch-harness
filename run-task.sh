@@ -1424,6 +1424,14 @@ ZAI_BASE_URL="https://api.z.ai/api/anthropic"
 ZAI_KEY_FILE="${ZAI_API_KEY_FILE:-$HARNESS_DIR/zai-api-key}"
 ZAI_TIMEOUT_MS=3000000
 ZAI_SMALL_MODEL=glm-4.7
+# Where a 1M-context implementer compacts. 1M is what the model can hold, not
+# where it works best: past ~300k every turn re-reads a prefix that is mostly
+# stale tool output, and the wall-clock and cache cost of each turn grow with
+# it. 300k is the ceiling the orchestrator sessions run under as well. NOTE: an
+# `env` block in ~/.claude/settings.json is applied with Object.assign over the
+# process environment and wins over this export — set the same number there,
+# or nowhere.
+IMPLEMENTER_COMPACT_WINDOW="${IMPLEMENTER_COMPACT_WINDOW:-300000}"
 # The cheap model both the CLI's own background work and the worker's Explore
 # subagents run on. It has to move with the provider: a subagent left on
 # `sonnet` would be routed to the z.ai endpoint under a model id it does not
@@ -1465,11 +1473,12 @@ apply_provider_env() {
   export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
   export API_TIMEOUT_MS="$ZAI_TIMEOUT_MS"
   export ANTHROPIC_DEFAULT_HAIKU_MODEL="$ZAI_SMALL_MODEL"
-  # The 1M-context variant only behaves as one if the CLI is told where to
-  # compact; left at its default it would compact at 200k against a model
-  # pinned for five times that.
+  # The 1M-context variant needs the CLI told where to compact — left at its
+  # default it would compact at 200k against a model pinned for five times
+  # that. IMPLEMENTER_COMPACT_WINDOW (see the knob above) is where.
   case "$IMPLEMENTER_MODEL" in
-    *'[1m]') export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ;;
+    *'[1m]') export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$IMPLEMENTER_COMPACT_WINDOW" ;;
+    *)       unset CLAUDE_CODE_AUTO_COMPACT_WINDOW ;;
   esac
 }
 
