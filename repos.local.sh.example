@@ -26,6 +26,11 @@
 #                  providers: the pin outranks an exported IMPLEMENTER_PROVIDER,
 #                  so the dispatching machine's default cannot route that repo's
 #                  code to a third party.
+#   HARNESS_PROVIDER_PRIVATE  1 keeps that vendor off the wall and the ticket (card and
+#                  activity say —, stage reports carry no provider); the local
+#                  result.json still says.
+#   HARNESS_MIRROR  mirror this repo's runs to another machine's wall (see
+#                  docs/operations.md) — as a pin, only this repo's runs travel.
 #   IMPLEMENTER_MODEL  a specific implementer model for this repo. Resolution is
 #                  repo pin, then ambient env, then the provider's own default.
 #   VISUAL_GATE_CMD  the visual profile's gate: render the app, check the frames,

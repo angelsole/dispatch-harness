@@ -698,6 +698,16 @@ short lifecycle, and `cleanup.sh` removes the mirrored copy when it promotes a
 run, so the wall's disk empties with yours. With the variable unset, none of
 this exists: no loop, no extra file, byte-identical behaviour.
 
+Both knobs can be **per-repo pins** in `repos.local.sh` rather than exports —
+`repo_config` runs before the mirror starts, so a repo can say
+`HARNESS_MIRROR=mini:.claude/harness/runs` for itself while every other repo on
+the machine stays unmirrored, and `cleanup.sh` resolves the same pin off the
+run's worktree when nothing is exported. `HARNESS_PROVIDER_PRIVATE=1` beside
+it keeps the vendor out of what the wall and the ticket see — the card and the
+activity line say `—`, the stage reports carry no provider, and the mirrored run
+dir carries a `provider-private` marker the wall honours before it reads the
+pin files. What a machine's own `result.json` and `status.sh` say is unchanged.
+
 The target is a machine you already trust with the run dir: mirroring copies
 briefs, feeds and worker logs onto it, and gives it whatever your ssh key gives
 it. Point it at your own wall, not at a shared box.

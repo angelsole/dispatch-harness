@@ -409,6 +409,10 @@ function turnsOf(metrics, dir) {
 }
 
 function providerOf(dir, result) {
+  // A run dispatched with HARNESS_PROVIDER_PRIVATE leaves this marker: the pin
+  // files travel with the mirror for the verdict's sake, but the wall does not
+  // say which vendor implemented.
+  if (fs.existsSync(path.join(dir, 'provider-private'))) return '';
   const pin = readChunk(path.join(dir, 'implementer-provider'), 4096, false);
   if (pin) return pin.text.split('\n')[0].trim();
   return result.implementer_provider || '';

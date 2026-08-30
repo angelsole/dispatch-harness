@@ -431,6 +431,14 @@ linear_activity() {  # $1 = session id, $2 = content JSON, $3 = "ephemeral"
   linear_agent_call agentActivityCreate "$gql" >/dev/null
 }
 
+# What the ticket may say about who implemented: the provider/model pair, or a
+# dash on a repo whose provider is private (HARNESS_PROVIDER_PRIVATE — the
+# team's GLM experiment is not announced on the ticket).
+linear_provider_label() {
+  if [ "${HARNESS_PROVIDER_PRIVATE:-0}" = 1 ]; then printf '%s' "—"
+  else printf '%s' "${IMPLEMENTER_PROVIDER:-}/${IMPLEMENTER_MODEL:-}"; fi
+}
+
 # --- The attachment card -------------------------------------------------------
 
 # The always-visible summary: one attachment whose subtitle tracks the stage.
@@ -442,7 +450,7 @@ linear_card() {  # $1 = stage text
   iid=$(linear_issue_uuid) || return 0
   gql=$(jq -cn --arg id "$iid" --arg url "$link" \
       --arg title "Dispatch run $TICKET" --arg sub "$1" \
-      --arg provider "${IMPLEMENTER_PROVIDER:-}/${IMPLEMENTER_MODEL:-}" \
+      --arg provider "$(linear_provider_label)" \
       --arg owner "${HARNESS_OWNER:-}" --arg branch "${BRANCH:-}" \
       --arg host "$(linear_host)" \
     '{query:"mutation($input: AttachmentCreateInput!){ attachmentCreate(input: $input){ success } }",
@@ -491,7 +499,7 @@ Answer in the run's brief and re-dispatch, or \`attach.sh $TICKET\`."
       ;;
     *)
       linear_activity "$sid" "$(linear_content_action "$1" \
-        "$TICKET · ${IMPLEMENTER_PROVIDER:-}/${IMPLEMENTER_MODEL:-} · $(linear_host)")"
+        "$TICKET · $(linear_provider_label) · $(linear_host)")"
       ;;
   esac
   return 0
