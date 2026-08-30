@@ -265,8 +265,11 @@ has "$(env_of implementer)" "base=[$ZAI_URL]" \
 dispatch PROV-MODEL commit "IMPLEMENTER_PROVIDER=zai IMPLEMENTER_MODEL=glm-5.3[1m]"
 check "knob: an explicit model outranks the provider's default" \
   "$(pin implementer-model)" "glm-5.3[1m]"
-has "$(env_of implementer)" "compact=[1000000]" \
-  "knob: and the 1M variant is given a compaction window that matches it"
+has "$(env_of implementer)" "compact=[300000]" \
+  "knob: and the 1M variant is given the harness's compaction window"
+dispatch PROV-MODEL-CW commit "IMPLEMENTER_PROVIDER=zai IMPLEMENTER_MODEL=glm-5.3[1m] IMPLEMENTER_COMPACT_WINDOW=500000"
+has "$(env_of implementer)" "compact=[500000]" \
+  "knob: IMPLEMENTER_COMPACT_WINDOW moves that window"
 dispatch PROV-ZAI commit ""
 has "$(env_of implementer)" "compact=[]" \
   "knob: an ordinary glm-5.3 gets no compaction override"
@@ -446,7 +449,7 @@ has "$ATTACH_OUT" "$HARNESS/zai-api-key" "attach: the hint names the key file"
 has_not "$ATTACH_OUT" "$ZAI_KEY" "attach: the hint never prints the credential"
 ATTACH_1M_OUT=$(env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
   HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" bash "$SRC/attach.sh" PROV-MODEL 2>&1)
-has "$ATTACH_1M_OUT" 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000' \
+has "$ATTACH_1M_OUT" 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000' \
   "attach: the 1M model hint includes its compaction window"
 
 printf 'commit\n' > "$CLAUDE_MODE"
@@ -461,7 +464,7 @@ check "attach: a correctly configured shell resumes the session" \
 env HARNESS_DIR="$HARNESS" PATH="$FAKES:$PATH" \
   ANTHROPIC_BASE_URL="$ZAI_URL" ANTHROPIC_AUTH_TOKEN="$ZAI_KEY" \
   API_TIMEOUT_MS=3000000 ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.7 \
-  CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7 CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 \
+  CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7 CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 \
   bash "$SRC/attach.sh" PROV-BASELINE >/dev/null 2>&1
 ANTHROPIC_ATTACH="$(env_of implementer 3)"
 has "$ANTHROPIC_ATTACH" "base=[]" \
@@ -529,7 +532,7 @@ check "repo pin: a zai pin outranks an ambient anthropic" \
   "$(pin implementer-provider)" "zai"
 check "repo pin: changing only the provider retains the ambient model" \
   "$(pin implementer-model)" "glm-5.3[1m]"
-has "$(env_of implementer)" "compact=[1000000]" \
+has "$(env_of implementer)" "compact=[300000]" \
   "repo pin: the retained ambient 1M model keeps its compaction window"
 
 repo_pin ""

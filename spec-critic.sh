@@ -25,7 +25,11 @@
 #
 # Env:
 #   CLAUDE_BIN             the CLI (default: claude on PATH)
-#   SPEC_CRITIC_MODEL      empty (the default) = whatever the CLI defaults to
+#   SPEC_CRITIC_MODEL      default claude-sonnet-5. A read-only pass that
+#                          reports rather than decides; on the station's own
+#                          default (Fable at xhigh) a verdict cost ~10x this
+#                          for no measured gain
+#   SPEC_CRITIC_EFFORT     default medium (low/medium/high/xhigh/max)
 #   SPEC_CRITIC_TIMEOUT    seconds per call, default 600
 #   SPEC_CRITIC_MAX_TURNS  default 40 — the repo research is most of them
 #   SPEC_CRITIC_SETTINGS   the tool policy, default spec-critic-settings.json
@@ -40,7 +44,8 @@ _COMMON_LIB_PATH="$SELF_DIR/lib/common.sh"
 unset _COMMON_LIB_PATH
 
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
-MODEL="${SPEC_CRITIC_MODEL:-}"
+MODEL="${SPEC_CRITIC_MODEL:-claude-sonnet-5}"
+EFFORT="${SPEC_CRITIC_EFFORT:-medium}"
 TIMEOUT="${SPEC_CRITIC_TIMEOUT:-600}"
 MAX_TURNS="${SPEC_CRITIC_MAX_TURNS:-40}"
 SETTINGS="${SPEC_CRITIC_SETTINGS:-$SELF_DIR/spec-critic-settings.json}"
@@ -149,7 +154,7 @@ run_once() {  # $1 = envelope path
         --add-dir "$REPO"
         --json-schema "$SCHEMA"
         --output-format json)
-  [ -z "$MODEL" ] || args+=(--model "$MODEL")
+  args+=(--model "$MODEL" --effort "$EFFORT")
   # env(1) sits INSIDE the timeout: with_timeout is a shell function and env
   # cannot exec one, which would fail instantly and read as a critic that
   # returned nothing.

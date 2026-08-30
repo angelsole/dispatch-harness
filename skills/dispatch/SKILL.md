@@ -164,6 +164,13 @@ Mention this option when the user seems to want mid-task interaction.
 
 ## 5. Verdict
 
+Prefer a fresh session for the verdict when this one is old or large. A run
+takes 30-75 minutes; a session that has waited that long has a cold prompt
+cache, and its first turn back rewrites the whole context at the cache-write
+rate — on a 500k-token session that costs more than the verdict itself. A new
+session starts from `result.json`, the notes and the diff, which is all the
+verdict needs; nothing about the run lives in this conversation.
+
 When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 
 - **ready** — verify against the brief before promoting: read

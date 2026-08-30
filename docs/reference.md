@@ -127,6 +127,7 @@ to before — this is instrumentation, not a redesign.
 | `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Resolved **repo pin → ambient env → default**: a [repo pin](#the-repo-pin) outranks the value this shell exports. Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
 | `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Resolved **repo pin → ambient env → provider default**, independently of the provider setting. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5`, or `glm-5.3` on `zai` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
+| `IMPLEMENTER_COMPACT_WINDOW` | Auto-compaction window, in tokens, for a `[1m]` implementer (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the worker's environment). 1M is what the model holds, not where it works best: past ~300k every turn re-reads a prefix that is mostly stale tool output. An `env` block in `~/.claude/settings.json` is applied over the process environment and wins over this knob — set the same number there, or nowhere. | `300000` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
 | `HARNESS_ESCALATION` | `on` \| `off` — whether a gate failure on the cheap implementer buys one pass on the Claude subscription ([Escalation](#escalation)). Defaults to `on` wherever the implementer is not already `anthropic`, `off` when it is (there is nothing to escalate to). An unrecognised value falls back to that default, says so once, and re-pins. | `on` on `zai`, `off` on `anthropic` |
@@ -182,7 +183,8 @@ fallback described in [the review guarantee](design-notes.md#why-its-built-this-
 loses nothing.
 
 **Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,
-and pinning it also sets the CLI's auto-compaction window to match. `glm-4.7` is
+and pinning it also sets the CLI's auto-compaction window
+(`IMPLEMENTER_COMPACT_WINDOW`, 300k by default). `glm-4.7` is
 the small/fast model. `IMPLEMENTER_EFFORT` is passed through unchanged and maps
 server-side: `xhigh`/`max` → max, `medium`/`high` → high, `low` → low.
 
@@ -445,7 +447,8 @@ so the write confinement holds whatever the policy file says.
 
 | Env var | What it does | Default |
 | --- | --- | --- |
-| `SPEC_CRITIC_MODEL` | Model for the pass | the CLI's own default |
+| `SPEC_CRITIC_MODEL` | Model for the pass. It reads and reports, it decides nothing; on the station's default model at `xhigh` a verdict cost ~10x this for no measured gain | `claude-sonnet-5` |
+| `SPEC_CRITIC_EFFORT` | Effort for the pass (`low`/`medium`/`high`/`xhigh`/`max`) | `medium` |
 | `SPEC_CRITIC_TIMEOUT` | Seconds per call | `600` |
 | `SPEC_CRITIC_MAX_TURNS` | Turn ceiling — repo research is most of them | `40` |
 | `SPEC_CRITIC_SETTINGS` | The tool policy | `spec-critic-settings.json` beside the script |
