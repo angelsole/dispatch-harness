@@ -212,6 +212,10 @@ WORKTREE="$(dirname "$REPO")/$(basename "$REPO")-$TICKET_LC"
 BASE_REF="origin/$BASE_BRANCH"
 mkdir -p "$RUN_DIR"
 ESCALATION_STATE="$RUN_DIR/escalation.json"
+# A repo whose provider is private (HARNESS_PROVIDER_PRIVATE, repos.local.sh) leaves
+# a marker the wall honours: the mirrored copy still carries the pin files the
+# verdict needs, and the wall reads the marker before it reads them.
+[ "${HARNESS_PROVIDER_PRIVATE:-0}" != 1 ] || : > "$RUN_DIR/provider-private"
 # From here the run dir exists, so another machine's wall can follow this run
 # (HARNESS_MIRROR). Best-effort throughout, and stopped — after one last pass —
 # on every exit path by the EXIT trap mirror_start installs.
@@ -861,12 +865,14 @@ fi
 # stay out of the log on purpose — it is read by whoever runs the dispatch.
 wall_report_stage() {  # $1 = stage text
   [ -n "$WALL_URL" ] || return 0
-  local body
+  local body WALL_PROVIDER="${IMPLEMENTER_PROVIDER:-}" WALL_MODEL="${IMPLEMENTER_MODEL:-}"
+  # A private provider (HARNESS_PROVIDER_PRIVATE) is not the wall's to know.
+  [ "${HARNESS_PROVIDER_PRIVATE:-0}" != 1 ] || { WALL_PROVIDER=""; WALL_MODEL=""; }
   body=$(jq -n -c \
     --arg run "$TICKET" --arg stage_text "$1" --argjson at "$(date +%s)" \
     --arg host "$WALL_HOSTNAME" --arg owner "${HARNESS_OWNER:-}" \
     --arg repo "$WALL_REPO" \
-    --arg provider "${IMPLEMENTER_PROVIDER:-}" --arg model "${IMPLEMENTER_MODEL:-}" \
+    --arg provider "$WALL_PROVIDER" --arg model "$WALL_MODEL" \
     --arg worktree "${WORKTREE:-}" --arg branch "${BRANCH:-}" \
     --arg base "${BASE_BRANCH:-}" --arg pr_url "${PR_URL:-}" \
     --arg status "${STATUS:-}" \
