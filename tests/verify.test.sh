@@ -265,6 +265,11 @@ check "off: no score reaches result.json" "$(result .metrics.verifier)" ""
 has_not "$(cat "$RUN/timeline")" "$STAGE_LINE" "off: and no stage line is written"
 file_has "$RUN/verify.log" "skipped: HARNESS_VERIFY=0" "off: verify.log says which knob turned it off"
 file_has_not "$RUN/pr-body.md" "## Verifier" "off: the PR body carries no verifier section"
+check "off: Ref: is still the first line" "$(sed -n 1p "$RUN/pr-body.md")" "Ref: V-OFF"
+file_has "$RUN/pr-body.md" "<details><summary>Review notes</summary>" \
+  "off: the reviewer's notes sit behind a collapsed fold"
+FOLD=$(sed -n '/^<details><summary>Review notes<\/summary>$/,/^<\/details>$/p' "$RUN/pr-body.md")
+has "$FOLD" "Everything is sound." "off: the notes themselves land inside the fold"
 cp "$RUN/pr-body.md" "$ROOT/body-without-verifier.md"
 BASELINE_STATUS="$(result .status)"
 BASELINE_PR="$(result .pr_url)"

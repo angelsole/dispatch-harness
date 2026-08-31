@@ -437,6 +437,13 @@ has "$PROMPT" ".harness/QUESTIONS.md" \
   "prompt: the stop still writes the file the pipeline reads"
 has "$PROMPT" "batched, all of them at once" \
   "prompt: questions go out in one round, not one at a time"
+has "$PROMPT" "Not user-visible" \
+  "prompt: pure internal work has an escape hatch in the notes"
+has "$PROMPT" "No file names, no function names" \
+  "prompt: the opening notes section speaks product language"
+check "prompt: the notes sections are specified user-facing first" \
+  "$(printf '%s\n' "$PROMPT" | grep -oE '## What this changes|## How to try it|## Technical notes' | tr '\n' ' ')" \
+  "## What this changes ## How to try it ## Technical notes "
 
 DISPATCH_TEXT=$(cat "$DISPATCH_SKILL")
 has "$DISPATCH_TEXT" "an ordinary reversible fork you leave out does not become a" \

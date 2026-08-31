@@ -1507,6 +1507,8 @@ file_has "$PROMPTS" "cannot render this yourself" \
   "pass: and told why that is the only look it gets"
 file_has "$RUN/pr-body.md" "## Visual gate" "pass: the PR body carries the render"
 file_has "$RUN/pr-body.md" "pairwise vs champion: **better**" "pass: with the verdict in it"
+file_has "$RUN/pr-body.md" "<details><summary>Review notes</summary>" \
+  "pass: the reviewer's notes sit behind a collapsed fold"
 file_has "$RUN/pr-body.md" "no R2 remote configured" \
   "pass: and says plainly that nothing was uploaded, rather than linking nowhere"
 absent "pass: no upload was attempted" "$RUN/visual-upload.log"
