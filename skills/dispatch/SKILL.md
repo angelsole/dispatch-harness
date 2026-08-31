@@ -127,9 +127,21 @@ question later.
 For free-form requests, the approval question also settles tracking: if an
 issue-tracker MCP is configured, offer to create the ticket (description from
 the brief's Problem section, no AI attribution) or run it as `adhoc-<slug>`
-with no ticket. If a ticket is created, rename the run dir to its ID and add the
-ticket line to the brief before dispatching. Never create a ticket before the
-user has approved.
+with no ticket. A created ticket must land where the team works, not as an
+orphan — set, in this order:
+
+- **assignee** — the dispatching user, the MCP's authenticated viewer. Never
+  unassigned, never an agent identity.
+- **cycle** — the team's current cycle, when the team uses cycles.
+- **project** — the one the work belongs to, resolved during research from the
+  tickets and code the request touches; when research leaves it genuinely
+  ambiguous, fold the choice into this approval question — never a second one.
+- **relations** — parent or related (whichever the tracker supports) to the
+  issues the request came from or blocks, when research identified them.
+
+If a ticket is created, rename the run dir to its ID and add the ticket line to
+the brief before dispatching. Never create a ticket before the user has
+approved.
 
 ## 4. Dispatch
 
