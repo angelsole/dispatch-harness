@@ -64,6 +64,9 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | `HARNESS_MAX_TURNS` | Turn ceiling for the implementer's session; pinned at first dispatch | `200` |
 | `HARNESS_MAX_RESUMES` | Automatic resumes allowed on turn exhaustion before the run fails (`0` opts out) | `2` |
 | `HARNESS_RESUME_MODE` | What a turn-ceiling resume hands the next segment: `report` (fresh session + a written handover) or `transcript` (`--resume` into the exhausted session); pinned at first dispatch | `report` |
+| `HARNESS_STOP_GATE` | `off` disarms the stop gate: the Stop hook (`lib/stop-gate.sh`) that refuses to let an implementer session end with zero commits unless it wrote `.harness/QUESTIONS.md` or `.harness/REJECTED.md`. The gate is armed only for implementer segments — review, refute and fix passes never see it — and any uncertainty (missing worktree, unresolvable base, git error) allows the stop | `on` |
+| `HARNESS_STOP_GATE_MAX` | Refused stops per run before the gate stands aside and lets the run end (and be ruled) honestly; `0` disarms the nudges | `2` |
+| `HARNESS_STOP_GATE_WORKTREE`, `HARNESS_STOP_GATE_BASE`, `HARNESS_STOP_GATE_STATE` | Not knobs: the worktree, base ref and nudge-count file (`stop-gate.blocks` in the run dir) the harness **exports to the implementer's session** so the hook can ask git the one question that matters | — |
 
 ### Dispatch and identity
 

@@ -44,7 +44,7 @@ echo "== the template's four new sections =="
 # them case-insensitively, so a renamed or demoted heading is a silent break
 # there and a loud one here.
 for h in 'Problem' 'Reproduction' 'Interface contract' 'Edit locations' \
-         'Decision points' 'Acceptance criteria' 'Verify'; do
+         'Decision points' 'Acceptance criteria' 'Tests' 'Verify'; do
   if grep -qxF -- "## $h" "$TPL"; then ok "template: '## $h' is a top-level section"
   else bad "template: '## $h' is missing or no longer a top-level section"; fi
 done
@@ -73,6 +73,16 @@ has "$TPLTEXT" 'unknown — research did not identify the edit location' \
   "template: Edit locations names an honest unknown value"
 has "$TPLTEXT" 'an honest unknown is better than an invented path' \
   "template: Edit locations prefers missing research to an invented location"
+
+# Test scope is a section for the same reason the four above are: left unsaid,
+# an implementer answers it with a whole suite around the module. See
+# docs/adr/0011-the-brief-bounds-the-tests.md.
+has "$TPLTEXT" 'none — the existing suite already covers this' \
+  "template: Tests names its legitimate empty value"
+has "$TPLTEXT" 'nothing beyond them' \
+  "template: Tests bounds the implementer to the criteria's cases"
+has "$TPLTEXT" 'a test framework the repo does not already have' \
+  "template: Tests refuses to introduce a framework the repo lacks"
 
 # ---------------------------------------------------------------------------
 echo "== the spec critic's confinement =="
