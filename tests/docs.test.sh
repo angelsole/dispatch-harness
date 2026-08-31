@@ -259,6 +259,8 @@ claim SKILL.md    "$SKILL"     'HARNESS_REDISPATCH=1'
 claim SKILL.md    "$SKILL"     'the dispatching user'
 claim SKILL.md    "$SKILL"     'never an agent identity'
 claim SKILL.md    "$SKILL"     "the team's current cycle"
+claim SKILL.md    "$SKILL"     '**project**'
+claim SKILL.md    "$SKILL"     'resolved during research'
 claim SKILL.md    "$SKILL"     'fold the choice into this approval question'
 claim SKILL.md    "$SKILL"     'the request came from or blocks'
 # A brief that fails validation is moved, not armed and not deleted. An
