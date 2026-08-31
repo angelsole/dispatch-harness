@@ -270,6 +270,8 @@ file_has "$RUN/pr-body.md" "<details><summary>Review notes</summary>" \
   "off: the reviewer's notes sit behind a collapsed fold"
 FOLD=$(sed -n '/^<details><summary>Review notes<\/summary>$/,/^<\/details>$/p' "$RUN/pr-body.md")
 has "$FOLD" "Everything is sound." "off: the notes themselves land inside the fold"
+check "off: the review fold closes after its notes" \
+  "$(printf '%s\n' "$FOLD" | tail -n 1)" "</details>"
 cp "$RUN/pr-body.md" "$ROOT/body-without-verifier.md"
 BASELINE_STATUS="$(result .status)"
 BASELINE_PR="$(result .pr_url)"
@@ -330,6 +332,8 @@ file_has "$RUN/pr-body.md" "| Criterion | Score |" "scored: with the per-criteri
 file_has "$RUN/pr-body.md" '| The endpoint exists \| safely | 0.9 |' \
   "scored: and a pipe in a criterion cannot break the table"
 file_has "$RUN/pr-body.md" "Advisory only" "scored: and the sentence saying it gates nothing"
+AFTER_FOLD=$(sed -n '/^<\/details>$/,$p' "$RUN/pr-body.md")
+has "$AFTER_FOLD" "## Verifier" "scored: the verifier section follows the closed review fold"
 has "$(cat "$VERIFY_ARGS")" "$RUNS/V-SCORE" "scored: the adapter was handed the run dir"
 has "$(cat "$VERIFY_ARGS")" "origin/main" "scored: and the base ref to diff against"
 file_has_not "$RUN/verify.log" "sk-not-a-real-key" "scored: the key is not in verify.log"
