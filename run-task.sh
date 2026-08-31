@@ -1530,19 +1530,25 @@ Rules:
 - Database/MCP tools: local environment only. Never switch environments or touch staging/production.
 - Stopping to ask is decided by the brief's '## Decision points', not by your own sense of doubt. Stop for exactly two things: a fork that section marks 'STOP and ask', and an irreversible action it does NOT declare — a schema migration or data backfill, deleting or rewriting files outside '## Edit locations', anything that leaves this machine. Do NOT stop for a fork the brief already decides: implement its decision as written, even where you would have chosen otherwise. To stop, write the specific question(s), each with the options you considered and what the wrong answer costs, to .harness/QUESTIONS.md and stop working — batched, all of them at once. The orchestrator will get answers and resume you.
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
-- When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
+- When finished, write .harness/implementer-notes.md in three sections, in this order — the user-facing ones first:
+  1. \`## What this changes\` — 2-5 sentences in product language: what a user of the product can now do or no longer suffers, and why it matters. No file names, no function names.
+  2. \`## How to try it\` — the concrete steps or command a human uses to see the change working; \`Not user-visible — <one line why>\` is legitimate for pure internal work.
+  3. \`## Technical notes\` — what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize.
+  Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
 
-# Every continuation message restates the commit rules. A resumed session has
-# its original instructions far behind it in a long context, and two resumes in
-# one day re-added `Co-Authored-By: Claude` trailers their first pass had never
-# written — one caught by hand, one by the reviewer, and a no_review arm would
-# have shipped them. This is the cheap half of the fix; the deterministic strip
-# after the stage is the half that does not depend on a model reading it.
+# Every continuation message restates the commit rules and the notes shape. A
+# resumed session has its original instructions far behind it in a long context,
+# and two resumes in one day re-added `Co-Authored-By: Claude` trailers their
+# first pass had never written — one caught by hand, one by the reviewer, and a
+# no_review arm would have shipped them. This is the cheap half of the fix; the
+# deterministic strip after the stage is the half that does not depend on a
+# model reading it.
 RESUME_RULES="These rules from your original instructions are still binding:
 - Make small conventional commits (type(scope): description).
 - Commit ALL your work before finishing — the pipeline rejects a dirty worktree (any uncommitted or untracked change outside \`.harness/\`). Delete scratch you don't want; don't leave it uncommitted.
 - Never mention AI, Claude, or agents in commits — no Co-Authored-By, no Generated-with, no attribution trailer of any kind, in the subject, the body or the footer.
 - Never git add or commit anything under .harness/; never use git add -f.
+- implementer-notes.md keeps its three-section shape — \`## What this changes\`, \`## How to try it\`, then \`## Technical notes\`, user-facing sections first; it becomes the PR body.
 - Do NOT push, do NOT create PRs, do NOT switch branches."
 
 # --- Escalation, the mechanism ------------------------------------------------
@@ -3641,7 +3647,13 @@ else
     TITLE=$(sed -n 's/^# //p' "$BRIEF" | head -1); [ -n "$TITLE" ] || TITLE="$TICKET"
     { echo "Ref: $TICKET"; echo
       if [ -f "$WORKTREE/.harness/implementer-notes.md" ]; then cat "$WORKTREE/.harness/implementer-notes.md"; fi
-      if [ -f "$WORKTREE/.harness/review-notes.md" ]; then echo; echo "## Review notes"; cat "$WORKTREE/.harness/review-notes.md"; fi
+      if [ -f "$WORKTREE/.harness/review-notes.md" ]; then
+        # Blank lines around the inner markdown — GitHub renders nothing inside
+        # <details> without them.
+        echo; echo '<details><summary>Review notes</summary>'; echo
+        cat "$WORKTREE/.harness/review-notes.md"
+        echo; echo '</details>'
+      fi
       hook_run pr_body_sections
     } > "$RUN_DIR/pr-body.md"
     # On re-dispatch a PR may already exist for this branch: reuse it (and do NOT

@@ -806,7 +806,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `brief.md` | The task contract the planner wrote |
 | `specs/` | Converted spec attachments, when the task had any (below) |
 | `QUESTIONS.md` | The implementer's blocking questions — the run is `needs_input` while it exists |
-| `implementer-notes.md` | What the implementer changed and decided (it becomes the PR body) |
+| `implementer-notes.md` | The implementer's account of the change, user-facing sections first (it becomes the PR body) |
 | `review-notes.md` / `REJECTED.md` | The reviewer's notes (with the promoted/refuted ledger appended), or its rejection |
 | `findings.json`, `refuted.json`, `promoted.json` | [Find, refute, fix](#find-refute-fix): what the review pass reported, what the refutation pass disproved (each with the citation that verified), and what therefore earned an edit (`doubted: true` on the ones the refuter could not confirm). Absent on a review that produced no structured findings |
 | `refute-discarded.json` | `[{id, why, reason}]` — refutations thrown away because their evidence did not verify, so the finding was promoted instead. `[]` on a run where every verdict held up |
