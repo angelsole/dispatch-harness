@@ -339,6 +339,7 @@ lessons_refresh_if_stale() {  # $1 = absolute repo path
   local out mt age
   out=$(lessons_file "$1")
   mt=$(harness_mtime "$out") || mt=""
+  case "$mt" in ''|*[!0-9]*) mt="" ;; esac   # a mtime nobody could read is not "fresh"
   if [ -n "$mt" ]; then
     age=$(( $(date +%s) - mt ))
     [ "$age" -lt $(( LESSONS_STALE_HOURS * 3600 )) ] && return 0

@@ -76,6 +76,20 @@ mkrepo "$TWIN" src/other.ts
 # so that every lookup below is crossing that boundary the way a real one does.
 CANON=$(cd "$REPO" && pwd -P)
 
+echo "== the mtime this suite stands on =="
+# lib/common.sh's harness_mtime, asserted here because this is the first caller
+# that hard-depends on it. BSD's `stat -f %m` is an mtime; GNU's `-f` is
+# *filesystem* status, where %m is not a valid specifier — GNU prints `?` and
+# exits 0. A BSD-first order therefore never reaches its own fallback, and every
+# run in a full history was skipped on Linux as "no readable timestamp".
+MT=$(harness_mtime "$0") || MT=""
+case "$MT" in
+  ''|*[!0-9]*) bad "mtime: harness_mtime returns an epoch (got [$MT])" ;;
+  *)           ok  "mtime: harness_mtime returns an epoch on this platform" ;;
+esac
+harness_mtime "$ROOT/does-not-exist" >/dev/null 2>&1
+check "mtime: a missing file is a failure, not a value" "$?" "1"
+
 echo "== the slug =="
 A=$(lessons_slug "$REPO"); B=$(lessons_slug "$TWIN")
 check "slug: keeps the basename readable" "${A%%-*}" "api"

@@ -63,6 +63,7 @@ list_repos() {
     if [ -s "$file" ]; then
       n=$(grep -c '^- `' "$file" 2>/dev/null | tr -d ' ') || n=0
       d=$(harness_mtime "$file") || d=""
+      case "$d" in ''|*[!0-9]*) d="" ;; esac
       if [ -n "$d" ]; then age="$(lessons_day "$d")"; else age="unknown"; fi
       printf '%-4s traps  refreshed %s  %s\n' "$n" "$age" "$repo"
       printf '            %s\n' "$file"
