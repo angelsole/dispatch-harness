@@ -64,6 +64,13 @@
 #                  prompts then get the greenfield posture (remove obsolete paths
 #                  instead of keeping compatibility layers, fallbacks or
 #                  migrations; simplest thing that fully meets the requirements)
+#   QUALITY_GATE   set to 1 to prepend the harness quality gate
+#                  (lib/quality-gate.sh) to GATE_CMD: static checks on the files
+#                  the branch touches — cyclomatic complexity <=21 per function,
+#                  <=500 lines of code per file, no `any` types, no dead code,
+#                  no added suppression comments — run BEFORE the suite so a
+#                  violation fails in seconds. Both worker prompts state the
+#                  bar. Thresholds via QG_MAX_COMPLEXITY / QG_MAX_FILE_LINES.
 #   DEPS_CACHE_POST_CMD  the part of a compound INSTALL_CMD the dependency cache
 #                  does not reproduce. The harness caches the root node_modules
 #                  per lockfile hash and skips the install on a hit (seconds
