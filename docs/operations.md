@@ -506,11 +506,20 @@ hours) is reaped: `TERM`, then `KILL` if it is still there a couple of seconds
 later. Nothing legitimate keeps a detached test runner alive for hours, so age
 is the whole test. Younger ones are counted and left.
 
+**What it teaches the next run.** After the outcome poll, the pass distils each
+repo's confirmed review findings — the ones that survived refutation — into a
+short per-repo file the next dispatch mounts for its implementer and the planner
+reads before writing a brief. It is derived data, rewritten whole every pass and
+removed for a repo with no traps left, so it destroys nothing and never fails a
+sweep. `lessons.sh` is the front door; the rules, the weights and the evictions
+are in [the feedback loop](reference.md#the-feedback-loop).
+
 **The two modes.** `janitor.sh` and `janitor.sh --report` produce the same
 listing of every worktree the harness still holds and what would happen to it.
 Report mode never removes a worktree or reaps a process or a zombie status, but
-it does perform the read-only PR/base refreshes described above and create or
-update `outcome.json` and the cached run `repo` path. `janitor.sh --clean`
+it does perform the read-only PR/base refreshes described above, create or
+update `outcome.json` and the cached run `repo` path, and refresh the lessons
+files. `janitor.sh --clean`
 additionally carries out the reported cleanup. `--install` writes a daily launchd agent — one fixed
 label, the `LABEL_ID` in `janitor.sh`, with `JANITOR_AT` to move it off 09:00 —
 on the quartermaster's conventions: a mode-600 wrapper carrying an environment

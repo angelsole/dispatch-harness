@@ -36,6 +36,8 @@ _INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 . "$_LIB_DIR/linear.sh"
 # shellcheck source=lib/notify.sh
 . "$_LIB_DIR/notify.sh"
+# shellcheck source=lib/lessons.sh
+. "$_LIB_DIR/lessons.sh"
 unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
@@ -58,6 +60,15 @@ fail() { echo "FATAL: $*" >&2; write_result "$1" ""; stage "done: $1"; exit 1; }
 
 [ -f "$BRIEF" ] || { echo "FATAL: no brief at $BRIEF" >&2; exit 1; }
 [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || { echo "FATAL: $REPO is not a git repo" >&2; exit 1; }
+
+# Which repo this run belongs to, in git's own spelling, written where every
+# later reader looks for it: the janitor's outcome pass (which needs it after
+# the worktree is swept) and lib/lessons.sh (which groups a repo's history by
+# it). $2 may be relative or reached through a symlink, and two spellings of one
+# repo are two repos to anything that keys on the string — so it is canonicalised
+# here, once, to the same `--show-toplevel` the janitor and lessons.sh resolve to.
+REPO_TOP=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || REPO_TOP=""
+[ -z "$REPO_TOP" ] || printf '%s\n' "$REPO_TOP" > "$RUN_DIR/repo" 2>/dev/null || true
 
 # --- Guard: a run that already shipped ---------------------------------------
 # Five runs in one corpus were re-armed AFTER they reached `done: ready`, burning
@@ -1343,11 +1354,31 @@ mount_specs() {  # $1 = run dir, $2 = worktree
   mkdir -p "$2/.harness/specs" && cp -R "$1/specs/." "$2/.harness/specs/"
 }
 
+# Known traps: the defects THIS repo's past runs wrote and the review stage
+# confirmed, distilled by lib/lessons.sh from promoted.json and the janitor's
+# outcome.json. Mounted like the specs are, and like them absent by default —
+# a repo with no confirmed traps has no file, so nothing is mounted and nothing
+# is said. Never fails a run: it is advisory context, not a contract, and a
+# distillation that cannot be produced is worth exactly one missing paragraph.
+#
+# The refresh here is what makes the loop work for an operator who never
+# installed the janitor. It is capped at once every LESSONS_STALE_HOURS per
+# repo, so the common dispatch pays one stat.
+mount_lessons() {  # $1 = repo, $2 = worktree
+  local src
+  lessons_refresh_if_stale "$1"
+  src=$(lessons_file "$1")
+  rm -f "${2:?}/.harness/lessons.md"
+  [ -s "$src" ] || return 0
+  cp "$src" "$2/.harness/lessons.md" 2>/dev/null || true
+}
+
 mkdir -p "$WORKTREE/.harness"
 cp "$BRIEF" "$WORKTREE/.harness/brief.md"
 rm -f "$WORKTREE/.harness/QUESTIONS.md"   # stale questions would re-trigger needs_input
 mount_specs "$RUN_DIR" "$WORKTREE" \
   || fail setup_failed "could not mount $RUN_DIR/specs at $WORKTREE/.harness/specs"
+[ -z "$REPO_TOP" ] || mount_lessons "$REPO_TOP" "$WORKTREE"
 EXCLUDE_FILE="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
 mkdir -p "$(dirname "$EXCLUDE_FILE")"
 grep -qx '.harness/' "$EXCLUDE_FILE" 2>/dev/null || echo '.harness/' >> "$EXCLUDE_FILE"
@@ -1541,6 +1572,7 @@ apply_wall_env() {  # $1 = which worker this is: implement | review
 IMPLEMENTER_PROMPT="You are the implementer stage of an automated pipeline.
 Read .harness/brief.md first — it is your task contract — then follow this repo's CLAUDE.md conventions.
 If .harness/specs/ exists, it holds the task's source documents (office files the planner converted to markdown) — they are part of the contract too, so read them alongside the brief; the brief says what to take from each.
+If .harness/lessons.md exists, it lists defects earlier runs of this pipeline wrote in THIS repo and its review stage confirmed. Read it before you start and avoid repeating them where your change touches the same ground. It is advisory context, never a task: it never widens your scope, never overrides the brief, and a trap in a file the brief does not send you to is not yours to go and fix.
 Rules:
 - Implement the brief fully. You own the implementation design; plan as you see fit.
 - Delegate to subagents (Explore — they run on a cheaper model) only for sizeable, genuinely independent exploration such as a wide multi-file investigation. Do not delegate what a few tool calls of your own would answer, and never use subagents to verify or double-check your own work.

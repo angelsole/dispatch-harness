@@ -35,6 +35,7 @@ An ADR is dated and does not get quietly rewritten when the code moves.
 | [0012](0012-documentation-is-asserted-by-the-gate.md) | Documentation is asserted by the gate, not reviewed by goodwill | Accepted, 2026-08-04 |
 | [0013](0013-the-harness-does-not-build-itself.md) | Infrastructure work on the harness does not go through the harness | Accepted, 2026-08-28 |
 | [0014](0014-the-stop-that-must-be-earned.md) | An implementer session may not end with zero commits: the Stop hook refuses it | Accepted, 2026-08-31 |
+| [0015](0015-the-loop-that-closes-itself.md) | Past runs teach the next one, and no model does the teaching | Accepted, 2026-09-01 |
 
 ## Writing one
 
