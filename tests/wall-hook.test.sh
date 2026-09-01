@@ -179,9 +179,19 @@ check "settings: three hook events, and only those" \
 # the "started" signal anyway.
 check "settings: no SessionStart hook is claimed" \
   "$(jq -r '.hooks | has("SessionStart")' "$WS")" "false"
+# Stop carries a second hook — the commit gate (lib/stop-gate.sh, its own suite:
+# tests/stop-gate.test.sh) — so the wrapper assertion is per-event: every event
+# still runs the wall wrapper at 5s, and the gate rides Stop and Stop alone.
 check "settings: every event runs the wrapper, on no matcher, capped at 5s" \
-  "$(jq -r '[.hooks[][] | .hooks[] | "\(.type)|\(.command)|\(.timeout)"] | unique | join(" ")' "$WS")" \
+  "$(jq -r '[.hooks[][] | .hooks[] | select(.command | test("wall-hook"))
+             | "\(.type)|\(.command)|\(.timeout)"] | unique | join(" ")' "$WS")" \
   'command|bash "${HARNESS_DIR:-$HOME/.claude/harness}/lib/wall-hook.sh"|5'
+check "settings: every event has the wall wrapper" \
+  "$(jq -r '[.hooks[][] | [.hooks[].command | test("wall-hook")] | any] | all' "$WS")" \
+  "true"
+check "settings: the stop gate rides Stop, and only Stop" \
+  "$(jq -r '[.hooks | to_entries[] | select([.value[].hooks[].command | test("stop-gate")] | any) | .key] | join(",")' "$WS")" \
+  "Stop"
 check "settings: PostToolUse claims every tool, with no matcher" \
   "$(jq -r '[.hooks.PostToolUse[] | has("matcher")] | any' "$WS")" "false"
 # The containment boundary is not what this change is about: the deny list and

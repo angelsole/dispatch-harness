@@ -1777,8 +1777,17 @@ opus_attempt() {  # $1 = prompt, rest = session args (--session-id / --resume)
   if [ -f "$RUN_DIR/opus-stream.jsonl" ]; then
     OPUS_STREAM_START_LINE=$(( $(wc -l < "$RUN_DIR/opus-stream.jsonl") + 1 ))
   fi
+  # The stop gate (lib/stop-gate.sh, wired to Stop in worker-settings.json) is
+  # armed here and ONLY here: an implementer segment may not end with zero
+  # commits unless it wrote QUESTIONS.md or REJECTED.md. The review, refute and
+  # fix sessions share worker-settings.json but never see these variables, so
+  # the gate cannot fire on a pass that legitimately commits nothing.
   (cd "$WORKTREE" && hook_run implementer_env \
       && env -u ANTHROPIC_API_KEY CLAUDE_CODE_SUBAGENT_MODEL="$IMPLEMENTER_SUBAGENT_MODEL" \
+      HARNESS_STOP_GATE="${HARNESS_STOP_GATE:-on}" \
+      HARNESS_STOP_GATE_WORKTREE="$WORKTREE" HARNESS_STOP_GATE_BASE="$BASE_REF" \
+      HARNESS_STOP_GATE_STATE="$RUN_DIR/stop-gate.blocks" \
+      HARNESS_STOP_GATE_MAX="${HARNESS_STOP_GATE_MAX:-2}" \
       "$CLAUDE_BIN" -p "$prompt" "${CLAUDE_ARGS[@]}" "$@" \
       --output-format stream-json --verbose </dev/null 2> "$RUN_DIR/opus-stderr.log") \
     | tee -a "$RUN_DIR/opus-stream.jsonl" \

@@ -68,6 +68,20 @@ one you have resolved costs the run a stop if you leave it out.
 - [ ] Each criterion independently verifiable by reading code or running a command
 - [ ] ...
 
+## Tests
+The tests this change actually needs, named. An implementer left to its own
+judgement writes a suite around the whole module — unit, integration and
+fixtures for behaviour nobody asked it to touch — and the diff arrives three
+times the size it should be, with the real change buried in it. So state the
+cases the acceptance criteria imply and nothing beyond them, and say where they
+go. `none — the existing suite already covers this` is a legitimate value and
+the right one for a change whose behaviour is already asserted somewhere. Never
+ask for a test framework the repo does not already have; if the change needs
+one, that is a decision point, not a test.
+
+- `src/pricing/margin.test.ts` — the two tier-edge cases from the criteria.
+  Nothing else in this file changes.
+
 ## Verify
 ```bash
 # the suites/checks that cover THIS change — what the implementer runs before
