@@ -56,10 +56,22 @@ TRACKED="$(cd "$SRC" && git ls-files)"
 # from git ls-files, so a docs page that is written but never committed does not
 # count as documentation — the same rule the rest of this suite already applies.
 DOC_FILES="$README"
-for f in $(cd "$SRC" && git ls-files 'docs/*.md'); do
+for f in $(cd "$SRC" && git ls-files 'docs/*.md' | grep -v '^docs/adr/'); do
   DOC_FILES="$DOC_FILES $SRC/$f"
 done
-for f in $DOC_FILES; do cat "$f"; done > "$DOCSBLOB"
+# The decision log is documentation too, but it is a log rather than a manual:
+# its pages are dated, numbered, and reachable through their own index instead
+# of from README directly. The checks that apply to any page — no phantom
+# script names, no dead anchors, no team-internal identifiers — run over these
+# as well; the ones about the manuals' shape do not.
+ADR_INDEX="$SRC/docs/adr/README.md"
+ADR_FILES=''
+for f in $(cd "$SRC" && git ls-files 'docs/adr/[0-9]*.md'); do
+  ADR_FILES="$ADR_FILES $SRC/$f"
+done
+ALL_DOCS="$DOC_FILES $ADR_INDEX $ADR_FILES"
+# shellcheck disable=SC2086
+for f in $ALL_DOCS; do cat "$f"; done > "$DOCSBLOB"
 
 uses() { grep -qwF -- "$1" "$BLOB"; }
 
@@ -86,11 +98,58 @@ done
 list_ok "$unlinked" "docs: every docs/ page is linked from README" \
                     "docs: docs/ pages README never links to"
 
+# ---------------------------------------------------------------------------
+echo "== the decision log =="
+# ---------------------------------------------------------------------------
+# An ADR is only worth writing if a later reader finds it, and only worth
+# trusting if it says when it was decided and what it cost. Both are checked.
+if grep -qF -- '](docs/adr/README.md' "$README"; then
+  ok "adr: the decision log is linked from README"
+else
+  bad "adr: README never links the decision log"
+fi
+
+n=0
+for f in $ADR_FILES; do n=$((n+1)); done
+if [ "$n" -ge 1 ]; then ok "adr: $n decisions recorded"
+else bad "adr: no ADRs found under docs/adr/ — extraction broken?"; fi
+
+# The index is the only entry point, exactly as README is for the manuals.
+unindexed=''
+for f in $ADR_FILES; do
+  grep -qF -- "]($(basename "$f")" "$ADR_INDEX" || unindexed="$unindexed $(basename "$f")"
+done
+list_ok "$unindexed" "adr: every decision is linked from the log's index" \
+                     "adr: decisions the index never links"
+
+# Numbers are the ADR's identity: they are cited from other ADRs and from code
+# comments, so a duplicate is a broken reference waiting to happen.
+dupes="$(for f in $ADR_FILES; do basename "$f" | cut -c1-4; done | sort | uniq -d | tr '\n' ' ')"
+list_ok "${dupes% }" "adr: decision numbers are unique" \
+                     "adr: duplicate decision numbers"
+
+# Shape: a numbered title, a dated status, and the three sections that make an
+# ADR an ADR rather than a design note. Consequences is the one a writer in a
+# hurry drops, and it is the section a later reader needs most.
+shapeless=''
+for f in $ADR_FILES; do
+  b="$(basename "$f")"
+  num="$(printf '%s' "$b" | cut -c1-4)"
+  grep -qE "^# $num\. " "$f"                 || shapeless="$shapeless $b(title)"
+  grep -qE '^- \*\*Status\*\*: .*[0-9]{4}-[0-9]{2}-[0-9]{2}' "$f" \
+                                             || shapeless="$shapeless $b(status/date)"
+  grep -qxF '## Context' "$f"                || shapeless="$shapeless $b(context)"
+  grep -qxF '## Decision' "$f"               || shapeless="$shapeless $b(decision)"
+  grep -qxF '## Consequences' "$f"           || shapeless="$shapeless $b(consequences)"
+done
+list_ok "$shapeless" "adr: every decision carries a number, a date and the three sections" \
+                     "adr: decisions missing their shape"
+
 # This repo was exported from a single-tenant working copy. Team-internal names
 # leaking back into the docs is the one regression a reader outside the team
 # would notice immediately. (wall/fixtures/ keeps its OLYX-* run ids on purpose:
 # they are fixture data, not prose, and are not searched here.)
-if ( cd "$SRC" && grep -qiE 'olyx|valoryx|angel\.sole' README.md docs/*.md ); then
+if ( cd "$SRC" && grep -qiE 'olyx|valoryx|angel\.sole' README.md docs/*.md docs/adr/*.md ); then
   bad "docs: team-internal identifiers are back in README/docs"
 else
   ok "docs: no team-internal identifiers in README or docs/"
@@ -298,7 +357,7 @@ scripts_named_in() {  # $@ = files
   grep -ohE '`[^`*]*`' "$@" | grep -ohE '[A-Za-z0-9][A-Za-z0-9_.-]*\.sh' | sort -u
 }
 # shellcheck disable=SC2086
-NAMED="$(scripts_named_in $DOC_FILES "$SKILL")"
+NAMED="$(scripts_named_in $ALL_DOCS "$SKILL")"
 n=$(printf '%s\n' "$NAMED" | grep -c '' | tr -d ' ')
 if [ "$n" -ge 15 ]; then ok "claim: docs name $n scripts"; else bad "claim: only $n script names found — extraction broken?"; fi
 
@@ -434,7 +493,8 @@ anchors_of() {  # $1 = markdown file -> one GitHub anchor slug per heading
 }
 
 checked=0; dead=''
-for f in $DOC_FILES; do
+# shellcheck disable=SC2086
+for f in $ALL_DOCS; do
   dir="$(dirname "$f")"
   for target in $(grep -ohE '\]\([^)[:space:]]*#[^)[:space:]]*\)' "$f" \
                   | sed -e 's/^](//' -e 's/)$//'); do

@@ -85,6 +85,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash \"${HARNESS_DIR:-$HOME/.claude/harness}/lib/stop-gate.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "bash \"${HARNESS_DIR:-$HOME/.claude/harness}/lib/wall-hook.sh\"",
             "timeout": 5
           }

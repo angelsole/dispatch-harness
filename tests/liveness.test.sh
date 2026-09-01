@@ -73,21 +73,20 @@ alive_code() { run_alive "$1"; printf '%s' "$?"; }
 # ---------------------------------------------------------------------------
 echo "== harness_mtime =="
 # ---------------------------------------------------------------------------
-# `stat -f` on GNU means --file-system: six lines to stdout, then exit 1. Probed
-# in the wrong order it contaminated the fallback and the numeric guard threw
-# the lot away, so the heartbeat was dead on Linux — where CI runs.
+# `stat -f` on GNU means --file-system, and `%m` there is not a valid specifier:
+# GNU prints `?` and exits 0. Probed in the wrong order, or trusted by exit
+# status, it hands every caller a non-number and the heartbeat is dead on Linux
+# — where CI runs. So the answer is validated, and GNU is asked first.
 touch "$ROOT/probe"
 MT=$(harness_mtime "$ROOT/probe")
 case "$MT" in ''|*[!0-9]*) bad "mtime: a bare epoch (got [$MT])" ;; *) ok "mtime: a bare epoch" ;; esac
 check "mtime: one line, not a filesystem report" "$(printf '%s' "$MT" | grep -c '')" "1"
 check "mtime: close to now" "$(( $(date +%s) - MT < 5 ? 1 : 0 ))" "1"
 check "mtime: a missing file reports nothing" "$(harness_mtime "$ROOT/nope" 2>/dev/null)" ""
-# Resolved at load: inside harness_mtime it would be assigned in the caller's
-# command substitution and lost with that subshell.
-case "$_DISPATCH_STAT_FLAVOUR" in
-  gnu|bsd) ok "mtime: the stat flavour is resolved once, at load" ;;
-  *)       bad "mtime: flavour is [$_DISPATCH_STAT_FLAVOUR]" ;;
-esac
+# No state carried between calls: the answer is validated per call, so a call
+# made inside a command substitution answers exactly as the one before it.
+check "mtime: a second call answers the same" \
+  "$(harness_mtime "$ROOT/probe")" "$MT"
 
 # ---------------------------------------------------------------------------
 echo "== harness_bre_escape: run ids are data, not patterns =="

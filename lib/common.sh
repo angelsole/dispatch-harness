@@ -154,21 +154,18 @@ harness_codex_preamble() {  # sets CODEX_BIN CODEX_AVAILABLE CONFLICT_AGENT CONF
 HARNESS_DEAD_AFTER="${HARNESS_DEAD_AFTER:-120}"         # secs of silence = dead
 HARNESS_HEARTBEAT_SECS="${HARNESS_HEARTBEAT_SECS:-20}"  # how often a driver ticks
 
-# Probe GNU first: `stat -f` on GNU means --file-system and prints six lines to
-# STDOUT before failing, which a BSD-first fallback then concatenates with the
-# real epoch. `stat -c` on BSD fails silently, so this order is the safe one.
-# Resolved once at load — inside harness_mtime it would run in the caller's
-# command substitution and the result would die with that subshell.
-if stat -c %Y . >/dev/null 2>&1; then _DISPATCH_STAT_FLAVOUR=gnu
-elif stat -f %m . >/dev/null 2>&1; then _DISPATCH_STAT_FLAVOUR=bsd
-else _DISPATCH_STAT_FLAVOUR=none; fi
-
+# The ANSWER is validated, not the exit status, and GNU is asked first. BSD's
+# `stat -f %m` is the mtime; GNU's `-f` is *filesystem* status, where `%m` is not
+# a valid specifier — GNU prints `?` and exits **0**, so a BSD-first order never
+# reaches its own fallback and hands every caller a non-number on Linux. The
+# callers that guard (`run_alive`, the janitor) then read "cannot tell" forever,
+# and the one that did not read zero rows out of a full run history.
 harness_mtime() {  # $1 = path; prints the epoch mtime, or nothing
-  case "$_DISPATCH_STAT_FLAVOUR" in
-    gnu) stat -c %Y "$1" 2>/dev/null ;;
-    bsd) stat -f %m "$1" 2>/dev/null ;;
-    *)   return 1 ;;
-  esac
+  local m
+  m=$(stat -c %Y "$1" 2>/dev/null) || m=""
+  case "$m" in ''|*[!0-9]*) m=$(stat -f %m "$1" 2>/dev/null) || m="" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$m"
 }
 
 # Run ids reach grep as data, not pattern: they are ticket ids and adhoc slugs,

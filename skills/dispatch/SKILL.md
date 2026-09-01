@@ -42,6 +42,20 @@ yourself. Find: the root cause / insertion point, the conventions that apply, an
 what "done" verifiably means. Do not design the implementation in detail — that is
 the implementer's job.
 
+**Known traps.** Run `~/.claude/harness/lessons.sh --show <repo-path>` before
+you write the brief. It prints the defects earlier runs wrote in this repo that
+the review stage confirmed — the findings that survived refutation — ranked by
+how often they recurred and by what their PR cost after merge. Prints nothing
+for a repo with none, which is the normal state of a fresh one. Where a trap
+lands on ground this task touches, fold it into `## Constraints & pointers` (an
+invariant the implementer must hold) or `## Decision points` (a fork it has to
+stop for) in this brief's own words. Do **not** paste the list into the brief,
+and do not widen the task to fix a trap the ticket did not ask about: the
+implementer gets the same file mounted at `.harness/lessons.md` as advisory
+context, and a trap outside this brief's scope stays out of scope. The file is
+regenerated from run history ([the feedback loop](../../docs/reference.md#the-feedback-loop));
+never edit it by hand.
+
 **Document attachments.** When the ticket or the user supplies the real spec as
 an office document (docx, xlsx, pptx, pdf, odt, …), convert each one to markdown
 before you write the brief — no downstream stage can read those formats:

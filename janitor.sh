@@ -66,6 +66,8 @@ _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 . "$_COMMON_LIB_PATH"
 # shellcheck source=lib/deps-cache.sh
 . "$(dirname "$_COMMON_LIB_PATH")/deps-cache.sh"
+# shellcheck source=lib/lessons.sh
+. "$(dirname "$_COMMON_LIB_PATH")/lessons.sh"
 unset _COMMON_LIB_PATH
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -376,6 +378,28 @@ capture_outcome() {  # $1 = run dir, $2 = PR url, $3 = the poll's JSON ('' = unr
     printf 'unreadable'
   fi
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# The feedback loop
+# ---------------------------------------------------------------------------
+# The outcome pass above records what the world did with each PR; this one
+# reads that back. Per repo, the review findings that survived refutation are
+# ranked by recurrence and by what their PR then cost, and the top few are
+# written to a lessons file the next dispatch mounts for its implementer and
+# the planner reads before writing a brief (lib/lessons.sh, lessons.sh).
+#
+# It runs in both modes and destroys nothing: the files are derived, rewritten
+# whole from run history every pass, and a repo with no confirmed traps has its
+# file removed rather than left stale. Never fails the sweep — a distillation
+# that cannot be produced costs the next run one missing paragraph of advice.
+distil_lessons() {
+  local repos traps
+  read -r repos traps <<EOF
+$(lessons_refresh_all 2>/dev/null)
+EOF
+  case "${repos:-}" in ''|*[!0-9]*) say "lessons: could not distil this pass"; return 0 ;; esac
+  say "lessons: $traps trap(s) across $repos repo(s) — $LESSONS_DIR"
 }
 
 # ---------------------------------------------------------------------------
@@ -840,9 +864,11 @@ pass() {  # $1 = report | clean
   reap_procs "$mode"
   echo
   prune_deps_cache "$mode"
+  echo
+  distil_lessons
   if [ "$mode" != clean ]; then
     echo
-    say "--report swept and reaped nothing (outcome.json is still refreshed). janitor.sh --clean does the above."
+    say "--report swept and reaped nothing (outcome.json and the lessons files are still refreshed). janitor.sh --clean does the above."
     return 0
   fi
   # A sweep that could not finish is the one thing an operator has to notice.
