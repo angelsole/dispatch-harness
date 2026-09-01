@@ -247,6 +247,10 @@ harness_start_heartbeat() {  # $1 = run dir -> sets HEARTBEAT_PID
     while kill -0 "$owner" 2>/dev/null; do
       sleep "${HARNESS_HEARTBEAT_SECS:-20}"
       touch "$dir/heartbeat" 2>/dev/null || exit 0
+      # The same tick keeps the run's Linear session out of `stale`, at its own
+      # much slower interval. Only where lib/linear.sh is loaded — common.sh is
+      # sourced on its own by callers that have no ticket sync at all.
+      if declare -F linear_heartbeat >/dev/null 2>&1; then linear_heartbeat || true; fi
     done ) >/dev/null 2>&1 &
   HEARTBEAT_PID=$!
 }

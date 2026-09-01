@@ -40,8 +40,10 @@ if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
   compact_export=""
   case "$(cat "$RUN/implementer-model" 2>/dev/null || true)" in
     *'[1m]')
-      compact_export=" CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000"
-      [ "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" = 1000000 ] || zai_env_missing=1
+      # The same window run-task.sh gives a [1m] implementer (IMPLEMENTER_COMPACT_WINDOW).
+      compact_window="${IMPLEMENTER_COMPACT_WINDOW:-300000}"
+      compact_export=" CLAUDE_CODE_AUTO_COMPACT_WINDOW=$compact_window"
+      [ "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" = "$compact_window" ] || zai_env_missing=1
       ;;
   esac
   if [ "$zai_env_missing" = 1 ]; then

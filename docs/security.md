@@ -1,8 +1,9 @@
 # Security
 
 What it means to point an unattended, code-executing pipeline at your
-repositories, and the two boundaries that contain it: the worker's deny list
-and the reviewer's sandbox.
+repositories, the two boundaries that contain it — the worker's deny list and
+the reviewer's sandbox — and the one secret the harness hands a worker that is
+not a vendor credential.
 
 ## The threat model
 
@@ -41,6 +42,38 @@ code**, against your repositories. Be clear-eyed about what that means.
   staging/production, and destructive environment-switch tools should be denied
   outright (see above).
 
+## Credentials, and how they travel
+
+Every credential the harness reads is a file you create by hand, mode 600, in
+`HARNESS_DIR` — never a value in a config file the repo ships, never an argument.
+[Local config files](reference.md#local-config-files) lists them all; the Linear
+set is:
+
+- **`linear-api-key`** — your personal Linear key. Reads the ticket, comments the
+  PR link, moves the ticket to In Review.
+- **`linear-agent-credentials`** — the `client_id` / `client_secret` of the
+  workspace's Linear OAuth app, present only where ticketed runs are dispatched.
+  Its blast radius is the whole workspace, so it lives on one machine and is
+  registered by an admin ([Ticket sync](operations.md#ticket-sync)).
+- **`linear-agent-token`** — written by the harness, not by you: the 30-day app
+  actor token minted from those credentials, re-minted on expiry or a `401`. It
+  is a cache; deleting it costs one round trip.
+
+Two rules hold for all of them:
+
+- **Never on argv.** `ps` is world-readable, so a secret handed to `curl` as
+  `-u id:secret` or `-H "Authorization: …"` is visible to every process on the
+  machine. Secrets are written to a mode-600 header file under `umask 077`,
+  passed as `-H @file`, and deleted after the call. GraphQL bodies carry no
+  secret and stay on argv, which is what makes the request logs readable.
+  [`tests/linear-agent.test.sh`](../tests/linear-agent.test.sh) records the full
+  argv of every `curl` the pipeline makes and asserts no credential appears in it.
+- **Never in a log.** `runs/<RUN-ID>/ticket-sync.log` holds every Linear request
+  and its raw response — but a token-minting response is summarised, never
+  echoed. The model stages cannot read any of these files: they are in the `deny`
+  list of `planner-settings.json`, `spec-critic-settings.json` and the visual
+  critic's settings.
+
 ## The worker sandbox and MCP denies
 
 The implementer runs under
@@ -66,3 +99,36 @@ If your worker loads an MCP server (via `MCP_CONFIG`) exposing destructive tools
 ```
 
 Deny lists are cheap insurance; add to them liberally.
+
+## The wall ingest token
+
+`HARNESS_WALL_TOKEN` ([Ingest](wall.md#ingest)) is the one secret the harness
+puts in a worker's environment on purpose. It has to be there: the CLI's
+OpenTelemetry exporter takes its headers from `OTEL_EXPORTER_OTLP_HEADERS` and
+has no file form, so there is no path-and-permissions dance to do here of the
+kind the z.ai key and the Linear key get.
+
+Size it accordingly. It is a **shared LAN-dashboard secret**, not a vendor
+credential: the only thing holding it buys is the ability to post run rows to a
+board on your own network, and the wall's GET routes have no auth at all. Use a
+value you are willing to have in the environment of every worker on every
+machine that dispatches, do not reuse a token that means anything else, and keep
+the wall off the public internet — which was already the rule.
+
+The wall is still not on the internet. Tailscale Funnel publishes exactly one
+path, `/webhooks/linear`
+([Operations](operations.md#exposing-the-webhook-path)), and its only accepted
+caller is a request Linear signed — an HMAC over the body with
+`linear-webhook-secret` on the wall machine. A leaked copy of that secret lets
+someone POST harmless 200s to a route that stores nothing, and it is rotated on
+Linear's side, on the webhook's detail page; nothing in this repo generates or
+renews it.
+
+**What the wall refuses to keep.** The worker's metrics carry the operator's
+identity beside the numbers: `user.email`, `user.id`, `user.account_uuid`,
+`user.account_id`, `organization.id`, `terminal.type`. All six are dropped at
+the ingest boundary and never reach the wall's memory, its `WALL_INGEST_FILE`,
+or any payload it serves. OTel **logs** — which carry prompt and response text —
+are never enabled by the harness at all: `OTEL_LOGS_EXPORTER=none` is part of
+the worker environment, and the wall's `/v1/logs` route accepts a body only to
+discard it.

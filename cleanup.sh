@@ -11,6 +11,18 @@ _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 unset _COMMON_LIB_PATH
 RUN="$HARNESS_DIR/runs/$1"
 
+# The mirror target may be a repo pin (repos.local.sh) rather than an exported
+# variable, so resolve it the way run-task.sh did, off the worktree the run named.
+if [ -z "${HARNESS_MIRROR:-}" ] && [ -r "$HARNESS_DIR/repos.conf.sh" ]; then
+  _wt=$(jq -r '.worktree // empty' "$RUN/result.json" 2>/dev/null)
+  if [ -n "$_wt" ]; then
+    # shellcheck source=repos.conf.sh
+    . "$HARNESS_DIR/repos.conf.sh"
+    repo_config "$_wt" >/dev/null 2>&1 || true
+  fi
+  unset _wt
+fi
+
 # A run dispatched with HARNESS_MIRROR left a copy of its run dir on another
 # machine's wall. Promoting the run should free that disk too — best-effort,
 # and before the early exit below, so it happens even when there is no worktree

@@ -5,6 +5,9 @@ repos.local.sh
 
 # Credentials that live in HARNESS_DIR, which may be this checkout
 linear-api-key
+linear-agent-credentials
+linear-agent-token
+linear-webhook-secret
 verifier-api-key
 zai-api-key
 factory.conf.sh

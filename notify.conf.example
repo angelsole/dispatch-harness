@@ -3,8 +3,16 @@
 
 # Push each stage handoff to your phone via ntfy (https://ntfy.sh or self-hosted).
 # Pick a hard-to-guess topic, subscribe to it in the ntfy app, then set it here.
-# Empty (the default) disables phone push.
+# This is the room feed: every run dispatched from this machine hits it.
+# Empty (the default) disables this room feed; per-owner topics below stay active.
 HARNESS_NTFY_TOPIC=""
+
+# Per-owner topic, for machines several people dispatch from: a run whose
+# owner has one of these is pushed to it AND to the room feed above (same
+# value in both means one push). <OWNER> is the owner's login uppercased with
+# every other character replaced by `_` (sam.lee -> SAM_LEE below).
+# An owner without one of these gets the room feed only, silently.
+# HARNESS_NTFY_TOPIC_SAM_LEE=""
 
 # Self-hosted ntfy server (default is the public service).
 # HARNESS_NTFY_SERVER="https://ntfy.sh"
@@ -12,3 +20,11 @@ HARNESS_NTFY_TOPIC=""
 # Local desktop notifications on every stage handoff (macOS `osascript`).
 # 1 = on (default), 0 = silence.
 # HARNESS_NOTIFY=1
+
+# Report this machine's runs to one shared wall (`wall.sh`), so a team watching
+# one board sees every run wherever it was dispatched. The wall must be started
+# with a matching WALL_INGEST_TOKEN; without one it refuses every report.
+# Both unset (the default) means no outbound traffic of any kind.
+# `install.sh --team <ssh host>` fills both in from the wall's machine.
+# HARNESS_WALL_URL="http://mini:4711"
+# HARNESS_WALL_TOKEN="a-long-random-string-shared-with-the-wall"

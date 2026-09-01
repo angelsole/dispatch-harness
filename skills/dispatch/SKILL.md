@@ -127,9 +127,21 @@ question later.
 For free-form requests, the approval question also settles tracking: if an
 issue-tracker MCP is configured, offer to create the ticket (description from
 the brief's Problem section, no AI attribution) or run it as `adhoc-<slug>`
-with no ticket. If a ticket is created, rename the run dir to its ID and add the
-ticket line to the brief before dispatching. Never create a ticket before the
-user has approved.
+with no ticket. A created ticket must land where the team works, not as an
+orphan — set, in this order:
+
+- **assignee** — the dispatching user, the MCP's authenticated viewer. Never
+  unassigned, never an agent identity.
+- **cycle** — the team's current cycle, when the team uses cycles.
+- **project** — the one the work belongs to, resolved during research from the
+  tickets and code the request touches; when research leaves it genuinely
+  ambiguous, fold the choice into this approval question — never a second one.
+- **relations** — parent or related (whichever the tracker supports) to the
+  issues the request came from or blocks, when research identified them.
+
+If a ticket is created, rename the run dir to its ID and add the ticket line to
+the brief before dispatching. Never create a ticket before the user has
+approved.
 
 ## 4. Dispatch
 
@@ -164,6 +176,13 @@ Mention this option when the user seems to want mid-task interaction.
 
 ## 5. Verdict
 
+Prefer a fresh session for the verdict when this one is old or large. A run
+takes 30-75 minutes; a session that has waited that long has a cold prompt
+cache, and its first turn back rewrites the whole context at the cache-write
+rate — on a 500k-token session that costs more than the verdict itself. A new
+session starts from `result.json`, the notes and the diff, which is all the
+verdict needs; nothing about the run lives in this conversation.
+
 When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
 
 - **ready** — verify against the brief before promoting: read
@@ -193,7 +212,12 @@ When the run finishes, read `~/.claude/harness/runs/<TICKET>/result.json`:
   routine version when a Linear key file is configured: on `ready` it comments
   the PR link on the ticket and moves it to the team's In Review state
   (`runs/<RUN-ID>/ticket-sync.log` records what it did; `HARNESS_TICKET_SYNC=0`
-  disables). Check that log before acting so you never duplicate its comment.
+  disables). Where the wall's URL is configured it also keeps an attachment
+  card on the issue whose subtitle tracks the live stage, and where the
+  workspace's OAuth app credentials are configured every stage is an activity
+  on a Linear agent session — so the PR link may already be there as the
+  session's `response` rather than as a comment. Check that log before acting
+  so you never duplicate what it posted.
   What remains yours: when a ticket spans several runs, verify every PR is
   ready before treating the ticket as In Review; put any missing links on the
   ticket — attachments if the MCP supports them, otherwise one comment listing

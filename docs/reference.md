@@ -73,18 +73,26 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | `HARNESS_OWNER` | Who dispatched the run. Pinned into the run dir on the first dispatch, so a resume from someone else's session never re-attributes it | your login name |
 | `HARNESS_REDISPATCH` | `1` dispatches a run that already reached `done: ready` | unset |
 | `HARNESS_SKIP_PUSH_PREFLIGHT` | `1` skips the setup-time push-auth check. Setup does a `git push --dry-run` against `origin` so a missing push credential (`GH_TOKEN`) fails the run in seconds as `setup_failed` instead of after implement → gate → review → verify; an anonymous read (the setup fetch) passes on a public repo, so only the write path proves the credential. Non-auth push errors never block setup — they are left to the real push at the end. Set this for a local-only dispatch whose remote genuinely cannot take a dry-run push. | unset |
-| `HARNESS_TICKET_SYNC` | `0` disables the [ticket sync](operations.md#ticket-sync) that comments the PR and moves the ticket to In Review | `1` |
+| `HARNESS_TICKET_SYNC` | `0` disables all three [ticket sync](operations.md#ticket-sync) layers: the PR comment and state move, the attachment card, and the agent session | `1` |
+| `LINEAR_AGENT_CREDENTIALS_FILE` | Moves the OAuth app credentials that switch the [agent-session layer](operations.md#ticket-sync) on. Absent file, no layer | `~/.claude/harness/linear-agent-credentials` |
+| `HARNESS_RUN_LINK_BASE` | Base URL of the team's wall, no trailing slash (e.g. `http://mini:4711`). Set, and every ticketed run gets an [attachment card](operations.md#ticket-sync) linking to `<base>/console#<RUN-ID>`, and its agent session carries the same link. Unset, no card | unset |
+| `HARNESS_LINEAR_HEARTBEAT_SECS` | Least time between the ephemeral `thought` activities that keep a long stage's agent session out of Linear's `stale` state. Read by the driver's heartbeat ticker, which starts before `notify.conf` is read — so this one has to come from the environment | `300` |
 | `HARNESS_MIRROR` | ssh target (`host:path`) or local path a live run dir is mirrored to — see [Runs from any machine](operations.md#runs-from-any-machine-harness_mirror) | unset |
+| `HARNESS_PROVIDER_PRIVATE` | `1` and the run says nothing about which vendor implemented: the ticket's attachment card and activity line show `—`, the wall's stage reports carry no provider or model, and a `provider-private` marker in the run dir makes the wall's own reader answer nothing for the mirrored copy. `result.json` and `status.sh` on the dispatching machine still say — the verdict needs it. Usually a per-repo pin in `repos.local.sh` beside `IMPLEMENTER_PROVIDER` | unset |
+| `HARNESS_WALL_URL` | Base URL of a wall this machine's runs report to, no trailing slash (`http://mini:4711`). Turns on all three fan-in channels — stage handoffs, worker hook events, worker OTel metrics — see [Ingest](wall.md#ingest). Unset means no outbound traffic at all | unset |
+| `HARNESS_WALL_TOKEN` | Shared secret sent to that wall as `Authorization: Bearer`. Empty means the reports carry no credential and the wall refuses them; `run-task.sh` says so once at startup | unset |
+| `HARNESS_RUN_ID` | Not a knob: the ticket id the harness **exports to its workers** when `HARNESS_WALL_URL` is set. `lib/wall-hook.sh` stamps every hook event with it, and refuses to report without one | — |
 
 ### Notifications and monitoring
 
-`notify.conf` is the usual home for the first three; the shipped
+`notify.conf` is the usual home for the first four; the shipped
 `notify.conf.example` documents them too.
 
 | Env var | What it does | Default |
 | --- | --- | --- |
-| `HARNESS_NTFY_TOPIC` | ntfy topic every stage handoff is pushed to. Empty disables phone push | empty |
-| `HARNESS_NTFY_SERVER` | Self-hosted ntfy server | the public [ntfy](https://ntfy.sh) service |
+| `HARNESS_NTFY_TOPIC` | ntfy topic every stage handoff is pushed to — the room feed every run dispatched from the machine shares. Empty disables this room feed, not configured per-owner topics | empty |
+| `HARNESS_NTFY_TOPIC_<OWNER>` | Per-owner ntfy topic: a run whose pinned owner has one of these is pushed to it *and* to `HARNESS_NTFY_TOPIC`. `<OWNER>` is the owner's login uppercased with every other character replaced by `_` (`sam.lee` → `SAM_LEE`); an owner without one gets the room feed only, and a value equal to the global topic collapses to one push | unset |
+| `HARNESS_NTFY_SERVER` | Self-hosted ntfy server — one server for every topic above | the public [ntfy](https://ntfy.sh) service |
 | `HARNESS_NOTIFY` | `0` silences the local desktop banners (macOS `osascript`) | `1` |
 | `HARNESS_WATCH_INTERVAL` | Seconds between redraws in `status.sh --watch` | `2` |
 | `HARNESS_STALE_SECS` | How long a run whose status has not moved stays on the statusline | `21600` (6h) |
@@ -120,6 +128,7 @@ to before — this is instrumentation, not a redesign.
 | `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Resolved **repo pin → ambient env → default**: a [repo pin](#the-repo-pin) outranks the value this shell exports. Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
 | `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Resolved **repo pin → ambient env → provider default**, independently of the provider setting. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5`, or `glm-5.3` on `zai` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
+| `IMPLEMENTER_COMPACT_WINDOW` | Auto-compaction window, in tokens, for a `[1m]` implementer (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the worker's environment). 1M is what the model holds, not where it works best: past ~300k every turn re-reads a prefix that is mostly stale tool output. An `env` block in `~/.claude/settings.json` is applied over the process environment and wins over this knob — set the same number there, or nowhere. | `300000` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
 | `REVIEWER_EFFORT` | `model_reasoning_effort` for every `codex exec` call. Sol also accepts `max` and the subagent-spawning `ultra` for harder repos — both cost more per pass. | `high` |
 | `HARNESS_ESCALATION` | `on` \| `off` — whether a gate failure on the cheap implementer buys one pass on the Claude subscription ([Escalation](#escalation)). Defaults to `on` wherever the implementer is not already `anthropic`, `off` when it is (there is nothing to escalate to). An unrecognised value falls back to that default, says so once, and re-pins. | `on` on `zai`, `off` on `anthropic` |
@@ -175,7 +184,8 @@ fallback described in [the review guarantee](design-notes.md#why-its-built-this-
 loses nothing.
 
 **Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,
-and pinning it also sets the CLI's auto-compaction window to match. `glm-4.7` is
+and pinning it also sets the CLI's auto-compaction window
+(`IMPLEMENTER_COMPACT_WINDOW`, 300k by default). `glm-4.7` is
 the small/fast model. `IMPLEMENTER_EFFORT` is passed through unchanged and maps
 server-side: `xhigh`/`max` → max, `medium`/`high` → high, `low` → low.
 
@@ -438,7 +448,8 @@ so the write confinement holds whatever the policy file says.
 
 | Env var | What it does | Default |
 | --- | --- | --- |
-| `SPEC_CRITIC_MODEL` | Model for the pass | the CLI's own default |
+| `SPEC_CRITIC_MODEL` | Model for the pass. It reads and reports, it decides nothing; on the station's default model at `xhigh` a verdict cost ~10x this for no measured gain | `claude-sonnet-5` |
+| `SPEC_CRITIC_EFFORT` | Effort for the pass (`low`/`medium`/`high`/`xhigh`/`max`) | `medium` |
 | `SPEC_CRITIC_TIMEOUT` | Seconds per call | `600` |
 | `SPEC_CRITIC_MAX_TURNS` | Turn ceiling — repo research is most of them | `40` |
 | `SPEC_CRITIC_SETTINGS` | The tool policy | `spec-critic-settings.json` beside the script |
@@ -673,6 +684,7 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 | `DEMO_DEV_CMD` | Dev server command for demo recording (must pin the port) | none |
 | `DEMO_PORT` | Port `DEMO_DEV_CMD` binds (storyboard origin + post-demo cleanup) | none |
 | `PREPROD` | `1` = repo is not in production yet: both worker prompts get the greenfield posture | none |
+| `QUALITY_GATE` | `1` = prepend the [quality gate](#quality_gate-the-quality-bar) to `GATE_CMD` and state the bar in both worker prompts | none |
 
 `GATE_CMD` is the heart of it: it is the objective checkpoint both models are
 measured against. Point it at the strictest fast feedback your repo has —
@@ -749,6 +761,29 @@ pre-production. With `PREPROD` unset both prompts are byte-identical to a run
 without the feature — [`tests/preprod.test.sh`](../tests/preprod.test.sh)
 captures the real prompts from a fabricated run and asserts it.
 
+### QUALITY_GATE: the quality bar
+
+Pin `QUALITY_GATE=1` and the repo's gate becomes
+`lib/quality-gate.sh && { GATE_CMD; }`: deterministic static checks on the
+files the branch touches — never the repo's legacy backlog — run *before* the
+suite, so a violation fails in seconds instead of after minutes of tests. The
+bar: cyclomatic complexity at most 21 per function, at most 500 lines of code
+per file (blanks and comments not counted), zero `any` types in TypeScript,
+zero dead code (unused variables/imports, unreachable statements), and zero
+*added* suppression comments — a branch that writes `eslint-disable`,
+`@ts-ignore`, `@ts-nocheck`, `noqa` or `type: ignore` to get past the gate
+fails it instead. JS/TS runs on [oxlint](https://oxc.rs) (the repo's own
+binary when installed, an npx-pinned one otherwise), Python on ruff; a
+language whose tool cannot be found prints a `skip` line rather than failing.
+
+Enforcement is the gate's half; the other half is that `run-task.sh` states
+the bar to the implementer **and** the reviewer, because a bar the implementer
+first learns from a failed round costs that round. Thresholds are env knobs:
+`QG_MAX_COMPLEXITY` (default 21) and `QG_MAX_FILE_LINES` (default 500);
+`QG_SUPPRESSIONS=0` drops the suppression check. Like `PREPROD`, it is a pin,
+never a detection, and unset it leaves gate and prompts byte-identical to a
+run without the feature.
+
 ## Local config files
 
 All gitignored. `install.sh` seeds each of these from its `*.example` the first
@@ -759,18 +794,31 @@ time and never overwrites an existing copy:
 - **`demo.conf.sh`** — object-storage remote (`R2_REMOTE`, `R2_PUBLIC`) for
   uploading PR demo videos.
 
-Three more files are **not** seeded, because they are credentials and you should
+Five more files are **not** seeded, because they are credentials and you should
 create them deliberately, mode 600:
 
 - **`linear-api-key`** (`LINEAR_API_KEY_FILE` to move it), read by
   [the Quartermaster](operations.md#the-quartermaster) and by
   [ticket sync](operations.md#ticket-sync). Without it the quartermaster still
   reports capacity and simply says the queue was unreadable.
+- **`linear-agent-credentials`** (`LINEAR_AGENT_CREDENTIALS_FILE` to move it),
+  the `client_id=` / `client_secret=` of the workspace's Linear OAuth app, one
+  per line. Present, and every ticketed run opens
+  [an agent session on its issue](operations.md#registering-the-agent); absent,
+  that layer does not exist.
+- **`linear-webhook-secret`**, the signing secret of the Linear webhook the
+  wall answers at `/webhooks/linear` — pasted from the webhook's page on the
+  app, first line only. Read by `wall.sh` on the wall machine, never by a run;
+  absent, the route does not exist.
 - **`verifier-api-key`** (`VERIFIER_API_KEY_FILE` to move it), read by
   [the verifier](#the-verifier).
 - **`zai-api-key`** (`ZAI_API_KEY_FILE` to move it), read only by runs pinned to
   [GLM as the implementer](#glm-as-the-implementer). A run pinned to `zai`
   without it ends `setup_failed` before it spawns anything.
+
+A sixth file, **`linear-agent-token`**, is written *by the harness* beside
+those five: the 30-day app token minted from the credentials above, mode 600,
+re-minted on expiry or a `401`. Delete it freely — it is a cache.
 
 ## The run directory
 
@@ -782,7 +830,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `brief.md` | The task contract the planner wrote |
 | `specs/` | Converted spec attachments, when the task had any (below) |
 | `QUESTIONS.md` | The implementer's blocking questions — the run is `needs_input` while it exists |
-| `implementer-notes.md` | What the implementer changed and decided (it becomes the PR body) |
+| `implementer-notes.md` | The implementer's account of the change, user-facing sections first (it becomes the PR body) |
 | `review-notes.md` / `REJECTED.md` | The reviewer's notes (with the promoted/refuted ledger appended), or its rejection |
 | `findings.json`, `refuted.json`, `promoted.json` | [Find, refute, fix](#find-refute-fix): what the review pass reported, what the refutation pass disproved (each with the citation that verified), and what therefore earned an edit (`doubted: true` on the ones the refuter could not confirm). Absent on a review that produced no structured findings |
 | `refute-discarded.json` | `[{id, why, reason}]` — refutations thrown away because their evidence did not verify, so the finding was promoted instead. `[]` on a run where every verdict held up |
@@ -802,7 +850,9 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `segment-report-<n>.md` | In `report` [resume mode](operations.md#turn-ceiling-a-run-that-resumes-itself), the handover the turn-ceiling resume gave segment `<n>+1` about segment `<n>` |
 | `attempts/<n>/`, `attempts.log` | Every earlier attempt's stream, gate rounds, final message and segment reports, kept instead of overwritten ([Attempts](operations.md#attempts-a-run-is-a-ticket-an-attempt-is-a-dispatch)) |
 | `scheduled`, `scheduled.log` | An armed schedule's fire epoch, and the output of the run it fired |
-| `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript |
+| `mirror.log`, `ticket-sync.log` | The last error from mirroring, and the ticket-sync transcript — every Linear request, every raw response, and one `LINEAR ERROR <mutation>:` line per failure |
+| `linear-issue.json`, `linear-session`, `linear-heartbeat` | [Ticket sync's](operations.md#ticket-sync) state: the issue lookup, made once per run and re-read by every mutation so they all pass the UUID; the id of the run's agent session, which a re-dispatch reuses rather than opening a second one; and the epoch of the last heartbeat activity |
+| `wall-report.log` | One line per stage report the [wall](wall.md#ingest) would not take, with `curl`'s exit status — never the token and never the body. Only exists on a run that reported and was refused |
 
 That table is the paper trail for a human. The same directory is also a **wire
 format**: [Ghost Shift](wall.md) reads it live over the shoulder of a running

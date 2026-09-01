@@ -32,6 +32,10 @@ _INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 . "$_LIB_DIR/profile.sh"
 # shellcheck source=lib/deps-cache.sh
 . "$_LIB_DIR/deps-cache.sh"
+# shellcheck source=lib/linear.sh
+. "$_LIB_DIR/linear.sh"
+# shellcheck source=lib/notify.sh
+. "$_LIB_DIR/notify.sh"
 unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
@@ -184,6 +188,10 @@ WORKTREE="$(dirname "$REPO")/$(basename "$REPO")-$TICKET_LC"
 BASE_REF="origin/$BASE_BRANCH"
 mkdir -p "$RUN_DIR"
 ESCALATION_STATE="$RUN_DIR/escalation.json"
+# A repo whose provider is private (HARNESS_PROVIDER_PRIVATE, repos.local.sh) leaves
+# a marker the wall honours: the mirrored copy still carries the pin files the
+# verdict needs, and the wall reads the marker before it reads them.
+[ "${HARNESS_PROVIDER_PRIVATE:-0}" != 1 ] || : > "$RUN_DIR/provider-private"
 # From here the run dir exists, so another machine's wall can follow this run
 # (HARNESS_MIRROR). Best-effort throughout, and stopped — after one last pass —
 # on every exit path by the EXIT trap mirror_start installs.
@@ -388,6 +396,7 @@ fi
 # above, which are what a profile decides and configures itself from. A run with
 # no active profile registers nothing more and behaves exactly as it always has.
 hook_register implementer_env  apply_provider_env
+hook_register implementer_env  apply_wall_env
 hook_register pr_body_sections verify_pr_section
 harness_load_profiles "$REPO" "$SELF_DIR/profiles"
 
@@ -809,6 +818,51 @@ write_result() {
 # statusline; add or update the mapping in the same commit.
 # tests/statusline.test.sh asserts every literal maps to a known actor.
 . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
+
+# --- The wall's fan-in --------------------------------------------------------
+# HARNESS_WALL_URL turns on three outbound report channels — this run's stage
+# handoffs, its worker's hook events (lib/wall-hook.sh) and its worker's OTel
+# metrics — all POSTed to one wall so a team on several machines watches one
+# board. Unset, nothing here does anything at all.
+WALL_URL="${HARNESS_WALL_URL:-}"
+WALL_TOKEN="${HARNESS_WALL_TOKEN:-}"
+WALL_HOSTNAME=$(hostname -s 2>/dev/null) || WALL_HOSTNAME=""
+[ -n "$WALL_HOSTNAME" ] || WALL_HOSTNAME=unknown
+WALL_REPO=$(basename "$REPO")
+WALL_AUTH=()
+[ -z "$WALL_TOKEN" ] || WALL_AUTH=(-H "Authorization: Bearer $WALL_TOKEN")
+if [ -n "$WALL_URL" ] && [ -z "$WALL_TOKEN" ]; then
+  echo "[harness] HARNESS_WALL_URL is set without HARNESS_WALL_TOKEN — the wall will refuse reports"
+fi
+
+# One stage handoff, as the wall's ingest route wants it. Backgrounded and
+# capped at three seconds, so a dead or slow wall never delays a run; `-f` makes
+# the wall's own 401/404 a failure worth writing down. The token and the body
+# stay out of the log on purpose — it is read by whoever runs the dispatch.
+wall_report_stage() {  # $1 = stage text
+  [ -n "$WALL_URL" ] || return 0
+  local body WALL_PROVIDER="${IMPLEMENTER_PROVIDER:-}" WALL_MODEL="${IMPLEMENTER_MODEL:-}"
+  # A private provider (HARNESS_PROVIDER_PRIVATE) is not the wall's to know.
+  [ "${HARNESS_PROVIDER_PRIVATE:-0}" != 1 ] || { WALL_PROVIDER=""; WALL_MODEL=""; }
+  body=$(jq -n -c \
+    --arg run "$TICKET" --arg stage_text "$1" --argjson at "$(date +%s)" \
+    --arg host "$WALL_HOSTNAME" --arg owner "${HARNESS_OWNER:-}" \
+    --arg repo "$WALL_REPO" \
+    --arg provider "$WALL_PROVIDER" --arg model "$WALL_MODEL" \
+    --arg worktree "${WORKTREE:-}" --arg branch "${BRANCH:-}" \
+    --arg base "${BASE_BRANCH:-}" --arg pr_url "${PR_URL:-}" \
+    --arg status "${STATUS:-}" \
+    '{run:$run,stage:$stage_text,at:$at,host:$host,owner:$owner,repo:$repo,
+      provider:$provider,model:$model,worktree:$worktree,branch:$branch,
+      base:$base,pr_url:$pr_url,status:$status}' 2>/dev/null) || return 0
+  ( rc=0
+    curl -sf -m 3 -X POST -H 'Content-Type: application/json' \
+      ${WALL_AUTH[@]+"${WALL_AUTH[@]}"} -d "$body" -o /dev/null \
+      "$WALL_URL/api/ingest/stage" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] || printf '%s stage report failed (curl %s)\n' \
+      "$(date '+%H:%M:%S')" "$rc" >> "$RUN_DIR/wall-report.log" ) &
+}
+
 stage() {  # $1 = stage text, $2 = optional extra line for the phone push only
   echo "$(date +%s) $1" > "$RUN_DIR/status"
   printf '%s %s\n' "$(date +%s)" "$1" >> "$RUN_DIR/stages.log"   # epoch history for metrics
@@ -818,43 +872,50 @@ stage() {  # $1 = stage text, $2 = optional extra line for the phone push only
   if [ "${HARNESS_NOTIFY:-1}" = "1" ] && command -v osascript >/dev/null 2>&1; then
     osascript -e "display notification \"$1\" with title \"dispatch $TICKET\"" 2>/dev/null || true
   fi
-  if [ -n "${HARNESS_NTFY_TOPIC:-}" ]; then
-    # The phone push is the only artifact of an unattended run its owner sees
-    # before sitting back down, so the stages they must act on carry more than
-    # the stage text: a terminal stage attaches the PR link (body + tap
-    # target), and the blocked-on-a-human stages escalate so they survive a
-    # silenced phone. Everything else stays a low-priority background tick.
-    # The optional extra line ($2) is the push body's alone: status,
-    # stages.log, timeline and activity stay byte-identical, so every
-    # stage-text contract (statusline, wall, metrics) is untouched.
-    local body="$1"; local -a extra=()
-    [ -n "${2:-}" ] && body="$1
+  # The phone push is the only artifact of an unattended run its owner sees
+  # before sitting back down, so the stages they must act on carry more than
+  # the stage text: a terminal stage attaches the PR link (body + tap
+  # target), and the blocked-on-a-human stages escalate so they survive a
+  # silenced phone. Everything else stays a low-priority background tick.
+  # The optional extra line ($2) is the push body's alone: status,
+  # stages.log, timeline and activity stay byte-identical, so every
+  # stage-text contract (statusline, wall, metrics) is untouched.
+  local body="$1"; local -a extra=()
+  [ -n "${2:-}" ] && body="$1
 $2"
-    case "$1" in
-      "done: needs_input"|"done: review_failed")
-        # The other ways a run stops on a human: base-sync conflicts the
-        # resolver could not finish (never passes the waiting stage below),
-        # and a review no backend could complete (out of credits). The
-        # contract is the same — a stage that blocks the run must survive a
-        # silenced phone.
-        extra+=(-H "Priority: high" -H "Tags: warning")
-        ;;
-      done:*)
-        if [ -n "${PR_URL:-}" ]; then
-          body="$body"$'\n'"$PR_URL"
-          extra+=(-H "Click: $PR_URL" -H "Actions: view, Open PR, $PR_URL")
-        fi
-        ;;
-      waiting*)
-        extra+=(-H "Priority: high" -H "Tags: warning")
-        ;;
-    esac
-    # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
-    # treats an empty array as unbound under `set -u` and would abort the run on
-    # the first stage that adds no headers.
+  case "$1" in
+    "done: needs_input"|"done: review_failed")
+      # The other ways a run stops on a human: base-sync conflicts the
+      # resolver could not finish (never passes the waiting stage below),
+      # and a review no backend could complete (out of credits). The
+      # contract is the same — a stage that blocks the run must survive a
+      # silenced phone.
+      extra+=(-H "Priority: high" -H "Tags: warning")
+      ;;
+    done:*)
+      if [ -n "${PR_URL:-}" ]; then
+        body="$body"$'\n'"$PR_URL"
+        extra+=(-H "Click: $PR_URL" -H "Actions: view, Open PR, $PR_URL")
+      fi
+      ;;
+    waiting*)
+      extra+=(-H "Priority: high" -H "Tags: warning")
+      ;;
+  esac
+  # The same body and headers to every topic ntfy_targets lists for the run's
+  # pinned owner. An empty list sends nothing, which is what an unconfigured
+  # HARNESS_NTFY_TOPIC has always done.
+  # ${a[@]+"${a[@]}"}, not "${a[@]}": bash 3.2 (the only bash on stock macOS)
+  # treats an empty array as unbound under `set -u` and would abort the run on
+  # the first stage that adds no headers.
+  local ntfy_topic
+  while IFS= read -r ntfy_topic; do
+    [ -n "$ntfy_topic" ] || continue
     curl -s -m 5 -H "Title: dispatch $TICKET" ${extra[@]+"${extra[@]}"} -d "$body" \
-      "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$HARNESS_NTFY_TOPIC" >/dev/null 2>&1 || true
-  fi
+      "${HARNESS_NTFY_SERVER:-https://ntfy.sh}/$ntfy_topic" >/dev/null 2>&1 || true
+  done < <(ntfy_targets "${HARNESS_OWNER:-}")
+  linear_stage_report "$1"
+  wall_report_stage "$1"
 }
 
 # --- No run may end without a verdict ------------------------------------------
@@ -1373,6 +1434,30 @@ This repo is NOT in production yet. Work under this posture:
 - Judge the diff under this posture: do NOT request backward-compatibility shims, fallbacks, or migration paths for pre-production code."
 fi
 
+# --- 3d. Quality posture (QUALITY_GATE=1 pinned in repos.local.sh) -----------
+# The repo's gate runs lib/quality-gate.sh, so the bar is already enforced
+# deterministically; this block exists because enforcement alone is the
+# expensive way to learn it — every violation the implementer discovers from a
+# failed round costs a full gate + fix cycle. Stating the bar up front makes
+# the first attempt aim at it, and the reviewer variant keeps the review from
+# blessing a diff the gate will bounce. Thresholds here must mirror
+# lib/quality-gate.sh's defaults. Empty unless pinned, which leaves both
+# prompts byte-identical to a run without this feature.
+QUALITY_POSTURE=""; QUALITY_POSTURE_REVIEW=""
+if [ "${QUALITY_GATE:-}" = 1 ]; then
+  QUALITY_POSTURE="
+
+This repo enforces a machine-checked quality bar. The deterministic gate runs it on the files your branch touches, before the test suite, and fails the round on any violation:
+- Cyclomatic complexity at most 21 per function — split or flatten anything denser.
+- At most 500 lines of code per file (blank lines and comments not counted) — split a file that would cross it.
+- Zero \`any\` types in TypeScript: type the value, or take \`unknown\` and narrow it.
+- Zero dead code: no unused variables or imports, no unreachable statements.
+- Zero suppressions: adding \`oxlint-disable\`, \`eslint-disable\`, \`@ts-ignore\`, \`@ts-nocheck\`, \`noqa\` or \`type: ignore\` comments fails the gate too. Refactor instead of suppressing.
+Write to this bar on the first attempt — every violation the gate catches costs a full fix round."
+  QUALITY_POSTURE_REVIEW="$QUALITY_POSTURE
+- Judge the diff against this bar: treat any suppression comment in the diff as a finding, and flag near-threshold complexity worth simplifying."
+fi
+
 # --- 4. The implementer (Claude subscription: ANTHROPIC_API_KEY unset) -------
 # z.ai serves the GLM Coding Plan over an Anthropic-compatible endpoint that this
 # same binary speaks, so the whole integration is four environment variables and
@@ -1384,6 +1469,14 @@ ZAI_BASE_URL="https://api.z.ai/api/anthropic"
 ZAI_KEY_FILE="${ZAI_API_KEY_FILE:-$HARNESS_DIR/zai-api-key}"
 ZAI_TIMEOUT_MS=3000000
 ZAI_SMALL_MODEL=glm-4.7
+# Where a 1M-context implementer compacts. 1M is what the model can hold, not
+# where it works best: past ~300k every turn re-reads a prefix that is mostly
+# stale tool output, and the wall-clock and cache cost of each turn grow with
+# it. 300k is the ceiling the orchestrator sessions run under as well. NOTE: an
+# `env` block in ~/.claude/settings.json is applied with Object.assign over the
+# process environment and wins over this export — set the same number there,
+# or nowhere.
+IMPLEMENTER_COMPACT_WINDOW="${IMPLEMENTER_COMPACT_WINDOW:-300000}"
 # The cheap model both the CLI's own background work and the worker's Explore
 # subagents run on. It has to move with the provider: a subagent left on
 # `sonnet` would be routed to the z.ai endpoint under a model id it does not
@@ -1425,12 +1518,39 @@ apply_provider_env() {
   export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
   export API_TIMEOUT_MS="$ZAI_TIMEOUT_MS"
   export ANTHROPIC_DEFAULT_HAIKU_MODEL="$ZAI_SMALL_MODEL"
-  # The 1M-context variant only behaves as one if the CLI is told where to
-  # compact; left at its default it would compact at 200k against a model
-  # pinned for five times that.
+  # The 1M-context variant needs the CLI told where to compact — left at its
+  # default it would compact at 200k against a model pinned for five times
+  # that. IMPLEMENTER_COMPACT_WINDOW (see the knob above) is where.
   case "$IMPLEMENTER_MODEL" in
-    *'[1m]') export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 ;;
+    *'[1m]') export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$IMPLEMENTER_COMPACT_WINDOW" ;;
+    *)       unset CLAUDE_CODE_AUTO_COMPACT_WINDOW ;;
   esac
+}
+
+# What a Claude worker needs to report to the wall on its own: the run id its
+# hook wrapper stamps every event with, and the CLI's OpenTelemetry exporter
+# pointed at the same wall. Applied inside the worker's subshell like the
+# provider credential above, so the gate, codex, the verifier and the planner
+# never see any of it. Logs export stays off — one one-tool session produced a
+# 63 KB /v1/logs body, and every one of them carries the operator's identity.
+apply_wall_env() {  # $1 = which worker this is: implement | review
+  [ -n "$WALL_URL" ] || return 0
+  export HARNESS_RUN_ID="$TICKET"
+  export HARNESS_WALL_URL="$WALL_URL"
+  export HARNESS_WALL_TOKEN="$WALL_TOKEN"
+  export HARNESS_DIR
+  export CLAUDE_CODE_ENABLE_TELEMETRY=1
+  export OTEL_METRICS_EXPORTER=otlp
+  export OTEL_LOGS_EXPORTER=none
+  export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+  export OTEL_EXPORTER_OTLP_ENDPOINT="$WALL_URL"
+  if [ -n "$WALL_TOKEN" ]; then
+    export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $WALL_TOKEN"
+  else
+    unset OTEL_EXPORTER_OTLP_HEADERS
+  fi
+  export OTEL_METRIC_EXPORT_INTERVAL=10000
+  export OTEL_RESOURCE_ATTRIBUTES="run.id=$TICKET,owner=${HARNESS_OWNER:-},repo=$WALL_REPO,host=$WALL_HOSTNAME,stage=${1:-implement}"
 }
 
 IMPLEMENTER_PROMPT="You are the implementer stage of an automated pipeline.
@@ -1439,7 +1559,7 @@ If .harness/specs/ exists, it holds the task's source documents (office files th
 Rules:
 - Implement the brief fully. You own the implementation design; plan as you see fit.
 - Delegate to subagents (Explore — they run on a cheaper model) only for sizeable, genuinely independent exploration such as a wide multi-file investigation. Do not delegate what a few tool calls of your own would answer, and never use subagents to verify or double-check your own work.
-- Leave the tree passing the verify commands from the brief.
+- Leave the tree passing the verify commands from the brief. Run those targeted checks — the suites that cover YOUR change — not the repo's whole test suite: the pipeline's deterministic gate runs the full suite right after you, so re-running all of it yourself only burns turns and hours.
 - Never weaken, skip, or delete tests to make them pass; if a test seems wrong, say so in your notes instead.
 - Comment policy: a comment states a constraint or gotcha the code cannot express — nothing else. Never narrate design rationale, alternatives considered, history, or ticket numbers in comments or doc comments; that context goes in commit messages and .harness/implementer-notes.md. Keep doc comments to a line or two of what the thing is for. Do not imitate verbose comments you find in the surrounding code.
 - Make small conventional commits (type(scope): description). Never mention AI, Claude, or agents in commits.
@@ -1449,19 +1569,25 @@ Rules:
 - Database/MCP tools: local environment only. Never switch environments or touch staging/production.
 - Stopping to ask is decided by the brief's '## Decision points', not by your own sense of doubt. Stop for exactly two things: a fork that section marks 'STOP and ask', and an irreversible action it does NOT declare — a schema migration or data backfill, deleting or rewriting files outside '## Edit locations', anything that leaves this machine. Do NOT stop for a fork the brief already decides: implement its decision as written, even where you would have chosen otherwise. To stop, write the specific question(s), each with the options you considered and what the wrong answer costs, to .harness/QUESTIONS.md and stop working — batched, all of them at once. The orchestrator will get answers and resume you.
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
-- When finished, write .harness/implementer-notes.md: what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize. Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
+- When finished, write .harness/implementer-notes.md in three sections, in this order — the user-facing ones first:
+  1. \`## What this changes\` — 2-5 sentences in product language: what a user of the product can now do or no longer suffers, and why it matters. No file names, no function names.
+  2. \`## How to try it\` — the concrete steps or command a human uses to see the change working; \`Not user-visible — <one line why>\` is legitimate for pure internal work.
+  3. \`## Technical notes\` — what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize.
+  Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE$QUALITY_POSTURE"
 
-# Every continuation message restates the commit rules. A resumed session has
-# its original instructions far behind it in a long context, and two resumes in
-# one day re-added `Co-Authored-By: Claude` trailers their first pass had never
-# written — one caught by hand, one by the reviewer, and a no_review arm would
-# have shipped them. This is the cheap half of the fix; the deterministic strip
-# after the stage is the half that does not depend on a model reading it.
+# Every continuation message restates the commit rules and the notes shape. A
+# resumed session has its original instructions far behind it in a long context,
+# and two resumes in one day re-added `Co-Authored-By: Claude` trailers their
+# first pass had never written — one caught by hand, one by the reviewer, and a
+# no_review arm would have shipped them. This is the cheap half of the fix; the
+# deterministic strip after the stage is the half that does not depend on a
+# model reading it.
 RESUME_RULES="These rules from your original instructions are still binding:
 - Make small conventional commits (type(scope): description).
 - Commit ALL your work before finishing — the pipeline rejects a dirty worktree (any uncommitted or untracked change outside \`.harness/\`). Delete scratch you don't want; don't leave it uncommitted.
 - Never mention AI, Claude, or agents in commits — no Co-Authored-By, no Generated-with, no attribution trailer of any kind, in the subject, the body or the footer.
 - Never git add or commit anything under .harness/; never use git add -f.
+- implementer-notes.md keeps its three-section shape — \`## What this changes\`, \`## How to try it\`, then \`## Technical notes\`, user-facing sections first; it becomes the PR body.
 - Do NOT push, do NOT create PRs, do NOT switch branches."
 
 # --- Escalation, the mechanism ------------------------------------------------
@@ -2532,7 +2658,7 @@ run_codex() {  # $1 = round label, $2 = prompt
 # whose ambient shell points the CLI at the compatible endpoint, an inherited
 # ANTHROPIC_BASE_URL would silently route this stage there too.
 run_claude_worker() {  # $1 = round label, $2 = prompt
-  (cd "$WORKTREE" && with_timeout "$CODEX_TIMEOUT" \
+  (cd "$WORKTREE" && apply_wall_env review && with_timeout "$CODEX_TIMEOUT" \
       env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
           -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
           -u CLAUDE_CODE_AUTO_COMPACT_WINDOW \
@@ -2994,48 +3120,62 @@ review_refute_and_fix() {
 # --- Ticket sync (script — no model, best-effort) ------------------------------
 # An overnight run has no orchestrator session watching for its result: when
 # the draft PR opens, the ticket itself has to say so. If the run id starts
-# with a TEAM-123 identifier and the same Linear key file the quartermaster
-# reads is present, the PR link is commented on the ticket and the ticket moves
-# to its team's "In Review" state. The pipeline still never marks a PR ready
-# and never merges — review stays a human act; this only routes the artifact.
+# with a TEAM-123 identifier and Linear is configured (lib/linear.sh holds the
+# client and the three layers' switches), the PR link reaches the ticket and the
+# ticket moves to its team's "In Review" state. The pipeline still never marks a
+# PR ready and never merges — review stays a human act; this only routes the
+# artifact.
+#
+# This is the single place that decides comment-vs-response. With an agent
+# session open the PR link IS the session's `response` — Linear mirrors it as a
+# comment — and the PR then hangs off the session as an external URL. A response
+# Linear will not take falls back to the comment that has always worked: a
+# ticket must never end without its PR link.
+#
 # Everything is best-effort: failures land in ticket-sync.log and never touch
 # the run's status. HARNESS_TICKET_SYNC=0 turns it off.
-LINEAR_URL="https://api.linear.app/graphql"
-LINEAR_KEY_FILE="${LINEAR_API_KEY_FILE:-$HARNESS_DIR/linear-api-key}"
 ticket_sync() {  # uses TICKET, PR_URL, BRANCH; always returns 0
   [ "${HARNESS_TICKET_SYNC:-1}" = 1 ] || return 0
-  [ -r "$LINEAR_KEY_FILE" ] || return 0
-  local ident hdr gql issue iid sid
-  ident=$(printf '%s' "$TICKET" | grep -oE '^[A-Za-z][A-Za-z0-9]*-[0-9]+') || return 0
-  # Key travels in a 600 header file, never in argv — same trick as the
-  # quartermaster, same reason: ps must never show it.
-  hdr="$RUN_DIR/.linear-hdr"
-  ( umask 077; printf 'Authorization: %s\n' "$(cat "$LINEAR_KEY_FILE")" > "$hdr" ) || return 0
+  linear_agent_on || [ -r "$LINEAR_KEY_FILE" ] || return 0
+  local ident issue iid sid sess gql log="$RUN_DIR/ticket-sync.log" responded=0
+  ident=$(linear_ident "$TICKET") || return 0
   stage "ticket sync — PR link + In Review (script — no model)"
-  {
-    gql=$(jq -n --arg id "$ident" '{query:"query($id: String!){ issue(id: $id){ id identifier team { states(first: 50){ nodes { id name type } } } } }",variables:{id:$id}}')
-    issue=$(curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL")
-    printf 'issue lookup: %s\n' "$issue"
-    iid=$(printf '%s' "$issue" | jq -r '.data.issue.id // empty')
-    if [ -z "$iid" ]; then echo "no Linear issue named $ident — nothing to sync"; rm -f "$hdr"; return 0; fi
+  issue=$(linear_issue_json) || { echo "issue lookup failed — nothing to sync" >> "$log"; return 0; }
+  iid=$(printf '%s' "$issue" | jq -r '.data.issue.id // empty')
+  if [ -z "$iid" ]; then echo "no Linear issue named $ident — nothing to sync" >> "$log"; return 0; fi
+  if sess=$(linear_session); then
+    if linear_activity "$sess" "$(linear_content response \
+        "Draft PR ready for review: $PR_URL (\`$BRANCH\`)
+Review: $REVIEW_CLASS")"; then
+      responded=1
+      gql=$(jq -cn --arg id "$sess" --arg url "$PR_URL" \
+        '{query:"mutation($id: String!, $input: AgentSessionUpdateInput!){ agentSessionUpdate(id: $id, input: $input){ success } }",
+          variables:{id:$id,input:{addedExternalUrls:[{label:"Pull Request",url:$url}]}}}')
+      linear_agent_call agentSessionUpdate "$gql" >/dev/null || true
+    fi
+  fi
+  if [ "$responded" = 0 ]; then
     gql=$(jq -n --arg id "$iid" --arg c "Draft PR ready for review: $PR_URL (\`$BRANCH\`)" \
       '{query:"mutation($id: String!, $c: String!){ commentCreate(input: {issueId: $id, body: $c}){ success } }",variables:{id:$id,c:$c}}')
-    printf 'comment: '; curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL"; echo
-    # The team's own state names are the truth: "In Review" by name first,
-    # else the started-type state that mentions review. No match = comment only.
-    sid=$(printf '%s' "$issue" | jq -r '.data.issue.team.states.nodes // []
-      | (map(select((.name | ascii_downcase) == "in review")) | first)
-        // (map(select(.type == "started" and (.name | test("review"; "i")))) | first)
-        // empty | .id // empty')
-    if [ -n "$sid" ]; then
-      gql=$(jq -n --arg id "$iid" --arg sid "$sid" \
-        '{query:"mutation($id: String!, $sid: String!){ issueUpdate(id: $id, input: {stateId: $sid}){ success } }",variables:{id:$id,sid:$sid}}')
-      printf 'state -> In Review: '; curl -s -m 15 -H @"$hdr" -H 'Content-Type: application/json' -d "$gql" "$LINEAR_URL"; echo
+    if [ -r "$LINEAR_KEY_FILE" ]; then
+      linear_call comment "$gql" personal >/dev/null || true
     else
-      echo "no In Review state on this team — commented only"
+      linear_call comment "$gql" >/dev/null || true
     fi
-  } >> "$RUN_DIR/ticket-sync.log" 2>&1
-  rm -f "$hdr"
+  fi
+  # The team's own state names are the truth: "In Review" by name first,
+  # else the started-type state that mentions review. No match = comment only.
+  sid=$(printf '%s' "$issue" | jq -r '.data.issue.team.states.nodes // []
+    | (map(select((.name | ascii_downcase) == "in review")) | first)
+      // (map(select(.type == "started" and (.name | test("review"; "i")))) | first)
+      // empty | .id // empty')
+  if [ -n "$sid" ]; then
+    gql=$(jq -n --arg id "$iid" --arg sid "$sid" \
+      '{query:"mutation($id: String!, $sid: String!){ issueUpdate(id: $id, input: {stateId: $sid}){ success } }",variables:{id:$id,sid:$sid}}')
+    linear_call_personal_fallback 'state -> In Review' "$gql" >/dev/null || true
+  else
+    echo "no In Review state on this team — commented only" >> "$log"
+  fi
   return 0
 }
 
@@ -3267,7 +3407,7 @@ Boundary: report freely on the code this branch introduces or touches; do NOT re
 - Do NOT push or create PRs.
 - Write .harness/review-notes.md: what you read, what you concluded, and anything you noticed but deliberately did not raise as a finding.
 - If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: write it to .harness/REJECTED.md and stop.
-- If everything is genuinely sound, say so in review-notes.md, write an empty findings array, and change nothing.$PREPROD_POSTURE_REVIEW$REVIEW_PROMPT_EXTRA"
+- If everything is genuinely sound, say so in review-notes.md, write an empty findings array, and change nothing.$PREPROD_POSTURE_REVIEW$QUALITY_POSTURE_REVIEW$REVIEW_PROMPT_EXTRA"
 
 # --- The refutation prompt ----------------------------------------------------
 # A fresh session, on the backend that reviewed, that has not seen the diff and
@@ -3557,7 +3697,13 @@ else
     TITLE=$(sed -n 's/^# //p' "$BRIEF" | head -1); [ -n "$TITLE" ] || TITLE="$TICKET"
     { echo "Ref: $TICKET"; echo
       if [ -f "$WORKTREE/.harness/implementer-notes.md" ]; then cat "$WORKTREE/.harness/implementer-notes.md"; fi
-      if [ -f "$WORKTREE/.harness/review-notes.md" ]; then echo; echo "## Review notes"; cat "$WORKTREE/.harness/review-notes.md"; fi
+      if [ -f "$WORKTREE/.harness/review-notes.md" ]; then
+        # Blank lines around the inner markdown — GitHub renders nothing inside
+        # <details> without them.
+        echo; echo '<details><summary>Review notes</summary>'; echo
+        cat "$WORKTREE/.harness/review-notes.md"
+        echo; echo '</details>'
+      fi
       hook_run pr_body_sections
     } > "$RUN_DIR/pr-body.md"
     # On re-dispatch a PR may already exist for this branch: reuse it (and do NOT

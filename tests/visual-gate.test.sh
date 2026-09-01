@@ -29,6 +29,11 @@
 # Usage: bash tests/visual-gate.test.sh
 set -u
 
+# This suite deliberately runs visual gates that fail and checks their exit
+# codes. Do not let those nested gates overwrite a parent run_gate() tracer and
+# make an unrelated lint/test failure look like one of these expected failures.
+unset HARNESS_GATE_STEP
+
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="$SRC/profiles/visual"
 CREATIVE="$PROFILE/creative"
@@ -1282,6 +1287,8 @@ file_has "$PROFILE_IMPL" 'visual_trace_prelude="trap '\''$GATE_TRACE_WRITE'\'' D
   "trace: the visual stage preserves the gate's own failing step"
 file_has "$PROFILE_IMPL" 'script="$visual_trace_prelude' \
   "trace: the visual runner uses its DEBUG-only prelude"
+file_has "$SRC/gate.sh" '-u HARNESS_GATE_STEP' \
+  "trace: a nested visual fixture cannot overwrite the repository gate step"
 
 # ---------------------------------------------------------------------------
 echo "== part B: the stage inside run-task.sh =="
@@ -1500,6 +1507,8 @@ file_has "$PROMPTS" "cannot render this yourself" \
   "pass: and told why that is the only look it gets"
 file_has "$RUN/pr-body.md" "## Visual gate" "pass: the PR body carries the render"
 file_has "$RUN/pr-body.md" "pairwise vs champion: **better**" "pass: with the verdict in it"
+file_has "$RUN/pr-body.md" "<details><summary>Review notes</summary>" \
+  "pass: the reviewer's notes sit behind a collapsed fold"
 file_has "$RUN/pr-body.md" "no R2 remote configured" \
   "pass: and says plainly that nothing was uploaded, rather than linking nowhere"
 absent "pass: no upload was attempted" "$RUN/visual-upload.log"

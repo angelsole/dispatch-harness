@@ -225,10 +225,13 @@ tail of `feed.log`, and the one control the console has —
 ```
 
 — as a copy-able command. Everything the console can *do* is that paste. It
-never mutates a run, and it shows this machine's `WALL_RUNS` only; a second
-machine's runs are the
-[mirror](operations.md#runs-from-any-machine-harness_mirror)'s job, not the
-console's.
+never mutates a run, and it draws this machine's `WALL_RUNS` plus whatever other
+machines have [reported in](#ingest). A reported run wears a dashed host chip
+and a hatched row, and where its paste would be it carries the machine's name
+instead: `attach.sh` opens a session here, and that run is not here. To follow
+its files rather than its stages, use the
+[mirror](operations.md#runs-from-any-machine-harness_mirror) as well; the two
+compose.
 
 It is live over `/api/stream` and falls back to polling `/api/runs` every few
 seconds when the stream drops (the dot in the top-right says which). A snapshot
@@ -241,6 +244,84 @@ is the second, and shares not a line of code with the first. Lifting that layer
 into its own directory so N frontends (web, mobile, pixel) hang cleanly off it
 is deferred work and nothing here does it — this is only the proof that the
 seam is real.
+
+## Ingest
+
+**Two commands, no secrets typed.** On the machine that runs the team's wall:
+
+```bash
+~/.claude/harness/wall.sh --init-token        # writes wall-ingest-token (600) + wall-url, then exits
+launchctl kickstart -k gui/$(id -u)/<label>   # or re-run wall.sh: it reads the token file itself
+```
+
+On each laptop that should report there, from its clone of this repo
+(`install.sh` lives in the checkout, not under `~/.claude/harness`):
+
+```bash
+./install.sh --team <ssh host>   # reads both files over ssh, writes notify.conf
+```
+
+`wall-url` defaults to the machine's Tailscale IPv4 and the wall's port; pass
+`--url http://…` to override. `WALL_INGEST_TOKEN` in the environment still wins
+over the file. The Linear webhook secret works the same way:
+`WALL_LINEAR_WEBHOOK_SECRET` in the environment, or the first line of
+`<HARNESS_DIR>/linear-webhook-secret` — pasted by the operator from the
+webhook's page on the Linear app, nothing generates it. With neither,
+`/webhooks/linear` is the 404 of an unknown page.
+
+The wall reads run dirs, and run dirs are on one disk. **Ingest** is the other
+direction: a run POSTs what it is doing to a wall, so four people on four
+machines watch one board. It is off unless the wall is started with a token:
+
+```bash
+WALL_INGEST_TOKEN=a-long-random-string wall.sh          # on the machine with the screen
+export HARNESS_WALL_URL=http://mini:4711                # in every dispatching shell,
+export HARNESS_WALL_TOKEN=a-long-random-string          # or in that machine's notify.conf
+```
+
+With `HARNESS_WALL_URL` unset a dispatch sends nothing and sets nothing. With it
+set, a run opens three channels, all of them best-effort and none of them able to
+delay or fail a run:
+
+| Channel | Who sends it | What it carries |
+| --- | --- | --- |
+| `POST /api/ingest/stage` | `run-task.sh`, on every stage handoff | the stage text and the run's identity: host, owner, repo, provider, model, worktree, branch, base, PR URL, status |
+| `POST /api/ingest/hook` | `lib/wall-hook.sh`, from the worker's `PostToolUse` / `Stop` / `SessionEnd` hooks | the event name, the session, and the tool name plus its command / file path / description, each capped at 200 characters |
+| `POST /v1/metrics` | the worker's own OpenTelemetry exporter | `claude_code.token.usage`, `claude_code.cost.usage`, `claude_code.session.count` |
+| `POST /webhooks/linear` | Linear itself, not a run — its agent-session events, the subscription that unlocks agent sessions on the app | Linear → wall, signed, nothing stored: verified against the signing secret, answered `200 {}`, discarded |
+
+A run the wall has never seen on disk becomes a **row of its own**, marked
+remote. A run that is *both* on disk (mirrored) and reporting is **one row** —
+the disk record wins and the telemetry attaches to it. Either way the numbers
+land in the row's cost and turns cells while the run is still live, which is
+sooner than `result.json` can answer.
+
+`/v1/logs` and `/v1/traces` answer `200 {}` and discard the body, so an exporter
+somebody pointed here by hand stops retrying instead of filling a run's stderr.
+The harness never turns either of them on: one single-tool session produced a
+63 KB log body, and every log record carries the operator's identity.
+
+**What the wall drops on the way in.** The CLI's metric datapoints carry
+`user.email`, `user.id`, `user.account_uuid`, `user.account_id`,
+`organization.id` and `terminal.type` beside the numbers. None of them is
+stored, written to disk, or served — they are dropped at the ingest boundary,
+before anything reaches memory. What is kept is the session id, the model name
+and the token type.
+
+**Where it lives.** In memory, keyed by run id, persisted to `WALL_INGEST_FILE`
+(by default beside the runs dir, like the city ledger) at most once a second, and
+reloaded at boot — a launchd restart on the office machine must not blank the
+board. An entry nothing has updated for seven days is pruned.
+
+**The privacy boundary is unchanged.** Everything above is **console view only**.
+`/api/runs` and `/api/stream` without `?view=console` return exactly what they
+returned before ingest existed: no telemetry on any run, and no remote rows at
+all. The city, the towers, the district and the summary are computed from the
+disk alone. There is still no auth on any GET route, and the token is a
+LAN-dashboard secret, not a vendor credential — see
+[Security](security.md#the-wall-ingest-token). The one public path is
+`/webhooks/linear`, and it is authenticated by Linear's HMAC signature, not
+by the bearer — the wall's only internet-facing caller is Linear itself.
 
 ## Which tower a run stands in
 

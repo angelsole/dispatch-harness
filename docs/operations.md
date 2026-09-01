@@ -539,15 +539,138 @@ until something is actually wrong.
 
 ## Ticket sync
 
-An overnight run has no orchestrator watching for its result. When a run
-reaches `ready` and its run id starts with a `TEAM-123` identifier, the
-pipeline comments the draft-PR link on the Linear ticket and moves the ticket
-to its team's **In Review** state (matched against the team's real state
-names, "In Review" by name first, else the `started`-type state mentioning
-"review"). It reads the same `linear-api-key` file the quartermaster uses,
-logs everything to `runs/<RUN-ID>/ticket-sync.log`, and is strictly
-best-effort — a Linear hiccup never fails a run. `HARNESS_TICKET_SYNC=0`
-disables it. Ad-hoc runs (no ticket-shaped id) are skipped automatically.
+An overnight run has no orchestrator watching for its result, and a teammate
+looking at Linear used to have no way to tell that a ticket was being built at
+all — the pipeline's whole footprint was one comment at the very end. Now the
+ticket carries the run while it runs, in three layers you switch on
+independently. All three are gated by the same two things: a run id that starts
+with a `TEAM-123` identifier (ad-hoc runs are skipped automatically) and
+`HARNESS_TICKET_SYNC` left at `1`. All three are best-effort in the strongest
+sense — no Linear failure ever changes a run's status or exit code.
+
+**1. The comment and the state move** (needs `linear-api-key`, the same file the
+quartermaster reads). On `ready`, the draft-PR link is commented on the ticket
+and the ticket moves to its team's **In Review** state — matched against the
+team's real state names, "In Review" by name first, else the `started`-type
+state mentioning "review". This is what the harness has always done.
+
+**2. The attachment card** (needs `linear-api-key` **and**
+`HARNESS_RUN_LINK_BASE`). One attachment on the issue, re-sent on every stage:
+title `Dispatch run <RUN-ID>`, subtitle the stage the run is in right now, and
+provider/owner/branch/host as attributes. Its URL — the run's deep link on the
+wall, `$HARNESS_RUN_LINK_BASE/console#<RUN-ID>` — is also its identity: Linear
+updates the original attachment when the same URL comes back on the same issue,
+so the card tracks the run with no bookkeeping and never accumulates.
+
+**3. The agent session** (needs `linear-agent-credentials`). The run becomes a
+Linear *agent session* on its issue: every stage is an activity on a timeline
+rendered as the app, not as you. Stages map to Linear's five activity shapes —
+an ordinary handoff is an `action`, the implementer's pause is an `elicitation`
+carrying `QUESTIONS.md` (the session shows as awaiting input), a capacity
+deferral is a `thought`, `rejected` and every other failing outcome is an
+`error`, and `ready` is a `response` carrying the PR link, with the PR added to
+the session as an external URL labelled "Pull Request". While a stage runs long,
+the driver's heartbeat posts an *ephemeral* thought carrying the run's current
+activity line at most once per `HARNESS_LINEAR_HEARTBEAT_SECS` (default 300), so
+a long implementer never reaches the 30 minutes after which Linear marks a
+session stale. Agents do not count as billable users.
+
+When layers 2 and 3 are both on, both run: the card is the always-visible
+summary, the session is the timeline. The end-of-run comment is *not* duplicated
+— with a session open the PR link is the session's `response`, which Linear
+mirrors as a comment. If that response is rejected, the old comment goes out
+instead, because a ticket must never end without its PR link.
+
+Everything every layer sends, and everything Linear answers, lands in
+`runs/<RUN-ID>/ticket-sync.log`. A failure adds a line starting
+`LINEAR ERROR <mutation>:` — that grep is the operator's live test:
+
+```bash
+grep 'LINEAR ERROR' ~/.claude/harness/runs/<RUN-ID>/ticket-sync.log
+```
+
+### Registering the agent
+
+Layer 3 needs a Linear OAuth app; layers 1 and 2 do not. The app authenticates
+with the `client_credentials` grant, which returns a 30-day app actor token
+with no browser step — the harness mints it, caches it in
+`linear-agent-token`, and re-mints it on expiry or a `401`. Agent sessions are
+gated behind a webhook, though: Linear answers `agentSessionCreateOnIssue`
+with *"Agent sessions are not enabled for this application"* until the app
+enables webhooks and selects **Agent session events**. The wall receives that
+webhook — its one path on the public internet, signed by Linear and answered
+with a 200 and nothing else ([Exposing the webhook
+path](#exposing-the-webhook-path)).
+
+1. A workspace admin opens `https://linear.app/settings/api/applications/new`.
+   The name and icon are how the agent appears in Linear (the name may not
+   contain "Linear" or "http"). One redirect URI is required even though nothing
+   uses it — `http://localhost/unused` is fine. Distribution: private.
+2. Toggle on **client credentials tokens**. Enable **Webhooks** on the same
+   app: URL `https://<wall-host>.<tailnet>.ts.net/webhooks/linear`, and tick
+   **Agent session events**. Copy the signing secret the page shows into
+   `~/.claude/harness/linear-webhook-secret` (first line, mode 600) **on the
+   wall machine**, then restart the wall so it reads the file. Do this only
+   after the Funnel subsection below — the URL should already answer when
+   Linear first delivers to it (Linear does not document validating the URL on
+   save, so the order is caution, not requirement).
+3. Put the client id and secret in `~/.claude/harness/linear-agent-credentials`,
+   mode 600, on the machine that dispatches ticketed runs — two `key=value`
+   lines and nothing else:
+
+   ```
+   client_id=<Linear OAuth app client id>
+   client_secret=<Linear OAuth app client secret>
+   ```
+
+4. Set `HARNESS_RUN_LINK_BASE` to the team wall's base URL, no trailing slash
+   (e.g. `http://mini:4711`), so sessions and cards link back to the run.
+5. Dispatch a real ticket and look at the issue: the session renders, and
+   `runs/<RUN-ID>/ticket-sync.log` has no `LINEAR ERROR
+   agentSessionCreateOnIssue` line. Without the webhook that mutation is
+   refused with *"Agent sessions are not enabled for this application"* —
+   observed 29 Aug 2026 on the first ticketed run, one refusal per stage while
+   it retried. The attachment card works either way; only the session needs
+   the webhook.
+
+#### Exposing the webhook path
+
+Linear delivers to a public HTTPS URL that must answer within 5 s. The wall
+has exactly one such path: `/webhooks/linear`, published with Tailscale
+Funnel on the wall machine. Everything else — the console, `/api/runs`, the
+ingest routes, every GET that has never had auth — stays on the tailnet
+exactly as before: Funnel is granted per path, not per machine.
+
+Prerequisites, once per tailnet: the `funnel` node attribute on the wall
+machine in the tailnet policy file, MagicDNS, and HTTPS certificates (the
+Tailscale Funnel guide covers all three). On macOS the CLI is not on `PATH`
+by default — it is
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale`. Then:
+
+```bash
+/Applications/Tailscale.app/Contents/MacOS/Tailscale funnel --bg \
+  --set-path /webhooks/linear http://127.0.0.1:4711/webhooks/linear
+```
+
+The listener is 443 (Funnel allows 443, 8443 and 10000 only); the target is
+the wall's matching route because Funnel removes the configured mount prefix
+before proxying. A request for the exact mount therefore reaches
+`/webhooks/linear`, while the route also tolerates the trailing slash Funnel
+may re-join onto it. `funnel status` lists what is published; `funnel off`
+unpublishes all of it. The command above follows the Tailscale KB and is
+written unverified against a live client — check `tailscale funnel --help` on
+the wall machine if it is rejected.
+
+The proof the mapping reached the route is a `curl` from anywhere:
+
+```bash
+curl -si https://<wall-host>.<tailnet>.ts.net/webhooks/linear -X POST -d '{}'
+```
+
+**401** is the answer wanted: the route was reached and refused an unsigned
+body. **404** means the request did not arrive as `/webhooks/linear` — or the
+wall was restarted before the secret file existed — and a timeout means
+Funnel itself is not up.
 
 ## Runs from any machine (`HARNESS_MIRROR`)
 
@@ -575,9 +698,46 @@ short lifecycle, and `cleanup.sh` removes the mirrored copy when it promotes a
 run, so the wall's disk empties with yours. With the variable unset, none of
 this exists: no loop, no extra file, byte-identical behaviour.
 
+Both knobs can be **per-repo pins** in `repos.local.sh` rather than exports —
+`repo_config` runs before the mirror starts, so a repo can say
+`HARNESS_MIRROR=mini:.claude/harness/runs` for itself while every other repo on
+the machine stays unmirrored, and `cleanup.sh` resolves the same pin off the
+run's worktree when nothing is exported. `HARNESS_PROVIDER_PRIVATE=1` beside
+it keeps the vendor out of what the wall and the ticket see — the card and the
+activity line say `—`, the stage reports carry no provider, and the mirrored run
+dir carries a `provider-private` marker the wall honours before it reads the
+pin files. What a machine's own `result.json` and `status.sh` say is unchanged.
+
 The target is a machine you already trust with the run dir: mirroring copies
 briefs, feeds and worker logs onto it, and gives it whatever your ssh key gives
 it. Point it at your own wall, not at a shared box.
+
+### Mirror or ingest?
+
+Joining a laptop to the team's wall is `wall.sh --init-token` once on the wall's
+machine and `install.sh --team <ssh host>` on the laptop — see
+[the wall's ingest section](wall.md#ingest).
+
+There are two ways a run on your laptop reaches a wall on another machine, and
+they answer different questions.
+
+| | `HARNESS_MIRROR` | `HARNESS_WALL_URL` ([ingest](wall.md#ingest)) |
+| --- | --- | --- |
+| What travels | the whole run dir — brief, feed, logs, `result.json` | a small JSON report per stage, per tool call, per metrics flush |
+| How | `rsync` over ssh, every two seconds | `POST` to one HTTP route on the wall |
+| Needs | an ssh key on the target and `rsync` | a token both sides share |
+| What the wall can then draw | everything, including the city, the district and the feed | the console's row: stage, actor, host, live cost and tool count |
+| Costs the target | your ssh key's access, and disk | nothing but the row |
+
+Mirroring is the richer picture and the bigger trust: the target gets your
+briefs and your worker logs. Ingest is the cheaper one, and it is the one that
+scales to a team — a shared token, no ssh keys, and a board that shows every
+run's *stage* the moment it moves.
+
+**They compose.** A run that both mirrors and reports appears once: the wall
+matches them by run id, the mirrored run dir wins, and the reported telemetry
+attaches to that same row. Nothing is duplicated, and turning one of them off
+never leaves a stale twin behind.
 
 ## Re-merging the base into a pushed PR
 

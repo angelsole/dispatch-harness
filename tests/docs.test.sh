@@ -116,7 +116,7 @@ PREREQ_BINS='claude gh jq git bash curl perl lsof uuidgen'
 # open docs/, and README's Prerequisites table is the single answer; letting a
 # binary count as documented because a design note happens to mention it in
 # passing would be a weaker check than the one this replaces.
-DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl magick'
+DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl magick tailscale oxlint ruff uvx'
 
 # Guarded at every call site and degrade silently when absent — README owes
 # them nothing.
@@ -253,6 +253,16 @@ claim operations.md "$OPS"     'HARNESS_REDISPATCH=1'
 claim reference.md  "$REF"     'attempts/<n>/'
 claim reference.md  "$REF"     'attempts.log'
 claim SKILL.md    "$SKILL"     'HARNESS_REDISPATCH=1'
+# A ticket the planner creates must land where the team works, not as an orphan:
+# one claim per field of the creation contract, so the skill cannot quietly drop
+# a field and go back to writing tickets nobody is assigned to.
+claim SKILL.md    "$SKILL"     'the dispatching user'
+claim SKILL.md    "$SKILL"     'never an agent identity'
+claim SKILL.md    "$SKILL"     "the team's current cycle"
+claim SKILL.md    "$SKILL"     '**project**'
+claim SKILL.md    "$SKILL"     'resolved during research'
+claim SKILL.md    "$SKILL"     'fold the choice into this approval question'
+claim SKILL.md    "$SKILL"     'the request came from or blocks'
 # A brief that fails validation is moved, not armed and not deleted. An
 # operator who finds their brief gone has to be able to look up where it went.
 # It travels with the Quartermaster section it belongs to.
