@@ -684,6 +684,7 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 | `DEMO_DEV_CMD` | Dev server command for demo recording (must pin the port) | none |
 | `DEMO_PORT` | Port `DEMO_DEV_CMD` binds (storyboard origin + post-demo cleanup) | none |
 | `PREPROD` | `1` = repo is not in production yet: both worker prompts get the greenfield posture | none |
+| `QUALITY_GATE` | `1` = prepend the [quality gate](#quality_gate-the-quality-bar) to `GATE_CMD` and state the bar in both worker prompts | none |
 
 `GATE_CMD` is the heart of it: it is the objective checkpoint both models are
 measured against. Point it at the strictest fast feedback your repo has —
@@ -759,6 +760,29 @@ It is a pin, never a detection: no heuristic gets to decide a repo is
 pre-production. With `PREPROD` unset both prompts are byte-identical to a run
 without the feature — [`tests/preprod.test.sh`](../tests/preprod.test.sh)
 captures the real prompts from a fabricated run and asserts it.
+
+### QUALITY_GATE: the quality bar
+
+Pin `QUALITY_GATE=1` and the repo's gate becomes
+`lib/quality-gate.sh && { GATE_CMD; }`: deterministic static checks on the
+files the branch touches — never the repo's legacy backlog — run *before* the
+suite, so a violation fails in seconds instead of after minutes of tests. The
+bar: cyclomatic complexity at most 21 per function, at most 500 lines of code
+per file (blanks and comments not counted), zero `any` types in TypeScript,
+zero dead code (unused variables/imports, unreachable statements), and zero
+*added* suppression comments — a branch that writes `eslint-disable`,
+`@ts-ignore`, `@ts-nocheck`, `noqa` or `type: ignore` to get past the gate
+fails it instead. JS/TS runs on [oxlint](https://oxc.rs) (the repo's own
+binary when installed, an npx-pinned one otherwise), Python on ruff; a
+language whose tool cannot be found prints a `skip` line rather than failing.
+
+Enforcement is the gate's half; the other half is that `run-task.sh` states
+the bar to the implementer **and** the reviewer, because a bar the implementer
+first learns from a failed round costs that round. Thresholds are env knobs:
+`QG_MAX_COMPLEXITY` (default 21) and `QG_MAX_FILE_LINES` (default 500);
+`QG_SUPPRESSIONS=0` drops the suppression check. Like `PREPROD`, it is a pin,
+never a detection, and unset it leaves gate and prompts byte-identical to a
+run without the feature.
 
 ## Local config files
 

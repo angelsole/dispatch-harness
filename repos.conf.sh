@@ -6,7 +6,15 @@
 # repo_config <repo-or-worktree-path> sets:
 #   BASE_BRANCH INSTALL_CMD GATE_CMD VISUAL_GATE_CMD VISUAL_SCOPE_GLOBS \
 #   MCP_CONFIG ENV_SUBDIRS DEV_CMD PREFLIGHT_CMD DEMO_DEV_CMD DEMO_PORT PREPROD \
-#   IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL DEPS_CACHE_POST_CMD
+#   QUALITY_GATE IMPLEMENTER_PROVIDER IMPLEMENTER_MODEL DEPS_CACHE_POST_CMD
+#
+# QUALITY_GATE=1 prepends lib/quality-gate.sh to GATE_CMD: deterministic static
+# checks (cyclomatic complexity, file length, `any` types, dead code, added
+# suppression comments) on the files the branch touches, run BEFORE the suite
+# so a violation fails in seconds instead of after minutes of tests. Both
+# worker prompts state the bar (run-task.sh's quality posture), so the first
+# attempt aims at it rather than discovering it from a failed round. Never
+# auto-detected — only a pin opts a repo into the bar.
 #
 # DEPS_CACHE_POST_CMD is pin-only, never auto-detected: it declares the part of
 # a compound INSTALL_CMD the dependency cache does not reproduce (anything
@@ -60,6 +68,9 @@ unset _COMMON_LIB_PATH
 _conf_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "$HARNESS_DIR")"
 # shellcheck source=/dev/null
 [ -f "$_conf_dir/repos.local.sh" ] && . "$_conf_dir/repos.local.sh"
+# Resolved at source time, embedded into GATE_CMD at composition time: the gate
+# runs inside the worktree, where a relative path would resolve to nothing.
+_QUALITY_GATE_SCRIPT="$_conf_dir/lib/quality-gate.sh"
 unset _conf_dir
 
 repo_config() {
@@ -68,7 +79,7 @@ repo_config() {
   BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
   VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
   ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
-  DEPS_CACHE_POST_CMD=""
+  QUALITY_GATE=""; DEPS_CACHE_POST_CMD=""
 
   # User pins first (if repos.local.sh defined the hook); auto-detection then
   # fills only the fields the hook left blank, so a pin can set just one value.
@@ -78,6 +89,16 @@ repo_config() {
 
   _detect_config "$repo"
   [ -n "$BASE_BRANCH" ] || _detect_base "$repo"
+  # The quality bar runs FIRST: its whole point is failing in seconds, before
+  # the suite. The brace group keeps a GATE_CMD containing `||` intact — bare
+  # concatenation would rebind its precedence.
+  if [ "${QUALITY_GATE:-}" = 1 ]; then
+    if [ -n "$GATE_CMD" ]; then
+      GATE_CMD="bash '$_QUALITY_GATE_SCRIPT' --base '$BASE_BRANCH' && { $GATE_CMD; }"
+    else
+      GATE_CMD="bash '$_QUALITY_GATE_SCRIPT' --base '$BASE_BRANCH'"
+    fi
+  fi
   # Only pass an MCP config that actually exists.
   [ -n "$MCP_CONFIG" ] && [ ! -f "$MCP_CONFIG" ] && MCP_CONFIG=""
   return 0

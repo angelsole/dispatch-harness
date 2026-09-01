@@ -1419,6 +1419,30 @@ This repo is NOT in production yet. Work under this posture:
 - Judge the diff under this posture: do NOT request backward-compatibility shims, fallbacks, or migration paths for pre-production code."
 fi
 
+# --- 3d. Quality posture (QUALITY_GATE=1 pinned in repos.local.sh) -----------
+# The repo's gate runs lib/quality-gate.sh, so the bar is already enforced
+# deterministically; this block exists because enforcement alone is the
+# expensive way to learn it — every violation the implementer discovers from a
+# failed round costs a full gate + fix cycle. Stating the bar up front makes
+# the first attempt aim at it, and the reviewer variant keeps the review from
+# blessing a diff the gate will bounce. Thresholds here must mirror
+# lib/quality-gate.sh's defaults. Empty unless pinned, which leaves both
+# prompts byte-identical to a run without this feature.
+QUALITY_POSTURE=""; QUALITY_POSTURE_REVIEW=""
+if [ "${QUALITY_GATE:-}" = 1 ]; then
+  QUALITY_POSTURE="
+
+This repo enforces a machine-checked quality bar. The deterministic gate runs it on the files your branch touches, before the test suite, and fails the round on any violation:
+- Cyclomatic complexity at most 21 per function — split or flatten anything denser.
+- At most 500 lines of code per file (blank lines and comments not counted) — split a file that would cross it.
+- Zero \`any\` types in TypeScript: type the value, or take \`unknown\` and narrow it.
+- Zero dead code: no unused variables or imports, no unreachable statements.
+- Zero suppressions: adding \`oxlint-disable\`, \`eslint-disable\`, \`@ts-ignore\`, \`@ts-nocheck\`, \`noqa\` or \`type: ignore\` comments fails the gate too. Refactor instead of suppressing.
+Write to this bar on the first attempt — every violation the gate catches costs a full fix round."
+  QUALITY_POSTURE_REVIEW="$QUALITY_POSTURE
+- Judge the diff against this bar: treat any suppression comment in the diff as a finding, and flag near-threshold complexity worth simplifying."
+fi
+
 # --- 4. The implementer (Claude subscription: ANTHROPIC_API_KEY unset) -------
 # z.ai serves the GLM Coding Plan over an Anthropic-compatible endpoint that this
 # same binary speaks, so the whole integration is four environment variables and
@@ -1534,7 +1558,7 @@ Rules:
   1. \`## What this changes\` — 2-5 sentences in product language: what a user of the product can now do or no longer suffers, and why it matters. No file names, no function names.
   2. \`## How to try it\` — the concrete steps or command a human uses to see the change working; \`Not user-visible — <one line why>\` is legitimate for pure internal work.
   3. \`## Technical notes\` — what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize.
-  Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE"
+  Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE$QUALITY_POSTURE"
 
 # Every continuation message restates the commit rules and the notes shape. A
 # resumed session has its original instructions far behind it in a long context,
@@ -3357,7 +3381,7 @@ Boundary: report freely on the code this branch introduces or touches; do NOT re
 - Do NOT push or create PRs.
 - Write .harness/review-notes.md: what you read, what you concluded, and anything you noticed but deliberately did not raise as a finding.
 - If you find a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: write it to .harness/REJECTED.md and stop.
-- If everything is genuinely sound, say so in review-notes.md, write an empty findings array, and change nothing.$PREPROD_POSTURE_REVIEW$REVIEW_PROMPT_EXTRA"
+- If everything is genuinely sound, say so in review-notes.md, write an empty findings array, and change nothing.$PREPROD_POSTURE_REVIEW$QUALITY_POSTURE_REVIEW$REVIEW_PROMPT_EXTRA"
 
 # --- The refutation prompt ----------------------------------------------------
 # A fresh session, on the backend that reviewed, that has not seen the diff and
