@@ -844,7 +844,7 @@ tool in the harness reads them and nothing else. The paper trail per run:
 | `gate-integrity.json`, `gate-integrity-replay.log` | The [integrity check's](#the-gate-integrity-check) findings (copied into `result.json` as `gate_integrity`), and the transcript of replaying this branch's tests against base |
 | `result.json` | The run's machine-readable outcome and metrics ([schema](#metrics-schema)) |
 | `outcome.json` | What the world did with the PR: `pr_url`, `pr_state`, `merged_at`, `time_to_merge_s`, `review_comment_count`, `follow_up_commits`, `reverted`, `checked_at` — written by the [janitor](operations.md#the-janitor) once the run has a PR. Absent until then, and absent for a PR the janitor could never read |
-| `repo` | The repo the janitor resolved the run's PR to, so later sweeps skip the re-derivation |
+| `repo` | The repo this run belongs to, in git's own `--show-toplevel` spelling — written by `run-task.sh` at setup and by the janitor for runs that predate it, so the attribution survives the sweep that removes the worktree. The [feedback loop](#the-feedback-loop) groups a repo's history by it |
 | `opus-head` | The commit SHA dividing the implementer's commits from the reviewer's. Per-model attribution lives here and in `result.json`, never in the commit messages themselves — the commits stay clean (no AI or agent mentions) and you still know which model wrote what |
 | `escalation.json`, `escalation-report.md` | [Escalation](#escalation): what the cheap tier failed on and where its commits end (copied into `result.json` as `escalation`), and the handover the escalated session was given. Only on a run that escalated |
 | `capacity.log` | The [preflight's](operations.md#capacity-preflight-a-run-that-defers-itself) verdict |
@@ -931,6 +931,84 @@ Wire the statusline once and monitoring is ambient; skip it and
 - **`preview.sh <RUN-ID>`** — run the dev server inside the worktree to see the
   change live before approving.
 - **[`wall.sh`](wall.md)** — the same picture for a room instead of a terminal.
+
+## The feedback loop
+
+The pipeline records two ground truths about every run and, until `lessons.sh`
+existed, read neither of them back:
+
+- **`promoted.json`** — the review findings that survived
+  [refutation](#find-refute-fix). A reviewer from a different vendor claimed a
+  defect, a second session that had not seen the diff failed to disprove it, and
+  the fix pass committed for it. That is not an opinion about style; it is a
+  mistake an implementer actually made in this repo and the pipeline actually
+  caught.
+- **`outcome.json`** — what the world then did with the PR (the
+  [janitor](operations.md#the-janitor) writes it): merged, reverted, how many
+  humans had to comment, how many commits landed on those files afterwards.
+
+`lib/lessons.sh` distils the two into one short file per repo. The split between
+them is the whole design: **findings supply the text, outcomes supply the
+weight.** No model reads or writes any of it — the entries are the reviewer's own
+words, counted, and a distillation that needed a vendor, a key and a quota is a
+loop that stops the first week the key expires. A trap scores one point per run
+that hit its file, plus what the world charged for those PRs — recurrence is the
+base, because it is the signal a human gardener acts on (the third time the same
+file bites is when it becomes a rule), and a revert is worth three of it, so one
+undone PR deliberately outranks three quiet repeats.
+
+```bash
+~/.claude/harness/lessons.sh                     # what each repo's file holds
+~/.claude/harness/lessons.sh --show /path/repo   # print that repo's traps
+~/.claude/harness/lessons.sh --refresh           # regenerate every repo's file
+~/.claude/harness/lessons.sh --path /path/repo   # where that repo's file lives
+```
+
+**Who reads it.** The planner runs `--show` during research and lets it inform
+the brief's constraints and decision points. Every dispatch mounts the same file
+at `.harness/lessons.md` in the worktree, next to `brief.md`, and the implementer
+is told to read it and avoid repeating what is in it. Both are **advisory**: a
+trap is a place to be careful, never a task, and the prompt says so — it never
+widens the run's scope and never overrides the brief. The reviewer is
+deliberately *not* given it, so the find pass keeps reading the diff cold rather
+than hunting for the traps it was handed.
+
+**Who writes it.** The janitor's daily pass, after the outcome poll it already
+makes, and — for an operator who never installed the janitor — the dispatch
+itself, at most once every `LESSONS_STALE_HOURS` per repo. Files are derived and
+rewritten whole every pass; a repo with no confirmed traps has its file
+**removed** rather than left stale, so nothing is mounted and nothing is said.
+
+**What gets evicted**, which is what keeps the file worth reading:
+
+| Rule | Why |
+| --- | --- |
+| Runs older than `LESSONS_MAX_AGE` days (60) | A trap from a codebase two months ago is advice about code that has moved |
+| A trap seen in one run, after `LESSONS_SOLO_MAX_AGE` days (21) | One sighting is an anecdote until it repeats |
+| A trap whose file is no longer tracked in the repo | Advice about a file nobody can open — and it silently drops findings that cited a path the reviewer invented, since a finding's `file` is free-form model text nothing upstream validates |
+| Everything past `LESSONS_MAX_ENTRIES` (8 files, `LESSONS_MAX_CLAIMS` = 2 findings each) | Context is the cost ([ADR 0009](adr/0009-context-is-the-cost.md)); a page nobody reads teaches nothing |
+
+Findings the refuter marked `doubted` never enter at all: those are the ones it
+found plausible and could **not** confirm, which is exactly the class that must
+not become a rule.
+
+| Knob | Default | What it does |
+| --- | --- | --- |
+| `LESSONS_DIR` | `$HARNESS_DIR/lessons` | Where the per-repo files live (`<basename>-<cksum of path>.md`, so two checkouts sharing a basename stay separate) |
+| `LESSONS_MAX_ENTRIES` | `8` | Traps (files) per repo |
+| `LESSONS_MAX_CLAIMS` | `2` | Findings quoted per trap, most recent first |
+| `LESSONS_CLAIM_CHARS` | `160` | Per quoted finding, ellipsised when cut |
+| `LESSONS_MAX_AGE` | `60` | Days a run may still contribute |
+| `LESSONS_SOLO_MAX_AGE` | `21` | Days a one-run trap survives |
+| `LESSONS_NOISY_COMMENTS` | `5` | Human review comments before a PR counts as "argued over" |
+| `LESSONS_STALE_HOURS` | `12` | How stale a repo's file may be before a dispatch refreshes it itself |
+
+Weights: a reverted PR adds 3 to its findings' score, one argued over adds 1, one
+patched on the same files after merge adds 1 — and the rendered entry names which
+of those happened, so a reader can see why a trap ranks where it does. A run
+contributes its weight once per file however many findings it filed there:
+recurrence *across runs* is the signal, and one chatty review must not outrank
+three separate runs tripping over the same ground.
 
 ## Metrics
 

@@ -162,8 +162,18 @@ harness_codex_preamble() {  # sets CODEX_BIN CODEX_AVAILABLE CONFLICT_AGENT CONF
 HARNESS_DEAD_AFTER="${HARNESS_DEAD_AFTER:-120}"         # secs of silence = dead
 HARNESS_HEARTBEAT_SECS="${HARNESS_HEARTBEAT_SECS:-20}"  # how often a driver ticks
 
+# The ANSWER is validated, not the exit status, and GNU is asked first. BSD's
+# `stat -f %m` is the mtime; GNU's `-f` is *filesystem* status, where `%m` is not
+# a valid specifier — GNU prints `?` and exits **0**, so a BSD-first order never
+# reaches its own fallback and hands every caller a non-number on Linux. The
+# callers that guard (`run_alive`, the janitor) then read "cannot tell" forever,
+# and the one that did not read zero rows out of a full run history.
 harness_mtime() {  # $1 = path; prints the epoch mtime, or nothing
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+  local m
+  m=$(stat -c %Y "$1" 2>/dev/null) || m=""
+  case "$m" in ''|*[!0-9]*) m=$(stat -f %m "$1" 2>/dev/null) || m="" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$m"
 }
 
 run_alive() {  # $1 = run dir -> 0 alive, 1 dead, 2 cannot tell
