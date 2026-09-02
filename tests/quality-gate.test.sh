@@ -83,6 +83,36 @@ has_not "$OX" 'util.py' "oxlint never sees a Python file"
 has     "$RF" 'util.py' "ruff gets the modified Python file"
 has_not "$RF" 'good.ts' "ruff never sees a TS file"
 
+echo "== a bare --base name means origin/<name>, never the checkout's stale local branch =="
+# The shape that bit OLYX-1887 (1 Sep 2026): the primary checkout's `main` sits
+# where the human last pulled it; origin/main has since grown a legacy file past
+# the ceiling; the branch is cut from origin/main and never touches that file.
+SBARE="$ROOT/stale-origin.git"; SREPO="$ROOT/stale"
+git init -q --bare "$SBARE"
+git clone -q "$SBARE" "$SREPO" 2>/dev/null
+git -C "$SREPO" config user.email t@t
+git -C "$SREPO" config user.name  t
+printf 'export const a = 1;\n' > "$SREPO/good.ts"
+git -C "$SREPO" add . && git -C "$SREPO" commit -qm base
+git -C "$SREPO" branch -M main
+git -C "$SREPO" push -q -u origin main
+# origin/main moves (a legacy TS file lands) while local main stays put.
+git -C "$SREPO" checkout -q --detach origin/main
+printf 'export const legacy = 1;\n' > "$SREPO/legacy.ts"
+git -C "$SREPO" add . && git -C "$SREPO" commit -qm "legacy grows"
+git -C "$SREPO" push -q origin HEAD:main
+git -C "$SREPO" fetch -q origin
+git -C "$SREPO" checkout -qb feat origin/main
+printf 'prose\n' > "$SREPO/note.txt"
+git -C "$SREPO" add . && git -C "$SREPO" commit -qm "branch: prose only"
+OUT="$ROOT/qg-stale-out"; rm -f "$ROOT/ox-args"
+(cd "$SREPO" && env QG_OXLINT_BIN="$FAKES/oxlint-stub" OX_ARGS="$ROOT/ox-args" OX_CFG="$ROOT/ox-cfg" \
+   bash "$SRC/lib/quality-gate.sh" --base main) > "$OUT" 2>&1
+has     "$(cat "$OUT")" 'changed vs origin/main' "the scope line names origin/main"
+has     "$(cat "$OUT")" '0 code file(s) in scope' "a prose-only branch owns no code file"
+has_not "$(cat "$ROOT/ox-args" 2>/dev/null || true)" 'legacy.ts' "the file the base moved is never judged"
+OUT="$ROOT/qg-out"
+
 echo "== the generated configs carry the thresholds =="
 CFG="$(cat "$ROOT/ox-cfg" 2>/dev/null || true)"
 RCFG="$(cat "$ROOT/ruff-cfg" 2>/dev/null || true)"
