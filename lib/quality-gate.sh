@@ -22,8 +22,9 @@
 #
 # Usage: quality-gate.sh [--base <ref>] [--all]
 #   --base <ref>  diff against merge-base(<ref>, HEAD); a bare branch name is
-#                 tried locally, then as origin/<ref>. Default: origin/staging,
-#                 origin/main or origin/master — first that exists.
+#                 tried as origin/<ref> first, then locally. Default:
+#                 origin/staging, origin/main or origin/master — first that
+#                 exists.
 #   --all         check every tracked file instead of the branch's diff
 #
 # Knobs (env): QG_MAX_COMPLEXITY  QG_MAX_FILE_LINES  QG_SUPPRESSIONS=0
@@ -59,7 +60,12 @@ else
     for c in origin/staging origin/main origin/master staging main master; do
       if git rev-parse --verify -q "$c" >/dev/null; then BASE="$c"; break; fi
     done
-  elif ! git rev-parse --verify -q "$BASE" >/dev/null; then
+  elif git rev-parse --verify -q "origin/$BASE" >/dev/null; then
+    # origin first: the worktree was cut from origin/<base>, and a bare name
+    # also resolves to the primary checkout's local branch, which is only as
+    # fresh as the last time a human pulled it. Judged against a stale local
+    # main, the branch owns every file the base moved since — and a legacy
+    # file someone else grew past the ceiling fails a run that never touched it.
     BASE="origin/$BASE"
   fi
   git rev-parse --verify -q "$BASE" >/dev/null \
