@@ -8,7 +8,13 @@
 # run's problem, so the gate never judges files the branch did not touch:
 #   - cyclomatic complexity per function  <= QG_MAX_COMPLEXITY  (default 21)
 #   - lines of code per file              <= QG_MAX_FILE_LINES  (default 500;
-#     blank lines and comments not counted)
+#     blank lines and comments not counted). Test files are exempt unless
+#     QG_TEST_MAX_FILE_LINES gives them a ceiling of their own: a test file's
+#     length follows its subject and moves when the subject splits — a ceiling
+#     on tests only ever fires on the branch that adds a test to a legacy file,
+#     which punishes the one thing that branch should do. A test file is
+#     *.test.* / *.spec.* / *_test.py / test_*.py, or anything under a test/,
+#     tests/ or __tests__/ directory.
 #   - `any` types in TypeScript: none
 #   - dead code (unused variables/imports, unreachable statements): none
 #   - suppression comments ADDED by the branch (oxlint-disable, eslint-disable,
@@ -27,7 +33,8 @@
 #                 exists.
 #   --all         check every tracked file instead of the branch's diff
 #
-# Knobs (env): QG_MAX_COMPLEXITY  QG_MAX_FILE_LINES  QG_SUPPRESSIONS=0
+# Knobs (env): QG_MAX_COMPLEXITY  QG_MAX_FILE_LINES  QG_TEST_MAX_FILE_LINES
+#   QG_SUPPRESSIONS=0
 #   QG_OXLINT_BIN  QG_RUFF_BIN  QG_OXLINT_VERSION
 set -u
 
@@ -49,6 +56,15 @@ cd "$ROOT" || exit 1
 
 MAXC="${QG_MAX_COMPLEXITY:-21}"
 MAXL="${QG_MAX_FILE_LINES:-500}"
+TMAXL="${QG_TEST_MAX_FILE_LINES:-}"   # empty: test files have no length ceiling
+
+is_test_file() {
+  case "$1" in
+    *.test.*|*.spec.*|*_test.py|test_*.py|*/test_*.py) return 0 ;;
+    test/*|tests/*|__tests__/*|*/test/*|*/tests/*|*/__tests__/*) return 0 ;;
+  esac
+  return 1
+}
 
 # --- Scope: which files this gate judges -------------------------------------
 MB=""
@@ -120,6 +136,13 @@ fi
 # enforces exactly its bar, not oxlint's opinions, and the repo's own lint
 # setup (or lack of one) never changes the verdict.
 if [ "${#JS_FILES[@]}" -gt 0 ]; then
+  # The test-file override rides in the same config so oxlint runs once:
+  # every other rule still reaches a test file, only max-lines changes.
+  if [ -n "$TMAXL" ]; then
+    TEST_MAX_LINES="[\"error\", { \"max\": $TMAXL, \"skipBlankLines\": true, \"skipComments\": true }]"
+  else
+    TEST_MAX_LINES='"off"'
+  fi
   cat > "$TMP/oxlintrc.json" <<EOF
 {
   "categories": { "correctness": "off" },
@@ -129,7 +152,13 @@ if [ "${#JS_FILES[@]}" -gt 0 ]; then
     "no-unused-vars": "error",
     "no-unreachable": "error",
     "typescript/no-explicit-any": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**"],
+      "rules": { "max-lines": $TEST_MAX_LINES }
+    }
+  ]
 }
 EOF
   OXLINT=()
@@ -183,11 +212,17 @@ EOF
     printf '%s\n' "$out"
   fi
   # ruff has no file-length rule, so the LOC ceiling is counted here: lines
-  # that are neither blank nor comment-only.
+  # that are neither blank nor comment-only. A test file takes its own
+  # ceiling, or none.
   over=""
   for f in "${PY_FILES[@]}"; do
+    ceiling="$MAXL"
+    if is_test_file "$f"; then
+      [ -n "$TMAXL" ] || continue
+      ceiling="$TMAXL"
+    fi
     n=$(grep -cve '^[[:space:]]*$' -e '^[[:space:]]*#' "$f")
-    [ "$n" -le "$MAXL" ] || over="$over
+    [ "$n" -le "$ceiling" ] || over="$over
   $f: $n lines of code"
   done
   if [ -n "$over" ]; then

@@ -144,6 +144,22 @@ has "$(cat "$OUT")" 'python file length' "the file-length check is the one that 
 if run_qg; then ok "the same file passes at the default ceiling"; else bad "the same file passes at the default ceiling"; fi
 git -C "$UREPO" rm -q long.py && git -C "$UREPO" commit -qm unlong
 
+echo "== a test file's length follows its subject: exempt unless given its own ceiling =="
+{ for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "y$i = $i"; done; } > "$UREPO/test_long.py"
+git -C "$UREPO" add test_long.py && git -C "$UREPO" commit -qm testlong
+if run_qg QG_MAX_FILE_LINES=10; then ok "an over-long Python test file passes the default ceiling"; else bad "an over-long Python test file passes the default ceiling (output: $(cat "$OUT"))"; fi
+if run_qg QG_MAX_FILE_LINES=10 QG_TEST_MAX_FILE_LINES=11; then bad "QG_TEST_MAX_FILE_LINES gives test files a ceiling"; else ok "QG_TEST_MAX_FILE_LINES gives test files a ceiling"; fi
+has "$(cat "$OUT")" 'test_long.py: 12 lines' "the over-long test file is the one named"
+if run_qg QG_MAX_FILE_LINES=10 QG_TEST_MAX_FILE_LINES=12; then ok "a test file under its own ceiling passes"; else bad "a test file under its own ceiling passes"; fi
+git -C "$UREPO" rm -q test_long.py && git -C "$UREPO" commit -qm untestlong
+run_qg
+CFG="$(cat "$ROOT/ox-cfg")"
+has "$CFG" '"**/*.test.*"'                "oxlint config: test files are an override"
+has "$CFG" '"max-lines": "off"'           "oxlint config: max-lines off for test files by default"
+has "$CFG" '"no-unused-vars": "error"'    "oxlint config: the other rules still reach test files"
+run_qg QG_TEST_MAX_FILE_LINES=1500
+has "$(cat "$ROOT/ox-cfg")" '"max": 1500' "QG_TEST_MAX_FILE_LINES reaches the oxlint override"
+
 echo "== suppressions added by the branch fail the gate =="
 printf '// eslint-disable-next-line no-unused-vars\nexport const c = 4;\n' > "$UREPO/new.ts"
 git -C "$UREPO" add new.ts && git -C "$UREPO" commit -qm suppress
