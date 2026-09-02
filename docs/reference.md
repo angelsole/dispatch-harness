@@ -771,7 +771,11 @@ Pin `QUALITY_GATE=1` and the repo's gate becomes
 files the branch touches — never the repo's legacy backlog — run *before* the
 suite, so a violation fails in seconds instead of after minutes of tests. The
 bar: cyclomatic complexity at most 21 per function, at most 500 lines of code
-per file (blanks and comments not counted), zero `any` types in TypeScript,
+per file (blanks and comments not counted; test files — `*.test.*`,
+`*.spec.*`, `test_*.py`, anything under `test/`, `tests/` or `__tests__/` —
+are exempt from this one rule, because a test file's length follows its
+subject and a ceiling on it only ever fires on the branch that adds a test to
+a legacy file), zero `any` types in TypeScript,
 zero dead code (unused variables/imports, unreachable statements), and zero
 *added* suppression comments — a branch that writes `eslint-disable`,
 `@ts-ignore`, `@ts-nocheck`, `noqa` or `type: ignore` to get past the gate
@@ -783,7 +787,8 @@ Enforcement is the gate's half; the other half is that `run-task.sh` states
 the bar to the implementer **and** the reviewer, because a bar the implementer
 first learns from a failed round costs that round. Thresholds are env knobs:
 `QG_MAX_COMPLEXITY` (default 21) and `QG_MAX_FILE_LINES` (default 500);
-`QG_SUPPRESSIONS=0` drops the suppression check. Like `PREPROD`, it is a pin,
+`QG_TEST_MAX_FILE_LINES` gives test files a ceiling of their own instead of
+the exemption; `QG_SUPPRESSIONS=0` drops the suppression check. Like `PREPROD`, it is a pin,
 never a detection, and unset it leaves gate and prompts byte-identical to a
 run without the feature.
 

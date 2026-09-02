@@ -1465,7 +1465,7 @@ if [ "${QUALITY_GATE:-}" = 1 ]; then
 
 This repo enforces a machine-checked quality bar. The deterministic gate runs it on the files your branch touches, before the test suite, and fails the round on any violation:
 - Cyclomatic complexity at most 21 per function — split or flatten anything denser.
-- At most 500 lines of code per file (blank lines and comments not counted) — split a file that would cross it.
+- At most 500 lines of code per file (blank lines and comments not counted) — split a file that would cross it. Test files are exempt: a test file follows its subject and moves when the subject splits; never split a test file on its own.
 - Zero \`any\` types in TypeScript: type the value, or take \`unknown\` and narrow it.
 - Zero dead code: no unused variables or imports, no unreachable statements.
 - Zero suppressions: adding \`oxlint-disable\`, \`eslint-disable\`, \`@ts-ignore\`, \`@ts-nocheck\`, \`noqa\` or \`type: ignore\` comments fails the gate too. Refactor instead of suppressing.
