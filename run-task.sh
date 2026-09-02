@@ -110,7 +110,7 @@ _LIVE_PID=$(cat "$RUN_DIR/driver.pid" 2>/dev/null) || _LIVE_PID=""
 case "$_LIVE_PID" in ''|*[!0-9]*) _LIVE_PID="" ;; esac
 if [ -n "$_LIVE_PID" ] && [ "$_LIVE_PID" != "$$" ] && kill -0 "$_LIVE_PID" 2>/dev/null \
    && ps -o command= -p "$_LIVE_PID" 2>/dev/null \
-      | grep -q "run-task\.sh $TICKET\([[:space:]]\|\$\)"; then
+      | grep -q "run-task\.sh $(harness_bre_escape "$TICKET")\([[:space:]]\|\$\)"; then
   echo "[harness] $TICKET already has a live driver (pid $_LIVE_PID) — not dispatching a second one"
   echo "[harness]   watch it   $HARNESS_DIR/status.sh $TICKET"
   echo "[harness]   stop it    kill -- -$_LIVE_PID"
@@ -146,8 +146,16 @@ unset _LIVE_PID
 # status, and schedule.sh's launchd wrapper must stay the parent so its
 # `launchctl bootout` still owns the run.
 : "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
+# An implicit HARNESS_DIR suppresses the detach for fixtures, and says so:
+# it is also the supported way to install elsewhere, so a value exported in a
+# shell profile must not silently stop every dispatch detaching. An explicit
+# HARNESS_DETACH wins either way.
 if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
-   && [ -z "$_INSTALL_DIR_FROM_ENV" ]; then
+   && [ -n "$_INSTALL_DIR_FROM_ENV" ] && [ -z "${HARNESS_DETACH:-}" ]; then
+  echo "[harness] HARNESS_DIR came from the environment — treating this as a fixture and NOT detaching (HARNESS_DETACH=1 forces it, =0 silences this)" >&2
+fi
+if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
+   && { [ -z "$_INSTALL_DIR_FROM_ENV" ] || [ "${HARNESS_DETACH:-}" = 1 ]; }; then
   echo "[harness] dispatched $TICKET — detached, this shell no longer owns it"
   echo "[harness]   stages   $HARNESS_DIR/status.sh $TICKET"
   echo "[harness]   live     tail -f $RUN_DIR/feed.log"
@@ -160,38 +168,6 @@ if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
   exit 0
 fi
 
-# --- Liveness: who is driving this run, and is it still breathing -------------
-# status.sh had no way to tell a slow gate from a dead driver, so a killed run
-# rendered as "in stage, 104m" forever. Two signals, because one is not enough:
-# the pid is authoritative on this machine and meaningless in a run dir
-# mirrored from another (HARNESS_MIRROR), where only an mtime travels. Both are
-# read back by run_alive (lib/common.sh), which status.sh, statusline.sh and
-# janitor.sh now share.
-DRIVER_PID_FILE="$RUN_DIR/driver.pid"
-printf '%s\n' "$$" > "$DRIVER_PID_FILE"
-touch "$RUN_DIR/heartbeat"
-# Same self-terminating idiom as mirror_loop (mirror.sh): the ticker follows the
-# driver's pid, so a driver killed outright — no trap, SIGKILL — leaves nothing
-# behind past one interval. $$ inside a subshell is still the driver's pid;
-# passed explicitly so that is not a thing anyone has to know.
-_DRIVER_PID=$$
-# The sleep runs in the background and the loop waits on it, so a TERM from the
-# driver's EXIT trap interrupts the wait and the trap kills the sleep: the ticker
-# is gone in milliseconds. With a foreground sleep the trap could only run once
-# the sleep returned, and harness_on_exit's `wait` paid up to a full interval on
-# EVERY run — twenty seconds of nothing at the end of each fixture run in the
-# suites, minutes per suite, most of an hour per gate.
-( _hb_sleep=""
-  trap 'kill "$_hb_sleep" 2>/dev/null; exit 0' TERM INT
-  while kill -0 "$_DRIVER_PID" 2>/dev/null; do
-    sleep "${HARNESS_HEARTBEAT_SECS:-20}" & _hb_sleep=$!
-    wait "$_hb_sleep" 2>/dev/null || exit 0
-    touch "$RUN_DIR/heartbeat" 2>/dev/null || exit 0
-    # The same tick keeps the run's Linear session out of `stale`, at its own
-    # much slower interval. Best-effort like everything else in lib/linear.sh.
-    linear_heartbeat || true
-  done ) &
-HEARTBEAT_PID=$!
 
 # shellcheck source=repos.conf.sh
 . "$HARNESS_DIR/repos.conf.sh"
@@ -970,11 +946,14 @@ $2"
 # where everything the handler calls (collect_metrics, record_attempt,
 # write_result, stage) has been executed into existence, and it is still before
 # capacity_preflight and "setup: worktree" — so it covers everything expensive.
-harness_record_death() {  # $1 = signal name, or "" for a bare exit
-  local rc=$?
-  local sig="${1:-}" why
-  [ "${VERDICT_WRITTEN:-0}" = 0 ] || return "$rc"
-  [ "${NO_VERDICT_OWED:-0}" = 0 ] || return "$rc"
+# $2 is the exit status to report, passed in rather than read from $? — the
+# caller has already run commands of its own by the time this is invoked, so
+# `local rc=$?` here reads THEIR status and every death was recorded as
+# "driver exited 0" however the driver actually died.
+harness_record_death() {  # $1 = signal name, or "" for a bare exit; $2 = rc
+  local sig="${1:-}" rc="${2:-0}" why
+  [ "${VERDICT_WRITTEN:-0}" = 0 ] || return 0
+  [ "${NO_VERDICT_OWED:-0}" = 0 ] || return 0
   if [ -n "$sig" ]; then why="killed by SIG$sig"
   else why="driver exited $rc with no verdict"; fi
   printf '%s %s %s\n' "$(date +%s)" "${sig:-EXIT}" "$why" > "$RUN_DIR/died" 2>/dev/null || true
@@ -982,29 +961,42 @@ harness_record_death() {  # $1 = signal name, or "" for a bare exit
   write_result "$STATUS" "${PR_URL:-}" 2>/dev/null || true
   stage "done: driver_failed ($why — re-dispatch to resume)" \
         "the driver died mid-stage; the worktree and the worker session are intact"
-  return "$rc"
+  return 0
 }
+
+
+
 harness_on_exit() {
   local rc=$?
-  if [ -n "${HEARTBEAT_PID:-}" ]; then
-    kill "$HEARTBEAT_PID" 2>/dev/null
-    wait "$HEARTBEAT_PID" 2>/dev/null
-    HEARTBEAT_PID=""
-  fi
-  harness_record_death "" || true
+  # Order matters, and it is the reverse of the obvious one: everything that
+  # must survive a second signal goes first, and the housekeeping last.
+  harness_record_death "" "$rc" || true
   # A run that dies holding the gate lock must not park it on the repo.
   harness_gate_lock_release "${GATE_LOCK_KEY:-}" 2>/dev/null || true
   rm -f "${DRIVER_PID_FILE:-/dev/null}" 2>/dev/null || true
+  # Both liveness files go, not just the pid: a heartbeat left behind made every
+  # cleanly-exited paused run read as dead. The stage exclusion in run_alive is
+  # the second guard, not the only one.
+  rm -f "$RUN_DIR/heartbeat" 2>/dev/null || true
+  harness_stop_heartbeat
   # mirror_start (mirror.sh) installs its own EXIT trap and this one replaces
   # it, so call it by hand or a mirrored run leaks its sync loop past the
   # invocation.
   if declare -F mirror_stop >/dev/null 2>&1; then mirror_stop >/dev/null 2>&1 || true; fi
   return "$rc"
 }
-trap 'harness_record_death TERM; exit 143' TERM
-trap 'harness_record_death INT;  exit 130' INT
-trap 'harness_record_death HUP;  exit 129' HUP
+trap 'harness_record_death TERM 143; exit 143' TERM
+trap 'harness_record_death INT  130; exit 130' INT
+trap 'harness_record_death HUP  129; exit 129' HUP
 trap harness_on_exit EXIT
+
+# Only now: driver.pid, the heartbeat and the ticker exist exactly as long as the
+# trap that removes them. Created before the traps — where they used to be — any
+# early exit in between left all three behind with no verdict, and a run that had
+# already stopped went on advertising a live driver.
+DRIVER_PID_FILE="$RUN_DIR/driver.pid"
+printf '%s\n' "$$" > "$DRIVER_PID_FILE"
+harness_start_heartbeat "$RUN_DIR"
 
 # --- Capacity preflight: defer rather than burn a launch on an empty window ---
 # Two dispatches once died instantly on "You've hit your session limit · resets
@@ -1249,7 +1241,14 @@ zai_setup_rejected() {
 #
 # The attempt number is the count of `__invocation__` markers in the
 # append-only stages.log, so it survives everything except deleting the run dir.
-ATTEMPT_FILES="opus-stream.jsonl gate-rounds.log opus.log verify.json verify.log dispatch.log"
+ATTEMPT_FILES="opus-stream.jsonl gate-rounds.log opus.log verify.json verify.log"
+# Rotated by COPY + TRUNCATE, never by mv. The detach opens dispatch.log once
+# with `>>` and nothing ever reopens it, so an mv moves the name while the open
+# fd stays on the inode: attempt N's driver log lands inside attempt N-1's
+# archive, RUN_DIR/dispatch.log disappears, and the `tail -f` the banner just
+# printed follows a file nobody writes. Truncating in place keeps the inode, and
+# O_APPEND puts the next write back at offset 0.
+ATTEMPT_COPY_FILES="dispatch.log"
 invocations_so_far() {
   local n=0
   [ -f "$RUN_DIR/stages.log" ] && n=$(awk '$2 == "__invocation__" { n++ } END { print n + 0 }' \
@@ -1281,16 +1280,32 @@ if [ "$PREV_ATTEMPT" -gt 0 ]; then
   for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if [ -e "$attempt_dir/$(basename "$f")" ]; then
       NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
-    echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
+      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$(basename "$f")" >&2
+      exit 1
+    fi
+  done
+  for f in $ATTEMPT_COPY_FILES; do
+    if [ -e "$attempt_dir/$f" ]; then
+      NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
+      echo "FATAL: refusing to overwrite preserved attempt telemetry at $attempt_dir/$f" >&2
       exit 1
     fi
   done
   for f in ${attempt_files[@]+"${attempt_files[@]}"}; do
     if ! mv "$f" "$attempt_dir/$(basename "$f")"; then
       NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
-    echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
+      echo "FATAL: cannot preserve $(basename "$f") for attempt $PREV_ATTEMPT" >&2
       exit 1
     fi
+  done
+  for f in $ATTEMPT_COPY_FILES; do
+    [ -f "$RUN_DIR/$f" ] || continue
+    if ! cp "$RUN_DIR/$f" "$attempt_dir/$f"; then
+      NO_VERDICT_OWED=1   # refusing to start, not dying mid-run
+      echo "FATAL: cannot preserve $f for attempt $PREV_ATTEMPT" >&2
+      exit 1
+    fi
+    : > "$RUN_DIR/$f"
   done
 fi
 # The implementer's stream is append-only *within* an invocation, because a
@@ -1750,6 +1765,13 @@ escalate() {
   write_result "$STATUS" ""
   echo "[harness] escalation: the gate failed on $from_provider/$from_model — re-pinning to anthropic/$DEFAULT_ANTHROPIC_MODEL and handing the task to one fresh session"
   echo "[harness] escalation: base..$glm_head is $from_provider's work; the escalated session's commits start there"
+  # exec(2) replaces the image without running a single trap, so anything the
+  # EXIT trap would have done has to happen here. The heartbeat ticker is the
+  # one that matters: it follows $_DRIVER_PID, exec keeps the pid, so the old
+  # ticker survives the handover and the re-exec'd driver starts a second one —
+  # one leaked subshell per escalation, all touching the same file.
+  harness_stop_heartbeat
+  harness_gate_lock_release "${GATE_LOCK_KEY:-}" 2>/dev/null || true
   exec bash "$SELF_DIR/$(basename "$0")" "$TICKET" "$REPO" "$BRANCH"
 }
 
@@ -3337,7 +3359,11 @@ if [ "${HARNESS_GATE_INTEGRITY:-1}" != 0 ] && [ -r "$HARNESS_DIR/lib/gate-integr
   # one test execution that does not go through run_gate — so it takes the same
   # per-repo lock the gate rounds do, for the same shared-database reason.
   GATE_LOCK_KEY=$(harness_gate_lock_key "$REPO")
-  harness_gate_lock_acquire "$GATE_LOCK_KEY" "$TICKET" || GATE_LOCK_KEY=""
+  # With the on-wait callback, same as the gate rounds: a replay that waits an
+  # hour for another run's gate must say so in the stage text rather than leave
+  # the silent gap this callback exists to close.
+  _GATE_LOCK_ROUND="integrity"
+  harness_gate_lock_acquire "$GATE_LOCK_KEY" "$TICKET" gate_lock_waiting || GATE_LOCK_KEY=""
   gate_integrity_check "$WORKTREE" "$BASE_REF" "$RUN_DIR" "$BRIEF" "$GATE_STATUS" || true
   harness_gate_lock_release "$GATE_LOCK_KEY"
   GATE_LOCK_KEY=""

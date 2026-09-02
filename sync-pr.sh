@@ -16,6 +16,10 @@ set -u -o pipefail
 _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 [ -r "$_COMMON_LIB_PATH" ] \
   || { echo "FATAL: cannot read lib/common.sh beside $0 — re-run install.sh" >&2; exit 1; }
+# Captured before common.sh defaults it, same contract as run-task.sh: a
+# caller-supplied HARNESS_DIR means a fixture, and the suites that run this
+# script in the foreground assert on its exit status.
+_INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 # shellcheck source=lib/common.sh
 . "$_COMMON_LIB_PATH"
 # shellcheck source=lib/deps-cache.sh
@@ -33,13 +37,32 @@ RUN_DIR="$HARNESS_DIR/runs/$TICKET"
 RESULT="$RUN_DIR/result.json"
 [ -f "$RESULT" ] || { echo "FATAL: no result.json at $RESULT" >&2; exit 1; }
 
+# --- Guard: a run that is already being synced --------------------------------
+# Same reason as run-task.sh's: detaching makes the launcher return instantly,
+# so firing the same sync twice is easy, and two syncs on one run would fight
+# over the worktree, the branch and the status file.
+_LIVE_PID=$(cat "$RUN_DIR/driver.pid" 2>/dev/null) || _LIVE_PID=""
+case "$_LIVE_PID" in ''|*[!0-9]*) _LIVE_PID="" ;; esac
+if [ -n "$_LIVE_PID" ] && [ "$_LIVE_PID" != "$$" ] && kill -0 "$_LIVE_PID" 2>/dev/null \
+   && ps -o command= -p "$_LIVE_PID" 2>/dev/null \
+      | grep -q "\(run-task\|sync-pr\)\.sh $(harness_bre_escape "$TICKET")\([[:space:]]\|\$\)"; then
+  echo "[sync-pr] $TICKET already has a live driver (pid $_LIVE_PID) — not starting a second one"
+  echo "[sync-pr]   watch it   $HARNESS_DIR/status.sh $TICKET"
+  exit 0
+fi
+unset _LIVE_PID
+
 # --- Detach: same contract as run-task.sh, for the same reason -----------------
 # A sync launched as an orchestrator background task shares that shell's process
 # group; stopping the task would kill the merge, the resolver and the gate
 # mid-flight with nothing recorded. Take a session of our own first.
-# HARNESS_DETACH=0 for the test suites, which assert on the foreground exit code.
 : "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
-if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ]; then
+if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
+   && [ -n "$_INSTALL_DIR_FROM_ENV" ] && [ -z "${HARNESS_DETACH:-}" ]; then
+  echo "[sync-pr] HARNESS_DIR came from the environment — treating this as a fixture and NOT detaching (HARNESS_DETACH=1 forces it, =0 silences this)" >&2
+fi
+if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
+   && { [ -z "$_INSTALL_DIR_FROM_ENV" ] || [ "${HARNESS_DETACH:-}" = 1 ]; }; then
   SELF_PATH="$(cd "$(dirname "$0")" && pwd)/${0##*/}"
   echo "[sync-pr] syncing $TICKET — detached, this shell no longer owns it"
   echo "[sync-pr]   stages   $HARNESS_DIR/status.sh $TICKET"
@@ -51,18 +74,6 @@ if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ]; then
   exit 0
 fi
 
-# Liveness, shared with run-task.sh: driver.pid + heartbeat feed run_alive
-# (lib/common.sh), so status.sh can tell a slow gate from a dead sync.
-DRIVER_PID_FILE="$RUN_DIR/driver.pid"
-printf '%s\n' "$$" > "$DRIVER_PID_FILE"
-touch "$RUN_DIR/heartbeat"
-_DRIVER_PID=$$
-( trap 'exit 0' TERM INT
-  while kill -0 "$_DRIVER_PID" 2>/dev/null; do
-    sleep "${HARNESS_HEARTBEAT_SECS:-20}"
-    touch "$RUN_DIR/heartbeat" 2>/dev/null || exit 0
-  done ) &
-HEARTBEAT_PID=$!
 
 WORKTREE=$(jq -r .worktree "$RESULT")
 BRANCH=$(jq -r .branch "$RESULT")
@@ -106,33 +117,39 @@ fail() { stage "sync failed: $1"; TERMINAL_WRITTEN=1; exit 1; }
 # status file frozen mid-stage with no record that anything died. `sync failed:`
 # is already a stage-vocab row, so no table changes anywhere.
 TERMINAL_WRITTEN=0
-sync_record_death() {  # $1 = signal name, or "" for a bare exit
-  local rc=$?
-  local sig="${1:-}" why
-  [ "${TERMINAL_WRITTEN:-0}" = 0 ] || return "$rc"
+# $2 is the exit status, passed in rather than read from $?: the caller has run
+# commands of its own by now, so `local rc=$?` here reads THEIR status. This
+# number reaches the wall in the stage text, not just a file.
+sync_record_death() {  # $1 = signal name, or "" for a bare exit; $2 = rc
+  local sig="${1:-}" rc="${2:-0}" why
+  [ "${TERMINAL_WRITTEN:-0}" = 0 ] || return 0
   if [ -n "$sig" ]; then why="driver killed (SIG$sig)"
   else why="driver exited $rc mid-stage"; fi
   printf '%s %s %s\n' "$(date +%s)" "${sig:-EXIT}" "$why" > "$RUN_DIR/died" 2>/dev/null || true
   TERMINAL_WRITTEN=1
   stage "sync failed: $why — re-run sync-pr.sh to resume"
-  return "$rc"
+  return 0
 }
+
 sync_on_exit() {
   local rc=$?
-  if [ -n "${HEARTBEAT_PID:-}" ]; then
-    kill "$HEARTBEAT_PID" 2>/dev/null; wait "$HEARTBEAT_PID" 2>/dev/null
-    HEARTBEAT_PID=""
-  fi
-  sync_record_death "" || true
+  sync_record_death "" "$rc" || true
   harness_gate_lock_release "${GATE_LOCK_KEY:-}" 2>/dev/null || true
   rm -f "${DRIVER_PID_FILE:-/dev/null}" 2>/dev/null || true
+  rm -f "$RUN_DIR/heartbeat" 2>/dev/null || true
+  harness_stop_heartbeat
   if declare -F mirror_stop >/dev/null 2>&1; then mirror_stop >/dev/null 2>&1 || true; fi
   return "$rc"
 }
-trap 'sync_record_death TERM; exit 143' TERM
-trap 'sync_record_death INT;  exit 130' INT
-trap 'sync_record_death HUP;  exit 129' HUP
+trap 'sync_record_death TERM 143; exit 143' TERM
+trap 'sync_record_death INT  130; exit 130' INT
+trap 'sync_record_death HUP  129; exit 129' HUP
 trap sync_on_exit EXIT
+
+# After the traps, so these never outlive the handler that removes them.
+DRIVER_PID_FILE="$RUN_DIR/driver.pid"
+printf '%s\n' "$$" > "$DRIVER_PID_FILE"
+harness_start_heartbeat "$RUN_DIR"
 
 # --- 1. Worktree (recreate from origin if cleaned up) -------------------------
 git -C "$REPO" fetch origin --quiet || fail "git fetch failed"

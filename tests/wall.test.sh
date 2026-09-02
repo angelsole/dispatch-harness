@@ -6603,7 +6603,7 @@ check "poll: the snapshot endpoint agrees" "$(state_of OLYX-1631 actorKey)" "gat
 # caught mid-write. None of that may blank the wall.
 echo "== wall: partial and missing files =="
 mkdir -p "$RUNS/BARE-1" "$RUNS/EMPTY-1" "$RUNS/JUNK-1" "$RUNS/PINNED-EMPTY" \
-  "$RUNS/SYNC-FAIL" "$RUNS/DONE-INPUT" "$RUNS/LONG-1"
+  "$RUNS/SYNC-FAIL" "$RUNS/DONE-INPUT" "$RUNS/LONG-1" "$RUNS/DONE-DRIVER"
 printf '%s setup: worktree\n' "$(date +%s)" > "$RUNS/BARE-1/status"   # status only
 : > "$RUNS/EMPTY-1/status"                                            # caught mid-write
 printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$RUNS/JUNK-1/status"
@@ -6617,6 +6617,17 @@ printf '%s review — Codex (ChatGPT sub)\n%s done: needs_input\n' \
 printf '{"status":"needs_input"}\n' > "$RUNS/DONE-INPUT/result.json"
 printf '# Questions\n\nChoose the deployment region.\n' > "$RUNS/DONE-INPUT/QUESTIONS.md"
 printf '/tmp/input-project-done-input\n' > "$RUNS/DONE-INPUT/worktree"
+# A driver killed mid-IMPLEMENT. Like needs_input, `done: driver_failed` is
+# written on TOP of the stage that was actually running, so it names no rung of
+# its own — and an unrecognised done: falls through to FLOORS.length - 1, the
+# PUSH floor reserved for runs that shipped. A run whose driver was killed
+# during implement would otherwise render on the rooftop, i.e. as a success.
+printf '%s done: driver_failed (killed by SIGTERM — re-dispatch to resume)\n' \
+  "$(date +%s)" > "$RUNS/DONE-DRIVER/status"
+printf '%s implementing — Opus (Claude sub)\n%s done: driver_failed (killed by SIGTERM)\n' \
+  "$(( $(date +%s) - 10 ))" "$(date +%s)" > "$RUNS/DONE-DRIVER/stages.log"
+printf '{"status":"driver_failed"}\n' > "$RUNS/DONE-DRIVER/result.json"
+printf '/tmp/input-project-done-driver\n' > "$RUNS/DONE-DRIVER/worktree"
 printf '%s implementing — Opus (Claude sub)\n' "$(date +%s)" > "$RUNS/LONG-1/status"
 LONG_PROJECT='a-project-name-that-is-definitely-longer-than-thirty-two-characters'
 printf '/tmp/%s-long-1\n' "$LONG_PROJECT" > "$RUNS/LONG-1/worktree"
@@ -6657,6 +6668,17 @@ check "floor: terminal needs_input stays where work stopped" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .floor')" "3"
 check "actor: terminal needs_input preserves who was working on that floor" \
   "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-INPUT") | .workActorKey')" "codex"
+check "floor: done: driver_failed parks where it died, not on the rooftop" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-DRIVER") | .floor')" "1"
+check "floor: which is not the PUSH floor a shipped run gets" \
+  "$(printf '%s' "$API" | jq -r '[.runs[] | select(.id=="DONE-DRIVER") | .floor] | first != 5')" "true"
+# The actor is `done` for every terminal status — the burnout shows in the
+# STATE, which is the row `^done:.*(fail|reject)` was written to catch. That is
+# why driver_failed needed no new stage-vocab row: it carries the word "fail".
+check "actor: a killed driver is terminal, like every other done:" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-DRIVER") | .actor')" "done"
+check "state: and it reads as failed, never as a ready beacon" \
+  "$(printf '%s' "$API" | jq -r '.runs[] | select(.id=="DONE-DRIVER") | .state')" "failed"
 check "alarm: terminal needs_input raises its project's searchlight" \
   "$(printf '%s' "$API" | jq -r '.towers[] | select(.project=="input-project") | .alarm')" "1"
 check "project: long repo basenames are not truncated or merged" \

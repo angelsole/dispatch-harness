@@ -275,6 +275,15 @@ function floorOf(stage, actorKey) {
   return FLOOR_OF[actorKey] ?? 0;
 }
 
+// The two terminal statuses that are written AFTER, and on top of, the stage
+// that actually stopped: `done: needs_input` (the run asked a question) and
+// `done: driver_failed` (the driver was killed mid-stage). Neither names a rung
+// of its own, and neither may fall through to the rooftop — a driver killed
+// during IMPLEMENT would otherwise render on the PUSH floor reserved for runs
+// that shipped. Recover the stage underneath instead; that is the floor the run
+// really reached.
+const DONE_PRIOR_FLOOR = /^done:\s*(needs_input\b|driver_failed\b)/;
+
 // A terminal `done: needs_input` is written after the actual stage that
 // blocked. Recover that last stage so the alarm stays on the floor where work
 // stopped instead of jumping to the rooftop and looking like a successful PR.
@@ -455,7 +464,12 @@ function readRun(id, current) {
   const provider = providerOf(dir, result);
   let { actor, actorKey } = actorOf(stage);
   const terminalNeedsInput = DONE_NEEDS_INPUT.test(stage);
-  const floor = terminalNeedsInput ? previousFloor(dir) : floorOf(stage, actorKey);
+  // driver_failed parks on the floor it died on, like needs_input — but it is
+  // a burnout, not an alarm, so it keeps its own actor rather than becoming
+  // "needs input" below.
+  const floor = (terminalNeedsInput || DONE_PRIOR_FLOOR.test(stage))
+    ? previousFloor(dir)
+    : floorOf(stage, actorKey);
   if (terminalNeedsInput) {
     actor = 'needs input';
     actorKey = 'alarm';

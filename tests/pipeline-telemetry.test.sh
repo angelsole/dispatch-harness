@@ -676,6 +676,35 @@ check "attempts: and its own clock" \
 check "attempts: the pinned turn ceiling is recorded beside the CLI's count" \
   "$(result .metrics.implementer_max_turns)" "200"
 
+# --- dispatch.log rotates by COPY, because a live fd is pointing at it --------
+# The detach opens dispatch.log once with `>>` and nothing ever reopens it, so
+# rotating it with mv moves the NAME while the open fd stays on the inode:
+# attempt N's driver log lands inside attempt N-1's archive, RUN_DIR/dispatch.log
+# vanishes, and the `tail -f` the dispatch banner just printed follows a file
+# nobody writes to. It fires on the automatic escalation exec and on any manual
+# re-dispatch — which is exactly what the driver_failed message tells a human to
+# do. Copy + truncate keeps the inode; O_APPEND puts the next write at offset 0.
+dispatch LOGROT ""                      # attempt 1, so the next dispatch rotates
+printf 'attempt-1 driver output\n' > "$RUN/dispatch.log"
+# A writer that opened the file BEFORE the rotation and never reopens it, which
+# is precisely the detached driver's fd.
+exec 9>> "$RUN/dispatch.log"
+LOGROT_INO_BEFORE=$(ls -i "$RUN/dispatch.log" | awk '{print $1}')
+dispatch LOGROT ""
+echo 'attempt-2 driver output' >&9
+exec 9>&-
+exists "dispatch.log: the live path still exists after a re-dispatch" "$RUN/dispatch.log"
+check "dispatch.log: kept its inode, so the open fd still points at it" \
+  "$(ls -i "$RUN/dispatch.log" | awk '{print $1}')" "$LOGROT_INO_BEFORE"
+file_has "$RUN/attempts/1/dispatch.log" "attempt-1 driver output" \
+  "dispatch.log: the previous attempt's log is archived"
+file_has "$RUN/dispatch.log" "attempt-2 driver output" \
+  "dispatch.log: and the pre-existing fd keeps writing to the LIVE log"
+has_not "$(cat "$RUN/dispatch.log")" "attempt-1 driver output" \
+  "dispatch.log: which was truncated, so it is this attempt's alone"
+has_not "$(cat "$RUN/attempts/1/dispatch.log")" "attempt-2 driver output" \
+  "dispatch.log: and the archive did not swallow the new attempt's output"
+
 # An attempt is one invocation, and a turn-ceiling resume is a segment INSIDE
 # one — the implementer's stream is appended to within a dispatch and rotated
 # whole between dispatches. Both halves are asserted here, because rotating half
