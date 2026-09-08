@@ -56,6 +56,21 @@ stays in its original CLI. Both planners can inspect saved harness runs with
 `dispatch status`. The choice controls the planner; implementation and review
 follow the repository's settings.
 
+For hands-off orchestration, add `--hands-off`:
+
+```bash
+dispatch --hands-off "Fix the checkout error when the cart is empty"
+dispatch --planner claude --model fable --hands-off "Fix the checkout error when the cart is empty"
+```
+
+This skips the planner's tool permission prompts. It passes
+`--dangerously-skip-permissions` to Claude Code and
+`--dangerously-bypass-approvals-and-sandbox` to Codex, including disabling the
+Codex sandbox. The choice applies to this launch; without the flag, the planner
+uses its existing CLI settings. Workers and reviewers keep the harness's task
+permissions and gates. Essential missing information and account sign-in can
+still require your input.
+
 Opening a planner checks only its own login. Task implementation currently
 uses the Claude CLI (Anthropic or the repo's pinned z.ai provider); Codex adds
 the independent review, with a fresh Claude reviewer as the fallback.
@@ -90,6 +105,9 @@ dispatch station --on mini --owner teammate --planner claude --model fable
 Add `--dir /path/to/repos` to choose the remote working directory. Each
 account, planner, and model has a separate persistent station; repeat its
 command to reconnect. Tasks launched there use the selected account.
+Add `--hands-off` to a station command for the same permission bypass on the
+Mini. Hands-off stations have separate sessions from ordinary stations; repeat
+the flag when reconnecting.
 Selection includes that profile's Codex, Claude, and GitHub
 configuration, so its GitHub identity is used for PR operations too. Account
 selection is recorded on the run and retained on resume. There is no automatic

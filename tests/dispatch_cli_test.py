@@ -136,6 +136,70 @@ class DispatchTests(unittest.TestCase):
         self.assertTrue((profile / 'claude/skills/dispatch/SKILL.md').is_file())
         self.assertTrue((profile / 'claude/skills/dispatch/references/pipeline.md').is_file())
 
+    def test_hands_off_is_explicit_for_each_planner(self):
+        flags = {'codex': '--dangerously-bypass-approvals-and-sandbox',
+                 'claude': '--dangerously-skip-permissions'}
+        for provider, flag in flags.items():
+            with self.subTest(provider=provider):
+                normal = self.call('Inspect checkout', '--planner', provider)
+                self.assertIn('permissions: CLI defaults', normal.stdout)
+                self.assertFalse(set(flags.values()).intersection(self.events('chat')[-1]['args']))
+                out = self.call('Fix checkout', '--planner', provider, '--hands-off', '--no-publish')
+                event = self.events('chat')[-1]
+                self.assertIn(flag, event['args'])
+                self.assertEqual(len(set(flags.values()).intersection(event['args'])), 1)
+                self.assertIn('permissions: hands-off', out.stdout)
+                self.assertEqual(event['publish'], '0')
+                self.assertIn('--no-publish', event['args'][-1])
+                self.assertIn("this task's authorized scope", event['args'][-1])
+                self.assertEqual(self.events('implement'), [])
+
+    def test_hands_off_does_not_skip_login_or_apply_to_background_commands(self):
+        for provider in ('codex', 'claude'):
+            with self.subTest(provider=provider):
+                (self.root / (provider + '-expired')).touch()
+                out = self.call('Fix checkout', '--planner', provider, '--hands-off', check=False)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn(provider + ' login is unavailable', out.stderr)
+        self.assertEqual(self.events('chat'), [])
+        for command in ('run', 'resume', 'status', 'wait', 'doctor', 'stations', 'login', 'init'):
+            with self.subTest(command=command):
+                out = self.call(command, '--hands-off', '--on', 'mini', check=False)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn('--hands-off applies to chat or station', out.stderr)
+        self.assertEqual(list((self.runtime / 'runs').glob('*')), [])
+
+    def test_hands_off_survives_ssh_and_station_forwarding(self):
+        remote_home = self.root / 'remote home'
+        remote_runtime = remote_home / '.claude/harness'
+        remote_runtime.parent.mkdir(parents=True)
+        shutil.copytree(self.runtime, remote_runtime)
+        script = self.bin / 'ssh'
+        script.write_text('#!/usr/bin/env python3\nimport os, subprocess, sys\n'
+                          'env=dict(os.environ); env.pop("HARNESS_DIR",None)\n'
+                          f'env["HOME"]={str(remote_home)!r}\n'
+                          'sys.exit(subprocess.run(["bash","-c",sys.argv[-1]],env=env).returncode)\n')
+        script.chmod(0o755)
+        (remote_home / 'accounts/teammate').mkdir(parents=True)
+        for provider, flag in (('codex', '--dangerously-bypass-approvals-and-sandbox'),
+                               ('claude', '--dangerously-skip-permissions')):
+            with self.subTest(provider=provider):
+                self.call("Fix checkout's price", '--planner', provider, '--hands-off',
+                          '--on', 'mini', '--owner', 'teammate')
+                event = self.events('chat')[-1]
+                self.assertIn(flag, event['args'])
+                self.assertIn("Fix checkout's price", event['args'][-1])
+                self.assertEqual(event['owner'], 'teammate')
+                self.assertEqual(event['codex'], str(remote_home / 'accounts/teammate/codex'))
+        # The actual SSH-to-tmux launch is covered by station.test.sh. Here
+        # observe the Python CLI's handoff to station.sh on both execution hosts.
+        for runtime in (self.runtime, remote_runtime):
+            (runtime / 'station.sh').write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+        for extra in ([], ['--on', 'mini', '--owner', 'teammate']):
+            out = self.call('station', '--planner', 'claude', '--model', 'fable', '--hands-off', *extra)
+            self.assertIn('--hands-off', out.stdout.splitlines())
+            self.assertIn('fable', out.stdout.splitlines())
+
     def test_no_publish_chat_carries_constraint_into_task_submission(self):
         self.call('Fix checkout', '--no-publish')
         event = self.events('chat')[0]

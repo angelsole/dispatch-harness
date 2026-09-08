@@ -38,6 +38,8 @@ def parser():
     p.add_argument("--repo", "--dir", dest="repo", help="repository/directory on the execution machine")
     p.add_argument("--planner", choices=("codex", "claude"), default=os.environ.get("DISPATCH_PLANNER", "codex"))
     p.add_argument("--model", default=os.environ.get("DISPATCH_MODEL"))
+    p.add_argument("--hands-off", action="store_true",
+                   help="chat/station: bypass planner permission checks (Codex also disables its sandbox)")
     p.add_argument("--brief", help="brief file; '-' reads stdin")
     p.add_argument("--id", help="run ID; generated when omitted")
     p.add_argument("--branch", help="task branch; generated when omitted")
@@ -258,6 +260,9 @@ def chat(args, runtime):
     command = [executable(provider, env)]
     if model:
         command += ["-m" if provider == "codex" else "--model", model]
+    if args.hands_off:
+        command += ["--dangerously-bypass-approvals-and-sandbox" if provider == "codex"
+                    else "--dangerously-skip-permissions"]
     if provider == "codex":
         command += ["-C", cwd, "--add-dir", str(runtime / "runs")]
     else:
@@ -272,9 +277,11 @@ def chat(args, runtime):
                 target.symlink_to(source, target_is_directory=True)
     if args.arguments:
         publication = " Use dispatch run --no-publish; keep a reviewed local branch without pushing or opening a PR." if env.get("HARNESS_PUBLISH") == "0" else ""
+        autonomy = " Proceed through research, briefing, and dispatch without routine confirmation within this task's authorized scope." if args.hands_off else ""
         command += ["Use the dispatch skill to research and run this task through the harness. "
-                    "Keep the user's authorized scope." + publication + " Task: " + " ".join(args.arguments)]
-    print(f"dispatch: local {provider} planner | account {env.get('HARNESS_OWNER') or 'current'} | {cwd}", flush=True)
+                    "Keep the user's authorized scope." + autonomy + publication + " Task: " + " ".join(args.arguments)]
+    permissions = "hands-off (checks bypassed)" if args.hands_off else "CLI defaults"
+    print(f"dispatch: local {provider} planner | account {env.get('HARNESS_OWNER') or 'current'} | permissions: {permissions} | {cwd}", flush=True)
     os.chdir(cwd)
     os.execvpe(command[0], command, env)
 
@@ -324,6 +331,9 @@ def remote(args, argv):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     args = parser().parse_intermixed_args(argv)
+    command = args.command if args.command in COMMANDS else "chat"
+    if args.hands_off and command not in ("chat", "station"):
+        raise DispatchError("--hands-off applies to chat or station; background workers use the harness's task permissions")
     if args.on:
         return remote(args, argv)
     if args.remote_harness:
@@ -370,6 +380,8 @@ def main(argv=None):
                 command += [flag, value]
         if args.browser:
             command += ["--browser"]
+        if args.hands_off:
+            command += ["--hands-off"]
         os.execvpe(command[0], command, env)
     if args.command == "stations":
         values = []

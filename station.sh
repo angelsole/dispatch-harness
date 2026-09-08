@@ -10,6 +10,8 @@
 #   Add --owner NAME to select ~/accounts/NAME/{claude,codex,gh}.
 #   --accounts-dir PATH overrides ~/accounts (on the target machine).
 #   --remote-harness PATH selects a non-default install on the SSH host.
+#   --hands-off bypasses planner permission checks (Codex also disables its sandbox).
+#   Available for start/setup; it opens a separate session from the default mode.
 #
 # Codex defaults to gpt-6-astra; Claude uses its selected account's model.
 # Each owner/planner/model gets a separate tmux session. Re-running reattaches;
@@ -39,6 +41,7 @@ shell_args() {
 }
 
 ACTION=start; LOGIN_PROVIDER=""; HOST=""; REMOTE_HARNESS=""; BROWSER=0
+HANDS_OFF=0
 PLANNER="${DISPATCH_PLANNER:-codex}"; MODEL="${DISPATCH_MODEL:-}"
 OWNER="${HARNESS_OWNER:-}"; OWNER_EXPLICIT=0; ACCOUNTS_DIR="${QM_ACCOUNTS_DIR:-$HOME/accounts}"
 STATION_DIR="${DISPATCH_STATION_DIR:-$HOME}"; REPO=""
@@ -65,6 +68,7 @@ while [ $# -gt 0 ]; do
       esac
       shift ;;
     --browser) BROWSER=1; REMOTE_ARGS+=("$1") ;;
+    --hands-off) HANDS_OFF=1; REMOTE_ARGS+=("$1") ;;
     -h|--help) harness_usage "$0"; exit 0 ;;
     *) usage_error "unknown option: $1 (see --help)" ;;
   esac
@@ -79,6 +83,8 @@ fi
 [ "$BROWSER" = 0 ] || { [ "$ACTION" = login ] && [ "$LOGIN_PROVIDER" = codex ]; } \
   || usage_error "--browser is only for login codex"
 [ -z "$REPO" ] || [ "$ACTION" = doctor ] || usage_error "--repo is only for doctor"
+[ "$HANDS_OFF" = 0 ] || { [ "$ACTION" = start ] || [ "$ACTION" = setup ]; } \
+  || usage_error "--hands-off is only for start or setup"
 
 if [ -n "$HOST" ]; then
   case "$HOST" in -*|*[!a-zA-Z0-9_.@:-]*) usage_error "invalid SSH host" ;; esac
@@ -253,13 +259,19 @@ command -v tmux >/dev/null || die "tmux is not installed"
 if [ "$PLANNER" = codex ]; then
   MODEL="${MODEL:-gpt-6-astra}"
   planner_cmd=("$CODEX_BIN" -m "$MODEL" -C "$STATION_DIR" --add-dir "$HARNESS_DIR/runs")
+  [ "$HANDS_OFF" = 0 ] || planner_cmd+=(--dangerously-bypass-approvals-and-sandbox)
 else
   planner_cmd=("$CLAUDE_BIN")
   [ -z "$MODEL" ] || planner_cmd+=(--model "$MODEL")
+  [ "$HANDS_OFF" = 0 ] || planner_cmd+=(--dangerously-skip-permissions)
 fi
 SESSION="dispatch-${OWNER:-current}-$PLANNER-${MODEL:-default}"
+[ "$HANDS_OFF" = 0 ] || SESSION="$SESSION-hands-off"
 SESSION="${SESSION//./_}"
 context=$(shell_args "$STATION_DIR" "$HARNESS_DIR" "$CLAUDE_CONFIG_DIR" "$CODEX_HOME" "$GH_CONFIG_DIR" "$MODEL")
+# Preserve the context format of existing ordinary sessions. Hands-off has its
+# own name and records the permission choice as an additional context field.
+[ "$HANDS_OFF" = 0 ] || context="$context $(shell_args hands-off)"
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
   # A changed accounts root must never reattach to the other account's session.
   existing_context=$(tmux show-options -qv -t "$SESSION" @dispatch-context)
