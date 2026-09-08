@@ -92,8 +92,10 @@ delete-if-unused ones: **Attached specs**, which you keep only when you
 converted document attachments above (one line per file in `.harness/specs/`
 saying what the implementer should take from it), and the **Demo storyboard**,
 which you keep (adapted to the feature's routes/dev command) only for
-user-facing frontend changes — the pipeline then records a video of the feature
-and embeds it in the PR automatically. A brief still has to stand on its own:
+user-facing frontend changes — the pipeline captures screenshots and optional
+video after the final gate, saves them with the commit in `evidence.json`, and
+attaches them when uploads are available. Capture and upload failures appear
+explicitly in the result and PR; do not describe them as visual verification. A brief still has to stand on its own:
 the specs are the detail behind it, never a substitute for stating the task.
 The first
 `# heading` becomes the PR title. Branch names follow the repo's convention

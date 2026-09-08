@@ -50,13 +50,13 @@ done
 # is the literal frame around it.
 echo "== the stage strings run-task.sh emits =="
 STAGES="$ROOT/stages.txt"
-# profiles/*/profile.sh too: a profile moves the stage through the same stage()
+# lib/*.sh and profiles/*/profile.sh too: helpers and profiles use stage()
 # the pipeline does, so its literals are as much part of the wire format as
 # run-task.sh's — and a row nothing but a profile reaches is not an inert row.
 # Command-position matching excludes helper names and jq's `--arg stage` while
 # retaining inline shell commands such as fail()'s `; stage "done: $1"`.
 # shellcheck disable=SC2046  # the glob is the point; profile paths hold no spaces
-grep -hoE '(^|;)[[:space:]]*stage "[^"]+"' "$SRC/run-task.sh" "$SRC/sync-pr.sh" $(echo "$SRC"/profiles/*/profile.sh) \
+grep -hoE '(^|;)[[:space:]]*stage "[^"]+"' "$SRC/run-task.sh" "$SRC/sync-pr.sh" "$SRC"/lib/*.sh $(echo "$SRC"/profiles/*/profile.sh) \
   | sed -E -e 's/^(;)?[[:space:]]*stage "//' -e 's/"$//' \
         -e 's/\$[A-Za-z_][A-Za-z0-9_]*/X/g' -e 's/\$[0-9]/X/g' \
   | sort -u > "$STAGES"

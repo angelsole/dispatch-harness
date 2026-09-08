@@ -52,6 +52,12 @@ beyond what correctness requires. Show the scope for approval only if it has
 not already been authorized. Combine any needed scope approval with the tracking
 question; do not ask again after the user has chosen an ad-hoc run.
 
+For user-facing frontend changes, include the template's **Demo storyboard**:
+a short interaction with a visible success-state wait and screenshots, plus a
+video when motion helps review. Establish the app's dev command, free port,
+and demo authentication during research. Use data suitable for the PR audience.
+If evidence cannot be captured, report the reason; do not claim a visual check.
+
 ## 3. Submit
 
 ```bash
@@ -89,7 +95,9 @@ runner; it only reports status for a live or finished run. It retains the saved
 account and reuses stages only when their checkpoint inputs still match.
 
 - `ready`: read the brief, implementer/review notes, and relevant diff before
-  reporting the draft PR. Promote or clean up only within the user's authorization.
+  reporting the draft PR. For frontend work, also inspect `result.evidence`, its
+  capture status, and the media; report missing capture/upload explicitly.
+  Promote or clean up only within the user's authorization.
 - `ready_local`: assess the same evidence and report the worktree; keep it.
 - `waiting_for_auth` / `blocked`: report the saved record's reason and repair
   action. The task is saved. Authentication requires the account holder.

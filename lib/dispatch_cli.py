@@ -122,6 +122,13 @@ def emit(value, as_json):
     result = value.get("result") or {}
     if result.get("pr_url"):
         print("  " + result["pr_url"])
+    evidence = result.get("evidence") or {}
+    if evidence:
+        print("  frontend evidence: " + evidence.get("status", "unknown"))
+        if evidence.get("reason"):
+            print("  " + evidence["reason"])
+        if evidence.get("directory") and value.get("logs"):
+            print("  media: " + str(Path(value["logs"]) / evidence["directory"]))
     if value.get("worktree"):
         print("  worktree: " + value["worktree"])
     if value.get("reason"):

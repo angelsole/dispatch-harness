@@ -57,7 +57,9 @@ if ! grep -qF '](references/pipeline.md)' "$SKILL"; then
 fi
 cat "$SKILL" "$SRC/skills/dispatch/references/pipeline.md" > "$SKILLBLOB"
 SKILL="$SKILLBLOB"
-( cd "$SRC" && git ls-files '*.sh' | grep -v '^tests/' | while IFS= read -r f; do cat "$f"; done ) > "$BLOB"
+# Runtime helpers can be shell or Python; media capture now invokes its tools
+# from Python, so the dependency check must inspect both shipped surfaces.
+( cd "$SRC" && git ls-files '*.sh' '*.py' | grep -v '^tests/' | while IFS= read -r f; do cat "$f"; done ) > "$BLOB"
 TRACKED="$(cd "$SRC" && git ls-files)"
 
 # The documentation home: the product page plus every page under docs/. Built
@@ -183,7 +185,7 @@ PREREQ_BINS='claude gh jq git bash curl perl lsof uuidgen'
 # open docs/, and README's Prerequisites table is the single answer; letting a
 # binary count as documented because a design note happens to mention it in
 # passing would be a weaker check than the one this replaces.
-DOCUMENTED_BINS='codex tmux shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl magick tailscale oxlint ruff uvx'
+DOCUMENTED_BINS='codex tmux agent-browser shot-scraper rclone ffmpeg python3 docker nc npm npx yarn shellcheck node rsync launchctl magick tailscale oxlint ruff uvx'
 
 # Guarded at every call site and degrade silently when absent — README owes
 # them nothing.

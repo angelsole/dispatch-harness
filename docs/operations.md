@@ -995,20 +995,62 @@ first.
 
 ## Demo recordings
 
-On a frontend run whose brief includes a Demo storyboard, the implementer writes
-the shot-scraper file and the pipeline can record it against a dev server inside
-the worktree — so the PR body carries a video of the change instead of a
-description of it. `DEMO_DEV_CMD` pins the command used by `demo-auth.sh`, and
-`DEMO_PORT` pins the storyboard origin and lets the recording stage reject a
-busy port; both live in [the repo pin](reference.md#the-repo-pin). Recording is
-enabled only when `shot-scraper` is installed and `demo.conf.sh` names a valid
-`rclone` remote. Then `shot-scraper` records, `ffmpeg` transcodes and builds the
-preview GIF, and `rclone` uploads both before the PR body is updated. Without
-that upload configuration the stage is skipped, and the run is otherwise
-unaffected. A site behind a login gets its session captured once, by hand, with
-`demo-auth.sh` — which falls back to `python3` running `auth-capture.py` when
-`shot-scraper` was installed outside uv's default tool directory. Every part of
-this is guarded: a missing binary or a failed recording never fails a run.
+Frontend briefs include a **Demo storyboard**. The worker writes
+`.harness/demo.json`, and the harness runs it through
+[agent-browser](https://agent-browser.dev/commands) after the final test gate
+and base sync. Each capture has its own browser session and dev server in the
+worktree. Screenshots are the default; `video: true` also records an MP4.
+The [brief template](../brief-template.md#demo-storyboard) is the format reference.
+Neither capture nor publication calls a model.
+
+On each execution host, install the optional browser tool once:
+
+```bash
+npm install -g agent-browser
+agent-browser install
+```
+
+Screenshots need no object storage or FFmpeg. Video requires `ffmpeg` on PATH;
+if it is missing, the harness saves screenshots and records that video was
+skipped. `AGENT_BROWSER_BIN` selects a nonstandard CLI location, and
+`AGENT_BROWSER_EXECUTABLE_PATH` can select a browser binary. Other ambient
+agent-browser profiles, CDP connections, and saved-session overrides are not
+inherited. Capture does not attach to someone's personal browser session.
+
+For apps requiring login, run `demo-auth.sh /path/to/repo` once on the execution
+host; it uses the existing Python/Playwright capture helper. The default state
+is `auth/<repo-name>.json`. For separate station accounts or repositories with
+the same basename, pin `DEMO_AUTH_FILE` to the intended account's saved state
+in `repo_config_local`. This file stays on that host and is never uploaded.
+Use demo accounts and fixture data appropriate for the PR audience. A missing
+or expired session normally fails the storyboard's success-state wait; the
+result reports the failure rather than attaching a login-screen recording.
+
+A run keeps `evidence.json` plus immutable capture directories under
+`runs/<ID>/evidence/<commit>-<capture>/`. The manifest records the commit,
+attempt, provider, media hashes, and capture/publication status. It is also
+included as `result.evidence`, visible through `dispatch status <ID> --json`.
+Ordinary `dispatch status <ID>` shows the evidence status, reason, and media folder.
+`--no-publish` keeps the same local evidence without contacting GitHub or R2.
+A failed scene publishes no partial media. A changed worktree or changed media
+cannot be uploaded as evidence of the recorded commit. Capture remains advisory:
+a run can be code-ready while its evidence is `failed` or `publish_failed`.
+
+For publishing runs, the harness checks whether `gh pr edit --help` supports
+`--attach`. Current [GitHub CLI](https://cli.github.com/manual/gh_pr_edit) can
+upload the media directly using the run's GitHub account. The harness updates
+one marked **Frontend evidence** section and preserves the rest of the PR body.
+Older GitHub CLI versions can use the existing `demo.conf.sh` settings:
+`R2_REMOTE` for an rclone destination and `R2_PUBLIC` for its HTTPS serving URL.
+Uploads use a separate repo/run/commit/capture path, so another run cannot
+replace media already linked from a PR. If neither upload method is available,
+the files remain local and the PR explains how to enable uploads.
+
+Legacy `.harness/demo.yml` shot-scraper storyboards remain supported. They
+require `shot-scraper` and a repo-pinned `DEMO_PORT`; the newer JSON storyboard
+takes the port from its URL. `DEMO_DEV_CMD` still configures the server used by
+`demo-auth.sh`. A busy port is a capture failure, and cleanup terminates only
+process groups created by the capture; it never kills an unrelated listener.
 
 ## Claude-only mode
 

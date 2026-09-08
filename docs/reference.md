@@ -704,7 +704,8 @@ Keys are the repo's directory name (`basename`). Worktrees are named
 | `DEV_CMD` | Dev server command for `preview.sh` | `npm run dev` |
 | `PREFLIGHT_CMD` | Env check run *before* the implementer (e.g. test DB up + migrated) | none |
 | `DEMO_DEV_CMD` | Dev server command for demo recording (must pin the port) | none |
-| `DEMO_PORT` | Port `DEMO_DEV_CMD` binds (storyboard origin + post-demo cleanup) | none |
+| `DEMO_PORT` | Login-capture port; also required for legacy shot-scraper capture | none |
+| `DEMO_AUTH_FILE` | Saved Playwright authentication state for this repo/account | `auth/<repo-name>.json` on the execution host |
 | `PREPROD` | `1` = repo is not in production yet: both worker prompts get the greenfield posture | none |
 | `QUALITY_GATE` | `1` = prepend the [quality gate](#quality_gate-the-quality-bar) to `GATE_CMD` and state the bar in both worker prompts | none |
 
