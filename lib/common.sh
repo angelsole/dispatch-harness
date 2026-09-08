@@ -36,6 +36,9 @@ HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 # what they fall back to.
 DEFAULT_IMPLEMENTER_PROVIDER="anthropic"
 DEFAULT_ANTHROPIC_MODEL="claude-opus-5"
+# The small model the implementer's Explore subagents, the Claude review
+# tier's subagents and setup-repo.sh --ai run on. Same rule: explicit ID, no alias.
+DEFAULT_ANTHROPIC_SMALL_MODEL="claude-sonnet-5"
 DEFAULT_ZAI_MODEL="glm-5.3"
 DEFAULT_IMPLEMENTER_MODEL="$DEFAULT_ANTHROPIC_MODEL"
 DEFAULT_IMPLEMENTER_EFFORT="high"

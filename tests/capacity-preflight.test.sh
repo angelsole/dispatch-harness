@@ -519,7 +519,7 @@ fi
 echo "== the preflight is wired before the expensive steps =="
 # ---------------------------------------------------------------------------
 RT="$SRC/run-task.sh"
-pre_line=$(grep -nx 'capacity_preflight' "$RT" | cut -d: -f1)
+pre_line=$(grep -n '^[[:space:]]*capacity_preflight$' "$RT" | head -1 | cut -d: -f1)
 wt_line=$(grep -n 'stage "setup: worktree"' "$RT" | cut -d: -f1)
 inst_line=$(grep -n 'stage "setup: installing deps"' "$RT" | cut -d: -f1)
 if [ -n "$pre_line" ] && [ -n "$wt_line" ] && [ -n "$inst_line" ] \

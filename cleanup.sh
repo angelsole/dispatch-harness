@@ -10,6 +10,10 @@ _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 . "$_COMMON_LIB_PATH"
 unset _COMMON_LIB_PATH
 RUN="$HARNESS_DIR/runs/$1"
+if [ "$(jq -r '.status // empty' "$RUN/result.json" 2>/dev/null)" = ready_local ]; then
+  echo "local-only worktree kept for $1: its work has not been published"
+  exit 1
+fi
 
 # The mirror target may be a repo pin (repos.local.sh) rather than an exported
 # variable, so resolve it the way run-task.sh did, off the worktree the run named.

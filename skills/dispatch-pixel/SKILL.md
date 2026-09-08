@@ -1,9 +1,15 @@
 ---
 name: dispatch-pixel
-description: Dispatch VISUAL work — pixel art, game-feel dashboards, anything judged by eye — through the harness's visual profile, the dispatch pipeline with eyes and hands — the orchestrator (you) reads the target repo's art-direction contract (.creative/ — bible, rubric, reference board, palette), looks at the current render, writes a brief, and after approval Opus implements in a worktree with the PixelLab / Retro Diffusion factories, the deterministic test gate runs, then the VISUAL gate renders fixed shots, checks them (palette, grid, luminance, legibility, SSIM) and asks a blind, both-order VLM critic whether the render beats the reigning champion; a fix round fires on taste, a reviewer reads the diff plus the contact sheet, and a draft PR opens with the pictures. Use when the user says /dispatch-pixel <ticket-or-description>, "dispatch pixel", or asks for a visual/creative run; for ordinary code use /dispatch, which is the same harness without the eyes.
+description: Dispatch VISUAL work — pixel art, game-feel dashboards, anything judged by eye — through the harness's visual profile, where the render is planned against the repo's .creative/ art-direction contract and judged by a blind critic, not by a test gate alone. Use when the user says $dispatch-pixel or /dispatch-pixel with a ticket or description, "dispatch pixel", or asks for a visual/creative run; for ordinary code use /dispatch.
 ---
 
 # Dispatch-pixel — the harness with eyes
+
+Works in Codex (`$dispatch-pixel`) and Claude Code (`/dispatch-pixel`).
+Resolve `HARNESS_DIR` first; paths below use its default `~/.claude/harness/`.
+Read the shared protocol at `$HARNESS_DIR/planner-skills/dispatch/SKILL.md` (default:
+`~/.claude/harness/planner-skills/dispatch/SKILL.md`) for station health, completion
+and resume behavior. Use the tools your host provides.
 
 You are the **planner / art-director** stage. Same posture as `/dispatch`:
 research, brief, verdict; never implement, never read worker logs line by
@@ -18,7 +24,7 @@ line. Two things are different, and both are load-bearing:
    the owner's board it agreed 6/6 with the owner; without it, it preferred
    the render the owner had rejected. So the contract is your first job.
 2. **You show pictures, you do not describe them.** Every verdict you give
-   the user comes with the contact sheet (SendUserFile) — the same one the
+   the user comes with the contact sheet (your host's image display or file attachment tool) — the same one the
    critic and the reviewer saw. Taste is settled by looking, at milestones,
    by a human; the machinery only converges toward the board it was given.
 
@@ -30,14 +36,6 @@ by itself for a repo that carries `.creative/` or pins `VISUAL_GATE_CMD`. You do
 not turn it on per run and there is no second install to invoke — dispatching a
 visual repo through either skill gets the visual gate. What `/dispatch-pixel`
 adds is *this* protocol: plan against the contract, and show pictures.
-
-> **Migrating from `~/.claude/creative-harness`.** If that directory still
-> exists, it is the fork this profile replaced. Move its `champion/` and
-> `factory.conf.sh` into `~/.claude/harness/`, repoint any `VISUAL_GATE_CMD` pin
-> at `$HARNESS_DIR/profiles/visual/creative/visual-gate.sh` (or drop the pin —
-> `.creative/` is enough now), and stop using it. Its old runs stay readable
-> where they are (`wall.sh --runs ~/.claude/creative-harness/runs`); nothing
-> moves them for you. Do not dispatch into it.
 
 ## 1. Scope
 
@@ -72,7 +70,7 @@ before anything else:
 ## 2. Research
 
 - Read the contract yourself: bible, rubric, `visual.conf.sh`, `proportions`,
-  the board (Read the PNGs — you have eyes too), `profiles/visual/creative/README.md` for the
+  the board (open the PNGs with your host's image viewer), `profiles/visual/creative/README.md` for the
   doctrine and the vendor gotchas the factory PR recorded.
 - **Look at the current state.** `~/.claude/harness/profiles/visual/creative/champion.sh
   show <repo-name>` says whether a champion reigns and where its sheet is; if
@@ -81,8 +79,9 @@ before anything else:
   (frames + `.harness/contact-sheet.png`, ~30–60 s, no model, no money) and
   promote it as the starting champion **only if the user says that render is
   the bar** (`profiles/visual/creative/champion.sh promote <repo-name> <path-with-frames>`).
-- Use Explore subagents for the code; find the insertion points, the scene
-  model, the asset pipeline the repo already has. Do not design the art.
+- Read applicable AGENTS.md and CLAUDE.md, then the code yourself — the insertion points, the scene model, the asset
+  pipeline the repo already has; use an available research subagent only for a
+  wide multi-file investigation. Do not design the art.
 - **Show the user the pictures now** — the champion sheet, and if useful a
   quick mock — before you write the brief. A brief written against a picture
   the user has not seen is the failure this harness exists to prevent.
@@ -114,7 +113,8 @@ following `~/.claude/harness/brief-template.md`, plus these sections
   round.
 
 The first `# heading` becomes the PR title. **Show the brief and the pictures
-to the user and get explicit approval before dispatching.**
+to the user and get approval before dispatching, unless the user already
+authorized that scope and visual contract in this session.**
 
 ## 4. Dispatch
 
@@ -122,7 +122,8 @@ Run in the background (it takes many minutes; visual rounds add 1–6 minutes
 each — render ~30 s, critic ≈ 2 calls ≈ $1 and 3–6 min per round):
 
 ```bash
-~/.claude/harness/run-task.sh <RUN-ID> <repo-path> <branch-name>
+dispatch run --id <RUN-ID> --repo <repo-path> --branch <branch-name> \
+  --brief ~/.claude/harness/runs/<RUN-ID>/brief.md --json
 ```
 
 Watch as with `/dispatch` — `~/.claude/harness/status.sh --watch`,
@@ -130,7 +131,8 @@ Watch as with `/dispatch` — `~/.claude/harness/status.sh --watch`,
 glance when a stage flips: `runs/<RUN-ID>/visual-rounds.log` (round, status,
 duration and the failing step). One statusline covers both
 skills — the visual stages have their own actors in it (`visual`, and the fix
-rounds by backend). Do not poll; you are notified when it exits.
+rounds by backend). Follow the shared dispatch skill's completion and resume
+guidance; a desktop notification does not itself resume a Codex turn.
 
 ## 5. Verdict
 
@@ -157,7 +159,7 @@ addition:
   the same worktree (`HARNESS_REDISPATCH=1 ~/.claude/harness/run-task.sh …`)
   or stop. Respect the kill criterion you wrote — the day this harness was
   built for was six rounds of "one more try".
-- **Send the pictures.** On every terminal status, `SendUserFile` the run's
+- **Send the pictures.** On every terminal status, display or attach the run's
   `visual/contact-sheet.png` (and the champion sheet beside it when there is
   one) with the critic's `pairwise` + one line of its `evidence`. The user
   judges the picture, not your adjectives.

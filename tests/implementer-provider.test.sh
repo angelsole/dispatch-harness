@@ -304,7 +304,7 @@ for role in reviewer fix; do
   has "$E" "token=[]"         "env: the $role stage never sees the credential"
   has "$E" "timeout=[]"       "env: the $role stage keeps the CLI's own timeout"
   has "$E" "haiku=[]"         "env: the $role stage keeps the CLI's own small model"
-  has "$E" "subagent=[sonnet]" "env: the $role stage keeps its Anthropic subagents"
+  has "$E" "subagent=[claude-sonnet-5]" "env: the $role stage keeps its Anthropic subagents"
   has "$E" "model=[claude-opus-5]" \
     "env: the $role stage runs on a Claude model, not the implementer's GLM one"
 done
@@ -424,7 +424,7 @@ has "$BASE_IMPL" "token=[]"    "default: no auth token is injected"
 has "$BASE_IMPL" "timeout=[]"  "default: no request timeout is injected"
 has "$BASE_IMPL" "haiku=[]"    "default: no small-model override is injected"
 has "$BASE_IMPL" "compact=[]"  "default: no compaction override is injected"
-has "$BASE_IMPL" "subagent=[sonnet]" "default: subagents stay on sonnet"
+has "$BASE_IMPL" "subagent=[claude-sonnet-5]" "default: subagents stay on the pinned small model"
 has "$BASE_IMPL" "model=[claude-opus-5]" "default: and the implementer on Opus"
 has "$(env_of reviewer)" "model=[claude-opus-5]" \
   "default: the Claude review tier still mirrors the implementer's model"
@@ -506,7 +506,7 @@ check "repo pin: the model keeps its own repo-ambient-default precedence" \
 IMPL="$(env_of implementer)"
 has "$IMPL" "base=[]"              "repo pin: no zai endpoint reaches the implementer"
 has "$IMPL" "token=[]"             "repo pin: nor the credential"
-has "$IMPL" "subagent=[sonnet]"    "repo pin: subagents stay on the provider's own"
+has "$IMPL" "subagent=[claude-sonnet-5]" "repo pin: subagents stay on the provider's own"
 has "$IMPL" "model=[glm-5.3]" "repo pin: the ambient model reaches the implementer"
 check "repo pin: nothing to escalate to, so escalation is off" "$(pin escalation)" "off"
 check "repo pin: the Claude window is measured again" \
@@ -647,7 +647,7 @@ check "wiring: the implementer_env hook is fired exactly once" \
   "$(grep -c 'hook_run implementer_env' "$RT" | tr -d ' ')" "1"
 call_line=$(grep -n 'hook_run implementer_env' "$RT" | cut -d: -f1)
 open_line=$(grep -n '^opus_attempt() {' "$RT" | cut -d: -f1)
-exit_line=$(grep -n '^  OPUS_EXIT=' "$RT" | cut -d: -f1)
+exit_line=$(grep -nF '  OPUS_EXIT=${PIPESTATUS[0]}' "$RT" | cut -d: -f1)
 if [ -n "$call_line" ] && [ -n "$open_line" ] && [ -n "$exit_line" ] \
    && [ "$call_line" -gt "$open_line" ] && [ "$call_line" -lt "$exit_line" ]; then
   ok "wiring: and that firing sits inside opus_attempt's subshell"

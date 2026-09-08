@@ -16,6 +16,22 @@ primary table live with [The Quartermaster](operations.md#the-quartermaster);
 the complete set is repeated here so this page remains the lookup for every
 environment variable.
 
+### CLI lifecycle
+
+| Env var | What it does | Default |
+| --- | --- | --- |
+| `HARNESS_RESUME` | Validate and reuse completed stage checkpoints. Set by `dispatch resume`; changed inputs run the normal pipeline. | `0` |
+| `HARNESS_PUBLISH` | Push and open a draft PR. `dispatch run --no-publish` pins `0` and finishes as `ready_local`. | `1` |
+| `DISPATCH_BIN_DIR` | Where the installer writes the `dispatch` launcher. Existing unrelated commands are preserved. | `~/.local/bin` |
+
+`request.json` holds the immutable task identity, repository, branch, execution
+host, selected account configuration paths, and publication choice. It holds
+no tokens. `launch.json` records the latest launch and brief digest;
+`waiting.json` supplies an actionable missing-login state. `checkpoint.json`
+binds completed stages to the code, brief, configuration, and review evidence.
+A per-run `.dispatch.lock` follows the detached process tree to prevent duplicate
+launches. The shell runner's existing `result.json` remains the verdict.
+
 ### The Quartermaster
 
 | Env var | What it does | Default |
@@ -729,9 +745,10 @@ determine is left blank (honestly reported) for runtime auto-detection.
   refuses to `--write` if either fails, so you never pin an entry that doesn't
   actually pass.
 - **`--ai`** makes one *read-only* `claude -p` call (model via `SETUP_MODEL`,
-  default `sonnet`; set `opus` for a harder look) that can only read the repo,
-  validates its JSON, and falls back to the deterministic proposal on any
-  failure — it works fine with `claude` absent.
+  default `claude-sonnet-5`; set `claude-opus-5` for a harder look) that can
+  only read the repo, returns a schema-validated object (`--json-schema`), and
+  falls back to the deterministic proposal on any failure — it works fine with
+  `claude` absent.
 - **`--write`** manages the arms between the `# >>> setup-repo managed >>>`
   markers in `repos.local.sh`; re-running a repo updates its arm in place. A
   hand-written file without those markers is never modified — it prints the

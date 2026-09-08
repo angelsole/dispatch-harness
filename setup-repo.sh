@@ -29,7 +29,7 @@
 #
 # Env overrides:
 #   HARNESS_DIR         where repos.local.sh lives   (default: ~/.claude/harness)
-#   SETUP_MODEL         model for --ai               (default: sonnet; try opus)
+#   SETUP_MODEL         model for --ai               (default: claude-sonnet-5; try claude-opus-5)
 #   CLAUDE_BIN          claude binary for --ai       (default: from PATH)
 #   SETUP_AI_TIMEOUT    seconds cap on the --ai call (default: 180)
 #   SETUP_VERIFY_TIMEOUT seconds cap on install+gate (default: 1200)
@@ -42,7 +42,7 @@ _COMMON_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 . "$_COMMON_LIB_PATH"
 unset _COMMON_LIB_PATH
 
-SETUP_MODEL="${SETUP_MODEL:-sonnet}"
+SETUP_MODEL="${SETUP_MODEL:-$DEFAULT_ANTHROPIC_SMALL_MODEL}"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 SETUP_AI_TIMEOUT="${SETUP_AI_TIMEOUT:-180}"
 SETUP_VERIFY_TIMEOUT="${SETUP_VERIFY_TIMEOUT:-1200}"
@@ -392,7 +392,7 @@ run_ai() {
 
   local prompt
   prompt="You are configuring a CI-style test pipeline for the git repo at the current working directory.
-Inspect it read-only and output ONLY a single JSON object (no prose, no markdown fences) with any of these keys you can determine confidently:
+Inspect it read-only and fill in any of these fields you can determine confidently:
   BASE_BRANCH   base branch PRs target (the remote's default branch)
   INSTALL_CMD   command to install deps in a fresh clone
   GATE_CMD      the strictest fast gate: type-check/lint/tests, '&&'-joined
@@ -402,21 +402,31 @@ Inspect it read-only and output ONLY a single JSON object (no prose, no markdown
   DEMO_DEV_CMD  dev server command with an explicit fixed port
   DEMO_PORT     the numeric port DEMO_DEV_CMD binds
   PREFLIGHT_CMD only if a service (e.g. a DB) must be up before tests
-Omit any key you cannot determine — never guess a command. Values must be plain strings (DEMO_PORT a number)."
+Omit any field you cannot determine — never guess a command."
+
+  # One property per KNOWN_FIELDS entry. The CLI validates the reply against
+  # this and hands back a parsed object, so no prose or fence can reach us.
+  local schema
+  schema='{"type":"object","additionalProperties":false,"properties":{
+    "BASE_BRANCH":{"type":"string"},"INSTALL_CMD":{"type":"string"},
+    "GATE_CMD":{"type":"string"},"MCP_CONFIG":{"type":"string"},
+    "ENV_SUBDIRS":{"type":"string"},"DEV_CMD":{"type":"string"},
+    "DEMO_DEV_CMD":{"type":"string"},"DEMO_PORT":{"type":"integer"},
+    "PREFLIGHT_CMD":{"type":"string"}}}'
 
   # Run the call from inside the repo so the model inspects the target tree.
   # The settings path is absolute, so it survives the cd.
   local raw json
   raw="$(cd "$REPO" && with_timeout "$SETUP_AI_TIMEOUT" env -u ANTHROPIC_API_KEY "$CLAUDE_BIN" \
           -p "$prompt" --settings "$settings" --model "$SETUP_MODEL" \
-          --output-format json --max-turns 30 </dev/null 2>/dev/null)" || {
+          --output-format json --json-schema "$schema" --max-turns 30 </dev/null 2>/dev/null)" || {
     warn "--ai: claude call failed or timed out — keeping deterministic proposal"; return; }
 
-  # Unwrap the CLI envelope, then strip any stray code fence the model added.
-  json="$(printf '%s' "$raw" | jq -r '.result // empty' 2>/dev/null)"
-  json="$(printf '%s' "$json" | sed -E 's/^```[a-zA-Z]*//; s/```$//' | sed '/^[[:space:]]*$/d')"
-  if [ -z "$json" ] || ! printf '%s' "$json" | jq -e 'type=="object"' >/dev/null 2>&1; then
-    warn "--ai: response was not a JSON object — keeping deterministic proposal"; return
+  # --json-schema puts the validated object under .structured_output.
+  json="$(printf '%s' "$raw" \
+        | jq -c 'select((.structured_output | type) == "object") | .structured_output' 2>/dev/null)"
+  if [ -z "$json" ]; then
+    warn "--ai: no structured output — keeping deterministic proposal"; return
   fi
 
   # Reject unknown keys wholesale rather than silently trusting a mangled reply.

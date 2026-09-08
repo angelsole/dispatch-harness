@@ -455,7 +455,7 @@ check "prompt: the notes sections are specified user-facing first" \
   "$(printf '%s\n' "$PROMPT" | grep -oE '## What this changes|## How to try it|## Technical notes' | tr '\n' ' ')" \
   "## What this changes ## How to try it ## Technical notes "
 
-DISPATCH_TEXT=$(cat "$DISPATCH_SKILL")
+DISPATCH_TEXT=$(cat "$DISPATCH_SKILL" "$SRC/skills/dispatch/references/pipeline.md")
 has "$DISPATCH_TEXT" "an ordinary reversible fork you leave out does not become a" \
   "planner guidance: omitted reversible forks do not stop on worker judgement"
 has "$DISPATCH_TEXT" "an undeclared irreversible" \

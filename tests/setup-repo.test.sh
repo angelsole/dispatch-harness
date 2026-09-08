@@ -245,7 +245,7 @@ FAKE="$ROOT/fake-claude"
 PWNED="$ROOT/pwned"
 cat > "$FAKE" <<SH
 #!/usr/bin/env bash
-printf '%s\n' '{"result":"{\"GATE_CMD\":\"echo \$(touch $PWNED)\",\"DEMO_PORT\":1234}"}'
+printf '%s\n' '{"structured_output":{"GATE_CMD":"echo \$(touch $PWNED)","DEMO_PORT":1234}}'
 SH
 chmod +x "$FAKE"
 HA="$ROOT/ha"; mkdir -p "$HA"

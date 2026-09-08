@@ -23,8 +23,9 @@ _LIB_DIR="$(dirname "${BASH_SOURCE[0]}")/lib"
 # runs this script in the foreground, asserting on its exit status — which a
 # detaching driver would answer with an instant 0 from the launcher half. The
 # gate pins HARNESS_DETACH=0 for the suites it runs; this covers a suite run by
-# hand, where nothing sets the knob. A real dispatch leaves HARNESS_DIR unset
-# and common.sh fills in ~/.claude/harness.
+# hand, where nothing sets the knob. An explicit HARNESS_DETACH=1 always wins;
+# station.sh sets it. The dispatch CLI owns its own process session and passes
+# HARNESS_DETACH=0. Keep this implicit foreground fallback for older fixtures.
 _INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 # shellcheck source=lib/common.sh
 . "$_LIB_DIR/common.sh"
@@ -38,6 +39,8 @@ _INSTALL_DIR_FROM_ENV="${HARNESS_DIR:-}"
 . "$_LIB_DIR/notify.sh"
 # shellcheck source=lib/lessons.sh
 . "$_LIB_DIR/lessons.sh"
+# shellcheck source=lib/checkpoints.sh
+. "$_LIB_DIR/checkpoints.sh"
 unset _LIB_DIR
 
 # Whole script runs inside main() so bash parses it fully before executing —
@@ -90,7 +93,7 @@ PREV_STATUS=$(cut -d' ' -f2- < "$RUN_DIR/status" 2>/dev/null || echo "")
 # and nothing else touches it.
 PREV_RESULT=$(jq -r '.status // ""' "$RUN_DIR/result.json" 2>/dev/null || echo "")
 if [ "${HARNESS_REDISPATCH:-0}" != 1 ]; then
-  if [ "$PREV_RESULT" = "ready" ] || [ "$PREV_STATUS" = "done: ready" ]; then
+  if [ "$PREV_RESULT" = "ready" ] || [ "$PREV_RESULT" = "ready_local" ] || [ "$PREV_STATUS" = "done: ready" ]; then
     PREV_PR=$(jq -r '.pr_url // ""' "$RUN_DIR/result.json" 2>/dev/null || echo "")
     echo "[harness] $TICKET already finished as 'done: ready' — not dispatching it again"
     [ -n "$PREV_PR" ] && echo "[harness]   PR: $PREV_PR"
@@ -147,7 +150,7 @@ unset _LIVE_PID
 # `launchctl bootout` still owns the run.
 : "${DISPATCH_DETACHED=}"   # internal: set by the re-exec below, never by a user
 if [ "${HARNESS_DETACH:-1}" = 1 ] && [ -z "$DISPATCH_DETACHED" ] \
-   && [ -z "$_INSTALL_DIR_FROM_ENV" ]; then
+   && { [ -z "$_INSTALL_DIR_FROM_ENV" ] || [ "${HARNESS_DETACH:-}" = 1 ]; }; then
   echo "[harness] dispatched $TICKET — detached, this shell no longer owns it"
   echo "[harness]   stages   $HARNESS_DIR/status.sh $TICKET"
   echo "[harness]   live     tail -f $RUN_DIR/feed.log"
@@ -331,6 +334,8 @@ pin_knob reviewer-effort REVIEWER_EFFORT high
 # re-attribute a run. Station sessions export HARNESS_OWNER; an unset one pins
 # empty and the run is simply unowned.
 pin_knob owner HARNESS_OWNER ""
+pin_knob publish HARNESS_PUBLISH 1
+printf '%s\n' "$BRANCH" > "$RUN_DIR/branch"
 
 # --- Escalation: which vendor gets a second try, and on what evidence ---------
 # The implementer is chosen once, cheap first, and until now that choice was the
@@ -1316,7 +1321,13 @@ echo "$WORKTREE" > "$RUN_DIR/worktree"
 echo "$BASE_REF" > "$RUN_DIR/base"
 echo "[harness] $TICKET -> $REPO ($BRANCH from $BASE_REF)"
 
-capacity_preflight
+# A checkpoint may avoid another model call; validate it after fetching base.
+CAPACITY_PENDING=0
+if [ "${HARNESS_RESUME:-0}" = 1 ] && [ -f "$RUN_DIR/checkpoint.json" ]; then
+  CAPACITY_PENDING=1
+else
+  capacity_preflight
+fi
 
 stage "setup: worktree"
 
@@ -1424,6 +1435,21 @@ if [ -n "${PREFLIGHT_CMD:-}" ]; then
     || fail setup_failed "gate preflight failed (see $RUN_DIR/preflight.log)"
 fi
 
+# Reuse is earned by the checkpoint signature, not the old status text. All
+# setup/service checks above still run. Profiles conservatively re-run fully.
+RESUME_CHECKPOINT=""
+if [ "${HARNESS_RESUME:-0}" = 1 ]; then
+  RESUME_CHECKPOINT=$(checkpoint load) || RESUME_CHECKPOINT=""
+fi
+if [ -n "$RESUME_CHECKPOINT" ]; then
+  echo "[harness] resume: reusing $RESUME_CHECKPOINT checkpoint"
+  OPUS_HEAD=$(jq -r '.state.opus_head' "$RUN_DIR/checkpoint.json")
+  OPUS_SESSION=$(cat "$RUN_DIR/opus-session" 2>/dev/null || true)
+  OPUS_EXIT=0
+elif [ "$CAPACITY_PENDING" = 1 ]; then
+  capacity_preflight
+fi
+
 # --- 3c. Pre-production posture (PREPROD=1 pinned in repos.local.sh) ---------
 # A repo that has not shipped yet wants the opposite defaults from a mature one:
 # delete obsolete paths rather than preserve them. Both models default to
@@ -1497,7 +1523,7 @@ IMPLEMENTER_COMPACT_WINDOW="${IMPLEMENTER_COMPACT_WINDOW:-300000}"
 # subagents run on. It has to move with the provider: a subagent left on
 # `sonnet` would be routed to the z.ai endpoint under a model id it does not
 # serve, and one left unset would silently bill somewhere the run did not ask for.
-IMPLEMENTER_SUBAGENT_MODEL=sonnet
+IMPLEMENTER_SUBAGENT_MODEL="$DEFAULT_ANTHROPIC_SMALL_MODEL"
 [ "$IMPLEMENTER_PROVIDER" != zai ] || IMPLEMENTER_SUBAGENT_MODEL="$ZAI_SMALL_MODEL"
 
 if [ "$IMPLEMENTER_PROVIDER" = zai ]; then
@@ -1509,7 +1535,8 @@ fi
 # The fetch above is an anonymous read and passes on a public repo with no
 # credential; only the push at the end needs one. Spend the check here, before
 # an implementer pass is billed to a run that cannot ship.
-if [ "${HARNESS_SKIP_PUSH_PREFLIGHT:-0}" != 1 ]; then
+if [ "$HARNESS_PUBLISH" = 1 ] && [ "${HARNESS_SKIP_PUSH_PREFLIGHT:-0}" != 1 ] \
+   && [ ! -f "$RUN_DIR/request.json" ]; then
   preflight_remote_auth "$WORKTREE" "$BRANCH" \
     || fail setup_failed "push preflight: origin rejected the credential (see above; HARNESS_SKIP_PUSH_PREFLIGHT=1 skips this check)"
 fi
@@ -1587,7 +1614,7 @@ Rules:
 - Stopping to ask is decided by the brief's '## Decision points', not by your own sense of doubt. Stop for exactly two things: a fork that section marks 'STOP and ask', and an irreversible action it does NOT declare — a schema migration or data backfill, deleting or rewriting files outside '## Edit locations', anything that leaves this machine. Do NOT stop for a fork the brief already decides: implement its decision as written, even where you would have chosen otherwise. To stop, write the specific question(s), each with the options you considered and what the wrong answer costs, to .harness/QUESTIONS.md and stop working — batched, all of them at once. The orchestrator will get answers and resume you.
 - If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
 - When finished, write .harness/implementer-notes.md in three sections, in this order — the user-facing ones first:
-  1. \`## What this changes\` — 2-5 sentences in product language: what a user of the product can now do or no longer suffers, and why it matters. No file names, no function names.
+  1. \`## What this changes\` — a short paragraph in product language: what a user of the product can now do or no longer suffers, and why it matters. No file names, no function names.
   2. \`## How to try it\` — the concrete steps or command a human uses to see the change working; \`Not user-visible — <one line why>\` is legitimate for pure internal work.
   3. \`## Technical notes\` — what you changed, key decisions, deviations from the brief, and what the reviewer should scrutinize.
   Keep it tight — substance only, no filler; it becomes the PR body.$PREPROD_POSTURE$QUALITY_POSTURE"
@@ -1865,6 +1892,15 @@ opus_incomplete() {
   [ "$OPUS_EXIT" -ne 0 ] || [ -z "$(git -C "$WORKTREE" log "$BASE_REF"..HEAD --oneline 2>/dev/null)" ]
 }
 
+if [ -z "$RESUME_CHECKPOINT" ]; then
+if [ -f "$RUN_DIR/request.json" ] && [ "$IMPLEMENTER_PROVIDER" = anthropic ] \
+   && ! { with_timeout 20 "$CLAUDE_BIN" auth status --json 2>/dev/null | jq -e '.loggedIn == true' >/dev/null 2>&1; }; then
+  jq -n --arg owner "${HARNESS_OWNER:-}" --arg id "$TICKET" \
+    '{provider:"claude",reason:"Claude implementer login is unavailable; the task is saved.",
+      action:("dispatch login claude" + (if $owner == "" then "" else " --owner " + $owner end) + " ; dispatch resume " + $id)}' \
+    > "$RUN_DIR/waiting.json.tmp" && mv "$RUN_DIR/waiting.json.tmp" "$RUN_DIR/waiting.json"
+  fail setup_failed "Claude login required; use dispatch status for the repair command"
+fi
 ESCALATION_HANDOFF=0
 if jq -e '.triggered == true and .pending == true and
           .to_provider == "anthropic" and ((.to_model // "") | length > 0)' \
@@ -2071,6 +2107,8 @@ if opus_incomplete; then
   echo "[harness] implementer failed (exit $OPUS_EXIT, see opus-stderr.log / feed.log in $RUN_DIR)"; exit 1
 fi
 
+fi   # end: implementation (or reuse a validated checkpoint)
+
 # --- 4c. Commit hygiene backstop (script — no model) -------------------------
 # The prompts have always said not to sign commits with the model's name, and
 # resumed sessions have twice done it anyway: one trailer was caught by hand,
@@ -2157,8 +2195,10 @@ HYGIENE_EXIT=$?
   || fail implementer_failed "commit hygiene could not remove AI attribution from $BASE_REF..HEAD"
 
 # Everything up to this commit is Opus's work; later commits are Codex's.
-OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)
-echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
+if [ -z "$RESUME_CHECKPOINT" ]; then
+  OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)
+  echo "$OPUS_HEAD" > "$RUN_DIR/opus-head"
+fi
 
 # Everything after this point — gate, review, push — judges the committed diff;
 # uncommitted leftovers end the run here with a status of their own.
@@ -2167,6 +2207,8 @@ require_clean_worktree "$WORKTREE" || {
   stage "done: $STATUS"
   exit 1
 }
+
+if [ -z "$RESUME_CHECKPOINT" ]; then checkpoint save implemented || true; fi
 
 # --- 5. Gate + Codex review/fix loop ------------------------------------------
 # Which step of the gate died. Three quarters of runs need a second gate round,
@@ -2681,7 +2723,7 @@ run_claude_worker() {  # $1 = round label, $2 = prompt
       env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
           -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
           -u CLAUDE_CODE_AUTO_COMPACT_WINDOW \
-          CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+          CLAUDE_CODE_SUBAGENT_MODEL="$DEFAULT_ANTHROPIC_SMALL_MODEL" \
       "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \
@@ -3303,7 +3345,12 @@ verify_pr_section() {
     | .[]' "$v" 2>/dev/null || true
 }
 
-run_gate 1 || true
+if [ "$RESUME_CHECKPOINT" = gated ] || [ "$RESUME_CHECKPOINT" = validated ]; then
+  GATE_STATUS=pass
+  echo "[harness] resume: initial gate already passed for these inputs"
+else
+  run_gate 1 || true
+fi
 
 # --- Post-gate profile stages -------------------------------------------------
 # The slot between the test gate and the review, for a stage that asks something
@@ -3328,10 +3375,13 @@ GATE_INTEGRITY_SECTION=""
 # An earlier attempt's findings describe an earlier tree, and result.json embeds
 # whatever this file holds: clear it before the stage that earns it, the same
 # rule the verifier's score follows.
-rm -f "$RUN_DIR/gate-integrity.json"
+if [ "$RESUME_CHECKPOINT" != gated ] && [ "$RESUME_CHECKPOINT" != validated ]; then
+  rm -f "$RUN_DIR/gate-integrity.json"
+fi
 if [ "${HARNESS_GATE_INTEGRITY:-1}" != 0 ] && [ -r "$HARNESS_DIR/lib/gate-integrity.sh" ]; then
   # shellcheck source=lib/gate-integrity.sh
   . "$HARNESS_DIR/lib/gate-integrity.sh"
+  if [ "$RESUME_CHECKPOINT" != gated ] && [ "$RESUME_CHECKPOINT" != validated ]; then
   echo "[harness] gate integrity: replaying this branch's tests against base (script — no model)"
   # The replay runs this branch's tests from inside lib/gate-integrity.sh — the
   # one test execution that does not go through run_gate — so it takes the same
@@ -3341,6 +3391,7 @@ if [ "${HARNESS_GATE_INTEGRITY:-1}" != 0 ] && [ -r "$HARNESS_DIR/lib/gate-integr
   gate_integrity_check "$WORKTREE" "$BASE_REF" "$RUN_DIR" "$BRIEF" "$GATE_STATUS" || true
   harness_gate_lock_release "$GATE_LOCK_KEY"
   GATE_LOCK_KEY=""
+  fi
   GI_SECTION_TEXT=$(gate_integrity_section "$RUN_DIR/gate-integrity.json" || true)
   if [ -n "$GI_SECTION_TEXT" ]; then
     GATE_INTEGRITY_SECTION="
@@ -3399,7 +3450,7 @@ You FIND; you do not fix. A later pass tries to disprove each thing you report a
 
 Before you open the diff, write .harness/expected-properties.md: from brief.md (and specs/ when present) alone, the properties a correct change MUST have — what each acceptance criterion implies about behaviour, the invariants it must not break, the error paths and edge cases it has to handle. Write it first and do not revise it afterwards; judging the diff against a spec you wrote before seeing it is what stops a plausible diff talking you into its own definition of correct.
 
-How to read the diff: not straight through. List the changed files first (git diff --name-status $BASE_REF...HEAD), then work through the diff in slices of about fifty changed lines. For each slice, read the code it plugs into — the callers, the definitions and constants it uses, the tests that cover it — judge that slice there, and only then move on. Never judge a hunk in isolation from the code it lands in: recall on a diff read in one pass collapses long before the end of it, and a finding nobody makes is one no later pass can recover.
+How to read the diff: not straight through. List the changed files first (git diff --name-status $BASE_REF...HEAD), then work through the diff one piece at a time — a file, or a coherent group of hunks. For each piece, read the code it plugs into — the callers, the definitions and constants it uses, the tests that cover it — judge that piece there, and only then move on. Never judge a hunk in isolation from the code it lands in: recall on a diff read in one pass collapses long before the end of it, and a finding nobody makes is one no later pass can recover.
 
 Then work through this checklist, in order:
 1. Gate-gaming — weakened or deleted tests, skipped/disabled cases, loosened assertions, hardcoded expected values, modified fixtures. A green gate proves nothing if the tests were touched to make it green; the fix is a restored test and corrected code, never the reverse. Highest priority. Start from the gate integrity flags above and from any analyzer, linter or type-checker lines in gate-latest.log — those are evidence somebody already collected, not a verdict.
@@ -3460,6 +3511,11 @@ Read .harness/promoted.json and fix each finding it lists.
 - Append to .harness/review-notes.md what you changed for each finding, and what you left alone and why.
 - If a promoted finding reveals a FUNDAMENTAL flaw (wrong approach, architectural problem) that should not be papered over: do not paper over it — write .harness/REJECTED.md and stop.$PREPROD_POSTURE_REVIEW"
 
+if [ "$RESUME_CHECKPOINT" = validated ]; then
+  checkpoint_restore_review
+  echo "[harness] resume: review and final gate already passed for these inputs"
+else
+if [ "$GATE_STATUS" = pass ]; then checkpoint save gated || true; fi
 if [ "$ARM" = "no_review" ]; then
   REVIEW_CLASS="skipped"   # the ablation arm (HARNESS_SKIP_REVIEW=1)
   stage "review skipped — HARNESS_SKIP_REVIEW=1 (no_review arm)"
@@ -3627,6 +3683,7 @@ if [ "$REVIEW_OK" = 1 ] && [ ! -f "$WORKTREE/.harness/REJECTED.md" ]; then
   fi
 fi
 fi   # end: review stage
+fi   # end: checkpoint reuse
 
 # Every arm passes through here, including no_review (where the score is the
 # implementer's alone) and the runs about to end rejected or gate_failed — those
@@ -3635,7 +3692,11 @@ fi   # end: review stage
 # after the review so the reviewer's own evidence is part of what it reads.
 # Paths that exit before the review stage — needs_input, implementer_failed,
 # capacity deferrals — never reach it and are untouched.
-verify_stage
+if [ "$RESUME_CHECKPOINT" != validated ]; then
+  verify_stage
+elif [ -f "$RUN_DIR/attempts/$PREV_ATTEMPT/verify.json" ]; then
+  cp "$RUN_DIR/attempts/$PREV_ATTEMPT/verify.json" "$RUN_DIR/verify.json"
+fi
 
 # --- 6. Outcome ---------------------------------------------------------------
 [ -f "$WORKTREE/.harness/review-notes.md" ] && cp "$WORKTREE/.harness/review-notes.md" "$RUN_DIR/review-notes.md"
@@ -3658,6 +3719,9 @@ elif [ "$REVIEW_OK" = 0 ]; then
   STATUS="review_failed"
 else
   STATUS="ready"
+  if [ "$REVIEW_CLASS" = reviewed ] || [ "$REVIEW_CLASS" = reviewed_claude ]; then
+    checkpoint save validated || true
+  fi
 
   # --- 5c. Base freshness sync (script; a model only on conflict) ---------------
   # Parallel runs merge PRs into base while this one is in flight; pushing a stale
@@ -3700,8 +3764,17 @@ else
     if [ "$STATUS" = "ready" ] && [ "$GATE_STATUS" != "pass" ]; then STATUS="gate_failed"; fi
   fi
 
-  if [ "$STATUS" = "ready" ]; then
+  if [ "$STATUS" = "ready" ] && [ "$HARNESS_PUBLISH" = 1 ]; then
   stage "push + draft PR (script — no model)"
+  # The task is already saved and reviewed. Request GitHub login only now;
+  # repairing it and resuming can reuse the validated checkpoint above.
+  if [ -f "$RUN_DIR/request.json" ] && ! gh auth status --hostname github.com >/dev/null 2>&1; then
+    jq -n --arg owner "${HARNESS_OWNER:-}" --arg id "$TICKET" \
+      '{provider:"gh",reason:"GitHub login is unavailable; the reviewed work is saved.",
+        action:("dispatch login gh" + (if $owner == "" then "" else " --owner " + $owner end) + " ; dispatch resume " + $id)}' \
+      > "$RUN_DIR/waiting.json.tmp" && mv "$RUN_DIR/waiting.json.tmp" "$RUN_DIR/waiting.json"
+    fail pr_failed "GitHub login required; use dispatch status for the repair command"
+  fi
   # Safety net: agents must never ship .harness/ metadata; strip if it slipped in.
   if [ -n "$(git -C "$WORKTREE" ls-files .harness 2>/dev/null)" ]; then
     git -C "$WORKTREE" rm -r -q --cached .harness
@@ -3796,6 +3869,7 @@ else
   fi
 fi
 
+if [ "$STATUS" = ready ] && [ "$HARNESS_PUBLISH" = 0 ]; then STATUS="ready_local"; fi
 write_result "$STATUS" "$PR_URL"
 # The loudest pushes carried the least information: `done: review_failed` went
 # out Priority: high with no reason at all, and a run that reached ready on the
@@ -3817,7 +3891,7 @@ fi
 stage "done: $STATUS" "$DONE_NOTE"
 echo "[harness] DONE status=$STATUS gate=$GATE_STATUS pr=${PR_URL:-none}"
 echo "[harness] worktree=$WORKTREE logs=$RUN_DIR"
-[ "$STATUS" = "ready" ]
+[ "$STATUS" = "ready" ] || [ "$STATUS" = "ready_local" ]
 }
 
 main "$@"

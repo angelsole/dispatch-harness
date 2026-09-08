@@ -16,6 +16,9 @@ set -u
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 WALL="$SRC/wall.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/wall-test.XXXXXX")"
+# A station may have an ingest token installed. Default to a fixture runtime;
+# individual token-file cases can still override HARNESS_DIR explicitly.
+export HARNESS_DIR="$ROOT/harness"
 RUNS="$ROOT/runs"
 PIDS=""
 cleanup() {
