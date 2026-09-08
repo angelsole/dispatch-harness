@@ -16,7 +16,7 @@ set -u
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 RT="$SRC/run-task.sh"
 TPL="$SRC/brief-template.md"
-SKILL="$SRC/skills/dispatch/SKILL.md"
+SKILL="$SRC/skills/dispatch/references/pipeline.md"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/context-mount-test.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
 

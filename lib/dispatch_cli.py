@@ -1,0 +1,413 @@
+"""The user/agent interface: local conversation, durable runs, optional SSH."""
+import argparse
+import getpass
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import uuid
+
+from dispatch_runs import (DispatchError, atomic_write, brief_digest, command_on_host,
+                           launch, read_json, read_text, run_directory, run_lock,
+                           status, write_json, repair_command)
+
+AUTH_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+             "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "OPENAI_BASE_URL",
+             "CODEX_ACCESS_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+             "GITHUB_ENTERPRISE_TOKEN", "HARNESS_CODEX_HOME_FALLBACK")
+ACCOUNT_VARS = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR")
+COMMANDS = ("chat", "station", "stations", "init", "run", "status", "wait", "resume", "doctor", "login")
+
+
+def parser():
+    p = argparse.ArgumentParser(prog="dispatch", description="Local-first coding tasks, with optional shared Mini stations.",
+        epilog="Examples: dispatch 'Fix checkout' | dispatch station --on mini --owner teammate | "
+               "dispatch run --brief brief.md | dispatch status | dispatch resume RUN-ID")
+    p.add_argument("command", nargs="?", default="chat", help="command or a quoted task description")
+    p.add_argument("arguments", nargs="*")
+    p.add_argument("--on", metavar="SSH_HOST", help="execute on an SSH host; default: this machine")
+    p.add_argument("--owner", help="explicitly select a saved station account")
+    p.add_argument("--accounts-dir", default=os.environ.get("QM_ACCOUNTS_DIR", str(Path.home() / "accounts")))
+    p.add_argument("--remote-harness", help="absolute installation path on the SSH host")
+    p.add_argument("--repo", "--dir", dest="repo", help="repository/directory on the execution machine")
+    p.add_argument("--planner", choices=("codex", "claude"), default=os.environ.get("DISPATCH_PLANNER", "codex"))
+    p.add_argument("--model", default=os.environ.get("DISPATCH_MODEL"))
+    p.add_argument("--brief", help="brief file; '-' reads stdin")
+    p.add_argument("--id", help="run ID; generated when omitted")
+    p.add_argument("--branch", help="task branch; generated when omitted")
+    p.add_argument("--no-publish", action="store_true", help="finish with a reviewed local branch; no push or PR")
+    p.add_argument("--json", action="store_true", help="machine-readable status/result")
+    p.add_argument("--timeout", type=int, default=60, help="wait timeout in seconds (default 60)")
+    p.add_argument("--pipeline", action="store_true", help="doctor: also check task execution dependencies")
+    p.add_argument("--browser", action="store_true", help="login codex: use browser callback instead of device login")
+    return p
+
+
+def executable(provider, env):
+    return env.get({"codex": "CODEX_BIN", "claude": "CLAUDE_BIN"}.get(provider, ""), provider)
+
+
+def account_environment(args, saved=None):
+    env = dict(os.environ)
+    env["PATH"] += os.pathsep + os.pathsep.join((str(Path.home() / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"))
+    owner = args.owner if args.owner is not None else env.get("HARNESS_OWNER", "")
+    if saved:
+        owner = saved.get("account", "")
+        if args.owner is not None and args.owner != owner:
+            raise DispatchError("this run is pinned to account " + (owner or "current") + "; resume without --owner")
+    if owner and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", owner):
+        raise DispatchError("invalid station account name")
+    if owner:
+        root = Path(args.accounts_dir).expanduser().absolute() / owner
+        if not saved and not root.is_dir():
+            raise DispatchError("unknown account " + owner + "; use dispatch stations")
+        for key in AUTH_VARS:
+            env.pop(key, None)
+        for key, provider in zip(ACCOUNT_VARS, ("claude", "codex", "gh")):
+            env[key] = str(root / provider)
+    if saved:
+        env.update({key: value for key, value in saved.get("account_paths", {}).items() if key in ACCOUNT_VARS})
+    for key, default in zip(ACCOUNT_VARS, (".claude", ".codex", ".config/gh")):
+        env[key] = str(Path(env.get(key, str(Path.home() / default))).expanduser().absolute())
+    env["HARNESS_OWNER"] = owner
+    return env
+
+
+def auth_ok(provider, env):
+    binary = executable(provider, env)
+    argv = {"codex": ["login", "status"], "claude": ["auth", "status", "--json"],
+            "gh": ["auth", "status", "--hostname", "github.com"]}[provider]
+    try:
+        out = subprocess.run([binary] + argv, env=env, capture_output=True, text=True, timeout=20)
+        if provider == "claude":
+            return out.returncode == 0 and json.loads(out.stdout).get("loggedIn") is True
+        return out.returncode == 0
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return False
+
+
+def emit(value, as_json):
+    if as_json:
+        print(json.dumps(value, indent=2))
+        return
+    if isinstance(value, list):
+        if not value:
+            print("No runs yet. Start with dispatch 'Describe the task'.")
+        for item in value:
+            emit(item, False)
+        return
+    print(f"{value['id']}: {value['state']} | account {value.get('account', 'current')}")
+    if value.get("stage") and value["state"] == "running":
+        print("  " + value["stage"])
+    result = value.get("result") or {}
+    if result.get("pr_url"):
+        print("  " + result["pr_url"])
+    if value.get("worktree"):
+        print("  worktree: " + value["worktree"])
+    if value.get("reason"):
+        print("  " + value["reason"])
+    if value.get("action"):
+        print("  next: " + value["action"])
+    elif value["state"] == "running":
+        print("  watch: " + command_on_host(["dispatch", "wait", value["id"]]))
+
+
+def repository(path, env):
+    out = subprocess.run(["git", "-C", path or os.getcwd(), "rev-parse", "--show-toplevel"],
+                         env=env, capture_output=True, text=True)
+    if out.returncode:
+        raise DispatchError("choose a Git repository with --repo, or run dispatch inside one")
+    return out.stdout.strip()
+
+
+def pipeline_issue(runtime, request, env, resuming=False):
+    checkpoint = read_json(runtime / "runs" / request["id"] / "checkpoint.json") if resuming else {}
+    binaries = ["git", "bash", "jq"]
+    if not checkpoint:
+        binaries.append(executable("claude", env))
+    for binary in binaries:
+        if not shutil.which(binary, path=env["PATH"]):
+            return {"reason": "missing task dependency: " + binary, "action": "Install " + binary + ", then dispatch resume " + request["id"]}
+    # Resolve the existing repo policy; do not guess the implementer's provider
+    # from the planner model or require a Claude login for a z.ai worker.
+    provider = read_text(runtime / "runs" / request["id"] / "implementer-provider")
+    if not provider:
+        out = subprocess.run(["bash", "-c", '. "$1/repos.conf.sh"; repo_config "$2"; printf "%s" "${IMPLEMENTER_PROVIDER:-$3}"',
+                              "dispatch", str(runtime), request["repo"], env.get("IMPLEMENTER_PROVIDER", "anthropic")],
+                             env=env, capture_output=True, text=True)
+        if out.returncode:
+            raise DispatchError("could not read repository configuration")
+        provider = out.stdout.strip()
+    if not checkpoint and provider == "anthropic" and not auth_ok("claude", env):
+        return {"provider": "claude", "reason": "Claude implementer login is unavailable; the task is saved.",
+                "action": repair_command("claude", request.get("account")) + " ; dispatch resume " + request["id"]}
+    return None
+
+
+def read_brief(path):
+    text = sys.stdin.read() if path == "-" else Path(path).expanduser().read_text()
+    if not text.strip():
+        raise DispatchError("brief is empty")
+    return text
+
+
+def submit(args, runtime):
+    if not args.brief:
+        raise DispatchError("run needs --brief FILE; use dispatch 'task description' to have the planner write it")
+    env = account_environment(args)
+    repo = repository(args.repo, env)
+    run_id = args.id or ("adhoc-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    directory = run_directory(runtime, run_id)
+    branch = args.branch or "task/" + run_id.lower()
+    check = subprocess.run(["git", "check-ref-format", "--branch", branch], env=env, capture_output=True)
+    if check.returncode or branch.startswith("-"):
+        raise DispatchError("invalid task branch")
+    text = read_brief(args.brief)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with run_lock(directory) as lock:
+        if any((directory / name).exists() for name in ("request.json", "result.json", "started", "status", "driver.pid", "arm", "publish", "worktree")) or is_running_legacy(directory):
+            raise DispatchError("run already exists; use dispatch status " + run_id + " or dispatch resume " + run_id)
+        request = {"version": 1, "id": run_id, "repo": repo, "branch": branch,
+                   "account": env.get("HARNESS_OWNER", ""),
+                   "account_paths": {key: env[key] for key in ACCOUNT_VARS},
+                   "operator": getpass.getuser(), "host": socket.gethostname(),
+                   "created": time.time(), "publish": not args.no_publish and env.get("HARNESS_PUBLISH", "1") != "0"}
+        atomic_write(directory / "brief.md", text)
+        write_json(directory / "request.json", request)
+        issue = pipeline_issue(runtime, request, env)
+        if issue:
+            write_json(directory / "waiting.json", issue)
+        else:
+            emit(launch(runtime, directory, request, env, lock), args.json)
+            return 0
+    emit(status(directory), args.json)
+    return 3
+
+
+def is_running_legacy(directory):
+    # run_lock is held here; querying the CLI lock would see ourselves.
+    from dispatch_runs import is_legacy_running
+    return is_legacy_running(directory)
+
+
+def resume(args, runtime):
+    if len(args.arguments) != 1:
+        raise DispatchError("resume needs one run ID")
+    directory = run_directory(runtime, args.arguments[0])
+    current = status(directory)
+    saved = read_json(directory / "request.json")
+    if saved and args.owner is not None and args.owner != saved.get("account", ""):
+        raise DispatchError("this run is pinned to account " + (saved.get("account") or "current") + "; resume without --owner")
+    if current["state"] in ("running", "ready", "ready_local"):
+        emit(current, args.json)
+        return 0
+    if saved.get("publish", True) and os.environ.get("HARNESS_PUBLISH") == "0":
+        raise DispatchError("this run is pinned to publishing; it cannot restart from a --no-publish session")
+    with run_lock(directory) as lock:
+        request = read_json(directory / "request.json")
+        if not request:
+            result = read_json(directory / "result.json")
+            repo = read_text(directory / "repo")
+            branch = result.get("branch") or read_text(directory / "branch")
+            if not repo or not branch:
+                raise DispatchError("legacy run is missing repo/branch metadata; resume it with run-task.sh once")
+            owner = read_text(directory / "owner")
+            if args.owner is None:
+                args.owner = owner
+            env = account_environment(args)
+            request = {"version": 1, "id": directory.name, "repo": repo, "branch": branch,
+                       "account": owner, "account_paths": {key: env[key] for key in ACCOUNT_VARS},
+                       "host": socket.gethostname(), "publish": True}
+            write_json(directory / "request.json", request)
+        if request.get("host") != socket.gethostname():
+            raise DispatchError("this run belongs to " + request["host"] + "; resume it on that host")
+        env = account_environment(args, request)
+        if args.brief:
+            atomic_write(directory / "brief.md", read_brief(args.brief))
+        last = read_json(directory / "launch.json")
+        if current["state"] == "needs_input" and brief_digest(directory) == last.get("brief_sha256"):
+            raise DispatchError(current["action"])
+        issue = pipeline_issue(runtime, request, env, resuming=True)
+        if issue:
+            write_json(directory / "waiting.json", issue)
+        else:
+            emit(launch(runtime, directory, request, env, lock, resume=True), args.json)
+            return 0
+    emit(status(directory), args.json)
+    return 3
+
+
+def chat(args, runtime):
+    env = account_environment(args)
+    if args.no_publish:
+        env["HARNESS_PUBLISH"] = "0"
+    provider = args.planner
+    if not auth_ok(provider, env):
+        raise DispatchError(provider + " login is unavailable; " + repair_command(provider, env.get("HARNESS_OWNER"), env))
+    cwd = str(Path(args.repo or os.getcwd()).expanduser().resolve())
+    if not Path(cwd).is_dir():
+        raise DispatchError("working directory does not exist: " + cwd)
+    (runtime / "runs").mkdir(parents=True, exist_ok=True)
+    model = args.model or ("gpt-6-astra" if provider == "codex" else None)
+    command = [executable(provider, env)]
+    if model:
+        command += ["-m" if provider == "codex" else "--model", model]
+    if provider == "codex":
+        command += ["-C", cwd, "--add-dir", str(runtime / "runs")]
+    else:
+        # Claude discovers skills inside its selected config directory.
+        # A peer profile can have working auth without any personal skills.
+        for skill in ("dispatch", "briefed-dispatch", "dispatch-pixel"):
+            source = runtime / "planner-skills" / skill
+            target = Path(env["CLAUDE_CONFIG_DIR"]) / "skills" / skill
+            enabled = skill != "dispatch-pixel" or (Path.home() / ".agents/skills" / skill / "SKILL.md").is_file()
+            if enabled and (source / "SKILL.md").is_file() and not target.exists() and not target.is_symlink():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(source, target_is_directory=True)
+    if args.arguments:
+        publication = " Use dispatch run --no-publish; keep a reviewed local branch without pushing or opening a PR." if env.get("HARNESS_PUBLISH") == "0" else ""
+        command += ["Use the dispatch skill to research and run this task through the harness. "
+                    "Keep the user's authorized scope." + publication + " Task: " + " ".join(args.arguments)]
+    print(f"dispatch: local {provider} planner | account {env.get('HARNESS_OWNER') or 'current'} | {cwd}", flush=True)
+    os.chdir(cwd)
+    os.execvpe(command[0], command, env)
+
+
+def remote(args, argv):
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]*", args.on):
+        raise DispatchError("invalid SSH host")
+    forwarded = []
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg in ("--on", "--remote-harness"):
+            skip = True
+        elif not arg.startswith(("--on=", "--remote-harness=")):
+            forwarded.append(arg)
+    data = None
+    if os.environ.get("HARNESS_PUBLISH") == "0" and not args.no_publish and (args.command in ("run", "resume", "chat") or args.command not in COMMANDS):
+        forwarded.append("--no-publish")
+    if args.brief:
+        data = read_brief(args.brief)
+        for i, arg in enumerate(forwarded):
+            if arg == "--brief":
+                forwarded[i + 1] = "-"
+            elif arg.startswith("--brief="):
+                forwarded[i] = "--brief=-"
+    if args.command in ("run", "init") and not args.repo:
+        # Resolve only the repo name locally. The remote home is expanded by
+        # the remote CLI, never by the laptop's shell.
+        name = Path(repository(None, os.environ)).name
+        forwarded += ["--repo", "~/Projects/" + name]
+    script = '"$HOME/.claude/harness/dispatch.sh"'
+    if args.remote_harness:
+        if not args.remote_harness.startswith("/"):
+            raise DispatchError("--remote-harness needs an absolute remote path")
+        script = shlex.quote(args.remote_harness + "/dispatch.sh")
+    command = 'export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"; exec bash ' + script + " " + shlex.join(forwarded)
+    interactive = args.command in ("chat", "station", "login") or args.command not in COMMANDS
+    if not interactive:
+        command = "export DISPATCH_REMOTE_HOST=" + shlex.quote(args.on) + "; " + command
+    ssh = ["ssh", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3"]
+    ssh += ["-t"] if interactive else ["-o", "BatchMode=yes"]
+    return subprocess.run(ssh + [args.on, command], input=data, text=True).returncode
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    args = parser().parse_intermixed_args(argv)
+    if args.on:
+        return remote(args, argv)
+    if args.remote_harness:
+        raise DispatchError("--remote-harness needs --on")
+    runtime = Path(os.environ.get("HARNESS_DIR", str(Path.home() / ".claude/harness"))).expanduser().absolute()
+    if args.repo:
+        args.repo = str(Path(args.repo).expanduser().absolute())
+    if args.command not in COMMANDS:
+        args.arguments.insert(0, args.command)
+        args.command = "chat"
+    if args.no_publish and args.command not in ("chat", "run"):
+        raise DispatchError("--no-publish is supported for a new chat or run; publication is pinned on existing runs")
+    if args.command == "chat":
+        chat(args, runtime)
+    if args.command == "run":
+        return submit(args, runtime)
+    if args.command == "resume":
+        return resume(args, runtime)
+    if args.command in ("status", "wait"):
+        if len(args.arguments) > 1 or (args.command == "wait" and len(args.arguments) != 1):
+            raise DispatchError(args.command + " needs one run ID" if args.command == "wait" else "status accepts one run ID")
+        if not args.arguments:
+            values = [status(d) for d in sorted((runtime / "runs").glob("*"), key=lambda d: d.stat().st_mtime, reverse=True)
+                      if d.is_dir() and not d.is_symlink()]
+            emit(values, args.json)
+            return 0
+        directory = run_directory(runtime, args.arguments[0])
+        deadline = time.monotonic() + max(0, args.timeout)
+        while True:
+            value = status(directory)
+            if args.command != "wait" or value["state"] != "running" or time.monotonic() >= deadline:
+                emit(value, args.json)
+                return 124 if args.command == "wait" and value["state"] == "running" else 0
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
+    env = account_environment(args)
+    if args.command == "init":
+        return subprocess.run(["bash", str(runtime / "setup-repo.sh"), repository(args.repo, env), "--write"], env=env).returncode
+    if args.command in ("station", "login"):
+        command = ["bash", str(runtime / "station.sh")]
+        command += ["start"] if args.command == "station" else ["login"] + args.arguments
+        for flag, value in (("--owner", env.get("HARNESS_OWNER")), ("--accounts-dir", args.accounts_dir),
+                            ("--dir", args.repo), ("--planner", args.planner), ("--model", args.model)):
+            if value:
+                command += [flag, value]
+        if args.browser:
+            command += ["--browser"]
+        os.execvpe(command[0], command, env)
+    if args.command == "stations":
+        values = []
+        for root in sorted(Path(args.accounts_dir).expanduser().glob("*")):
+            if not root.is_dir() or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", root.name):
+                continue
+            args.owner = root.name
+            selected = account_environment(args)
+            values.append({"account": root.name, **{provider: "signed_in" if auth_ok(provider, selected) else "login_needed"
+                                                    for provider in ("codex", "claude", "gh")}})
+        if args.json:
+            print(json.dumps(values, indent=2))
+        else:
+            for item in values:
+                print("{account}: codex={codex} claude={claude} gh={gh}".format(**item))
+            print("Select explicitly: dispatch station --owner NAME. Login checks do not measure remaining credits.")
+        return 0
+    if args.command == "doctor":
+        healthy = auth_ok(args.planner, env)
+        checks = {"planner": args.planner, "account": env.get("HARNESS_OWNER") or "current",
+                  "login": "signed_in" if healthy else "login_needed"}
+        if not healthy:
+            checks["action"] = repair_command(args.planner, env.get("HARNESS_OWNER"), env)
+        if args.pipeline:
+            request = {"id": "doctor", "repo": repository(args.repo, env), "account": env.get("HARNESS_OWNER")}
+            issue = pipeline_issue(runtime, request, env)
+            checks["pipeline"] = issue or "available"
+            healthy = healthy and not issue
+        print(json.dumps(checks, indent=2) if args.json else "\n".join(f"{k}: {v}" for k, v in checks.items()))
+        return 0 if healthy else 1
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (DispatchError, OSError) as error:
+        print("dispatch: " + str(error), file=sys.stderr)
+        sys.exit(2)
+    except KeyboardInterrupt:
+        sys.exit(130)

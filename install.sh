@@ -2,7 +2,8 @@
 # Install the dispatch harness.
 #
 # Symlinks (default) or copies the runtime scripts into ~/.claude/harness and
-# the planner skills into ~/.claude/skills/<name>/SKILL.md. Idempotent: safe to
+# the planner skills into ~/.claude/skills and ~/.agents/skills (Codex).
+# Idempotent: safe to
 # re-run. Your local config (notify.conf, repos.local.sh, demo.conf.sh) is
 # seeded from the matching *.example ONLY when absent — an existing file is
 # never overwritten.
@@ -34,6 +35,8 @@
 # Env overrides:
 #   HARNESS_DIR           install target         (default: ~/.claude/harness)
 #   CLAUDE_SKILLS_DIR     skills directory       (default: ~/.claude/skills)
+#   CODEX_SKILLS_DIR      Codex skills directory (default: ~/.agents/skills)
+#   DISPATCH_BIN_DIR     command directory      (default: ~/.local/bin)
 #   CLAUDE_SETTINGS_FILE  settings.json to wire  (default: ~/.claude/settings.json)
 set -eu
 
@@ -72,7 +75,8 @@ while [ $# -gt 0 ]; do
 done
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
-SKILLS_ROOT="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+SKILLS_ROOT="${CLAUDE_SKILLS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills}"
+CODEX_SKILLS_ROOT="${CODEX_SKILLS_DIR:-$HOME/.agents/skills}"
 SKILLS=(dispatch briefed-dispatch)
 # Three signals that this machine does visual work, any one of which is enough.
 # The legacy directory is the migration case: the creative harness used to be a
@@ -80,6 +84,7 @@ SKILLS=(dispatch briefed-dispatch)
 if [ "$PIXEL" = auto ]; then
   PIXEL=no
   if [ -f "$SKILLS_ROOT/dispatch-pixel/SKILL.md" ] \
+     || [ -f "$CODEX_SKILLS_ROOT/dispatch-pixel/SKILL.md" ] \
      || [ -d "$HOME/.claude/creative-harness" ] \
      || grep -q 'VISUAL_GATE_CMD=[^"]*"[^"]' "$HARNESS_DIR/repos.local.sh" 2>/dev/null; then
     PIXEL=yes
@@ -100,12 +105,18 @@ STATUSLINE_CMD="$HARNESS_DIR/statusline.sh"
 # credential should be created by hand, like linear-api-key.
 FILES=(
   lib profiles mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
-  metrics.sh attach.sh cleanup.sh janitor.sh lessons.sh preview.sh station.sh wall.sh wall demo-auth.sh
+  metrics.sh attach.sh cleanup.sh janitor.sh lessons.sh preview.sh station.sh dispatch.sh wall.sh wall demo-auth.sh
   auth-capture.py verify.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
   planner-settings.json spec-critic.sh spec-critic-settings.json brief-template.md
 )
 
 link_or_copy() {  # $1 = source path, $2 = dest path
+  # A custom skills root may itself point into this checkout. Never replace a
+  # source file through a symlinked parent with a link back to itself.
+  if [ "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" = \
+       "$(cd "$(dirname "$2")" && pwd -P)/$(basename "$2")" ]; then
+    return 0
+  fi
   # A directory entry is replaced wholesale: ln would otherwise drop the link
   # *inside* an existing real directory, and cp -R would merge into it.
   if [ -d "$1" ]; then rm -rf "$2"; fi
@@ -226,10 +237,37 @@ for f in "${FILES[@]}"; do
   echo "$MODE  $HARNESS_DIR/$f"
 done
 
-for s in "${SKILLS[@]}"; do
-  mkdir -p "$SKILLS_ROOT/$s"
-  link_or_copy "$SRC/skills/$s/SKILL.md" "$SKILLS_ROOT/$s/SKILL.md"
-  echo "$MODE  $SKILLS_ROOT/$s/SKILL.md"
+# A separate name avoids colliding with existing CLAUDE_SKILLS_DIR=$HARNESS_DIR/skills installs.
+link_or_copy "$SRC/skills" "$HARNESS_DIR/planner-skills"
+
+# A small launcher works for both copied and symlinked runtimes. Keep the
+# installation path literal, including spaces/quotes; never write through an
+# unrelated user's symlink or replace a different program named dispatch.
+DISPATCH_BIN_DIR="${DISPATCH_BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$DISPATCH_BIN_DIR"
+DISPATCH_COMMAND="$DISPATCH_BIN_DIR/dispatch"
+if { [ -e "$DISPATCH_COMMAND" ] || [ -L "$DISPATCH_COMMAND" ]; } \
+   && ! grep -q '^# dispatch-harness launcher$' "$DISPATCH_COMMAND" 2>/dev/null; then
+  echo "keep  $DISPATCH_COMMAND (another command exists; use $HARNESS_DIR/dispatch.sh)"
+else
+  DISPATCH_LAUNCHER=$(mktemp "$DISPATCH_BIN_DIR/.dispatch.XXXXXX")
+  { printf '#!/usr/bin/env bash\n# dispatch-harness launcher\n'
+    printf 'exec bash %q "$@"\n' "$HARNESS_DIR/dispatch.sh"
+  } > "$DISPATCH_LAUNCHER"
+  chmod 755 "$DISPATCH_LAUNCHER"
+  mv -f "$DISPATCH_LAUNCHER" "$DISPATCH_COMMAND"
+  echo "command  $DISPATCH_COMMAND"
+fi
+
+for root in "$SKILLS_ROOT" "$CODEX_SKILLS_ROOT"; do
+  for s in "${SKILLS[@]}"; do
+    mkdir -p "$root/$s"
+    link_or_copy "$SRC/skills/$s/SKILL.md" "$root/$s/SKILL.md"
+    if [ -d "$SRC/skills/$s/references" ]; then
+      link_or_copy "$SRC/skills/$s/references" "$root/$s/references"
+    fi
+    echo "$MODE  $root/$s/SKILL.md"
+  done
 done
 
 # Seed local config from *.example, never clobbering an existing file.
@@ -279,6 +317,9 @@ wire_statusline
 echo
 echo "Installed into $HARNESS_DIR (mode: $MODE)."
 echo "Next: pin your repos in $HARNESS_DIR/repos.local.sh — see README.md."
+echo "Local Astra planner: $DISPATCH_COMMAND (Codex: \$dispatch; Claude: /dispatch)."
+echo "Mini station: $DISPATCH_COMMAND station --on mini --owner NAME"
+case ":$PATH:" in *":$DISPATCH_BIN_DIR:"*) ;; *) echo "Add $DISPATCH_BIN_DIR to PATH to use the short dispatch command." ;; esac
 if [ "$PIXEL" = yes ]; then
   echo
   echo "Visual profile: /dispatch-pixel is installed. A repo activates the profile"

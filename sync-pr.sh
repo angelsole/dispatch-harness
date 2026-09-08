@@ -379,7 +379,7 @@ run_claude_worker() {  # $1 = label, $2 = prompt
       env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
           -u API_TIMEOUT_MS -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
           -u CLAUDE_CODE_AUTO_COMPACT_WINDOW \
-          CLAUDE_CODE_SUBAGENT_MODEL=sonnet \
+          CLAUDE_CODE_SUBAGENT_MODEL="$DEFAULT_ANTHROPIC_SMALL_MODEL" \
       "$CLAUDE_BIN" -p "$2" --model "$CLAUDE_WORKER_MODEL" --effort "$IMPLEMENTER_EFFORT" \
       --settings "$HARNESS_DIR/worker-settings.json" --permission-mode acceptEdits \
       </dev/null 2>&1) \

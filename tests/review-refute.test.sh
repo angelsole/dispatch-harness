@@ -400,8 +400,8 @@ has "$(cat "$FIND_PROMPT")" "compositional authorization" \
   "prompt: and compositional authorization"
 has "$(cat "$FIND_PROMPT")" "gate integrity flags above" \
   "prompt: the find pass starts from the deterministic flags"
-has "$(cat "$FIND_PROMPT")" "fifty changed lines" \
-  "prompt: and reads the diff in slices rather than in one pass"
+has "$(cat "$FIND_PROMPT")" "the code it plugs into" \
+  "prompt: and judges each piece of the diff in the code it plugs into, not in one pass"
 has "$(cat "$REFUTE_PROMPT_FILE")" "your job is to DISPROVE them" \
   "prompt: the refutation pass is asked to disprove, not to review"
 has "$(cat "$REFUTE_PROMPT_FILE")" "literal substring" \

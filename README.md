@@ -1,56 +1,121 @@
 # Dispatch Harness
 
-A multi-model pipeline for shipping code: **one model plans, a second
-implements, a deterministic gate runs, a third — from a different vendor —
-reviews and fixes, and a draft PR opens.** You approve at the ends; the middle
-runs unattended in a git worktree. It is for a developer who already pays for a
-Claude and a ChatGPT subscription and would rather hand a ticket over than watch
-it being built.
+A local-first harness for delegated coding tasks: a planner writes the brief,
+a worker implements in an isolated worktree, deterministic checks run, an
+independent session reviews the result, and the harness can open a draft PR.
+The conversation can close while the task runs. Completed work and recovery
+state live on disk.
 
-The design principle is simple: **no model grades its own homework.** The agent
-that writes the code is never the agent that reviews it, and they come from
-different vendors (Anthropic and OpenAI), so a blind spot in one model's
-training is unlikely to be shared by the other. Between them sits a gate no
-model can talk its way past.
+Use your laptop by default. The Mini is an optional execution host and a place
+to keep shared stations under explicitly selected teammates' saved accounts.
+Independent review provides another check on the change; it does not guarantee
+that a different model or vendor will catch every defect.
 
 ```
 you → planner → [ implementer → gate → reviewer → gate ] → draft PR → you
   (your session)  (Claude sub)  (free)  (ChatGPT sub)
 ```
 
-The planner isn't pinned by the harness: it is whatever Claude Code session
-invokes `/dispatch`, billed however that session is billed. Only the implementer
-and reviewer are fixed by the pipeline. Why it is built this way is in
+The planner is the calling Codex or Claude Code session, billed however that
+session is billed. The station launcher defaults to **GPT-6 Astra in Codex**;
+the implementer and reviewer keep their own model pins. Why it is built this way is in
 [Design notes](docs/design-notes.md); the rest of the manuals are indexed
 [below](#the-manuals).
 
 ## Quickstart
 
-The minimal install is the **`claude` CLI plus `./install.sh`** — nothing else
-is required, and the pipeline runs end to end on that alone. `codex` (the
-cross-vendor review), the visual profile and the wall are each optional: every
-one is guarded at its call site, and its absence costs exactly the feature
-named. Without `codex` the same review prompt runs in a fresh Claude session
-([Claude-only mode](docs/operations.md#claude-only-mode)).
+Install once on each machine where you want to run the harness. Existing
+provider logins are reused. Copied installs stay fixed until you update them;
+`--symlink` is available for developing the harness itself.
 
 ```bash
 git clone <this-repo> dispatch-harness && cd dispatch-harness
+./install.sh --copy --no-statusline
 
-# Symlinks the scripts into ~/.claude/harness and the skills into
-# ~/.claude/skills/. Re-runnable, never clobbers local config, and offers to
-# wire the live statusline into ~/.claude/settings.json.
-./install.sh          # --copy for detached copies; --statusline / --no-statusline
-
-# Pin a repo onto the pipeline (optional — anything unset is auto-detected).
-~/.claude/harness/setup-repo.sh /path/to/repo            # preview the proposal
-~/.claude/harness/setup-repo.sh /path/to/repo --write    # save it
-$EDITOR ~/.claude/harness/notify.conf   # phone push / notifications (optional)
+cd /path/to/project
+dispatch                         # local Astra planner; no tmux or SSH
+dispatch "Fix the checkout test"  # start the planner with a task
+dispatch "Fix checkout" --no-publish # keep the reviewed result local
+dispatch init                    # detect and save this repo's settings
 ```
 
-Then, from a Claude session in your orchestrator working directory,
-`/dispatch <TICKET-or-"a description of what to build">`. The planner researches
-the repo, writes a brief, and shows it for approval; on approval it launches
-`run-task.sh <TICKET> <repo-path> <branch-name>` in the background.
+The installer adds `~/.local/bin/dispatch`. If that directory is not on PATH,
+use the printed absolute command. In an existing Codex conversation use
+`$dispatch`; in Claude Code use `/dispatch`.
+
+**Choose your orchestrator each time.** Both use the same harness:
+
+```bash
+dispatch --planner codex                 # Astra in Codex (the default)
+dispatch --planner claude --model fable  # Fable in Claude Code
+```
+
+With `--planner claude`, omitting `--model` uses that account's configured
+Claude model. These commands open separate conversations; conversation history
+stays in its original CLI. Both planners can inspect saved harness runs with
+`dispatch status`. The choice controls the planner; implementation and review
+follow the repository's settings.
+
+Opening a planner checks only its own login. Task implementation currently
+uses the Claude CLI (Anthropic or the repo's pinned z.ai provider); Codex adds
+the independent review, with a fresh Claude reviewer as the fallback.
+GitHub authentication is checked when a publishing run reaches the PR step.
+Trackers, scheduling, the wall, and visual stages are optional.
+
+The planner submits a brief through the same interface available to scripts:
+
+```bash
+dispatch run --brief /path/to/brief.md --json
+dispatch run --brief /path/to/brief.md --no-publish # reviewed local branch
+dispatch status
+dispatch wait <RUN-ID> --timeout 60 --json
+dispatch resume <RUN-ID>
+```
+
+`run` generates the ID and branch unless `--id` / `--branch` specify them. The
+runner detaches automatically. `resume` reports live/finished runs without
+launching them again; stopped runs reuse valid checkpoints. A missing login
+leaves the task saved with a concrete repair action. See
+[Local tasks and recovery](docs/operations.md#local-tasks-and-recovery).
+
+**Mini stations and holiday coverage.** Keep teammates' saved accounts on the
+Mini and explicitly choose the station whose account should run the work:
+
+```bash
+dispatch stations --on mini
+dispatch station --on mini --owner teammate --planner codex
+dispatch station --on mini --owner teammate --planner claude --model fable
+```
+
+Add `--dir /path/to/repos` to choose the remote working directory. Each
+account, planner, and model has a separate persistent station; repeat its
+command to reconnect. Tasks launched there use the selected account.
+Selection includes that profile's Codex, Claude, and GitHub
+configuration, so its GitHub identity is used for PR operations too. Account
+selection is recorded on the run and retained on resume. There is no automatic
+rotation through other teammates' accounts. If a saved login expires, its
+account holder renews it. Login status does not measure remaining credits.
+
+A laptop planner can also submit a prepared task remotely without opening an
+interactive station:
+
+```bash
+dispatch run --on mini --owner teammate --repo /remote/path/to/project \
+  --brief /local/path/to/brief.md
+dispatch status --on mini
+```
+
+Teammates using only the Mini need no laptop installation. With SSH access,
+they can connect directly to an existing station:
+
+```bash
+ssh -t mini '~/.claude/harness/station.sh --owner teammate'
+```
+
+The Mini has one shared harness installation. The operator updates it once;
+station users do not re-run `install.sh`. First-time personal login setup is
+`station.sh setup --owner you`; see
+[Station setup and login repair](docs/operations.md#station-setup-and-login-repair).
 
 **Watching it.** `statusline.sh` puts a line per active run in every Claude
 session on the machine, and `status.sh --watch` is the same picture as a
@@ -137,9 +202,12 @@ ships in a commit or PR
 
 Required:
 
-The **[`claude`](https://docs.claude.com/en/docs/claude-code) CLI** runs the
+For the `dispatch` interface: **`python3` (≥ 3.9)** and the selected planner
+CLI. No third-party Python packages are needed.
+
+For task execution, the **[`claude`](https://docs.claude.com/en/docs/claude-code) CLI** runs the
 implementer (and optionally the planner) on a Claude subscription; **`gh`**
-(authenticated) pushes branches and opens PRs; **`jq`** reads and writes run
+(authenticated at publication time) opens PRs; `--no-publish` needs no GitHub login; **`jq`** reads and writes run
 metadata. Plus **`git`**, **`bash`**, `curl`, `perl`, `lsof` and `uuidgen` —
 macOS ships all of them; on Linux, `uuid-runtime` and `lsof` may need adding.
 
@@ -153,7 +221,7 @@ absence costs exactly the feature named.
 | `npx` (Node 20+) | Converting document attachments to markdown (`@firecrawl/anydoc`) and reading a station's local token accounting (`ccusage`). Nothing in the pipeline itself invokes it. | [Spec attachments](docs/reference.md#spec-attachments), [The Quartermaster](docs/operations.md#the-quartermaster) |
 | `node` (≥ 20), `rsync`, `tmux`, `tailscale` | The wall's zero-dependency HTTP server; copying a live run dir onto the machine that serves it (a remote target also needs `ssh` reaching the host non-interactively); the parked orchestrator session you drive from your phone; and `wall.sh --init-token`, which advertises the wall on its Tailscale address (falls back to the hostname without it). | [Ghost Shift](docs/wall.md), [Runs from any machine](docs/operations.md#runs-from-any-machine-harness_mirror), `station.sh` |
 | [`shot-scraper`](https://shot-scraper.datasette.io/), `ffmpeg`, [`rclone`](https://rclone.org/) | Recording the storyboard, transcoding it into a video plus preview GIF, and uploading both to any S3-compatible bucket. | [Demo recordings](docs/operations.md#demo-recordings) |
-| `python3` (≥ 3.9, with `venv`) | `install.sh --verifier` builds a venv and installs the scoring library into it; it also runs the one-time login capture for demo recordings. Nothing else needs Python. | [The verifier](docs/reference.md#the-verifier) |
+| `python3` (≥ 3.9, with `venv`) | `install.sh --verifier` builds a venv and installs the scoring library into it; it also runs the one-time login capture for demo recordings. The `dispatch` interface and checkpoint recovery use Python without third-party packages. | [The verifier](docs/reference.md#the-verifier) |
 | `docker`, `nc`, `shellcheck` | The copyable Postgres preflight example, and this repo's own gate. | [`examples/`](examples/), [Development](docs/development.md) |
 | `npm` / `yarn` / `uv`, whichever your repo uses | Nothing in the harness itself: they are your repo's own `INSTALL_CMD` and `GATE_CMD`, auto-detected from its lockfile and allow-listed for the worker. | [The repo pin](docs/reference.md#the-repo-pin) |
 | `oxlint` / `ruff` (or `npx` / `uvx` to fetch one) | The `QUALITY_GATE` pin's static checks — JS/TS on oxlint, Python on ruff. A missing tool costs a disclosed `skip` line for that language, never the run. | [The quality bar](docs/reference.md#quality_gate-the-quality-bar) |
@@ -219,6 +287,7 @@ And one line per thing the pipeline does beyond implement → gate → review:
 | `run-task.sh` `sync-pr.sh` | The pipeline (worktree → implement → gate → review → PR), and [the base re-merge](docs/operations.md#re-merging-the-base-into-a-pushed-pr) for an already-pushed branch |
 | `schedule.sh` `capacity.sh` `quartermaster.sh` | [Fire a prepared run at a set time](docs/operations.md#scheduling-a-run-for-later), the local-file subscription accounting the [preflight](docs/operations.md#capacity-preflight-a-run-that-defers-itself) defers on, and [the 19:00 check](docs/operations.md#the-quartermaster) that fills the night with briefed work |
 | `repos.conf.sh` `setup-repo.sh` | Generic per-repo detection (sourcing your `repos.local.sh`), and the inspector that proposes or writes a repo's pinned entry |
+| `dispatch.sh` | The local-first command interface: planner, task submission, status, checkpoint recovery, and remote stations |
 | `lib/common.sh` | The plumbing every script shares, sourced from beside it: `HARNESS_DIR`, the macOS-safe timeout cap, the `--help` that reads a script's own header comment, the run's worktree and pinned knobs, and the Codex-availability preamble |
 | `lib/profile.sh` `profiles/` | [The pipeline's six named extension points](docs/design-notes.md#the-extension-points-and-why-there-are-exactly-six) and the loader that fills them per repo, plus the one profile that ships: [`profiles/visual/`](profiles/visual/creative/README.md), the visual gate, the blind critic and the asset factories |
 | `statusline.sh` `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `janitor.sh` `station.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose), the terminal monitor (`status.sh --watch` is the live dashboard), and the lifecycle helpers — including [the janitor](docs/operations.md#the-janitor), the pass that sweeps the worktrees `cleanup.sh` never got to |

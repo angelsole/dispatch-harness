@@ -48,7 +48,15 @@ list_ok() {  # $1 = accumulated offenders, $2 = ok label, $3 = fail label
 # tests/ is excluded — a binary only the suites use is not a user prerequisite.
 BLOB="$(mktemp "${TMPDIR:-/tmp}/docs-test.XXXXXX")"
 DOCSBLOB="$(mktemp "${TMPDIR:-/tmp}/docs-test-docs.XXXXXX")"
-trap 'rm -f "$BLOB" "$DOCSBLOB"' EXIT
+SKILLBLOB="$(mktemp "${TMPDIR:-/tmp}/docs-test-skill.XXXXXX")"
+trap 'rm -f "$BLOB" "$DOCSBLOB" "$SKILLBLOB"' EXIT
+# The concise entry point links conditional procedures. Check the complete,
+# discoverable protocol without forcing all operational detail into SKILL.md.
+if ! grep -qF '](references/pipeline.md)' "$SKILL"; then
+  bad "skill: detailed protocol is not linked from the entry point"
+fi
+cat "$SKILL" "$SRC/skills/dispatch/references/pipeline.md" > "$SKILLBLOB"
+SKILL="$SKILLBLOB"
 ( cd "$SRC" && git ls-files '*.sh' | grep -v '^tests/' | while IFS= read -r f; do cat "$f"; done ) > "$BLOB"
 TRACKED="$(cd "$SRC" && git ls-files)"
 

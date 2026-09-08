@@ -53,3 +53,7 @@ Two operational rules come from the same day:
 - Open follow-up, still unbuilt: stage-resumable re-dispatch. A run killed
   after review currently repeats gate → review → gate, which is what made
   killing a slow run so expensive in the first place.
+
+Update, 2026-09-08: ordinary CLI runs now support checkpoint recovery after
+implementation, gate, and review. Changed inputs and optional profiles
+conservatively re-run. See [Local tasks and recovery](../operations.md#local-tasks-and-recovery).

@@ -293,7 +293,7 @@ has "$(env_of implementer 2)" "model=[claude-opus-5]" \
   "escalate: the second pass is the Claude subscription's default model"
 has "$(env_of implementer 2)" "base=[]"  "escalate: with no z.ai endpoint in sight"
 has "$(env_of implementer 2)" "token=[]" "escalate: and no z.ai credential"
-has "$(env_of implementer 2)" "subagent=[sonnet]" \
+has "$(env_of implementer 2)" "subagent=[claude-sonnet-5]" \
   "escalate: its subagents move back to Anthropic with it"
 
 has "$(impl_argv 2)" "--session-id" "escalate: the escalated pass is a FRESH session"

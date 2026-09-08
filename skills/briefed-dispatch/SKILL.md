@@ -1,6 +1,6 @@
 ---
 name: briefed-dispatch
-description: Dispatch a well-detailed ticket through the multi-model harness with no approval pause — the ticket itself is the approved artefact. The orchestrator (you) researches, writes one brief per repo the ticket touches (frontend + backend = two runs, dispatched together), launches every run immediately, answers the workers' questions itself where the ticket or the codebase answers them, and when all PRs are ready it attaches them to the ticket and moves it to In Review. Use when the user says /briefed-dispatch <ticket>, "briefed dispatch", or asks to dispatch a ticket without brief approval. For free-form work or thin tickets, use /dispatch instead.
+description: Dispatch a well-detailed ticket through the multi-model harness with no approval pause — the ticket itself is the approved artefact, so every repo it touches is briefed and launched at once. Use when the user says $briefed-dispatch or /briefed-dispatch with a ticket, "briefed dispatch", or asks to dispatch a ticket without brief approval. For free-form work or thin tickets, use /dispatch instead.
 ---
 
 # Briefed dispatch — ticket in, PRs out
@@ -14,10 +14,13 @@ You are still the **planner/architect** stage. Your token budget is expensive �
 spend it on research, the briefs, and the verdicts. Never implement, never read
 worker logs line-by-line, never stream worker output.
 
-Harness files live in `~/.claude/harness/`. Runs live in
+Works in Codex (`$briefed-dispatch`) and Claude Code (`/briefed-dispatch`).
+Resolve `HARNESS_DIR` first; paths below use its default `~/.claude/harness/`. Runs live in
 `~/.claude/harness/runs/<RUN-ID>/`. Where this file is silent (document
 attachments, monitoring, attach/resume, post-PR conflicts, worker settings),
-`~/.claude/skills/dispatch/SKILL.md` applies verbatim.
+`$HARNESS_DIR/planner-skills/dispatch/SKILL.md` applies (default:
+`~/.claude/harness/planner-skills/dispatch/SKILL.md`). Read it using your host's file tools,
+including its CLI and completion guidance. Consult its references/pipeline.md only for the detailed procedures this ticket needs.
 
 ## 1. Scope — a ticket, and a fitness check
 
@@ -35,7 +38,8 @@ on a guess.
 ## 2. Repos — all of them, decided now
 
 Determine **every** repo the ticket touches: read the ticket's text, then
-verify against the code (Explore subagents). A ticket that changes an API and
+verify against the code yourself (a research subagent only when available and the check
+spans many files). A ticket that changes an API and
 the screen that consumes it is **one dispatch producing two PRs** — never
 dispatch one repo and come back to ask about the other.
 
@@ -47,13 +51,14 @@ dispatch one repo and come back to ask about the other.
 
 ## 3. Briefs — one per repo, decisions written down
 
-Research each repo as `/dispatch` prescribes (Explore subagents for the
-codebase, the repo's CLAUDE.md yourself), then write each run's brief to
+Research each repo as `/dispatch` prescribes (applicable AGENTS.md and
+CLAUDE.md yourself, an available research subagent only for a question spanning many files — the brief
+needs real file paths, not guesses), then write each run's brief to
 `~/.claude/harness/runs/<RUN-ID>/brief.md` following
 `~/.claude/harness/brief-template.md`.
 
 Fill in `## Reproduction`, `## Interface contract`, `## Edit locations` and
-`## Decision points` as `/dispatch` §3 prescribes — an honest "unknown" in any
+`## Decision points` as the dispatch brief template prescribes — an honest "unknown" in any
 of them beats an invented answer. Three rules specific to this skill:
 
 - **Cross-repo contract.** When runs span repos, the workers never meet — the
@@ -87,21 +92,22 @@ of them beats an invented answer. Three rules specific to this skill:
 
 ## 4. Dispatch — every run, immediately
 
-No pause. Launch each run in the background (never foreground), all repos in
-parallel — worktrees are separate:
+No pause. Submit each run through the CLI; it detaches the driver and returns immediately. Worktrees are separate:
 
 ```bash
-~/.claude/harness/run-task.sh <RUN-ID> <repo-path> <branch-name>
+dispatch run --id <RUN-ID> --repo <repo-path> --branch <branch-name> \
+  --brief ~/.claude/harness/runs/<RUN-ID>/brief.md --json
 ```
 
 Tell the user what was dispatched — one line per run: run ID, repo, branch —
 and how to watch (statusline if wired, else
-`~/.claude/harness/status.sh --watch`). Do not poll; you are notified when
-each run exits.
+`~/.claude/harness/status.sh --watch`). Use the host's completion event when
+available; otherwise use the resume guidance in the shared dispatch skill.
+A desktop notification does not resume an agent turn.
 
 ## 5. Verdicts — per run, without the user where possible
 
-Triage each finished run exactly as `/dispatch`'s Verdict section, with the
+Triage each finished run exactly as the dispatch skill's Observe and recover section, with the
 autonomy dialed up:
 
 - **ready** — verify against the brief (implementer/review notes, `git diff

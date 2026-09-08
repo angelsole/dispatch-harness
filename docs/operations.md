@@ -10,6 +10,204 @@ Quartermaster's `QM_*` variables stay beside its operational narrative below
 and are repeated in the reference for lookup. The incidents that shaped these
 behaviours are in [the design notes](design-notes.md).
 
+## Local tasks and recovery
+
+`dispatch` starts a local Astra planner in the current directory. It uses the
+existing Codex login, requires no tmux, and preserves the CLI's configured
+sandbox and approval settings. Choose the orchestrator for each conversation:
+
+```bash
+dispatch --planner codex                 # Astra in Codex
+dispatch --planner claude --model fable  # Fable in Claude Code
+```
+
+Omit `--model` with Claude to use the selected account's configured model.
+Switching opens a separate conversation in the selected CLI; saved harness
+runs remain accessible through `dispatch status`. The worker and reviewer
+keep their repository settings regardless of which planner you choose.
+
+`dispatch doctor` checks only the selected planner; `--pipeline --repo <repo>`
+also checks the dependencies needed to start a task. Neither performs a paid
+model request or proves remaining credits.
+
+`dispatch init` saves detected repository settings through the existing setup
+tool. Review the printed gate command; repository-specific services still need
+their existing preflight configuration. The engine currently expects an origin
+remote even for a local-only branch (a local Git remote also works).
+
+`dispatch run --brief <file>` saves a durable request, generates a branch and
+run ID, then starts an independent process session. It accepts `--id`,
+`--branch`, `--repo`, and `--no-publish`. Closing the planner, terminal, or SSH
+connection does not stop the task. Submission is atomic per run ID; a second
+client cannot start another copy. The CLI's driver output is `launcher.log`.
+
+`dispatch status [ID] --json` is the conversation recovery interface. It reports
+state, stage, selected account, host, worktree, result, and any required action.
+`dispatch wait ID --timeout 60 --json` waits for a terminal state or returns the
+current snapshot with exit 124. A finished draft PR is `ready`; a reviewed
+local branch is `ready_local`. A stopped process is reported as interrupted,
+not left with an indefinitely growing stage timer.
+
+`dispatch resume ID` keeps the saved account configuration and restarts only a
+stopped task. A `needs_input` run needs answers appended to its brief first;
+`--brief <file>` can supply an updated brief. Merely reconnecting to a live or
+finished run never starts another attempt. Scheduled capacity deferrals should
+be allowed to fire through their existing scheduler.
+
+The runner writes checkpoints after implementation, the initial passing gate,
+and a successful review plus final gate. Reuse requires the same clean commit,
+base commit, brief/specs, effective gate/configuration, account paths, and
+runtime code; final review evidence must still match. Changed inputs run the
+normal pipeline. Setup and service preflights still execute. Optional profile
+stages conservatively run again; they do not reuse these checkpoints. This
+preserves their outcome policy. A checkpoint does not assert that external
+services can never change between runs.
+
+Publishing tasks check GitHub login after review. A missing login produces a
+saved `waiting_for_auth` state and a repair command. After the account holder
+signs in, `dispatch resume ID` can finish publication using the validated work.
+`--no-publish` ends with a reviewed local worktree and performs no push or PR.
+It is pinned for that run; a finished local-only run is not auto-published by
+resuming it.
+
+For remote execution add `--on <ssh-alias>`. The CLI sends the brief through
+SSH stdin, never through an interpolated shell command. `--repo` is a remote
+path; if omitted for `run`/`init`, the default is `~/Projects/<local-repo-name>`
+on the target. The repository must already exist there. Converted attachment
+specs must already be in the remote run's specs directory; only the brief is
+transferred by this command. Run `status`, `wait`, and `resume` on the same host.
+`--remote-harness /absolute/path` selects a custom remote installation.
+
+## Shared stations and account selection
+
+Stations remain useful for connecting to the Mini and running work under a
+teammate's saved subscriptions while that person is away:
+
+```bash
+dispatch stations --on mini
+dispatch station --on mini --owner teammate --dir /path/to/repos
+dispatch station --on mini --owner teammate --dir /path/to/repos --planner claude --model fable
+```
+
+Use `station` to open or reconnect the persistent remote planner. Use `run
+--on mini --owner teammate` to send a prepared brief from a local planner.
+Each selection uses that profile's `codex`, `claude`, and `gh` directories; the
+GitHub profile also determines the PR identity. Ambient API tokens and the
+optional Codex fallback-account override are cleared for an explicit profile.
+The selected account is stored with the run and restored on resume, even if
+another station requests the resume. An explicitly conflicting `--owner` is
+rejected. No provider credentials are copied to the laptop or saved in the
+request. These profiles share an OS account and are not a security boundary.
+
+`stations` checks configured logins, not entitlement or remaining quota. It
+never selects a peer automatically or logs anyone out. Do not use personal
+onboarding (`setup`) to reconnect to a peer: use `station --owner NAME`.
+An expired peer login needs the account holder to renew it. New personal
+accounts use the setup flow below. One operator installation serves all
+profiles; only a new execution machine needs its own installation.
+
+## Station setup and login repair
+
+`station.sh` launches GPT-6 Astra in Codex by default. The existing worker,
+reviewer, spec critic and overnight Quartermaster keep their own providers;
+changing the interactive planner does not change those stages. The operator
+installs the current checkout once per execution host/macOS account with
+`./install.sh --no-statusline`: it installs
+the shared planner protocols for both Claude Code and Codex, without changing
+either CLI's model configuration.
+
+**Team onboarding: one command.** When the team uses the shared Mini, its
+`accounts/<name>` profiles all use the same installation. Users do not re-run
+`install.sh`, and their laptops need neither the harness nor the model CLIs.
+With SSH access to `mini` already configured, they run:
+
+```bash
+ssh -t mini '~/.claude/harness/station.sh setup --owner you'
+```
+
+Replace `you` with their station name. `setup` checks the shared tools, creates
+their account directories if needed, skips configured logins, guides missing
+Codex/Claude/GitHub sign-ins, then opens or reconnects their planner. It uses
+their own accounts in each browser flow. If they cancel a login, completed
+logins are kept and no planner starts; re-running the command continues setup.
+Without `--owner`, it lists the existing stations and asks for the person's name
+in the terminal, even if the shell has an ambient `HARNESS_OWNER`. It never saves
+a default person in the shared machine's environment. The same command can be
+used on subsequent visits. Use `login <provider>` below to explicitly renew
+credentials that are cached but rejected when the CLI starts.
+
+Users who already have the local wrapper can use
+`station.sh setup --host mini --owner you`. The commands below remain available
+for direct launches and troubleshooting. A separate macOS login account, or a
+person running the pipeline on their own laptop, needs its own initial install.
+
+```bash
+~/.claude/harness/station.sh --dir /path/to/repos
+~/.claude/harness/station.sh --host mini --owner you --dir /remote/path/to/repos
+~/.claude/harness/station.sh --host mini --owner you --planner claude
+```
+
+`mini` is an SSH alias you configure normally. The wrapper supplies SSH
+keepalives and the usual user/Homebrew binary paths; it does not require a login
+shell or a GUI session to find the CLIs. `--dir` and `--accounts-dir` refer to
+paths on the machine running the planner. Omit `--dir` to use that machine's
+`DISPATCH_STATION_DIR`, or its home directory. `--remote-harness /absolute/path`
+selects a custom install on the remote host; a local `HARNESS_DIR` is never sent
+to that host.
+
+**Identity.** `--owner you` selects `~/accounts/you/claude`, `codex`, and `gh`
+(the same layout as the Quartermaster). `--accounts-dir` overrides the root,
+otherwise `QM_ACCOUNTS_DIR` or `~/accounts` applies. With no owner, the current
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `GH_CONFIG_DIR` apply. Ambient provider API
+keys and GitHub tokens are removed so the selected directories determine the
+accounts, including in an existing tmux server. Account login can create a new
+owner's directories; starting an unknown owner refuses rather than borrowing
+the default user's account.
+
+**First login and renewal.** Run the command for the provider that needs repair:
+
+```bash
+~/.claude/harness/station.sh login codex --host mini --owner you
+~/.claude/harness/station.sh login claude --host mini --owner you
+~/.claude/harness/station.sh login gh --host mini --owner you
+```
+
+Codex uses `codex login --device-auth`. Enable device login in your ChatGPT
+security settings or workspace permissions, then open the printed link in your
+own browser and enter its code. If device login is unavailable, `--browser`
+uses the normal callback flow: open a separate `ssh -N -L 1455:localhost:1455 mini`
+tunnel first, then run `station.sh login codex --host mini --owner you --browser`.
+Claude uses its subscription login; GitHub uses its web/device flow for
+github.com. Credentials remain with their selected account. See the
+[official Codex authentication guide](https://learn.chatgpt.com/docs/auth).
+
+**Health.** `station.sh doctor --host mini --owner you` checks the binaries,
+harness/skill installation, working directory and the three account logins. It
+prints the repair command for a missing login and exits nonzero if a check
+fails; it does not log credential contents. Login status confirms configured
+credentials; model entitlement and token refresh are checked by Codex when it
+starts. `doctor --repo /remote/path/to/repo` also checks origin read access and
+runs that repo's configured `PREFLIGHT_CMD` with a 30-second cap. That command
+can start services if the repo pin says to; the doctor runs no install or test
+gate and does not push a branch.
+
+**Reconnect.** Detach with your tmux prefix, then **d** (the default prefix is
+**Ctrl-b**). Run the same station command to
+reattach after closing SSH. Each owner, planner and model has its own tmux
+session. A different working directory or account configuration is refused on
+reattach, so it cannot connect you to an unexpected account. Existing legacy
+`dispatch` sessions remain available with `tmux attach -t dispatch`.
+
+Use `$dispatch`, `$briefed-dispatch` or `$dispatch-pixel` in Codex, and the
+corresponding slash commands in Claude Code. The visual skill retains the
+installer's `--pixel` opt-in. `DISPATCH_PLANNER` changes the launcher default;
+`--model` or `DISPATCH_MODEL` changes only the planner model. Astra is the Codex
+default; Claude uses its account's configured model unless explicitly selected.
+Codex gets write access to the harness's `runs/` directory through `--add-dir`,
+and keeps its configured sandbox and approval policy. A detached worker's
+desktop notification does not itself wake the planner: use `resume dispatch
+<RUN-ID>` in a conversation to continue from the persisted run state.
+
 ## Scheduling a run for later
 
 `schedule.sh` takes the same arguments as `run-task.sh` plus a time, and fires
@@ -906,12 +1104,11 @@ variable into the wrapper it arms, so the knob travels to 02:00 on its own.
 **One-time operator setup.** Log the second account in, in its own directory:
 
 ```bash
-CODEX_HOME=~/.codex-fallback codex login
+CODEX_HOME=~/.codex-fallback codex login --device-auth
 ```
 
-On a headless machine, the login callback lands on `localhost:1455`, so forward
-that port over the ssh session you run the command in (the same tunnel the
-onboarding docs use) and open the printed URL on your laptop:
+Device authentication lets you complete login in your laptop's browser. If it
+is unavailable, use `codex login` with the callback forwarded over SSH:
 
 ```bash
 ssh -t -L 1455:localhost:1455 mini

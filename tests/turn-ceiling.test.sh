@@ -648,7 +648,7 @@ RT="$SRC/run-task.sh"
 strip_line=$(grep -nx 'strip_ai_attribution' "$RT" | cut -d: -f1)
 review_line=$(grep -n 'end: review stage' "$RT" | cut -d: -f1)
 push_line=$(grep -n 'stage "push + draft PR' "$RT" | cut -d: -f1)
-head_line=$(grep -n '^OPUS_HEAD=' "$RT" | cut -d: -f1)
+head_line=$(grep -nF 'OPUS_HEAD=$(git -C "$WORKTREE" rev-parse HEAD)' "$RT" | cut -d: -f1)
 if [ -n "$strip_line" ] && [ -n "$review_line" ] && [ -n "$push_line" ] && [ -n "$head_line" ] \
    && [ "$strip_line" -lt "$review_line" ] && [ "$strip_line" -lt "$push_line" ] \
    && [ "$strip_line" -lt "$head_line" ]; then
