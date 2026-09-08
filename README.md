@@ -71,6 +71,15 @@ uses its existing CLI settings. Workers and reviewers keep the harness's task
 permissions and gates. Essential missing information and account sign-in can
 still require your input.
 
+For a free-text request, the planner asks once whether to create a Linear (or
+other tracker) ticket or run ad hoc, including in hands-off mode. Supplying an
+existing ticket or an explicit tracking choice answers that question up front.
+If the tracker is unavailable, the planner tells you before offering ad hoc.
+
+Local launches reuse the native CLI account and MCP connections. Only an
+explicit account/configuration override selects a separate profile; the
+launcher does not set `CLAUDE_CONFIG_DIR` for your ordinary local Claude account.
+
 Opening a planner checks only its own login. Task implementation currently
 uses the Claude CLI (Anthropic or the repo's pinned z.ai provider); Codex adds
 the independent review, with a fresh Claude reviewer as the fallback.

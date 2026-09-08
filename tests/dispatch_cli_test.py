@@ -14,14 +14,18 @@ import json, os, pathlib, subprocess, sys, time
 root = pathlib.Path(os.environ['DISPATCH_TEST_DATA'])
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
+claude_config_path = (pathlib.Path(os.environ['CLAUDE_CONFIG_DIR'])/'.claude.json'
+                     if os.environ.get('CLAUDE_CONFIG_DIR') else pathlib.Path.home()/'.claude.json')
+claude_config = json.loads(claude_config_path.read_text()) if claude_config_path.is_file() else {}
 def event(kind):
     with (root/'events').open('a') as out:
         out.write(json.dumps({'kind':kind, 'args':args, 'codex':os.environ.get('CODEX_HOME'),
             'claude':os.environ.get('CLAUDE_CONFIG_DIR'), 'gh':os.environ.get('GH_CONFIG_DIR'),
             'token':os.environ.get('OPENAI_API_KEY'), 'owner':os.environ.get('HARNESS_OWNER'),
-            'publish':os.environ.get('HARNESS_PUBLISH')})+'\n')
+            'publish':os.environ.get('HARNESS_PUBLISH'),
+            'mcp':list(claude_config.get('mcpServers',{}))})+'\n')
 if name == 'claude' and args[:2] == ['auth','status']:
-    good = not (root/'claude-expired').exists()
+    good = not (root/'claude-expired').exists() and claude_config.get('loggedIn',True)
     print(json.dumps({'loggedIn':good})); sys.exit(0 if good else 1)
 if name == 'codex' and args[:2] == ['login','status']:
     sys.exit(1 if (root/'codex-expired').exists() else 0)
@@ -135,6 +139,69 @@ class DispatchTests(unittest.TestCase):
         self.call('Inspect checkout', '--planner', 'claude', '--owner', 'teammate')
         self.assertTrue((profile / 'claude/skills/dispatch/SKILL.md').is_file())
         self.assertTrue((profile / 'claude/skills/dispatch/references/pipeline.md').is_file())
+
+    def test_native_claude_keeps_login_and_project_connections(self):
+        (self.home / '.claude.json').write_text(json.dumps({'loggedIn':True,'mcpServers':{'linear':{}}}))
+        (self.home / '.claude/.claude.json').write_text(json.dumps({'loggedIn':False}))
+        self.call('Inspect checkout', '--planner', 'claude')
+        event = self.events('chat')[-1]
+        self.assertIsNone(event['claude'])
+        self.assertEqual(event['mcp'], ['linear'])
+        self.call('login', 'claude')
+        event = self.events('chat')[-1]
+        self.assertEqual(event['args'][:2], ['auth', 'login'])
+        self.assertIsNone(event['claude'])
+        self.assertEqual(event['mcp'], ['linear'])
+
+    def test_explicit_default_claude_directory_remains_explicit(self):
+        self.env['CLAUDE_CONFIG_DIR'] = str(self.home / '.claude')
+        (self.home / '.claude.json').write_text(json.dumps({'loggedIn':False}))
+        (self.home / '.claude/.claude.json').write_text(json.dumps({'loggedIn':True,'mcpServers':{'profile-tracker':{}}}))
+        self.call('Inspect checkout', '--planner', 'claude')
+        event = self.events('chat')[-1]
+        self.assertEqual(event['claude'], str(self.home / '.claude'))
+        self.assertEqual(event['mcp'], ['profile-tracker'])
+        self.call('login', 'claude')
+        self.assertEqual(self.events('chat')[-1]['claude'], str(self.home / '.claude'))
+        (self.root / 'claude-expired').touch()
+        out = self.call('Inspect checkout', '--planner', 'claude', check=False)
+        self.assertIn('CLAUDE_CONFIG_DIR=', out.stderr)
+
+    def test_native_run_restores_absent_account_overrides_on_resume(self):
+        (self.root / 'claude-expired').touch()
+        value = json.loads(self.run_task().stdout)
+        self.assertEqual(value['state'], 'waiting_for_auth')
+        request = json.loads((self.runtime / 'runs/TASK-1/request.json').read_text())
+        self.assertEqual(request['account_paths'], {})
+        self.assertIn('dispatch login claude --for-run TASK-1', value['action'])
+        self.assertNotEqual(self.call('doctor', '--for-run', 'TASK-1', check=False).returncode, 0)
+        self.assertNotEqual(self.call('login', 'claude', '--for-run', 'TASK-1', '--owner', 'other', check=False).returncode, 0)
+        (self.root / 'claude-expired').unlink()
+        self.env.update(HARNESS_OWNER='other-station', CLAUDE_CONFIG_DIR=str(self.root/'other-claude'),
+                        CODEX_HOME=str(self.root/'other-codex'), GH_CONFIG_DIR=str(self.root/'other-gh'))
+        self.call('login', 'claude', '--for-run', 'TASK-1')
+        self.assertIsNone(self.events('chat')[-1]['claude'])
+        self.call('resume', 'TASK-1')
+        self.assertEqual(self.wait()['state'], 'ready')
+        implementer = self.events('implement')[0]
+        self.assertIsNone(implementer['claude'])
+        self.assertIsNone(implementer['gh'])
+        self.assertEqual(implementer['owner'], '')
+
+    def test_legacy_request_keeps_explicit_default_account_paths(self):
+        (self.root / 'claude-expired').touch()
+        self.run_task()
+        path = self.runtime / 'runs/TASK-1/request.json'
+        request = json.loads(path.read_text())
+        request['account_paths'] = {key:str(self.home / suffix) for key,suffix in
+                                   (('CLAUDE_CONFIG_DIR','.claude'),('CODEX_HOME','.codex'),('GH_CONFIG_DIR','.config/gh'))}
+        path.write_text(json.dumps(request))
+        (self.root / 'claude-expired').unlink()
+        self.call('login', 'claude', '--for-run', 'TASK-1')
+        self.assertEqual(self.events('chat')[-1]['claude'], str(self.home / '.claude'))
+        self.call('resume', 'TASK-1')
+        self.assertEqual(self.wait()['state'], 'ready')
+        self.assertEqual(self.events('implement')[0]['claude'], str(self.home / '.claude'))
 
     def test_hands_off_is_explicit_for_each_planner(self):
         flags = {'codex': '--dangerously-bypass-approvals-and-sandbox',
@@ -287,8 +354,10 @@ class DispatchTests(unittest.TestCase):
         (self.root / 'claude-expired').touch()
         result = self.run_task('TASK-1', '--owner', 'teammate', '--accounts-dir', str(accounts))
         value = json.loads(result.stdout)
-        self.assertIn('--accounts-dir', value['action'])
+        self.assertIn('--for-run TASK-1', value['action'])
         (self.root / 'claude-expired').unlink()
+        self.call('login', 'claude', '--for-run', 'TASK-1')
+        self.assertEqual(self.events('chat')[-1]['claude'], str(accounts / 'teammate/claude'))
         self.call('resume', 'TASK-1'); self.wait()
         self.assertEqual(self.events('implement')[0]['claude'], str(accounts / 'teammate/claude'))
         self.assertNotEqual(self.call('resume', 'TASK-1', '--owner', 'someoneelse', check=False).returncode, 0)
@@ -356,15 +425,20 @@ class DispatchTests(unittest.TestCase):
                           'sys.exit(subprocess.run(["bash","-c",sys.argv[-1]],env=env).returncode)\n')
         script.chmod(0o755)
         self.brief.write_text("# Quoted ' task\n$(touch NEVER-RUN) `touch NEVER-RUN`\n")
+        # Simulate a task started with an explicitly selected remote profile.
+        self.env['CLAUDE_CONFIG_DIR'] = str(remote_home / '.claude')
         (self.root / 'gh-expired').touch()
         result = self.call('run', '--on', 'mini', '--repo', str(self.repo), '--brief', str(self.brief),
                            '--id', 'REMOTE-1', '--json')
         self.assertEqual(json.loads(result.stdout)['state'], 'running')
         value = json.loads(self.call('wait', 'REMOTE-1', '--on', 'mini', '--timeout', '35', '--json').stdout)
         self.assertEqual(value['state'], 'waiting_for_auth', value)
-        self.assertIn('dispatch login gh --on mini', value['action'])
+        self.assertIn('dispatch login gh --for-run REMOTE-1 --on mini', value['action'])
         self.assertIn('dispatch resume REMOTE-1 --on mini', value['action'])
         (self.root / 'gh-expired').unlink()
+        self.env['CLAUDE_CONFIG_DIR'] = str(self.home / '.claude')
+        self.call('login', 'gh', '--for-run', 'REMOTE-1', '--on', 'mini')
+        self.assertEqual(self.events('gh')[-1]['claude'], str(remote_home / '.claude'))
         self.call('resume', 'REMOTE-1', '--on', 'mini')
         value = json.loads(self.call('wait', 'REMOTE-1', '--on', 'mini', '--timeout', '35', '--json').stdout)
         self.assertEqual(value['state'], 'ready', value)

@@ -42,7 +42,7 @@ if [ "$1" = login ]; then
   printf 'codex\n' >> "$CAPTURE/login-calls"
 fi
 printf '%s\n' "$@" > "$CAPTURE/codex.args"
-printf '%s\n' "$CODEX_HOME" "$CLAUDE_CONFIG_DIR" "$GH_CONFIG_DIR" "${HARNESS_OWNER:-}" > "$CAPTURE/identity"
+printf '%s\n' "${CODEX_HOME:-native}" "${CLAUDE_CONFIG_DIR:-native}" "${GH_CONFIG_DIR:-native}" "${HARNESS_OWNER:-}" > "$CAPTURE/identity"
 printf '%s\n' "${GH_TOKEN:-clear}" "${OPENAI_API_KEY:-clear}" "${ANTHROPIC_API_KEY:-clear}" > "$CAPTURE/tokens"
 CLI
 cat > "$BIN/claude" <<'CLI'
@@ -59,7 +59,7 @@ if [ "${2:-}" = login ]; then
   printf 'claude\n' >> "$CAPTURE/login-calls"
 fi
 printf '%s\n' "$@" > "$CAPTURE/claude.args"
-printf '%s\n' "$CLAUDE_CONFIG_DIR" > "$CAPTURE/claude.home"
+printf '%s\n' "${CLAUDE_CONFIG_DIR:-native}" > "$CAPTURE/claude.home"
 CLI
 cat > "$BIN/gh" <<'CLI'
 #!/usr/bin/env bash
@@ -73,7 +73,7 @@ if [ "${2:-}" = login ]; then
   printf 'gh\n' >> "$CAPTURE/login-calls"
 fi
 printf '%s\n' "$@" > "$CAPTURE/gh.args"
-printf '%s\n' "$GH_CONFIG_DIR" > "$CAPTURE/gh.home"
+printf '%s\n' "${GH_CONFIG_DIR:-native}" > "$CAPTURE/gh.home"
 CLI
 cat > "$BIN/caffeinate" <<'CLI'
 #!/usr/bin/env bash
@@ -94,7 +94,8 @@ case "$1" in
     # Simulate a tmux server that retained another user's ambient API keys.
     cd "$6"
     GH_TOKEN=stale-server-token OPENAI_API_KEY=stale-server-key \
-      ANTHROPIC_API_KEY=stale-server-key bash -c "$7"
+      ANTHROPIC_API_KEY=stale-server-key CLAUDE_CONFIG_DIR=stale-server-claude \
+      CODEX_HOME=stale-server-codex GH_CONFIG_DIR=stale-server-gh bash -c "$7"
     ;;
   *) exit 2 ;;
 esac
@@ -259,6 +260,15 @@ check 'setup: works over SSH without a separate remote installer' "$(cat "$CAPTU
 has "$CAPTURE/ssh.args" '-t' 'setup: remote onboarding requests a terminal'
 station setup --owner alice --planner claude --hands-off >/dev/null
 has "$CAPTURE/claude.args" '--dangerously-skip-permissions' 'setup: hands-off reaches selected planner after login checks'
+station login claude >/dev/null
+check 'native: login keeps Claude configuration unset' "$(cat "$CAPTURE/claude.home")" native
+station --planner claude --hands-off >/dev/null
+check 'native: tmux does not inherit an old Claude profile' "$(cat "$CAPTURE/claude.home")" native
+check 'native: avoids pre-fix alternate-profile session' "$(cat "$CAPTURE/session")" dispatch-current-claude-default-native-hands-off
+station >/dev/null
+check 'native: tmux clears inherited account directory overrides' "$(head -3 "$CAPTURE/identity" | sort -u)" native
+fixture env CLAUDE_CONFIG_DIR="$FIXTURE_HOME/.claude" bash "$H/station.sh" --planner claude >/dev/null
+check 'native: explicitly selected default directory stays explicit' "$(cat "$CAPTURE/claude.home")" "$FIXTURE_HOME/.claude"
 for option in '--owner ../escape' '--host -oops' '--planner other' '--browser' '--repo /tmp' 'doctor --hands-off' 'login codex --hands-off'; do
   # Only fixed test literals are split here.
   # shellcheck disable=SC2086

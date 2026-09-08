@@ -26,7 +26,10 @@ environment variable.
 
 `request.json` holds the immutable task identity, repository, branch, execution
 host, selected account configuration paths, and publication choice. It holds
-no tokens. `launch.json` records the latest launch and brief digest;
+no tokens. An omitted account path means the CLI's native context: resume removes
+that environment override. An explicit path, even one equal to the default
+directory, stays explicit; older requests retain their saved context.
+`launch.json` records the latest launch and brief digest;
 `waiting.json` supplies an actionable missing-login state. `checkpoint.json`
 binds completed stages to the code, brief, configuration, and review evidence.
 A per-run `.dispatch.lock` follows the detached process tree to prevent duplicate

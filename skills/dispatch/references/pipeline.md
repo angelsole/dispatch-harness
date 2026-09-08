@@ -143,10 +143,13 @@ For a multi-repo ticket that is one approval covering the whole set — approved
 means every run launches together (parallel worktrees), not one now and a
 question later.
 
-For free-form requests, the approval question also settles tracking: if an
-issue-tracker MCP is configured, offer to create the ticket (description from
-the brief's Problem section, no AI attribution) or run it as `adhoc-<slug>`
-with no ticket. A created ticket must land where the team works, not as an
+For free-form requests, ask once whether to create a tracker ticket or run
+ad hoc unless the user already chose tracking. Ask even in hands-off mode;
+combine it with scope approval when that is also needed. If an issue-tracker
+MCP is configured, offer to create the ticket (description from the brief's
+Problem section, no AI attribution) or run it as `adhoc-<slug>` with no ticket.
+If the tracker is unavailable, say so and confirm an ad-hoc run rather than
+silently choosing one. A created ticket must land where the team works, not as an
 orphan — set, in this order:
 
 - **assignee** — the dispatching user, the MCP's authenticated viewer. Never

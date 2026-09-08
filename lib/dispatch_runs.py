@@ -26,7 +26,9 @@ def command_on_host(argv):
     return shlex.join(argv + (["--on", host] if host else []))
 
 
-def repair_command(provider, owner="", paths=None):
+def repair_command(provider, owner="", paths=None, run_id=None):
+    if run_id:
+        return command_on_host(["dispatch", "login", provider, "--for-run", run_id])
     paths = paths or {}
     argv = ["dispatch", "login", provider]
     if owner:
@@ -35,11 +37,18 @@ def repair_command(provider, owner="", paths=None):
         if root != str(Path.home() / "accounts"):
             argv += ["--accounts-dir", root]
     else:
-        overrides = [f"{key}={paths[key]}" for key, default in
-                     (("CODEX_HOME", ".codex"), ("CLAUDE_CONFIG_DIR", ".claude"), ("GH_CONFIG_DIR", ".config/gh"))
-                     if paths.get(key) and paths[key] != str(Path.home() / default)]
-        if overrides:
-            argv = ["env"] + overrides + argv
+        cleared = []
+        overrides = []
+        for key in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR"):
+            if key not in paths:
+                continue
+            if paths[key] is None:
+                cleared += ["-u", key]
+            else:
+                # Even an explicit default path can select another CLI profile.
+                overrides.append(f"{key}={paths[key]}")
+        if cleared or overrides:
+            argv = ["env", "-u", "HARNESS_OWNER"] + cleared + overrides + argv
     return command_on_host(argv)
 
 
@@ -145,7 +154,8 @@ def status(directory):
         response["action"] = waiting.get("action", "")
         response["reason"] = waiting.get("reason", "")
         if waiting.get("provider") in ("codex", "claude", "gh"):
-            response["action"] = repair_command(waiting["provider"], request.get("account", ""), request.get("account_paths"))
+            response["action"] = repair_command(waiting["provider"], request.get("account", ""), request.get("account_paths"),
+                                                directory.name if request else None)
             response["action"] += " ; " + command_on_host(["dispatch", "resume", directory.name])
     elif state == "needs_input":
         response["action"] = "Answer QUESTIONS.md in the brief, then dispatch resume " + directory.name

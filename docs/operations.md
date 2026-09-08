@@ -36,6 +36,23 @@ worker/reviewer permissions, skip gates, supply missing logins, or authorize
 work outside the request. `run`, `resume`, and diagnostic commands reject the
 flag because they do not launch a planner conversation.
 
+Tracking remains a user choice in hands-off mode. For a free-text task, the
+planner asks once whether to create a tracker ticket or run ad hoc unless the
+request already specifies that choice. A supplied ticket is reused. A missing
+tracker connection is reported before offering an ad-hoc fallback.
+
+The local launcher preserves unset provider config variables. This matters
+for Claude: native configuration is `~/.claude.json`, while explicitly setting
+`CLAUDE_CONFIG_DIR=~/.claude` selects `~/.claude/.claude.json`. Forcing that
+seemingly equivalent path can produce another onboarding/login flow and hide
+project MCP connections. A named station still uses its explicitly selected
+profile. Native stations have a distinct session name from older stations
+that forced the alternate profile; reconnecting cannot silently choose it.
+Saved tasks suggest `dispatch login <provider> --for-run <ID>` for repair.
+That command restores the task's account context on its execution host,
+including native defaults and custom profile directories. Add `--on mini`
+for a remote task; the context is resolved on the Mini.
+
 `dispatch doctor` checks only the selected planner; `--pipeline --repo <repo>`
 also checks the dependencies needed to start a task. Neither performs a paid
 model request or proves remaining credits.

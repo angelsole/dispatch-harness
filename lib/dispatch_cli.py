@@ -48,6 +48,7 @@ def parser():
     p.add_argument("--timeout", type=int, default=60, help="wait timeout in seconds (default 60)")
     p.add_argument("--pipeline", action="store_true", help="doctor: also check task execution dependencies")
     p.add_argument("--browser", action="store_true", help="login codex: use browser callback instead of device login")
+    p.add_argument("--for-run", metavar="RUN_ID", help="login: use the account context saved with this task")
     return p
 
 
@@ -74,9 +75,20 @@ def account_environment(args, saved=None):
         for key, provider in zip(ACCOUNT_VARS, ("claude", "codex", "gh")):
             env[key] = str(root / provider)
     if saved:
-        env.update({key: value for key, value in saved.get("account_paths", {}).items() if key in ACCOUNT_VARS})
-    for key, default in zip(ACCOUNT_VARS, (".claude", ".codex", ".config/gh")):
-        env[key] = str(Path(env.get(key, str(Path.home() / default))).expanduser().absolute())
+        for key in ACCOUNT_VARS:
+            value = saved.get("account_paths", {}).get(key)
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
+    # Absence is meaningful: native Claude uses ~/.claude.json, while setting
+    # CLAUDE_CONFIG_DIR=~/.claude selects ~/.claude/.claude.json instead, losing
+    # the native account's onboarding and project MCP configuration.
+    for key in ACCOUNT_VARS:
+        if env.get(key):
+            env[key] = str(Path(env[key]).expanduser().absolute())
+        else:
+            env.pop(key, None)
     env["HARNESS_OWNER"] = owner
     return env
 
@@ -177,7 +189,7 @@ def submit(args, runtime):
             raise DispatchError("run already exists; use dispatch status " + run_id + " or dispatch resume " + run_id)
         request = {"version": 1, "id": run_id, "repo": repo, "branch": branch,
                    "account": env.get("HARNESS_OWNER", ""),
-                   "account_paths": {key: env[key] for key in ACCOUNT_VARS},
+                   "account_paths": {key: env[key] for key in ACCOUNT_VARS if key in env},
                    "operator": getpass.getuser(), "host": socket.gethostname(),
                    "created": time.time(), "publish": not args.no_publish and env.get("HARNESS_PUBLISH", "1") != "0"}
         atomic_write(directory / "brief.md", text)
@@ -224,7 +236,7 @@ def resume(args, runtime):
                 args.owner = owner
             env = account_environment(args)
             request = {"version": 1, "id": directory.name, "repo": repo, "branch": branch,
-                       "account": owner, "account_paths": {key: env[key] for key in ACCOUNT_VARS},
+                       "account": owner, "account_paths": {key: env[key] for key in ACCOUNT_VARS if key in env},
                        "host": socket.gethostname(), "publish": True}
             write_json(directory / "request.json", request)
         if request.get("host") != socket.gethostname():
@@ -270,7 +282,7 @@ def chat(args, runtime):
         # A peer profile can have working auth without any personal skills.
         for skill in ("dispatch", "briefed-dispatch", "dispatch-pixel"):
             source = runtime / "planner-skills" / skill
-            target = Path(env["CLAUDE_CONFIG_DIR"]) / "skills" / skill
+            target = Path(env.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "skills" / skill
             enabled = skill != "dispatch-pixel" or (Path.home() / ".agents/skills" / skill / "SKILL.md").is_file()
             if enabled and (source / "SKILL.md").is_file() and not target.exists() and not target.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -279,7 +291,10 @@ def chat(args, runtime):
         publication = " Use dispatch run --no-publish; keep a reviewed local branch without pushing or opening a PR." if env.get("HARNESS_PUBLISH") == "0" else ""
         autonomy = " Proceed through research, briefing, and dispatch without routine confirmation within this task's authorized scope." if args.hands_off else ""
         command += ["Use the dispatch skill to research and run this task through the harness. "
-                    "Keep the user's authorized scope." + autonomy + publication + " Task: " + " ".join(args.arguments)]
+                    "Keep the user's authorized scope." + autonomy + publication +
+                    " Before submitting a free-text task, ask whether to use a tracker ticket or run ad hoc, "
+                    "unless the user already specified that choice or supplied an existing ticket. "
+                    "Hands-off mode does not choose tracking. Task: " + " ".join(args.arguments)]
     permissions = "hands-off (checks bypassed)" if args.hands_off else "CLI defaults"
     print(f"dispatch: local {provider} planner | account {env.get('HARNESS_OWNER') or 'current'} | permissions: {permissions} | {cwd}", flush=True)
     os.chdir(cwd)
@@ -332,6 +347,8 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     args = parser().parse_intermixed_args(argv)
     command = args.command if args.command in COMMANDS else "chat"
+    if args.for_run and command != "login":
+        raise DispatchError("--for-run is only supported by login")
     if args.hands_off and command not in ("chat", "station"):
         raise DispatchError("--hands-off applies to chat or station; background workers use the harness's task permissions")
     if args.on:
@@ -368,7 +385,17 @@ def main(argv=None):
                 emit(value, args.json)
                 return 124 if args.command == "wait" and value["state"] == "running" else 0
             time.sleep(min(2, max(0, deadline - time.monotonic())))
-    env = account_environment(args)
+    saved = None
+    if args.for_run:
+        directory = run_directory(runtime, args.for_run)
+        saved = read_json(directory / "request.json")
+        if not saved:
+            raise DispatchError("this run has no saved account context")
+        if saved.get("host") != socket.gethostname():
+            raise DispatchError("log in on the execution host: " + str(saved.get("host")))
+    env = account_environment(args, saved)
+    if saved and env.get("HARNESS_OWNER"):
+        args.accounts_dir = str(Path(env["CODEX_HOME"]).parent.parent)
     if args.command == "init":
         return subprocess.run(["bash", str(runtime / "setup-repo.sh"), repository(args.repo, env), "--write"], env=env).returncode
     if args.command in ("station", "login"):
