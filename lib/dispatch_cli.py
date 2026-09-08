@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 
+from planner import DEFAULT_MODELS, prompt as planner_prompt
 from dispatch_runs import (DispatchError, atomic_write, brief_digest, command_on_host,
                            launch, read_json, read_text, run_directory, run_lock,
                            status, write_json, repair_command)
@@ -22,13 +23,14 @@ AUTH_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
              "CODEX_ACCESS_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
              "GITHUB_ENTERPRISE_TOKEN", "HARNESS_CODEX_HOME_FALLBACK")
 ACCOUNT_VARS = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR")
-COMMANDS = ("chat", "station", "stations", "init", "run", "status", "wait", "resume", "doctor", "login")
+COMMANDS = ("chat", "station", "stations", "init", "run", "status", "wait", "resume", "evidence", "doctor", "login")
 
 
 def parser():
     p = argparse.ArgumentParser(prog="dispatch", description="Local-first coding tasks, with optional shared Mini stations.",
         epilog="Examples: dispatch 'Fix checkout' | dispatch station --on mini --owner teammate | "
-               "dispatch run --brief brief.md | dispatch status | dispatch resume RUN-ID")
+               "dispatch run --brief brief.md | dispatch status | dispatch resume RUN-ID | "
+               "dispatch evidence RUN-ID --publish")
     p.add_argument("command", nargs="?", default="chat", help="command or a quoted task description")
     p.add_argument("arguments", nargs="*")
     p.add_argument("--on", metavar="SSH_HOST", help="execute on an SSH host; default: this machine")
@@ -49,6 +51,8 @@ def parser():
     p.add_argument("--pipeline", action="store_true", help="doctor: also check task execution dependencies")
     p.add_argument("--browser", action="store_true", help="login codex: use browser callback instead of device login")
     p.add_argument("--for-run", metavar="RUN_ID", help="login: use the account context saved with this task")
+    p.add_argument("--capture", action="store_true", help="evidence: recapture the completed run's frontend storyboard")
+    p.add_argument("--publish", action="store_true", help="evidence: upload saved media to this run's existing PR")
     return p
 
 
@@ -122,6 +126,17 @@ def emit(value, as_json):
     result = value.get("result") or {}
     if result.get("pr_url"):
         print("  " + result["pr_url"])
+    evidence = result.get("evidence") or {}
+    if evidence:
+        print("  frontend evidence: " + evidence.get("status", "unknown"))
+        if evidence.get("reason"):
+            print("  " + evidence["reason"])
+        for warning in evidence.get("warnings", []):
+            print("  " + warning)
+        if evidence.get("action"):
+            print("  next: " + evidence["action"])
+        if evidence.get("directory") and value.get("logs"):
+            print("  media: " + str(Path(value["logs"]) / evidence["directory"]))
     if value.get("worktree"):
         print("  worktree: " + value["worktree"])
     if value.get("reason"):
@@ -218,6 +233,16 @@ def resume(args, runtime):
     saved = read_json(directory / "request.json")
     if saved and args.owner is not None and args.owner != saved.get("account", ""):
         raise DispatchError("this run is pinned to account " + (saved.get("account") or "current") + "; resume without --owner")
+    if current["state"] in ("ready", "ready_local"):
+        result = current.get("result") or {}
+        media = result.get("evidence") or {}
+        if saved and media.get("head") and media.get("status") in ("failed", "not_run", "captured", "publish_failed"):
+            if args.brief:
+                raise DispatchError("this run's code is complete; use a new reviewed run for a changed brief")
+            args.capture = media["status"] in ("failed", "not_run") or not media.get("artifacts")
+            args.publish = bool(saved.get("publish", True) and result.get("pr_url"))
+            if args.capture or args.publish:
+                return evidence(args, runtime)
     if current["state"] in ("running", "ready", "ready_local"):
         emit(current, args.json)
         return 0
@@ -268,7 +293,7 @@ def chat(args, runtime):
     if not Path(cwd).is_dir():
         raise DispatchError("working directory does not exist: " + cwd)
     (runtime / "runs").mkdir(parents=True, exist_ok=True)
-    model = args.model or ("gpt-6-astra" if provider == "codex" else None)
+    model = args.model or DEFAULT_MODELS[provider]
     command = [executable(provider, env)]
     if model:
         command += ["-m" if provider == "codex" else "--model", model]
@@ -287,18 +312,79 @@ def chat(args, runtime):
             if enabled and (source / "SKILL.md").is_file() and not target.exists() and not target.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.symlink_to(source, target_is_directory=True)
-    if args.arguments:
-        publication = " Use dispatch run --no-publish; keep a reviewed local branch without pushing or opening a PR." if env.get("HARNESS_PUBLISH") == "0" else ""
-        autonomy = " Proceed through research, briefing, and dispatch without routine confirmation within this task's authorized scope." if args.hands_off else ""
-        command += ["Use the dispatch skill to research and run this task through the harness. "
-                    "Keep the user's authorized scope." + autonomy + publication +
-                    " Before submitting a free-text task, ask whether to use a tracker ticket or run ad hoc, "
-                    "unless the user already specified that choice or supplied an existing ticket. "
-                    "Hands-off mode does not choose tracking. Task: " + " ".join(args.arguments)]
+    command += [planner_prompt(runtime, " ".join(args.arguments), no_publish=env.get("HARNESS_PUBLISH") == "0",
+                               hands_off=args.hands_off)]
     permissions = "hands-off (checks bypassed)" if args.hands_off else "CLI defaults"
-    print(f"dispatch: local {provider} planner | account {env.get('HARNESS_OWNER') or 'current'} | permissions: {permissions} | {cwd}", flush=True)
+    print(f"dispatch: local {provider} planner ({model}) | account {env.get('HARNESS_OWNER') or 'current'} | permissions: {permissions} | {cwd}", flush=True)
     os.chdir(cwd)
     os.execvpe(command[0], command, env)
+
+
+def evidence(args, runtime):
+    if len(args.arguments) != 1:
+        raise DispatchError("evidence needs one run ID")
+    directory = run_directory(runtime, args.arguments[0])
+    current = status(directory)
+    if not args.capture and not args.publish:
+        if args.json:
+            print(json.dumps({"id": directory.name, "state": current["state"],
+                              "evidence": (current.get("result") or {}).get("evidence"),
+                              "stage": current["stage"], "logs": str(directory)}, indent=2))
+        else:
+            emit(current, False)
+            if not (current.get("result") or {}).get("evidence"):
+                print("  No frontend evidence has been recorded for this run.")
+        return 0
+    with run_lock(directory) as lock:
+        if is_running_legacy(directory):
+            raise DispatchError("this run has a live driver; wait for it to finish")
+        # Re-read under the lock; status() would see this operation itself as a
+        # running pipeline. An old ready result cannot stand in for a newer run.
+        result = read_json(directory / "result.json")
+        started = read_json(directory / "launch.json").get("started", 0)
+        if (result.get("status") not in ("ready", "ready_local")
+                or (directory / "result.json").stat().st_mtime < started):
+            raise DispatchError("evidence retries require a completed ready or ready_local run")
+        saved = read_json(directory / "request.json")
+        if not saved:
+            raise DispatchError("this run has no saved account context; evidence is available read-only")
+        if saved.get("host") != socket.gethostname():
+            raise DispatchError("retry evidence on the execution host: " + str(saved.get("host")))
+        env = account_environment(args, saved)
+        # Tokens are never saved with a request. An ambient token from another
+        # session must not override the run's saved GitHub CLI profile.
+        for key in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"):
+            env.pop(key, None)
+        if args.publish and (not saved.get("publish", True) or env.get("HARNESS_PUBLISH") == "0"):
+            raise DispatchError("publishing is disabled for this run or session; use evidence --capture to save locally")
+        if args.publish and not result.get("pr_url"):
+            raise DispatchError("this run has no existing PR; evidence does not push code or create PRs")
+        # Configuration is trusted host configuration, sourced under the saved
+        # account. Values stay in the child's environment, never stdout/JSON.
+        script = '''set -e
+. "$1/repos.conf.sh"
+repo_config "$2"
+if [ -f "$1/demo.conf.sh" ]; then . "$1/demo.conf.sh"; fi
+export DEMO_PORT="${DEMO_PORT:-}" DEMO_AUTH_FILE="${DEMO_AUTH_FILE:-}"
+export SHOT_BIN="${SHOT_BIN:-$HOME/.local/bin/shot-scraper}"
+export R2_REMOTE="${R2_REMOTE:-}" R2_PUBLIC="${R2_PUBLIC:-}"
+runtime="$1"; shift 2
+exec python3 "$runtime/lib/evidence_retry.py" "$@"
+'''
+        argv = ["bash", "-c", script, "dispatch-evidence", str(runtime), saved["repo"], str(directory)]
+        if args.capture:
+            argv.append("--capture")
+        if args.publish:
+            argv.append("--publish")
+        # If the client goes away, the recorder retains the lock until its own
+        # cleanup finishes. Browser/server children do not inherit it further.
+        with (directory / "demo-driver.log").open("ab") as log:
+            rc = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=log,
+                                pass_fds=(lock.fileno(),)).returncode
+    emit(status(directory), args.json)
+    if rc:
+        print("dispatch: evidence retry did not complete; see demo-driver.log and demo.log", file=sys.stderr)
+    return rc
 
 
 def remote(args, argv):
@@ -315,7 +401,7 @@ def remote(args, argv):
         elif not arg.startswith(("--on=", "--remote-harness=")):
             forwarded.append(arg)
     data = None
-    if os.environ.get("HARNESS_PUBLISH") == "0" and not args.no_publish and (args.command in ("run", "resume", "chat") or args.command not in COMMANDS):
+    if os.environ.get("HARNESS_PUBLISH") == "0" and not args.no_publish and (args.command in ("run", "chat") or args.command not in COMMANDS):
         forwarded.append("--no-publish")
     if args.brief:
         data = read_brief(args.brief)
@@ -338,6 +424,8 @@ def remote(args, argv):
     interactive = args.command in ("chat", "station", "login") or args.command not in COMMANDS
     if not interactive:
         command = "export DISPATCH_REMOTE_HOST=" + shlex.quote(args.on) + "; " + command
+    if os.environ.get("HARNESS_PUBLISH") == "0" and args.command == "resume":
+        command = "export HARNESS_PUBLISH=0; " + command
     ssh = ["ssh", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3"]
     ssh += ["-t"] if interactive else ["-o", "BatchMode=yes"]
     return subprocess.run(ssh + [args.on, command], input=data, text=True).returncode
@@ -349,6 +437,10 @@ def main(argv=None):
     command = args.command if args.command in COMMANDS else "chat"
     if args.for_run and command != "login":
         raise DispatchError("--for-run is only supported by login")
+    if (args.capture or args.publish) and command != "evidence":
+        raise DispatchError("--capture and --publish are only supported by evidence")
+    if command == "evidence" and args.publish and os.environ.get("HARNESS_PUBLISH") == "0":
+        raise DispatchError("publishing is disabled for this session; use evidence --capture to save locally")
     if args.hands_off and command not in ("chat", "station"):
         raise DispatchError("--hands-off applies to chat or station; background workers use the harness's task permissions")
     if args.on:
@@ -369,6 +461,8 @@ def main(argv=None):
         return submit(args, runtime)
     if args.command == "resume":
         return resume(args, runtime)
+    if args.command == "evidence":
+        return evidence(args, runtime)
     if args.command in ("status", "wait"):
         if len(args.arguments) > 1 or (args.command == "wait" and len(args.arguments) != 1):
             raise DispatchError(args.command + " needs one run ID" if args.command == "wait" else "status accepts one run ID")

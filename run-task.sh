@@ -437,7 +437,11 @@ fi
 # no active profile registers nothing more and behaves exactly as it always has.
 hook_register implementer_env  apply_provider_env
 hook_register implementer_env  apply_wall_env
+# shellcheck source=lib/demo.sh
+. "$SELF_DIR/lib/demo.sh"
 hook_register pr_body_sections verify_pr_section
+hook_register pr_body_sections demo_pr_section
+hook_register result_json_extra demo_result_extra
 harness_load_profiles "$REPO" "$SELF_DIR/profiles"
 
 STATUS="setup_failed"; GATE_STATUS="not_run"; PR_URL=""; OPUS_HEAD=""; OPUS_SESSION=""; DEMO_URL=""
@@ -1612,7 +1616,7 @@ Rules:
 - Do NOT push, do NOT create PRs, do NOT switch branches.
 - Database/MCP tools: local environment only. Never switch environments or touch staging/production.
 - Stopping to ask is decided by the brief's '## Decision points', not by your own sense of doubt. Stop for exactly two things: a fork that section marks 'STOP and ask', and an irreversible action it does NOT declare — a schema migration or data backfill, deleting or rewriting files outside '## Edit locations', anything that leaves this machine. Do NOT stop for a fork the brief already decides: implement its decision as written, even where you would have chosen otherwise. To stop, write the specific question(s), each with the options you considered and what the wrong answer costs, to .harness/QUESTIONS.md and stop working — batched, all of them at once. The orchestrator will get answers and resume you.
-- If the brief contains a 'Demo storyboard' section, also write .harness/demo.yml exactly as that section specifies — a shot-scraper storyboard (server + url + scenes) demonstrating the feature you built. Never commit it.
+- For user-facing frontend changes, write .harness/demo.json (agent-browser server + url + steps; legacy .harness/demo.yml remains supported), unless the brief explicitly excludes capture. Follow its 'Demo storyboard' when provided; otherwise choose a short interaction that demonstrates the change. Include screenshots and video when motion helps review. Use stable selectors, a visible success-state wait, and fixture data suitable for the PR audience. Never commit the storyboard or captured media. The harness records after the final gate; it reports capture failures separately from the code verdict.
 - When finished, write .harness/implementer-notes.md in three sections, in this order — the user-facing ones first:
   1. \`## What this changes\` — a short paragraph in product language: what a user of the product can now do or no longer suffers, and why it matters. No file names, no function names.
   2. \`## How to try it\` — the concrete steps or command a human uses to see the change working; \`Not user-visible — <one line why>\` is legitimate for pure internal work.
@@ -3764,6 +3768,16 @@ else
     if [ "$STATUS" = "ready" ] && [ "$GATE_STATUS" != "pass" ]; then STATUS="gate_failed"; fi
   fi
 
+  if [ "$STATUS" = "ready" ]; then
+  # Safety net: agents must never ship .harness/ metadata; strip if it slipped in.
+  if [ -n "$(git -C "$WORKTREE" ls-files .harness 2>/dev/null)" ]; then
+    git -C "$WORKTREE" rm -r -q --cached .harness
+    git -C "$WORKTREE" commit -q -m "chore: remove local tooling files"
+  fi
+    # Capture the final commit, including base sync, for local and publishing runs.
+    demo_capture
+  fi
+
   if [ "$STATUS" = "ready" ] && [ "$HARNESS_PUBLISH" = 1 ]; then
   stage "push + draft PR (script — no model)"
   # The task is already saved and reviewed. Request GitHub login only now;
@@ -3774,11 +3788,6 @@ else
         action:("dispatch login gh" + (if $owner == "" then "" else " --owner " + $owner end) + " ; dispatch resume " + $id)}' \
       > "$RUN_DIR/waiting.json.tmp" && mv "$RUN_DIR/waiting.json.tmp" "$RUN_DIR/waiting.json"
     fail pr_failed "GitHub login required; use dispatch status for the repair command"
-  fi
-  # Safety net: agents must never ship .harness/ metadata; strip if it slipped in.
-  if [ -n "$(git -C "$WORKTREE" ls-files .harness 2>/dev/null)" ]; then
-    git -C "$WORKTREE" rm -r -q --cached .harness
-    git -C "$WORKTREE" commit -q -m "chore: remove local tooling files"
   fi
   git -C "$WORKTREE" push -u origin "$BRANCH" > "$RUN_DIR/push.log" 2>&1 || STATUS="push_failed"
   if [ "$STATUS" = "ready" ]; then
@@ -3807,65 +3816,8 @@ else
   if [ "$STATUS" = "ready" ] && [ -n "$PR_URL" ]; then ticket_sync; fi
   fi
 
-  # --- 6b. Demo recording (frontend runs only; a demo failure never fails the run)
-  . "$HARNESS_DIR/demo.conf.sh" 2>/dev/null || true
-  SHOT_BIN="${SHOT_BIN:-$HOME/.local/bin/shot-scraper}"
-  if [ "$STATUS" = "ready" ] && [ -n "$PR_URL" ] && [ -f "$WORKTREE/.harness/demo.yml" ] \
-     && [ -x "$SHOT_BIN" ] && [ -n "${R2_REMOTE:-}" ] \
-     && rclone listremotes 2>/dev/null | grep -q "^${R2_REMOTE%%:*}:"; then
-    stage "demo — recording (script, no model)"
-    # Logged-in session captured once via demo-auth.sh; storyboards assume auth.
-    AUTH_FILE="$HARNESS_DIR/auth/$(basename "$REPO").json"
-    AUTH_ARGS=()
-    [ -f "$AUTH_FILE" ] && AUTH_ARGS=(--auth "$AUTH_FILE")
-    # The storyboard's server runs --strictPort on DEMO_PORT: if a stale server
-    # already squats the port, ours dies silently and whatever lives there gets
-    # recorded instead (bit us in production — 30s of another worktree's error overlay).
-    DEMO_RC=0
-    if [ -n "${DEMO_PORT:-}" ] && lsof -nP -iTCP:"$DEMO_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-      { echo "[harness] demo skipped — port $DEMO_PORT already in use by:"
-        lsof -nP -iTCP:"$DEMO_PORT" -sTCP:LISTEN; } > "$RUN_DIR/demo.log" 2>&1
-      stage "demo — skipped (port $DEMO_PORT busy)"
-      DEMO_RC=98
-    else
-      (cd "$WORKTREE" && with_timeout 600 \
-          "$SHOT_BIN" video .harness/demo.yml --mp4 ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} </dev/null) > "$RUN_DIR/demo.log" 2>&1 || DEMO_RC=$?
-      # shot-scraper only kills the npm wrapper it spawned; the vite child
-      # survives and squats the port for every later run. The port was free
-      # before recording, so any listener now belongs to this storyboard — reap it.
-      if [ -n "${DEMO_PORT:-}" ]; then
-        DEMO_SRV_PIDS=$(lsof -ti "tcp:$DEMO_PORT" -sTCP:LISTEN 2>/dev/null || true)
-        [ -n "$DEMO_SRV_PIDS" ] && kill $DEMO_SRV_PIDS 2>/dev/null
-      fi
-    fi
-    VID=$(find "$WORKTREE/.harness" -maxdepth 1 \( -name '*.mp4' -o -name '*.webm' \) -newer "$RUN_DIR/started" 2>/dev/null | head -1)
-    if [ "$DEMO_RC" -ne 0 ]; then
-      # Scene failures (wait_for timeouts, dead server) exit non-zero but still
-      # leave a video of the broken state — never attach that to the PR.
-      if [ "$DEMO_RC" -ne 98 ]; then
-        echo "[harness] demo recording failed (exit $DEMO_RC) — video not uploaded" >> "$RUN_DIR/demo.log"
-        stage "demo — failed (not uploaded)"
-      fi
-    elif [ -n "$VID" ]; then
-      ffmpeg -y -i "$VID" -c:v libx264 -pix_fmt yuv420p -vf "scale=1280:-2" "$RUN_DIR/demo.mp4" >> "$RUN_DIR/demo.log" 2>&1 \
-      && ffmpeg -y -i "$RUN_DIR/demo.mp4" -vf "fps=6,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse" -loop 0 "$RUN_DIR/demo-preview.gif" >> "$RUN_DIR/demo.log" 2>&1 \
-      && rclone copyto "$RUN_DIR/demo.mp4" "$R2_REMOTE/$TICKET/demo.mp4" --s3-no-check-bucket >> "$RUN_DIR/demo.log" 2>&1 \
-      && rclone copyto "$RUN_DIR/demo-preview.gif" "$R2_REMOTE/$TICKET/demo-preview.gif" --s3-no-check-bucket >> "$RUN_DIR/demo.log" 2>&1 \
-      && DEMO_URL="$R2_PUBLIC/$TICKET/demo.mp4" || true
-      if [ -n "$DEMO_URL" ]; then
-        # Append the demo to the PR's CURRENT body (it may have been rewritten since
-        # creation) via the REST API — `gh pr edit --body` breaks on repos that ever
-        # used classic Projects (deprecation error), the API PATCH route does not.
-        { (cd "$WORKTREE" && gh pr view "$PR_URL" --json body -q .body) > "$RUN_DIR/pr-body-live.md" \
-          && printf '\n## Demo\n\n[![Demo](%s)](%s)\n\n*Click the GIF to open the full video*\n' \
-            "$R2_PUBLIC/$TICKET/demo-preview.gif" "$DEMO_URL" >> "$RUN_DIR/pr-body-live.md" \
-          && REPO_SLUG=$( (cd "$WORKTREE" && gh repo view --json nameWithOwner -q .nameWithOwner) ) \
-          && (cd "$WORKTREE" && gh api "repos/$REPO_SLUG/pulls/${PR_URL##*/}" -X PATCH \
-                -F body=@"$RUN_DIR/pr-body-live.md" >/dev/null); } >> "$RUN_DIR/demo.log" 2>&1 || true
-      fi
-    else
-      echo "[harness] demo produced no video — see log above" >> "$RUN_DIR/demo.log"
-    fi
+  if [ "$STATUS" = "ready" ] && [ -n "$PR_URL" ] && [ "$HARNESS_PUBLISH" = 1 ]; then
+    demo_publish
   fi
 fi
 

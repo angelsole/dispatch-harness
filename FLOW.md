@@ -11,7 +11,7 @@ deterministic gate + script glue (free).
 ```mermaid
 flowchart LR
     U(["👤 You<br/>/dispatch a ticket or a description"])
-    B["📝 Brief<br/>acceptance criteria + verify commands<br/>you approve it"]
+    B["📝 Brief<br/>acceptance criteria + verify commands<br/>within your authorized scope"]
     I["🤖 Implementer<br/>Claude, alone in a fresh git worktree"]
     G{"✅ Deterministic gate<br/>your repo's lint · types · tests<br/>no model in the loop"}
     P["📬 Draft PR<br/>both models' notes in the body"]

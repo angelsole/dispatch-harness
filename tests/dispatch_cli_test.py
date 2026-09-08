@@ -49,6 +49,8 @@ if name == 'claude' and '--output-format' in args:
         (harness/'QUESTIONS.md').write_text('Which colour?')
     else:
         with pathlib.Path('feature.txt').open('a') as out: out.write('feature line\n'*30)
+        if (root/'demo.json').exists():
+            (harness/'demo.json').write_text((root/'demo.json').read_text())
         (harness/'implementer-notes.md').write_text('Implemented the requested change.')
         subprocess.run(['git','add','feature.txt'],check=True,stdout=subprocess.DEVNULL)
         subprocess.run(['git','commit','-qm','feat: requested change'],check=True,stdout=subprocess.DEVNULL)
@@ -132,6 +134,82 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("local codex", out.stdout)
         self.assertIn("gpt-6-astra", self.events('chat')[0]['args'])
         self.assertEqual(self.events('implement'), [])
+
+    def test_empty_start_bootstraps_both_planners_with_model_and_protocol(self):
+        for provider, model in (('codex', 'gpt-6-astra'), ('claude', 'fable')):
+            with self.subTest(provider=provider):
+                self.call('--planner', provider)
+                args = self.events('chat')[-1]['args']
+                self.assertIn(model, args)
+                self.assertIn(str(self.runtime / 'planner-skills/dispatch/SKILL.md'), args[-1])
+                self.assertIn('No task has been supplied yet', args[-1])
+                self.assertIn('reviewed result', args[-1])
+                self.assertEqual(self.events('implement'), [])
+        self.call('--planner', 'claude', '--model', 'custom-model')
+        self.assertIn('custom-model', self.events('chat')[-1]['args'])
+
+    def test_task_start_uses_same_protocol_without_losing_task_or_local_intent(self):
+        task = 'Fix checkout without a tracker ticket'
+        self.call(task, '--planner', 'claude', '--no-publish')
+        args = self.events('chat')[-1]['args']
+        self.assertIn('fable', args)
+        self.assertIn(str(self.runtime / 'planner-skills/dispatch/SKILL.md'), args[-1])
+        self.assertTrue(args[-1].endswith('Task: ' + task))
+        self.assertIn('--no-publish', args[-1])
+        self.assertNotIn('No task has been supplied yet', args[-1])
+
+    def test_frontend_missing_storyboard_reports_capture_failure_without_failing_code(self):
+        self.brief.write_text(self.brief.read_text() + '\n## Demo storyboard\nShow the feature.\n')
+        self.run_task('DEMO-MISSING', '--no-publish')
+        result = self.wait('DEMO-MISSING')
+        self.assertEqual(result['state'], 'ready_local', result)
+        evidence = result['result']['evidence']
+        self.assertEqual(evidence['status'], 'failed')
+        self.assertIn('worker wrote no', evidence['reason'])
+        self.assertIn('frontend evidence: failed', self.call('status', 'DEMO-MISSING').stdout)
+
+    def test_frontend_local_run_keeps_commit_bound_screenshots(self):
+        import socket
+        import sys
+        from demo_test import FAKE, PNG
+        self.brief.write_text(self.brief.read_text() + '\n## Demo storyboard\nShow the feature.\n')
+        binary = self.bin/'agent-browser'; binary.write_text(FAKE); binary.chmod(0o755)
+        (self.root/'fixture.png').write_bytes(PNG)
+        self.env.update(DEMO_TEST_ROOT=str(self.root), AGENT_BROWSER_BIN=str(binary))
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
+        (self.root/'demo.json').write_text(json.dumps({
+            'server':[sys.executable,'-m','http.server',str(port),'--bind','127.0.0.1'],
+            'url':f'http://127.0.0.1:{port}/', 'steps':[['wait','#success']]}))
+        self.run_task('DEMO-LOCAL', '--no-publish')
+        result = self.wait('DEMO-LOCAL')
+        self.assertEqual(result['state'], 'ready_local', result)
+        evidence = result['result']['evidence']
+        self.assertEqual(evidence['status'], 'captured', evidence)
+        head = self.shell(['git','-C',result['worktree'],'rev-parse','HEAD']).stdout.strip()
+        self.assertEqual(evidence['head'], head)
+        self.assertTrue((Path(result['logs'])/evidence['artifacts'][0]['path']).is_file())
+        self.assertEqual(self.events('gh'), [])
+        output = self.call('status', 'DEMO-LOCAL').stdout
+        self.assertIn('frontend evidence: captured', output)
+        self.assertIn(str(Path(result['logs']) / evidence['directory']), output)
+        gates = (self.root / 'gates').read_bytes()
+        models = (len(self.events('implement')), len(self.events('review')))
+        updated = json.loads(self.call('evidence', 'DEMO-LOCAL', '--capture', '--json').stdout)
+        self.assertEqual(updated['state'], 'ready_local')
+        self.assertEqual(updated['result']['evidence']['status'], 'captured')
+        self.assertNotEqual(updated['result']['evidence']['directory'], evidence['directory'])
+        self.assertEqual(updated['result']['attempt'], result['result']['attempt'])
+        self.assertEqual(gates, (self.root / 'gates').read_bytes())
+        self.assertEqual(models, (len(self.events('implement')), len(self.events('review'))))
+        storyboard = Path(result['worktree']) / '.harness/demo.json'
+        original = storyboard.read_text(); storyboard.unlink()
+        self.assertEqual(self.call('evidence', 'DEMO-LOCAL', '--capture', check=False).returncode, 1)
+        storyboard.write_text(original)
+        recovered = json.loads(self.call('resume', 'DEMO-LOCAL', '--json').stdout)
+        self.assertEqual(recovered['result']['evidence']['status'], 'captured')
+        self.assertEqual(models, (len(self.events('implement')), len(self.events('review'))))
+        self.assertEqual(gates, (self.root / 'gates').read_bytes())
 
     def test_local_claude_profile_discovers_shared_protocol(self):
         profile = self.home / 'accounts/teammate'

@@ -92,36 +92,44 @@ npm run type-check && npm test -- src/pricing
 
 ## Demo storyboard
 (Only for user-facing/frontend changes — DELETE this section otherwise.)
-Write `.harness/demo.yml`, a shot-scraper storyboard demonstrating THIS feature,
-15–30s: navigate → demonstrate → success state. Scenes must assume an
-already-authenticated session — never script the login; the pipeline injects a
-saved session (`--auth`) automatically. Shape:
+Write `.harness/demo.json` for agent-browser. Show THIS feature using fixture
+or demo data suitable for the PR's audience. Use stable CSS/text selectors,
+never session refs such as `@e1`. End the interaction with a `wait` for its
+visible success state. Keep a screenshot for a static change; set `video: true`
+for a short interaction recording. The harness always captures `result.png`.
 
-The server/url port MUST be the app's normal dev port (whatever DEMO_PORT is
-pinned to for this repo) — backend CORS allowlists usually only cover those
-origins.
+The server runs in the task worktree. Pin its port strictly, choose a free port
+allowed by the app's backend CORS configuration, and use the same localhost
+origin in `url`. The harness refuses a busy port and stops only its own server.
+For authenticated apps, use the host's saved demo session (`demo-auth.sh` or a
+repo-pinned `DEMO_AUTH_FILE`); never put credentials or login actions here.
 
-Scene actions — these are the ONLY ones shot-scraper supports; anything else
-(e.g. `key`, `type`, `fill`) aborts the recording: `click`, `press` (keyboard
-key, e.g. `press: Escape`), `scroll`, `pause`, `wait_for`, `wait_for_url`.
-Prefer selectors unique on the page — ambiguous `text=` selectors fail strict
-mode. A demo failure never fails the run, so a broken storyboard just means a
-silently missing video.
-
-```yaml
-output: .harness/demo.webm
-server: ["npm", "run", "dev", "--", "--port", "5173", "--strictPort"]
-url: http://localhost:5173/route-to-the-feature
-viewport: {width: 1280, height: 800}
-cursor: true
-scenes:
-  - name: open the feature
-    wait_for: "text=Something visible on load"
-    do:
-      - pause: 1
-      - click: "text=The new button"
-      - pause: 2
+```json
+{
+  "server": ["npm", "run", "dev", "--", "--port", "5173", "--strictPort"],
+  "url": "http://localhost:5173/route-to-the-feature",
+  "viewport": {"width": 1280, "height": 800},
+  "video": true,
+  "steps": [
+    ["wait", "#feature-form"],
+    ["screenshot", "before.png"],
+    ["fill", "#name", "Demo item"],
+    ["click", "#save"],
+    ["wait", "#save-success"],
+    ["wait", "1500"]
+  ]
+}
 ```
+
+Steps support `click selector`, `fill selector value`, `press key`,
+`wait selector-or-milliseconds`, and `screenshot filename.png` as arrays.
+Screenshot names are simple filenames; at most ten named screenshots and fifty
+steps. Total capture time is bounded to ten minutes. Capture happens after the
+final gate and base sync. Media and a commit-bound manifest stay in the run
+folder, including with `--no-publish`. The PR receives the media when uploads
+are available, or an explicit capture/upload status. Evidence does not replace
+tests or visual review. Existing shot-scraper `.harness/demo.yml` storyboards
+remain supported; their repo must set `DEMO_PORT`.
 
 ## Out of scope
 What must NOT be touched, even if tempting.

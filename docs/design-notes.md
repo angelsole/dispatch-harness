@@ -73,6 +73,60 @@ way: `opus_head` records the boundary between the two models' commits in the
 run's metadata, never in the commit messages
 ([the run directory](reference.md#the-run-directory)).
 
+## Direction: share the work and its evidence
+
+The user-facing contract is to choose a planner and describe the task. New local
+and Mini conversations start as harness planners. Worker selection, setup,
+capture, and recovery belong to the planner and repository policy. Operator
+commands remain available for diagnosis; ordinary users should receive a reviewed
+result or a concrete blocker, not a list of commands to finish the process.
+
+The useful collaboration boundary is the task. Keep implementation worktrees,
+browser sessions, and model contexts isolated. A teammate or another planner
+should be able to recover the brief, decisions, commit, review, and evidence
+without attaching to the original conversation. Linear (when selected) and
+GitHub remain the team's durable work records; the run directory holds execution
+details and recovery checkpoints. Local execution and Mini stations use the
+same contracts.
+
+Frontend evidence is the first concrete improvement in this direction. Its
+manifest survives the worker, records the commit it shows, and separates
+capture from hosting. This improves review without adding a shared chat service,
+database, or mandatory cloud account. The existing `.creative/` visual gate
+still serves tasks with an art-direction contract; an ordinary frontend demo
+does not need that entire profile.
+
+`dispatch evidence ID --capture` and `--publish` now recover capture and upload
+independently, using the saved account and run lock. Previous captures remain
+addressable by commit. Upload-only recovery survives worktree cleanup; neither
+operation repeats model work or changes the code verdict.
+
+The next improvements should be measured against user effort and recovery:
+
+1. **Improve handoff through the existing records.** Publish concise decisions,
+   unresolved questions, and artifact links to the selected ticket/PR. Extend
+   the current result schema before introducing a separate collaboration store.
+2. **Add diagrams selectively.** [PR Lens](https://github.com/coldteadotai/pr-lens)
+   can turn an agent-authored graph into architecture and data-flow diagrams.
+   Use it for changes spanning components or services. Treat diagrams as
+   explanations, separate from screenshots and executable verification. Prefer
+   the existing planner authoring a graph plus local validation/rendering;
+   installing its GitHub App or publishing a public canvas is an independent
+   deployment choice.
+3. **Measure routing before enforcing it.** Spotify's
+   [bulk-reader/code-writer experiment](https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90)
+   suggests compact summaries for large reads and cheaper models for repetitive
+   generation. Its reported savings concern bulk-read tokens in four scenarios,
+   not total task cost or correctness. Start with an optional bounded reader
+   returning file citations and uncertainty. Let the planner read original
+   code for reasoning and edits. Compare total tokens, latency, retries, and
+   accepted results; include the worker's usage. Avoid a Claude-only blocking
+   hook becoming a different product experience from Codex.
+
+These are follow-ups, not prerequisites for the evidence capture feature. The
+system earns another service only when a specific handoff or scaling problem
+cannot be handled by its existing task records and artifact files.
+
 ## What the corpus taught the pipeline
 
 Four of the pipeline's self-recovery rules are answers to measured waste:

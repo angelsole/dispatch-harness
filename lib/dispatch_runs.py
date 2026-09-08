@@ -113,11 +113,7 @@ def is_running(directory):
             return True
     # Older run-task callers have a PID but no CLI lock. Check argv as well:
     # a recycled PID must not make an interrupted task look alive forever.
-    pid = read_text(directory / "driver.pid")
-    if not pid.isdigit():
-        return False
-    proc = subprocess.run(["ps", "-o", "command=", "-p", pid], capture_output=True, text=True)
-    return bool(re.search(r"run-task\.sh\s+" + re.escape(directory.name) + r"(?:\s|$)", proc.stdout))
+    return is_legacy_running(directory)
 
 
 def status(directory):
@@ -140,6 +136,11 @@ def status(directory):
     if not launch and not result and not alive and not waiting:
         state = "prepared"
     stage = read_text(directory / "status").partition(" ")[2]
+    operation = read_json(directory / "evidence-operation.json")
+    if alive and isinstance(operation.get("pid"), int):
+        proc = subprocess.run(["ps", "-o", "command=", "-p", str(operation["pid"])], capture_output=True, text=True)
+        if "evidence_retry.py" in proc.stdout and str(directory) in proc.stdout:
+            stage = "frontend evidence — " + operation.get("action", "retrying")
     response = {
         "id": directory.name, "state": state, "stage": stage,
         "account": request.get("account", read_text(directory / "owner")) or "current",
@@ -194,4 +195,4 @@ def is_legacy_running(directory):
     if not pid.isdigit():
         return False
     proc = subprocess.run(["ps", "-o", "command=", "-p", pid], capture_output=True, text=True)
-    return bool(re.search(r"run-task\.sh\s+" + re.escape(directory.name) + r"(?:\s|$)", proc.stdout))
+    return bool(re.search(r"(?:run-task|sync-pr)\.sh\s+" + re.escape(directory.name) + r"(?:\s|$)", proc.stdout))

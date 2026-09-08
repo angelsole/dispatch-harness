@@ -17,17 +17,20 @@ existing Codex login, requires no tmux, and preserves the CLI's configured
 sandbox and approval settings. Choose the orchestrator for each conversation:
 
 ```bash
-dispatch --planner codex                 # Astra in Codex
-dispatch --planner claude --model fable  # Fable in Claude Code
+dispatch --planner codex   # Astra in Codex
+dispatch --planner claude  # Fable in Claude Code
 ```
 
-Omit `--model` with Claude to use the selected account's configured model.
-Switching opens a separate conversation in the selected CLI; saved harness
+Both commands start with the same harness planner instructions, even without a
+task argument. The planner asks for a task, handles routine repository setup,
+follows the run, and assesses its reviewed output. `--model` remains an explicit
+override; `DISPATCH_MODEL` can set an operator default. Switching opens a separate
+conversation in the selected CLI; saved harness
 runs remain accessible through `dispatch status`. The worker and reviewer
 keep their repository settings regardless of which planner you choose.
 
 For unattended orchestration, use `dispatch --hands-off "task description"`,
-optionally with `--planner claude --model fable`. This is an explicit launch
+optionally with `--planner claude`. This is an explicit launch
 choice: Claude Code gets `--dangerously-skip-permissions`; Codex gets
 `--dangerously-bypass-approvals-and-sandbox`, disabling both permission prompts
 and the Codex sandbox. The launch banner shows the selected mode. Existing
@@ -57,8 +60,9 @@ for a remote task; the context is resolved on the Mini.
 also checks the dependencies needed to start a task. Neither performs a paid
 model request or proves remaining credits.
 
-`dispatch init` saves detected repository settings through the existing setup
-tool. Review the printed gate command; repository-specific services still need
+The planner runs `dispatch init` for an unconfigured repository. It saves detected
+settings through the existing setup tool. The planner checks the printed gate
+against the project; repository-specific services still need
 their existing preflight configuration. The engine currently expects an origin
 remote even for a local-only branch (a local Git remote also works).
 
@@ -75,10 +79,13 @@ current snapshot with exit 124. A finished draft PR is `ready`; a reviewed
 local branch is `ready_local`. A stopped process is reported as interrupted,
 not left with an indefinitely growing stage timer.
 
-`dispatch resume ID` keeps the saved account configuration and restarts only a
-stopped task. A `needs_input` run needs answers appended to its brief first;
+`dispatch resume ID` keeps the saved account configuration and restarts a
+stopped task. On a finished run with missing frontend evidence, it selects
+capture or upload-only recovery automatically. A captured local-only run and a
+run with published evidence are already complete. A `needs_input` run needs
+answers appended to its brief first;
 `--brief <file>` can supply an updated brief. Merely reconnecting to a live or
-finished run never starts another attempt. Scheduled capacity deferrals should
+finished run never starts another coding attempt. Scheduled capacity deferrals should
 be allowed to fire through their existing scheduler.
 
 The runner writes checkpoints after implementation, the initial passing gate,
@@ -113,8 +120,8 @@ teammate's saved subscriptions while that person is away:
 ```bash
 dispatch stations --on mini
 dispatch station --on mini --owner teammate --dir /path/to/repos
-dispatch station --on mini --owner teammate --dir /path/to/repos --planner claude --model fable
-dispatch station --on mini --owner teammate --planner claude --model fable --hands-off
+dispatch station --on mini --owner teammate --dir /path/to/repos --planner claude
+dispatch station --on mini --owner teammate --planner claude --hands-off
 ```
 
 The last command opens a hands-off planner. Each hands-off station uses a
@@ -236,7 +243,9 @@ Use `$dispatch`, `$briefed-dispatch` or `$dispatch-pixel` in Codex, and the
 corresponding slash commands in Claude Code. The visual skill retains the
 installer's `--pixel` opt-in. `DISPATCH_PLANNER` changes the launcher default;
 `--model` or `DISPATCH_MODEL` changes only the planner model. Astra is the Codex
-default; Claude uses its account's configured model unless explicitly selected.
+default; Claude uses Fable unless explicitly overridden. New station conversations
+receive the same planner instructions as local launches. Reconnecting retains the
+existing conversation; it does not inject a new task into a running planner.
 Codex gets write access to the harness's `runs/` directory through `--add-dir`,
 and keeps its configured sandbox and approval policy. A detached worker's
 desktop notification does not itself wake the planner: use `resume dispatch
@@ -995,20 +1004,99 @@ first.
 
 ## Demo recordings
 
-On a frontend run whose brief includes a Demo storyboard, the implementer writes
-the shot-scraper file and the pipeline can record it against a dev server inside
-the worktree — so the PR body carries a video of the change instead of a
-description of it. `DEMO_DEV_CMD` pins the command used by `demo-auth.sh`, and
-`DEMO_PORT` pins the storyboard origin and lets the recording stage reject a
-busy port; both live in [the repo pin](reference.md#the-repo-pin). Recording is
-enabled only when `shot-scraper` is installed and `demo.conf.sh` names a valid
-`rclone` remote. Then `shot-scraper` records, `ffmpeg` transcodes and builds the
-preview GIF, and `rclone` uploads both before the PR body is updated. Without
-that upload configuration the stage is skipped, and the run is otherwise
-unaffected. A site behind a login gets its session captured once, by hand, with
-`demo-auth.sh` — which falls back to `python3` running `auth-capture.py` when
-`shot-scraper` was installed outside uv's default tool directory. Every part of
-this is guarded: a missing binary or a failed recording never fails a run.
+Frontend briefs include a **Demo storyboard**. The worker writes
+`.harness/demo.json`, and the harness runs it through
+[agent-browser](https://agent-browser.dev/commands) after the final test gate
+and base sync. Each capture has its own browser session and dev server in the
+worktree. Screenshots are the default; `video: true` also records an MP4.
+The [brief template](../brief-template.md#demo-storyboard) is the format reference.
+Neither capture nor publication calls a model.
+
+On each execution host, install the optional browser tool once:
+
+```bash
+npm install -g agent-browser
+agent-browser install
+```
+
+Screenshots need no object storage or FFmpeg. Video requires `ffmpeg` on PATH;
+if it is missing, the harness saves screenshots and records that video was
+skipped. `AGENT_BROWSER_BIN` selects a nonstandard CLI location, and
+`AGENT_BROWSER_EXECUTABLE_PATH` can select a browser binary. Other ambient
+agent-browser profiles, CDP connections, and saved-session overrides are not
+inherited. Capture does not attach to someone's personal browser session.
+
+For apps requiring login, run `demo-auth.sh /path/to/repo` once on the execution
+host; it uses the existing Python/Playwright capture helper. The default state
+is `auth/<repo-name>.json`. For separate station accounts or repositories with
+the same basename, pin `DEMO_AUTH_FILE` to the intended account's saved state
+in `repo_config_local`. This file stays on that host and is never uploaded.
+Use demo accounts and fixture data appropriate for the PR audience. A missing
+or expired session normally fails the storyboard's success-state wait; the
+result reports the failure rather than attaching a login-screen recording.
+
+A run keeps `evidence.json` plus immutable capture directories under
+`runs/<ID>/evidence/<commit>-<capture>/`. The manifest records the commit,
+attempt, provider, media hashes, and capture/publication status. It is also
+included as `result.evidence`, visible through `dispatch status <ID> --json`.
+Ordinary `dispatch status <ID>` shows the evidence status, reason, and media folder.
+`--no-publish` keeps the same local evidence without contacting GitHub or R2.
+A failed scene publishes no partial media. Media hashes and the PR's current
+commit must match the capture before upload. Capture remains advisory:
+a run can be code-ready while its evidence is `failed` or `publish_failed`.
+
+For publishing runs, the harness checks whether `gh pr edit --help` supports
+`--attach`. Current [GitHub CLI](https://cli.github.com/manual/gh_pr_edit) can
+upload the media directly using the run's GitHub account. The harness updates
+one marked **Frontend evidence** section and preserves the rest of the PR body.
+Older GitHub CLI versions can use the existing `demo.conf.sh` settings:
+`R2_REMOTE` for an rclone destination and `R2_PUBLIC` for its HTTPS serving URL.
+Uploads use a separate repo/run/commit/capture path, so another run cannot
+replace media already linked from a PR. If neither upload method is available,
+the files remain local and the PR explains how to enable uploads.
+
+The planner handles evidence recovery with `dispatch resume ID` after addressing
+the reported cause. It records again when capture failed and uploads existing
+media when only publication is missing. No worker or reviewer is repeated.
+
+The following commands are operator tools for inspecting or explicitly rerunning
+evidence once the run is `ready` or `ready_local`:
+
+```bash
+dispatch evidence ID                         # inspect the saved manifest
+dispatch evidence ID --json                  # machine-readable evidence
+dispatch evidence ID --capture               # capture again, save locally
+dispatch evidence ID --publish               # upload existing files only
+dispatch evidence ID --capture --publish     # capture, then upload
+dispatch evidence ID --publish --on mini     # use the run's saved Mini account
+```
+
+These commands run no implementer, reviewer, or gate. The code verdict, attempt,
+metrics, and checkpoints remain intact. Each capture gets a new directory;
+previous media stays available. Capture requires the original worktree to be
+clean and still at the completed run's commit. Fixing browser setup, saved login
+state, or the ignored `.harness/demo.json` storyboard is enough to retry. Changed
+product code needs a new reviewed run. Upload-only recovery also works after
+worktree cleanup, using the saved repository, media hashes, and live PR commit.
+
+Retries run on the original execution host under its saved account configuration.
+An expired GitHub login leaves the files in place and prints
+`dispatch login gh --for-run ID`, followed by `dispatch resume ID`; remote commands
+include `--on`. A run started with `--no-publish` remains local. Upload needs an
+existing PR and never creates one or pushes code. Older runs without a saved
+account and commit-bound evidence record remain readable but cannot be retried.
+
+Capture and upload run in the foreground. `dispatch status ID` shows the active
+evidence operation. The existing CLI run lock prevents duplicate retries and
+pipeline launches; an already-running legacy driver or `sync-pr.sh` also blocks
+the retry. Interruptions keep the code verdict and any previous captures. The
+operation's local diagnostics are in `demo.log` and `demo-driver.log`.
+
+Legacy `.harness/demo.yml` shot-scraper storyboards remain supported. They
+require `shot-scraper` and a repo-pinned `DEMO_PORT`; the newer JSON storyboard
+takes the port from its URL. `DEMO_DEV_CMD` still configures the server used by
+`demo-auth.sh`. A busy port is a capture failure, and cleanup terminates only
+process groups created by the capture; it never kills an unrelated listener.
 
 ## Claude-only mode
 

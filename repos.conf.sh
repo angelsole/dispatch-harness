@@ -78,7 +78,7 @@ repo_config() {
   local name; name=$(basename "$repo")
   BASE_BRANCH=""; INSTALL_CMD=""; GATE_CMD=""; VISUAL_GATE_CMD=""; MCP_CONFIG=""
   VISUAL_SCOPE_GLOBS=""; IMPLEMENTER_PROVIDER=""; IMPLEMENTER_MODEL=""
-  ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; PREPROD=""
+  ENV_SUBDIRS=""; DEV_CMD=""; PREFLIGHT_CMD=""; DEMO_DEV_CMD=""; DEMO_PORT=""; DEMO_AUTH_FILE=""; PREPROD=""
   QUALITY_GATE=""; DEPS_CACHE_POST_CMD=""
 
   # User pins first (if repos.local.sh defined the hook); auto-detection then
