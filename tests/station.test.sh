@@ -16,6 +16,7 @@ bad() { fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$3], got [$2])"; fi; }
 has() { if grep -qF -- "$2" "$1"; then ok "$3"; else bad "$3"; fi; }
 absent() { if [ ! -e "$1" ]; then ok "$2"; else bad "$2"; fi; }
+omits() { if grep -qF -- "$2" "$1"; then bad "$3"; else ok "$3"; fi; }
 # Clear ambient overrides so this suite cannot inherit a real station identity.
 fixture() {
   env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u GH_CONFIG_DIR -u HARNESS_OWNER \
@@ -41,7 +42,7 @@ if [ "$1" = login ]; then
   printf 'codex\n' >> "$CAPTURE/login-calls"
 fi
 printf '%s\n' "$@" > "$CAPTURE/codex.args"
-printf '%s\n' "$CODEX_HOME" "$CLAUDE_CONFIG_DIR" "$GH_CONFIG_DIR" "${HARNESS_OWNER:-}" > "$CAPTURE/identity"
+printf '%s\n' "${CODEX_HOME:-native}" "${CLAUDE_CONFIG_DIR:-native}" "${GH_CONFIG_DIR:-native}" "${HARNESS_OWNER:-}" > "$CAPTURE/identity"
 printf '%s\n' "${GH_TOKEN:-clear}" "${OPENAI_API_KEY:-clear}" "${ANTHROPIC_API_KEY:-clear}" > "$CAPTURE/tokens"
 CLI
 cat > "$BIN/claude" <<'CLI'
@@ -58,7 +59,7 @@ if [ "${2:-}" = login ]; then
   printf 'claude\n' >> "$CAPTURE/login-calls"
 fi
 printf '%s\n' "$@" > "$CAPTURE/claude.args"
-printf '%s\n' "$CLAUDE_CONFIG_DIR" > "$CAPTURE/claude.home"
+printf '%s\n' "${CLAUDE_CONFIG_DIR:-native}" > "$CAPTURE/claude.home"
 CLI
 cat > "$BIN/gh" <<'CLI'
 #!/usr/bin/env bash
@@ -72,7 +73,7 @@ if [ "${2:-}" = login ]; then
   printf 'gh\n' >> "$CAPTURE/login-calls"
 fi
 printf '%s\n' "$@" > "$CAPTURE/gh.args"
-printf '%s\n' "$GH_CONFIG_DIR" > "$CAPTURE/gh.home"
+printf '%s\n' "${GH_CONFIG_DIR:-native}" > "$CAPTURE/gh.home"
 CLI
 cat > "$BIN/caffeinate" <<'CLI'
 #!/usr/bin/env bash
@@ -93,7 +94,8 @@ case "$1" in
     # Simulate a tmux server that retained another user's ambient API keys.
     cd "$6"
     GH_TOKEN=stale-server-token OPENAI_API_KEY=stale-server-key \
-      ANTHROPIC_API_KEY=stale-server-key bash -c "$7"
+      ANTHROPIC_API_KEY=stale-server-key CLAUDE_CONFIG_DIR=stale-server-claude \
+      CODEX_HOME=stale-server-codex GH_CONFIG_DIR=stale-server-gh bash -c "$7"
     ;;
   *) exit 2 ;;
 esac
@@ -180,6 +182,7 @@ mkdir -p "$WEIRD_DIR"
 station --owner alice --dir "$WEIRD_DIR" > "$ROOT/start.out"
 check 'start: Astra session' "$(cat "$CAPTURE/session")" dispatch-alice-codex-gpt-6-astra
 has "$CAPTURE/codex.args" 'gpt-6-astra' 'start: Astra model is explicit'
+omits "$CAPTURE/codex.args" '--dangerously-bypass-approvals-and-sandbox' 'start: ordinary Codex does not request bypass'
 has "$CAPTURE/codex.args" "$H/runs" 'start: run directory is writable for Codex'
 check 'start: tmux receives literal directory' "$(cat "$CAPTURE/dir")" "$WEIRD_DIR"
 check 'start: tmux inherited tokens cleared' "$(sort -u "$CAPTURE/tokens")" clear
@@ -193,11 +196,27 @@ if FAKE_EXISTING=1 station --owner alice --dir "$WEIRD_DIR" --accounts-dir "$ROO
 station --owner alice --planner claude >/dev/null
 check 'start: Claude has distinct session' "$(cat "$CAPTURE/session")" dispatch-alice-claude-default
 check 'start: Claude account selected' "$(cat "$CAPTURE/claude.home")" "$FIXTURE_HOME/accounts/alice/claude"
+omits "$CAPTURE/claude.args" '--dangerously-skip-permissions' 'start: ordinary Claude does not request bypass'
 if [ -f "$FIXTURE_HOME/accounts/alice/claude/skills/dispatch/SKILL.md" ]; then ok 'start: Claude owner discovers shared skills'; else bad 'start: Claude owner discovers shared skills'; fi
 if [ -f "$FIXTURE_HOME/accounts/alice/claude/skills/dispatch-pixel/SKILL.md" ]; then ok 'start: Claude owner discovers enabled visual skill'; else bad 'start: Claude owner discovers enabled visual skill'; fi
 station --owner alice --model gpt-5.6-sol >/dev/null
 has "$CAPTURE/codex.args" 'gpt-5.6-sol' 'start: explicit model honored'
 if FAKE_AUTH_FAIL=codex station --owner alice > "$ROOT/start-bad.out" 2>&1; then bad 'start: missing login refused'; else ok 'start: missing login refused'; fi
+
+station --owner alice --hands-off > "$ROOT/hands-off.out"
+check 'hands-off: separate Codex session' "$(cat "$CAPTURE/session")" dispatch-alice-codex-gpt-6-astra-hands-off
+has "$CAPTURE/codex.args" '--dangerously-bypass-approvals-and-sandbox' 'hands-off: Codex bypass is explicit'
+omits "$CAPTURE/codex.args" '--dangerously-skip-permissions' 'hands-off: Codex does not receive Claude flag'
+has "$CAPTURE/context" "'hands-off'" 'hands-off: context records permissions'
+rm -f "$CAPTURE/attached"
+FAKE_EXISTING=1 station --owner alice --hands-off >/dev/null
+if [ -f "$CAPTURE/attached" ]; then ok 'hands-off: same context reconnects'; else bad 'hands-off: same context reconnects'; fi
+if FAKE_EXISTING=1 station --owner alice > "$ROOT/reconnect-mode.out" 2>&1; then bad 'hands-off: ordinary request rejects bypass context'; else ok 'hands-off: ordinary request rejects bypass context'; fi
+station --owner alice --planner claude --model fable --hands-off >/dev/null
+check 'hands-off: separate Claude session' "$(cat "$CAPTURE/session")" dispatch-alice-claude-fable-hands-off
+has "$CAPTURE/claude.args" '--dangerously-skip-permissions' 'hands-off: Claude bypass is explicit'
+omits "$CAPTURE/claude.args" '--dangerously-bypass-approvals-and-sandbox' 'hands-off: Claude does not receive Codex flag'
+if FAKE_AUTH_FAIL=claude station --owner alice --planner claude --hands-off > "$ROOT/start-bad.out" 2>&1; then bad 'hands-off: login still required'; else ok 'hands-off: login still required'; fi
 
 station doctor --host mini --owner alice > /dev/null
 has "$CAPTURE/ssh.args" 'BatchMode=yes' 'remote: doctor never waits for SSH login'
@@ -211,6 +230,9 @@ check 'remote: account paths resolve on the Mini' "$(head -1 "$CAPTURE/identity"
 FAKE_SSH_EXEC=1 FAKE_REMOTE_HOME="$REMOTE_HOME" station --host mini --owner bob --dir "$WEIRD_DIR" >/dev/null
 check 'remote: quote survives SSH and tmux' "$(cat "$CAPTURE/dir")" "$WEIRD_DIR"
 absent "$WEIRD_DIR/INJECTED" 'remote: shell syntax never executes'
+FAKE_SSH_EXEC=1 FAKE_REMOTE_HOME="$REMOTE_HOME" station --host mini --owner bob --dir "$WEIRD_DIR" --hands-off >/dev/null
+has "$CAPTURE/codex.args" '--dangerously-bypass-approvals-and-sandbox' 'remote: hands-off survives SSH and tmux'
+check 'remote: hands-off has separate session' "$(cat "$CAPTURE/session")" dispatch-bob-codex-gpt-6-astra-hands-off
 
 : > "$CAPTURE/login-calls"
 station setup --owner alice >/dev/null
@@ -236,7 +258,18 @@ ln -s "$FIXTURE_HOME/.agents/skills" "$REMOTE_HOME/.agents/skills"
 FAKE_SSH_EXEC=1 FAKE_REMOTE_HOME="$REMOTE_HOME" station setup --host mini --owner bob >/dev/null
 check 'setup: works over SSH without a separate remote installer' "$(cat "$CAPTURE/session")" dispatch-bob-codex-gpt-6-astra
 has "$CAPTURE/ssh.args" '-t' 'setup: remote onboarding requests a terminal'
-for option in '--owner ../escape' '--host -oops' '--planner other' '--browser' '--repo /tmp'; do
+station setup --owner alice --planner claude --hands-off >/dev/null
+has "$CAPTURE/claude.args" '--dangerously-skip-permissions' 'setup: hands-off reaches selected planner after login checks'
+station login claude >/dev/null
+check 'native: login keeps Claude configuration unset' "$(cat "$CAPTURE/claude.home")" native
+station --planner claude --hands-off >/dev/null
+check 'native: tmux does not inherit an old Claude profile' "$(cat "$CAPTURE/claude.home")" native
+check 'native: avoids pre-fix alternate-profile session' "$(cat "$CAPTURE/session")" dispatch-current-claude-default-native-hands-off
+station >/dev/null
+check 'native: tmux clears inherited account directory overrides' "$(head -3 "$CAPTURE/identity" | sort -u)" native
+fixture env CLAUDE_CONFIG_DIR="$FIXTURE_HOME/.claude" bash "$H/station.sh" --planner claude >/dev/null
+check 'native: explicitly selected default directory stays explicit' "$(cat "$CAPTURE/claude.home")" "$FIXTURE_HOME/.claude"
+for option in '--owner ../escape' '--host -oops' '--planner other' '--browser' '--repo /tmp' 'doctor --hands-off' 'login codex --hands-off'; do
   # Only fixed test literals are split here.
   # shellcheck disable=SC2086
   if station $option > "$ROOT/invalid.out" 2>&1; then bad "usage: rejects $option"; else ok "usage: rejects $option"; fi

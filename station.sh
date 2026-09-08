@@ -10,6 +10,8 @@
 #   Add --owner NAME to select ~/accounts/NAME/{claude,codex,gh}.
 #   --accounts-dir PATH overrides ~/accounts (on the target machine).
 #   --remote-harness PATH selects a non-default install on the SSH host.
+#   --hands-off bypasses planner permission checks (Codex also disables its sandbox).
+#   Available for start/setup; it opens a separate session from the default mode.
 #
 # Codex defaults to gpt-6-astra; Claude uses its selected account's model.
 # Each owner/planner/model gets a separate tmux session. Re-running reattaches;
@@ -39,6 +41,7 @@ shell_args() {
 }
 
 ACTION=start; LOGIN_PROVIDER=""; HOST=""; REMOTE_HARNESS=""; BROWSER=0
+HANDS_OFF=0
 PLANNER="${DISPATCH_PLANNER:-codex}"; MODEL="${DISPATCH_MODEL:-}"
 OWNER="${HARNESS_OWNER:-}"; OWNER_EXPLICIT=0; ACCOUNTS_DIR="${QM_ACCOUNTS_DIR:-$HOME/accounts}"
 STATION_DIR="${DISPATCH_STATION_DIR:-$HOME}"; REPO=""
@@ -65,6 +68,7 @@ while [ $# -gt 0 ]; do
       esac
       shift ;;
     --browser) BROWSER=1; REMOTE_ARGS+=("$1") ;;
+    --hands-off) HANDS_OFF=1; REMOTE_ARGS+=("$1") ;;
     -h|--help) harness_usage "$0"; exit 0 ;;
     *) usage_error "unknown option: $1 (see --help)" ;;
   esac
@@ -79,6 +83,8 @@ fi
 [ "$BROWSER" = 0 ] || { [ "$ACTION" = login ] && [ "$LOGIN_PROVIDER" = codex ]; } \
   || usage_error "--browser is only for login codex"
 [ -z "$REPO" ] || [ "$ACTION" = doctor ] || usage_error "--repo is only for doctor"
+[ "$HANDS_OFF" = 0 ] || { [ "$ACTION" = start ] || [ "$ACTION" = setup ]; } \
+  || usage_error "--hands-off is only for start or setup"
 
 if [ -n "$HOST" ]; then
   case "$HOST" in -*|*[!a-zA-Z0-9_.@:-]*) usage_error "invalid SSH host" ;; esac
@@ -121,11 +127,16 @@ if [ -n "$OWNER" ]; then
   export CLAUDE_CONFIG_DIR="$ACCOUNT_DIR/claude"
   export CODEX_HOME="$ACCOUNT_DIR/codex"
   export GH_CONFIG_DIR="$ACCOUNT_DIR/gh"
-else
-  export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-  export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-  export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
 fi
+# Keep native CLI configuration selection. In particular, exporting the
+# default Claude directory changes its global config file and MCP servers.
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+GH_DIR="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
+ACCOUNT_ENV=()
+[ -z "${CLAUDE_CONFIG_DIR:-}" ] || ACCOUNT_ENV+=("CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR")
+[ -z "${CODEX_HOME:-}" ] || ACCOUNT_ENV+=("CODEX_HOME=$CODEX_HOME")
+[ -z "${GH_CONFIG_DIR:-}" ] || ACCOUNT_ENV+=("GH_CONFIG_DIR=$GH_CONFIG_DIR")
 export HARNESS_DIR HARNESS_OWNER="$OWNER"
 # Station workers use the selected subscription/account, including when an
 # existing tmux server remembers tokens from somebody else's old shell.
@@ -151,7 +162,7 @@ check_auth() {
 login_provider() {  # $1 = provider, $2 = use browser callback (Codex only)
   local provider="$1" browser="${2:-0}"
   if [ -n "$OWNER" ]; then
-    (umask 077; mkdir -p "$CLAUDE_CONFIG_DIR" "$CODEX_HOME" "$GH_CONFIG_DIR") || return 1
+    (umask 077; mkdir -p "$CLAUDE_DIR" "$CODEX_DIR" "$GH_DIR") || return 1
   fi
   echo "station: login $provider for ${OWNER:-current account}"
   case "$provider" in
@@ -188,7 +199,7 @@ if [ "$ACTION" = setup ]; then
     [ -f "$HOME/.agents/skills/$skill/SKILL.md" ] \
       || die "shared Codex skill $skill is missing; ask the station operator to re-run install.sh"
   done
-  (umask 077; mkdir -p "$CLAUDE_CONFIG_DIR" "$CODEX_HOME" "$GH_CONFIG_DIR")
+  (umask 077; mkdir -p "$CLAUDE_DIR" "$CODEX_DIR" "$GH_DIR")
   echo "station: setting up $OWNER on this machine"
   for provider in codex claude gh; do
     if check_auth "$provider"; then
@@ -253,13 +264,23 @@ command -v tmux >/dev/null || die "tmux is not installed"
 if [ "$PLANNER" = codex ]; then
   MODEL="${MODEL:-gpt-6-astra}"
   planner_cmd=("$CODEX_BIN" -m "$MODEL" -C "$STATION_DIR" --add-dir "$HARNESS_DIR/runs")
+  [ "$HANDS_OFF" = 0 ] || planner_cmd+=(--dangerously-bypass-approvals-and-sandbox)
 else
   planner_cmd=("$CLAUDE_BIN")
   [ -z "$MODEL" ] || planner_cmd+=(--model "$MODEL")
+  [ "$HANDS_OFF" = 0 ] || planner_cmd+=(--dangerously-skip-permissions)
 fi
 SESSION="dispatch-${OWNER:-current}-$PLANNER-${MODEL:-default}"
+# A native session must not reattach to a pre-fix session that exported the
+# default CLAUDE_CONFIG_DIR and therefore opened a different Claude profile.
+[ -n "${CLAUDE_CONFIG_DIR:-}" ] || SESSION="$SESSION-native"
+[ "$HANDS_OFF" = 0 ] || SESSION="$SESSION-hands-off"
 SESSION="${SESSION//./_}"
-context=$(shell_args "$STATION_DIR" "$HARNESS_DIR" "$CLAUDE_CONFIG_DIR" "$CODEX_HOME" "$GH_CONFIG_DIR" "$MODEL")
+context=$(shell_args "$STATION_DIR" "$HARNESS_DIR" "$CLAUDE_DIR" "$CODEX_DIR" "$GH_DIR" "$MODEL")
+[ -n "${CLAUDE_CONFIG_DIR:-}" ] || context="$context $(shell_args native-claude-config)"
+# Preserve the context format of existing ordinary sessions. Hands-off has its
+# own name and records the permission choice as an additional context field.
+[ "$HANDS_OFF" = 0 ] || context="$context $(shell_args hands-off)"
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
   # A changed accounts root must never reattach to the other account's session.
   existing_context=$(tmux show-options -qv -t "$SESSION" @dispatch-context)
@@ -278,17 +299,18 @@ if [ "$PLANNER" = claude ]; then
     owner_skills+=(dispatch-pixel)
   fi
   for skill in "${owner_skills[@]}"; do
-    if [ ! -e "$CLAUDE_CONFIG_DIR/skills/$skill" ]; then
-      mkdir -p "$CLAUDE_CONFIG_DIR/skills"
-      ln -s "$HARNESS_DIR/planner-skills/$skill" "$CLAUDE_CONFIG_DIR/skills/$skill"
+    if [ ! -e "$CLAUDE_DIR/skills/$skill" ]; then
+      mkdir -p "$CLAUDE_DIR/skills"
+      ln -s "$HARNESS_DIR/planner-skills/$skill" "$CLAUDE_DIR/skills/$skill"
     fi
   done
 fi
 keep_awake=()
 command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -i)
-command_line=$(shell_args env "${CLEAR_AUTH[@]}" "PATH=$PATH" "HARNESS_DIR=$HARNESS_DIR" "HARNESS_DETACH=1" \
-  "HARNESS_OWNER=$OWNER" "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" "CODEX_HOME=$CODEX_HOME" \
-  "GH_CONFIG_DIR=$GH_CONFIG_DIR" ${keep_awake[@]+"${keep_awake[@]}"} "${planner_cmd[@]}")
+command_line=$(shell_args env "${CLEAR_AUTH[@]}" -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u GH_CONFIG_DIR \
+  "PATH=$PATH" "HARNESS_DIR=$HARNESS_DIR" "HARNESS_DETACH=1" \
+  "HARNESS_OWNER=$OWNER" ${ACCOUNT_ENV[@]+"${ACCOUNT_ENV[@]}"} \
+  ${keep_awake[@]+"${keep_awake[@]}"} "${planner_cmd[@]}")
 echo "station: $SESSION | $STATION_DIR (detach with your tmux prefix, then d; default Ctrl-b)"
 # Chain the option write before attaching, so another reconnect can verify cwd.
 exec tmux new-session -d -s "$SESSION" -c "$STATION_DIR" "$command_line" \; \

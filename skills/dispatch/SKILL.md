@@ -28,6 +28,13 @@ which repos are involved before launching; each gets a separate run and branch.
 For an unconfigured repository, `dispatch init --repo <repo>` detects and saves
 its settings. Check that its proposed test gate actually verifies this project.
 
+For a free-text request, ask once whether to create a tracker ticket (Linear
+when available) or run ad hoc before submitting. An existing ticket or an
+explicit tracking choice already answers this question. Hands-off mode skips
+tool permission prompts; it does not choose tracking. If the tracker is
+unavailable, explain that and confirm an ad-hoc run instead of silently falling
+back. For a new ticket, follow the placement rules in the detailed protocol.
+
 For document attachments, multi-repo interface contracts, ticket creation,
 visual work, and post-PR repairs, read the relevant part of
 [the detailed protocol](references/pipeline.md). Do not load it for an ordinary
@@ -42,7 +49,8 @@ product choices or irreversible actions. An omitted, ordinary reversible fork
 does not itself require a question; an undeclared irreversible action still
 stops the run. Do not prescribe the implementation
 beyond what correctness requires. Show the scope for approval only if it has
-not already been authorized. Tracking is optional and never blocks an ad-hoc run.
+not already been authorized. Combine any needed scope approval with the tracking
+question; do not ask again after the user has chosen an ad-hoc run.
 
 ## 3. Submit
 

@@ -26,6 +26,33 @@ Switching opens a separate conversation in the selected CLI; saved harness
 runs remain accessible through `dispatch status`. The worker and reviewer
 keep their repository settings regardless of which planner you choose.
 
+For unattended orchestration, use `dispatch --hands-off "task description"`,
+optionally with `--planner claude --model fable`. This is an explicit launch
+choice: Claude Code gets `--dangerously-skip-permissions`; Codex gets
+`--dangerously-bypass-approvals-and-sandbox`, disabling both permission prompts
+and the Codex sandbox. The launch banner shows the selected mode. Existing
+CLI settings apply when the flag is absent. It does not change background
+worker/reviewer permissions, skip gates, supply missing logins, or authorize
+work outside the request. `run`, `resume`, and diagnostic commands reject the
+flag because they do not launch a planner conversation.
+
+Tracking remains a user choice in hands-off mode. For a free-text task, the
+planner asks once whether to create a tracker ticket or run ad hoc unless the
+request already specifies that choice. A supplied ticket is reused. A missing
+tracker connection is reported before offering an ad-hoc fallback.
+
+The local launcher preserves unset provider config variables. This matters
+for Claude: native configuration is `~/.claude.json`, while explicitly setting
+`CLAUDE_CONFIG_DIR=~/.claude` selects `~/.claude/.claude.json`. Forcing that
+seemingly equivalent path can produce another onboarding/login flow and hide
+project MCP connections. A named station still uses its explicitly selected
+profile. Native stations have a distinct session name from older stations
+that forced the alternate profile; reconnecting cannot silently choose it.
+Saved tasks suggest `dispatch login <provider> --for-run <ID>` for repair.
+That command restores the task's account context on its execution host,
+including native defaults and custom profile directories. Add `--on mini`
+for a remote task; the context is resolved on the Mini.
+
 `dispatch doctor` checks only the selected planner; `--pipeline --repo <repo>`
 also checks the dependencies needed to start a task. Neither performs a paid
 model request or proves remaining credits.
@@ -87,7 +114,14 @@ teammate's saved subscriptions while that person is away:
 dispatch stations --on mini
 dispatch station --on mini --owner teammate --dir /path/to/repos
 dispatch station --on mini --owner teammate --dir /path/to/repos --planner claude --model fable
+dispatch station --on mini --owner teammate --planner claude --model fable --hands-off
 ```
+
+The last command opens a hands-off planner. Each hands-off station uses a
+separate tmux session from the corresponding ordinary station. Repeat the
+same command, including `--hands-off`, to reconnect. Direct SSH entry through
+`station.sh start` or `station.sh setup` accepts the flag too; doctor and login
+do not. Choosing hands-off does not edit another user's default settings.
 
 Use `station` to open or reconnect the persistent remote planner. Use `run
 --on mini --owner teammate` to send a prepared brief from a local planner.
