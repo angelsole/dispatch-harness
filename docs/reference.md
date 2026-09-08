@@ -35,6 +35,15 @@ binds completed stages to the code, brief, configuration, and review evidence.
 A per-run `.dispatch.lock` follows the detached process tree to prevent duplicate
 launches. The shell runner's existing `result.json` remains the verdict.
 
+`dispatch evidence ID` reads the latest completed run's evidence. `--capture`
+records again; `--publish` uploads existing files to its PR. Flags can be combined
+and accept `--on HOST`. They reuse the run lock and saved account. During a retry,
+`evidence-operation.json` identifies the active helper and stage; it is removed
+on normal completion or interruption and ignored when the process is gone.
+Only `result.evidence` and the compatible `demo_url` change. Each capture has its
+own `evidence/<commit>-<capture>/manifest.json`; `evidence.json` points to the
+latest attempt. See [Demo recordings](operations.md#demo-recordings).
+
 ### The Quartermaster
 
 | Env var | What it does | Default |

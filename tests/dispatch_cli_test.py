@@ -170,6 +170,15 @@ class DispatchTests(unittest.TestCase):
         output = self.call('status', 'DEMO-LOCAL').stdout
         self.assertIn('frontend evidence: captured', output)
         self.assertIn(str(Path(result['logs']) / evidence['directory']), output)
+        gates = (self.root / 'gates').read_bytes()
+        models = (len(self.events('implement')), len(self.events('review')))
+        updated = json.loads(self.call('evidence', 'DEMO-LOCAL', '--capture', '--json').stdout)
+        self.assertEqual(updated['state'], 'ready_local')
+        self.assertEqual(updated['result']['evidence']['status'], 'captured')
+        self.assertNotEqual(updated['result']['evidence']['directory'], evidence['directory'])
+        self.assertEqual(updated['result']['attempt'], result['result']['attempt'])
+        self.assertEqual(gates, (self.root / 'gates').read_bytes())
+        self.assertEqual(models, (len(self.events('implement')), len(self.events('review'))))
 
     def test_local_claude_profile_discovers_shared_protocol(self):
         profile = self.home / 'accounts/teammate'

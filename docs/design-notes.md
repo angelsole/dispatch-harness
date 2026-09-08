@@ -90,22 +90,24 @@ database, or mandatory cloud account. The existing `.creative/` visual gate
 still serves tasks with an art-direction contract; an ordinary frontend demo
 does not need that entire profile.
 
+`dispatch evidence ID --capture` and `--publish` now recover capture and upload
+independently, using the saved account and run lock. Previous captures remain
+addressable by commit. Upload-only recovery survives worktree cleanup; neither
+operation repeats model work or changes the code verdict.
+
 The next improvements should be measured against user effort and recovery:
 
-1. **Recover evidence independently.** Add a supported capture/upload retry
-   command using the run's saved account and a lock, without re-running the
-   implementer or reviewer. Keep previous captures addressable by commit.
-2. **Improve handoff through the existing records.** Publish concise decisions,
+1. **Improve handoff through the existing records.** Publish concise decisions,
    unresolved questions, and artifact links to the selected ticket/PR. Extend
    the current result schema before introducing a separate collaboration store.
-3. **Add diagrams selectively.** [PR Lens](https://github.com/coldteadotai/pr-lens)
+2. **Add diagrams selectively.** [PR Lens](https://github.com/coldteadotai/pr-lens)
    can turn an agent-authored graph into architecture and data-flow diagrams.
    Use it for changes spanning components or services. Treat diagrams as
    explanations, separate from screenshots and executable verification. Prefer
    the existing planner authoring a graph plus local validation/rendering;
    installing its GitHub App or publishing a public canvas is an independent
    deployment choice.
-4. **Measure routing before enforcing it.** Spotify's
+3. **Measure routing before enforcing it.** Spotify's
    [bulk-reader/code-writer experiment](https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90)
    suggests compact summaries for large reads and cheaper models for repetitive
    generation. Its reported savings concern bulk-read tokens in four scenarios,

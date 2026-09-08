@@ -15,11 +15,12 @@ import demo
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ZkAAAAASUVORK5CYII=")
 FAKE = r'''#!/usr/bin/env python3
-import json, os, pathlib, re, subprocess, sys
+import json, os, pathlib, re, subprocess, sys, time
 root=pathlib.Path(os.environ['DEMO_TEST_ROOT'])
 args=sys.argv[1:]; name=pathlib.Path(sys.argv[0]).name
 with (root/'calls').open('a') as f:
-    f.write(json.dumps({'name':name,'args':args,'env':{k:v for k,v in os.environ.items() if k.startswith('AGENT_BROWSER_')}})+'\n')
+    f.write(json.dumps({'name':name,'args':args,'env':{k:v for k,v in os.environ.items() if k.startswith('AGENT_BROWSER_')},
+        'account':{k:os.environ.get(k) for k in ('CLAUDE_CONFIG_DIR','CODEX_HOME','GH_CONFIG_DIR','HARNESS_OWNER','GH_TOKEN')}})+'\n')
 if name=='agent-browser':
     a=args[4:]
     if a[0]=='screenshot': pathlib.Path(a[1]).write_bytes((root/'fixture.png').read_bytes())
@@ -27,6 +28,8 @@ if name=='agent-browser':
         (root/'video-path').write_text(a[2])
         pathlib.Path(a[2]).write_bytes(b'\0\0\0\x18ftypmp42fixture')
     if a[0]=='wait' and a[1]=='#missing': sys.exit(1)
+    if a[0]=='wait':
+        while (root/'hold-browser').exists(): time.sleep(.05)
     if a[0]=='fill' and a[1]=='#mutate': pathlib.Path('index.html').write_text('changed during recording')
 elif name=='shot-scraper':
     pathlib.Path('.harness/demo.mp4').write_bytes(b'\0\0\0\x18ftypmp42fixture')
@@ -34,7 +37,9 @@ elif name=='shot-scraper':
 elif name=='ffmpeg':
     pathlib.Path(args[-1]).write_bytes((root/'fixture.png').read_bytes())
 elif name=='gh':
-    if args==['pr','edit','--help']:
+    if args[:2]==['auth','status']:
+        sys.exit(1 if (root/'gh-expired').exists() else 0)
+    elif args==['pr','edit','--help']:
         print('gh pr edit' + (' --attach file' if (root/'native').exists() else ''))
     elif args[:2]==['pr','view']:
         if 'body,headRefOid' in args:
@@ -43,6 +48,7 @@ elif name=='gh':
         else: print((root/'body').read_text())
     elif args[:2]==['repo','view']: print('team/app')
     elif args[:2]==['pr','edit']:
+        while (root/'hold-upload').exists(): time.sleep(.05)
         if (root/'upload-fails').exists(): sys.exit(1)
         body=pathlib.Path(args[args.index('--body-file')+1]).read_text()
         for i,a in enumerate(args):

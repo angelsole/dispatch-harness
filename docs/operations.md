@@ -1032,8 +1032,8 @@ attempt, provider, media hashes, and capture/publication status. It is also
 included as `result.evidence`, visible through `dispatch status <ID> --json`.
 Ordinary `dispatch status <ID>` shows the evidence status, reason, and media folder.
 `--no-publish` keeps the same local evidence without contacting GitHub or R2.
-A failed scene publishes no partial media. A changed worktree or changed media
-cannot be uploaded as evidence of the recorded commit. Capture remains advisory:
+A failed scene publishes no partial media. Media hashes and the PR's current
+commit must match the capture before upload. Capture remains advisory:
 a run can be code-ready while its evidence is `failed` or `publish_failed`.
 
 For publishing runs, the harness checks whether `gh pr edit --help` supports
@@ -1045,6 +1045,38 @@ Older GitHub CLI versions can use the existing `demo.conf.sh` settings:
 Uploads use a separate repo/run/commit/capture path, so another run cannot
 replace media already linked from a PR. If neither upload method is available,
 the files remain local and the PR explains how to enable uploads.
+
+Evidence can be recovered independently once the run is `ready` or `ready_local`:
+
+```bash
+dispatch evidence ID                         # inspect the saved manifest
+dispatch evidence ID --json                  # machine-readable evidence
+dispatch evidence ID --capture               # capture again, save locally
+dispatch evidence ID --publish               # upload existing files only
+dispatch evidence ID --capture --publish     # capture, then upload
+dispatch evidence ID --publish --on mini     # use the run's saved Mini account
+```
+
+These commands run no implementer, reviewer, or gate. The code verdict, attempt,
+metrics, and checkpoints remain intact. Each capture gets a new directory;
+previous media stays available. Capture requires the original worktree to be
+clean and still at the completed run's commit. Fixing browser setup, saved login
+state, or the ignored `.harness/demo.json` storyboard is enough to retry. Changed
+product code needs a new reviewed run. Upload-only recovery also works after
+worktree cleanup, using the saved repository, media hashes, and live PR commit.
+
+Retries run on the original execution host under its saved account configuration.
+An expired GitHub login leaves the files in place and prints
+`dispatch login gh --for-run ID`, followed by the upload retry; remote commands
+include `--on`. A run started with `--no-publish` remains local. Upload needs an
+existing PR and never creates one or pushes code. Older runs without a saved
+account and commit-bound evidence record remain readable but cannot be retried.
+
+Capture and upload run in the foreground. `dispatch status ID` shows the active
+evidence operation. The existing CLI run lock prevents duplicate retries and
+pipeline launches; an already-running legacy driver or `sync-pr.sh` also blocks
+the retry. Interruptions keep the code verdict and any previous captures. The
+operation's local diagnostics are in `demo.log` and `demo-driver.log`.
 
 Legacy `.harness/demo.yml` shot-scraper storyboards remain supported. They
 require `shot-scraper` and a repo-pinned `DEMO_PORT`; the newer JSON storyboard

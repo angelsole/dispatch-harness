@@ -111,6 +111,12 @@ account and reuses stages only when their checkpoint inputs still match.
   `capacity_failed`, `dirty_worktree_failed`, `driver_failed`, `interrupted`:
   inspect the relevant log tail, fix the cause within scope, then resume.
 
+For missing frontend evidence on a finished run, fix the reported capture or
+upload cause within scope, then use `dispatch evidence <ID> --capture` and/or
+`--publish` (plus the original `--on` host). Upload-only retries reuse saved media
+and the run's account; neither command repeats model work. Stop if login requires
+the account holder or the code/PR commit has changed. Revised code needs review.
+
 Independent review is required by the normal workflow. A `claude_only` run uses
 a fresh Claude reviewer. `failed_silent` means no review evidence and must hold.
 Never label the explicit `no_review` experiment as reviewed. Do not restart a

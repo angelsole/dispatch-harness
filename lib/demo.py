@@ -233,14 +233,25 @@ def legacy_capture(worktree, destination, log, auth):
     return []
 
 
+def capture_directory(run, directory):
+    relative = Path(directory)
+    destination = run / relative
+    if (len(relative.parts) != 2 or relative.parts[0] != "evidence"
+            or (run / "evidence").is_symlink() or destination.is_symlink()
+            or not destination.resolve().is_relative_to((run / "evidence").resolve())):
+        raise DemoError("evidence directory is outside this run's capture storage")
+    return destination
+
+
 def save_manifest(run, destination, manifest):
+    capture_directory(run, str(destination.relative_to(run)))
     write_json(destination / "manifest.json", manifest)
     write_json(run / "evidence.json", manifest)
 
 
 def capture(run, worktree, attempt, auth=None):
     head = revision(worktree)
-    destination = run / "evidence" / (head[:12] + "-" + uuid.uuid4().hex[:12])
+    destination = capture_directory(run, "evidence/" + head[:12] + "-" + uuid.uuid4().hex[:12])
     destination.mkdir(parents=True, mode=0o700)
     manifest = dict(version=1, head=head, attempt=attempt, status="not_run", reason="",
                     directory=str(destination.relative_to(run)), artifacts=[], warnings=[])
@@ -307,14 +318,15 @@ def replace_section(body, replacement):
     return body.rstrip() + "\n\n" + replacement + "\n"
 
 
-def publish(run, worktree, pr, manifest):
-    destination = run / manifest["directory"]
+def publish(run, worktree, pr, manifest, *, check_worktree=True):
+    # Validate before entering the failure handler: it also persists a manifest.
+    destination = capture_directory(run, manifest["directory"])
     native = False
     pr_state = None
     live_body = run / "pr-body-evidence.md"
     with (run / "demo.log").open("ab") as log:
         try:
-            if revision(worktree) != manifest["head"] or not clean(worktree):
+            if check_worktree and (revision(worktree) != manifest["head"] or not clean(worktree)):
                 raise DemoError("PR worktree differs from the captured commit; record evidence again")
             paths = []
             for item in manifest.get("artifacts", []):
@@ -333,6 +345,10 @@ def publish(run, worktree, pr, manifest):
             native = "--attach" in help_text and bool(paths)
             remote, public = os.environ.get("R2_REMOTE"), os.environ.get("R2_PUBLIC")
             if paths and native:
+                # Retry replaces the entire evidence block. Always give gh local
+                # references, including after a partial upload or storage switch.
+                for item in manifest["artifacts"]:
+                    item.pop("url", None)
                 manifest.update(status="published", reason="", publisher="github")
             elif paths and remote and public:
                 if urlsplit(public).scheme != "https":
@@ -367,7 +383,7 @@ def publish(run, worktree, pr, manifest):
                 command(["gh", "api", f"repos/{slug}/pulls/{pr.rstrip('/').split('/')[-1]}", "-X", "PATCH",
                          "-F", "body=@" + str(live_body)], worktree, log)
             manifest["pr_url"] = pr
-        except (DemoError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        except (DemoError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
             manifest.update(status="publish_failed", reason=str(exc) if isinstance(exc, DemoError)
                             else f"evidence publishing failed ({type(exc).__name__}); see demo.log")
             log.write((str(exc) + "\n").encode())
