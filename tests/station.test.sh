@@ -182,6 +182,8 @@ mkdir -p "$WEIRD_DIR"
 station --owner alice --dir "$WEIRD_DIR" > "$ROOT/start.out"
 check 'start: Astra session' "$(cat "$CAPTURE/session")" dispatch-alice-codex-gpt-6-astra
 has "$CAPTURE/codex.args" 'gpt-6-astra' 'start: Astra model is explicit'
+has "$CAPTURE/codex.args" "$H/planner-skills/dispatch/SKILL.md" 'start: Codex opens as a harness planner'
+has "$CAPTURE/codex.args" 'No task has been supplied yet' 'start: planner waits for the user task'
 omits "$CAPTURE/codex.args" '--dangerously-bypass-approvals-and-sandbox' 'start: ordinary Codex does not request bypass'
 has "$CAPTURE/codex.args" "$H/runs" 'start: run directory is writable for Codex'
 check 'start: tmux receives literal directory' "$(cat "$CAPTURE/dir")" "$WEIRD_DIR"
@@ -194,7 +196,9 @@ if FAKE_EXISTING=1 station --owner alice --dir "$FIXTURE_HOME" > "$ROOT/reconnec
 mkdir -p "$ROOT/other-accounts/alice"
 if FAKE_EXISTING=1 station --owner alice --dir "$WEIRD_DIR" --accounts-dir "$ROOT/other-accounts" > "$ROOT/reconnect.out" 2>&1; then bad 'start: different account root refused'; else ok 'start: different account root refused'; fi
 station --owner alice --planner claude >/dev/null
-check 'start: Claude has distinct session' "$(cat "$CAPTURE/session")" dispatch-alice-claude-default
+check 'start: Claude has distinct session' "$(cat "$CAPTURE/session")" dispatch-alice-claude-fable
+has "$CAPTURE/claude.args" 'fable' 'start: Claude selects Fable without a model flag'
+has "$CAPTURE/claude.args" "$H/planner-skills/dispatch/SKILL.md" 'start: Claude opens as a harness planner'
 check 'start: Claude account selected' "$(cat "$CAPTURE/claude.home")" "$FIXTURE_HOME/accounts/alice/claude"
 omits "$CAPTURE/claude.args" '--dangerously-skip-permissions' 'start: ordinary Claude does not request bypass'
 if [ -f "$FIXTURE_HOME/accounts/alice/claude/skills/dispatch/SKILL.md" ]; then ok 'start: Claude owner discovers shared skills'; else bad 'start: Claude owner discovers shared skills'; fi
@@ -264,7 +268,7 @@ station login claude >/dev/null
 check 'native: login keeps Claude configuration unset' "$(cat "$CAPTURE/claude.home")" native
 station --planner claude --hands-off >/dev/null
 check 'native: tmux does not inherit an old Claude profile' "$(cat "$CAPTURE/claude.home")" native
-check 'native: avoids pre-fix alternate-profile session' "$(cat "$CAPTURE/session")" dispatch-current-claude-default-native-hands-off
+check 'native: avoids pre-fix alternate-profile session' "$(cat "$CAPTURE/session")" dispatch-current-claude-fable-native-hands-off
 station >/dev/null
 check 'native: tmux clears inherited account directory overrides' "$(head -3 "$CAPTURE/identity" | sort -u)" native
 fixture env CLAUDE_CONFIG_DIR="$FIXTURE_HOME/.claude" bash "$H/station.sh" --planner claude >/dev/null

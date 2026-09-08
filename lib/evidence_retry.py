@@ -46,7 +46,7 @@ def retry(run, capture, publish):
             auth = Path(os.environ.get("DEMO_AUTH_FILE") or str(run.parents[1] / "auth" / (repo.name + ".json")))
             manifest = demo.capture(run, worktree, result.get("attempt", 1), auth)
             if manifest["status"] != "captured":
-                manifest["action"] = command_on_host(["dispatch", "evidence", run.name, "--capture"])
+                manifest["action"] = command_on_host(["dispatch", "resume", run.name])
                 return 1
         if publish:
             stage("uploading")
@@ -60,7 +60,7 @@ def retry(run, capture, publish):
             if not authenticated:
                 manifest.update(status="publish_failed", reason="GitHub login is unavailable; the captured media is saved.",
                     action=repair_command("gh", run_id=run.name) + " ; " +
-                           command_on_host(["dispatch", "evidence", run.name, "--publish"]))
+                           command_on_host(["dispatch", "resume", run.name]))
                 return 3
             manifest.pop("action", None)
             # Archived media is independent of a worktree. Its hashes and the
@@ -77,8 +77,7 @@ def retry(run, capture, publish):
         uploading = read_json(operation).get("action") == "uploading"
         manifest.update(status="publish_failed" if uploading else "failed",
                         reason="Evidence retry interrupted; inspect saved media before retrying.")
-        manifest["action"] = command_on_host(["dispatch", "evidence", run.name,
-                                              "--publish" if uploading else "--capture"])
+        manifest["action"] = command_on_host(["dispatch", "resume", run.name])
         return 130
     finally:
         try:
@@ -100,6 +99,9 @@ def main():
         raise InterruptedError("evidence retry interrupted")
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGHUP, interrupted)
+    # Background shells can pass down SIGINT=ignored. The recorder must still
+    # respond to an explicit cancellation and clean up the processes it owns.
+    signal.signal(signal.SIGINT, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run", type=Path)
     parser.add_argument("--capture", action="store_true")

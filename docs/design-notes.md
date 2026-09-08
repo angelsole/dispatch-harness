@@ -75,6 +75,12 @@ run's metadata, never in the commit messages
 
 ## Direction: share the work and its evidence
 
+The user-facing contract is to choose a planner and describe the task. New local
+and Mini conversations start as harness planners. Worker selection, setup,
+capture, and recovery belong to the planner and repository policy. Operator
+commands remain available for diagnosis; ordinary users should receive a reviewed
+result or a concrete blocker, not a list of commands to finish the process.
+
 The useful collaboration boundary is the task. Keep implementation worktrees,
 browser sessions, and model contexts isolated. A teammate or another planner
 should be able to recover the brief, decisions, commit, review, and evidence

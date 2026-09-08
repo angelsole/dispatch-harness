@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 
+from planner import DEFAULT_MODELS, prompt as planner_prompt
 from dispatch_runs import (DispatchError, atomic_write, brief_digest, command_on_host,
                            launch, read_json, read_text, run_directory, run_lock,
                            status, write_json, repair_command)
@@ -232,6 +233,16 @@ def resume(args, runtime):
     saved = read_json(directory / "request.json")
     if saved and args.owner is not None and args.owner != saved.get("account", ""):
         raise DispatchError("this run is pinned to account " + (saved.get("account") or "current") + "; resume without --owner")
+    if current["state"] in ("ready", "ready_local"):
+        result = current.get("result") or {}
+        media = result.get("evidence") or {}
+        if saved and media.get("head") and media.get("status") in ("failed", "not_run", "captured", "publish_failed"):
+            if args.brief:
+                raise DispatchError("this run's code is complete; use a new reviewed run for a changed brief")
+            args.capture = media["status"] in ("failed", "not_run") or not media.get("artifacts")
+            args.publish = bool(saved.get("publish", True) and result.get("pr_url"))
+            if args.capture or args.publish:
+                return evidence(args, runtime)
     if current["state"] in ("running", "ready", "ready_local"):
         emit(current, args.json)
         return 0
@@ -282,7 +293,7 @@ def chat(args, runtime):
     if not Path(cwd).is_dir():
         raise DispatchError("working directory does not exist: " + cwd)
     (runtime / "runs").mkdir(parents=True, exist_ok=True)
-    model = args.model or ("gpt-6-astra" if provider == "codex" else None)
+    model = args.model or DEFAULT_MODELS[provider]
     command = [executable(provider, env)]
     if model:
         command += ["-m" if provider == "codex" else "--model", model]
@@ -301,16 +312,10 @@ def chat(args, runtime):
             if enabled and (source / "SKILL.md").is_file() and not target.exists() and not target.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.symlink_to(source, target_is_directory=True)
-    if args.arguments:
-        publication = " Use dispatch run --no-publish; keep a reviewed local branch without pushing or opening a PR." if env.get("HARNESS_PUBLISH") == "0" else ""
-        autonomy = " Proceed through research, briefing, and dispatch without routine confirmation within this task's authorized scope." if args.hands_off else ""
-        command += ["Use the dispatch skill to research and run this task through the harness. "
-                    "Keep the user's authorized scope." + autonomy + publication +
-                    " Before submitting a free-text task, ask whether to use a tracker ticket or run ad hoc, "
-                    "unless the user already specified that choice or supplied an existing ticket. "
-                    "Hands-off mode does not choose tracking. Task: " + " ".join(args.arguments)]
+    command += [planner_prompt(runtime, " ".join(args.arguments), no_publish=env.get("HARNESS_PUBLISH") == "0",
+                               hands_off=args.hands_off)]
     permissions = "hands-off (checks bypassed)" if args.hands_off else "CLI defaults"
-    print(f"dispatch: local {provider} planner | account {env.get('HARNESS_OWNER') or 'current'} | permissions: {permissions} | {cwd}", flush=True)
+    print(f"dispatch: local {provider} planner ({model}) | account {env.get('HARNESS_OWNER') or 'current'} | permissions: {permissions} | {cwd}", flush=True)
     os.chdir(cwd)
     os.execvpe(command[0], command, env)
 
@@ -396,7 +401,7 @@ def remote(args, argv):
         elif not arg.startswith(("--on=", "--remote-harness=")):
             forwarded.append(arg)
     data = None
-    if os.environ.get("HARNESS_PUBLISH") == "0" and not args.no_publish and (args.command in ("run", "resume", "chat") or args.command not in COMMANDS):
+    if os.environ.get("HARNESS_PUBLISH") == "0" and not args.no_publish and (args.command in ("run", "chat") or args.command not in COMMANDS):
         forwarded.append("--no-publish")
     if args.brief:
         data = read_brief(args.brief)
@@ -419,6 +424,8 @@ def remote(args, argv):
     interactive = args.command in ("chat", "station", "login") or args.command not in COMMANDS
     if not interactive:
         command = "export DISPATCH_REMOTE_HOST=" + shlex.quote(args.on) + "; " + command
+    if os.environ.get("HARNESS_PUBLISH") == "0" and args.command == "resume":
+        command = "export HARNESS_PUBLISH=0; " + command
     ssh = ["ssh", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3"]
     ssh += ["-t"] if interactive else ["-o", "BatchMode=yes"]
     return subprocess.run(ssh + [args.on, command], input=data, text=True).returncode

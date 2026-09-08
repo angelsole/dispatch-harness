@@ -13,7 +13,7 @@
 #   --hands-off bypasses planner permission checks (Codex also disables its sandbox).
 #   Available for start/setup; it opens a separate session from the default mode.
 #
-# Codex defaults to gpt-6-astra; Claude uses its selected account's model.
+# Codex defaults to gpt-6-astra; Claude defaults to fable.
 # Each owner/planner/model gets a separate tmux session. Re-running reattaches;
 # The default detach binding is Ctrl-b d. macOS caffeinate keeps it awake.
 # Login defaults to Codex device authentication; --browser uses its callback
@@ -261,8 +261,8 @@ STATION_DIR="$(cd "$STATION_DIR" && pwd -P)"
 [ -z "$OWNER" ] || [ -d "$ACCOUNTS_DIR/$OWNER" ] \
   || die "unknown owner $OWNER; set up authentication: $(repair_command codex)"
 command -v tmux >/dev/null || die "tmux is not installed"
+MODEL="${MODEL:-$(python3 "$SELF_DIR/lib/planner.py" model "$PLANNER")}"
 if [ "$PLANNER" = codex ]; then
-  MODEL="${MODEL:-gpt-6-astra}"
   planner_cmd=("$CODEX_BIN" -m "$MODEL" -C "$STATION_DIR" --add-dir "$HARNESS_DIR/runs")
   [ "$HANDS_OFF" = 0 ] || planner_cmd+=(--dangerously-bypass-approvals-and-sandbox)
 else
@@ -290,6 +290,9 @@ fi
 command -v "${planner_cmd[0]}" >/dev/null || die "$PLANNER is not installed"
 check_auth "$PLANNER" || die "$PLANNER authentication unavailable; repair: $(repair_command "$PLANNER")"
 mkdir -p "$HARNESS_DIR/runs"
+prompt_args=(prompt "$HARNESS_DIR")
+[ "$HANDS_OFF" = 0 ] || prompt_args+=(--hands-off)
+planner_cmd+=("$(python3 "$SELF_DIR/lib/planner.py" "${prompt_args[@]}")")
 # Claude's skills follow CLAUDE_CONFIG_DIR. Account-specific installs need the
 # same shared protocol. Existing personal skills are never overwritten here.
 if [ "$PLANNER" = claude ]; then

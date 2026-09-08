@@ -9,6 +9,12 @@ You are the planner. Research the task, write its brief, submit it, and assess
 the result. The runner owns implementation, gates, independent review, process
 lifetime, and checkpoint recovery. Use the user's existing authorization.
 
+The normal user experience is choosing a planner and describing the task.
+Own the rest through to a reviewed result or a concrete blocker. Use repository
+policy and harness defaults for the worker, reviewer, gates, and tools; ask the
+user about product choices, not routine execution settings. Do not end by
+handing back setup, monitoring, or evidence commands you can run within scope.
+
 `dispatch` is installed in `~/.local/bin`. If it is not on PATH, use
 `$HARNESS_DIR/dispatch.sh` (default `~/.claude/harness/dispatch.sh`). Run records
 live at `$HARNESS_DIR/runs/<ID>/`; credentials never belong in a brief or record.
@@ -26,7 +32,8 @@ Read applicable AGENTS.md and CLAUDE.md, relevant code, and the reproduction.
 Use `lessons.sh --show <repo>` for known defects relevant to this scope. Decide
 which repos are involved before launching; each gets a separate run and branch.
 For an unconfigured repository, `dispatch init --repo <repo>` detects and saves
-its settings. Check that its proposed test gate actually verifies this project.
+its settings. Run it yourself and check that its proposed test gate actually
+verifies this project. Resolve routine setup from the repository's instructions.
 
 For a free-text request, ask once whether to create a tracker ticket (Linear
 when available) or run ad hoc before submitting. An existing ticket or an
@@ -55,7 +62,9 @@ question; do not ask again after the user has chosen an ad-hoc run.
 For user-facing frontend changes, include the template's **Demo storyboard**:
 a short interaction with a visible success-state wait and screenshots, plus a
 video when motion helps review. Establish the app's dev command, free port,
-and demo authentication during research. Use data suitable for the PR audience.
+browser tooling, and demo authentication during research. Reuse installed tools
+and saved demo state, and prepare missing development dependencies within scope.
+Choose the capture approach yourself. Use data suitable for the PR audience.
 If evidence cannot be captured, report the reason; do not claim a visual check.
 
 ## 3. Submit
@@ -75,7 +84,9 @@ prepare their specs on the execution host as the detailed protocol describes.
 The local brief remains local; the task record belongs to the execution host.
 
 Submission returns immediately. Do not add another background shell or tmux
-layer. The task survives the planner closing. Report its ID and execution host.
+layer. The task survives the planner closing. Report its ID and execution host
+as progress, then observe and assess the result unless the user requested only
+submission or explicitly ends the conversation.
 
 ## 4. Observe and recover
 
@@ -91,8 +102,10 @@ Avoid continuous log polling. Desktop notifications do not resume an agent turn.
 
 When the user says “resume dispatch”, first read `status`, the result, and the
 brief to recover conversation context. `dispatch resume` restarts a stopped
-runner; it only reports status for a live or finished run. It retains the saved
-account and reuses stages only when their checkpoint inputs still match.
+runner, or recovers missing frontend evidence on a finished run. It only reports
+status when the run is live or already complete, including its evidence. It
+retains the saved account and reuses stages only when their checkpoint inputs
+still match.
 
 - `ready`: read the brief, implementer/review notes, and relevant diff before
   reporting the draft PR. For frontend work, also inspect `result.evidence`, its
@@ -112,10 +125,13 @@ account and reuses stages only when their checkpoint inputs still match.
   inspect the relevant log tail, fix the cause within scope, then resume.
 
 For missing frontend evidence on a finished run, fix the reported capture or
-upload cause within scope, then use `dispatch evidence <ID> --capture` and/or
-`--publish` (plus the original `--on` host). Upload-only retries reuse saved media
-and the run's account; neither command repeats model work. Stop if login requires
-the account holder or the code/PR commit has changed. Revised code needs review.
+upload cause within scope, then run `dispatch resume <ID>` on the original host.
+It chooses capture or upload-only recovery from the saved evidence. Retry after
+addressing a cause, not repeatedly on the same error. The explicit `dispatch
+evidence` flags remain available for targeted troubleshooting. Stop if login
+requires the account holder or the code/PR commit has changed. Revised code needs
+review. Return the product outcome, PR or local branch, checks, and relevant media;
+report a remaining capture/upload failure plainly.
 
 Independent review is required by the normal workflow. A `claude_only` run uses
 a fresh Claude reviewer. `failed_silent` means no review evidence and must hold.

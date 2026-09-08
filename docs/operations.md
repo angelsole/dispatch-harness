@@ -17,17 +17,20 @@ existing Codex login, requires no tmux, and preserves the CLI's configured
 sandbox and approval settings. Choose the orchestrator for each conversation:
 
 ```bash
-dispatch --planner codex                 # Astra in Codex
-dispatch --planner claude --model fable  # Fable in Claude Code
+dispatch --planner codex   # Astra in Codex
+dispatch --planner claude  # Fable in Claude Code
 ```
 
-Omit `--model` with Claude to use the selected account's configured model.
-Switching opens a separate conversation in the selected CLI; saved harness
+Both commands start with the same harness planner instructions, even without a
+task argument. The planner asks for a task, handles routine repository setup,
+follows the run, and assesses its reviewed output. `--model` remains an explicit
+override; `DISPATCH_MODEL` can set an operator default. Switching opens a separate
+conversation in the selected CLI; saved harness
 runs remain accessible through `dispatch status`. The worker and reviewer
 keep their repository settings regardless of which planner you choose.
 
 For unattended orchestration, use `dispatch --hands-off "task description"`,
-optionally with `--planner claude --model fable`. This is an explicit launch
+optionally with `--planner claude`. This is an explicit launch
 choice: Claude Code gets `--dangerously-skip-permissions`; Codex gets
 `--dangerously-bypass-approvals-and-sandbox`, disabling both permission prompts
 and the Codex sandbox. The launch banner shows the selected mode. Existing
@@ -57,8 +60,9 @@ for a remote task; the context is resolved on the Mini.
 also checks the dependencies needed to start a task. Neither performs a paid
 model request or proves remaining credits.
 
-`dispatch init` saves detected repository settings through the existing setup
-tool. Review the printed gate command; repository-specific services still need
+The planner runs `dispatch init` for an unconfigured repository. It saves detected
+settings through the existing setup tool. The planner checks the printed gate
+against the project; repository-specific services still need
 their existing preflight configuration. The engine currently expects an origin
 remote even for a local-only branch (a local Git remote also works).
 
@@ -75,10 +79,13 @@ current snapshot with exit 124. A finished draft PR is `ready`; a reviewed
 local branch is `ready_local`. A stopped process is reported as interrupted,
 not left with an indefinitely growing stage timer.
 
-`dispatch resume ID` keeps the saved account configuration and restarts only a
-stopped task. A `needs_input` run needs answers appended to its brief first;
+`dispatch resume ID` keeps the saved account configuration and restarts a
+stopped task. On a finished run with missing frontend evidence, it selects
+capture or upload-only recovery automatically. A captured local-only run and a
+run with published evidence are already complete. A `needs_input` run needs
+answers appended to its brief first;
 `--brief <file>` can supply an updated brief. Merely reconnecting to a live or
-finished run never starts another attempt. Scheduled capacity deferrals should
+finished run never starts another coding attempt. Scheduled capacity deferrals should
 be allowed to fire through their existing scheduler.
 
 The runner writes checkpoints after implementation, the initial passing gate,
@@ -113,8 +120,8 @@ teammate's saved subscriptions while that person is away:
 ```bash
 dispatch stations --on mini
 dispatch station --on mini --owner teammate --dir /path/to/repos
-dispatch station --on mini --owner teammate --dir /path/to/repos --planner claude --model fable
-dispatch station --on mini --owner teammate --planner claude --model fable --hands-off
+dispatch station --on mini --owner teammate --dir /path/to/repos --planner claude
+dispatch station --on mini --owner teammate --planner claude --hands-off
 ```
 
 The last command opens a hands-off planner. Each hands-off station uses a
@@ -236,7 +243,9 @@ Use `$dispatch`, `$briefed-dispatch` or `$dispatch-pixel` in Codex, and the
 corresponding slash commands in Claude Code. The visual skill retains the
 installer's `--pixel` opt-in. `DISPATCH_PLANNER` changes the launcher default;
 `--model` or `DISPATCH_MODEL` changes only the planner model. Astra is the Codex
-default; Claude uses its account's configured model unless explicitly selected.
+default; Claude uses Fable unless explicitly overridden. New station conversations
+receive the same planner instructions as local launches. Reconnecting retains the
+existing conversation; it does not inject a new task into a running planner.
 Codex gets write access to the harness's `runs/` directory through `--add-dir`,
 and keeps its configured sandbox and approval policy. A detached worker's
 desktop notification does not itself wake the planner: use `resume dispatch
@@ -1046,7 +1055,12 @@ Uploads use a separate repo/run/commit/capture path, so another run cannot
 replace media already linked from a PR. If neither upload method is available,
 the files remain local and the PR explains how to enable uploads.
 
-Evidence can be recovered independently once the run is `ready` or `ready_local`:
+The planner handles evidence recovery with `dispatch resume ID` after addressing
+the reported cause. It records again when capture failed and uploads existing
+media when only publication is missing. No worker or reviewer is repeated.
+
+The following commands are operator tools for inspecting or explicitly rerunning
+evidence once the run is `ready` or `ready_local`:
 
 ```bash
 dispatch evidence ID                         # inspect the saved manifest
@@ -1067,7 +1081,7 @@ worktree cleanup, using the saved repository, media hashes, and live PR commit.
 
 Retries run on the original execution host under its saved account configuration.
 An expired GitHub login leaves the files in place and prints
-`dispatch login gh --for-run ID`, followed by the upload retry; remote commands
+`dispatch login gh --for-run ID`, followed by `dispatch resume ID`; remote commands
 include `--on`. A run started with `--no-publish` remains local. Upload needs an
 existing PR and never creates one or pushes code. Older runs without a saved
 account and commit-bound evidence record remain readable but cannot be retried.

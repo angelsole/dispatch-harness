@@ -44,6 +44,12 @@ Only `result.evidence` and the compatible `demo_url` change. Each capture has it
 own `evidence/<commit>-<capture>/manifest.json`; `evidence.json` points to the
 latest attempt. See [Demo recordings](operations.md#demo-recordings).
 
+`dispatch resume ID` selects these evidence actions automatically for an eligible
+finished run: capture when no successful media exists, upload when saved media
+has not been published. It respects the run's local-only setting. Published
+evidence and successful local-only captures do not repeat. These explicit
+evidence flags are for operator control; the planner owns normal recovery.
+
 ### The Quartermaster
 
 | Env var | What it does | Default |

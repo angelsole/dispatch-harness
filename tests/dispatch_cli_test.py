@@ -135,6 +135,29 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("gpt-6-astra", self.events('chat')[0]['args'])
         self.assertEqual(self.events('implement'), [])
 
+    def test_empty_start_bootstraps_both_planners_with_model_and_protocol(self):
+        for provider, model in (('codex', 'gpt-6-astra'), ('claude', 'fable')):
+            with self.subTest(provider=provider):
+                self.call('--planner', provider)
+                args = self.events('chat')[-1]['args']
+                self.assertIn(model, args)
+                self.assertIn(str(self.runtime / 'planner-skills/dispatch/SKILL.md'), args[-1])
+                self.assertIn('No task has been supplied yet', args[-1])
+                self.assertIn('reviewed result', args[-1])
+                self.assertEqual(self.events('implement'), [])
+        self.call('--planner', 'claude', '--model', 'custom-model')
+        self.assertIn('custom-model', self.events('chat')[-1]['args'])
+
+    def test_task_start_uses_same_protocol_without_losing_task_or_local_intent(self):
+        task = 'Fix checkout without a tracker ticket'
+        self.call(task, '--planner', 'claude', '--no-publish')
+        args = self.events('chat')[-1]['args']
+        self.assertIn('fable', args)
+        self.assertIn(str(self.runtime / 'planner-skills/dispatch/SKILL.md'), args[-1])
+        self.assertTrue(args[-1].endswith('Task: ' + task))
+        self.assertIn('--no-publish', args[-1])
+        self.assertNotIn('No task has been supplied yet', args[-1])
+
     def test_frontend_missing_storyboard_reports_capture_failure_without_failing_code(self):
         self.brief.write_text(self.brief.read_text() + '\n## Demo storyboard\nShow the feature.\n')
         self.run_task('DEMO-MISSING', '--no-publish')
@@ -179,6 +202,14 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(updated['result']['attempt'], result['result']['attempt'])
         self.assertEqual(gates, (self.root / 'gates').read_bytes())
         self.assertEqual(models, (len(self.events('implement')), len(self.events('review'))))
+        storyboard = Path(result['worktree']) / '.harness/demo.json'
+        original = storyboard.read_text(); storyboard.unlink()
+        self.assertEqual(self.call('evidence', 'DEMO-LOCAL', '--capture', check=False).returncode, 1)
+        storyboard.write_text(original)
+        recovered = json.loads(self.call('resume', 'DEMO-LOCAL', '--json').stdout)
+        self.assertEqual(recovered['result']['evidence']['status'], 'captured')
+        self.assertEqual(models, (len(self.events('implement')), len(self.events('review'))))
+        self.assertEqual(gates, (self.root / 'gates').read_bytes())
 
     def test_local_claude_profile_discovers_shared_protocol(self):
         profile = self.home / 'accounts/teammate'

@@ -133,7 +133,7 @@ class EvidenceRetryTests(unittest.TestCase):
         evidence = json.loads(result.stdout)["result"]["evidence"]
         self.assertEqual(evidence["status"], "publish_failed")
         self.assertIn("dispatch login gh --for-run TASK-1 --on mini", evidence["action"])
-        self.assertIn("dispatch evidence TASK-1 --publish --on mini", evidence["action"])
+        self.assertIn("dispatch resume TASK-1 --on mini", evidence["action"])
         count = len(self.calls("agent-browser")); (self.root / "gh-expired").unlink()
         self.call("evidence", "TASK-1", "--publish")
         self.assertEqual(count, len(self.calls("agent-browser")))
@@ -213,7 +213,8 @@ class EvidenceRetryTests(unittest.TestCase):
     def test_interrupted_upload_is_not_reported_as_published_and_can_retry(self):
         (self.root / "native").touch(); (self.root / "hold-upload").touch()
         proc = subprocess.Popen([sys.executable, str(self.runtime / "lib/dispatch_cli.py"),
-            "evidence", "TASK-1", "--publish"], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            "evidence", "TASK-1", "--publish"], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
         try:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
@@ -274,7 +275,37 @@ class EvidenceRetryTests(unittest.TestCase):
         self.assertNotIn("-t", argv)
         self.assertIn("DISPATCH_REMOTE_HOST=mini", argv[-1])
         self.assertEqual(read_json(self.run / "result.json")["evidence"]["status"], "captured")
+        self.env['HARNESS_PUBLISH'] = '0'
+        result = self.call('resume', 'TASK-1', '--on', 'mini', '--remote-harness', str(self.runtime), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('publishing is disabled', result.stderr)
+        self.assertEqual(self.calls('gh'), [])
         self.unchanged_verdict()
+
+    def test_resume_chooses_capture_then_publication_without_changing_code(self):
+        (self.root / 'native').touch()
+        self.result['evidence'].update(status='failed', artifacts=[])
+        write_json(self.run / 'result.json', self.result)
+        write_json(self.run / 'evidence.json', self.result['evidence'])
+        self.call('resume', 'TASK-1')
+        self.assertEqual(read_json(self.run / 'result.json')['evidence']['status'], 'published')
+        self.unchanged_verdict()
+        count = len(self.calls('agent-browser'))
+        self.call('resume', 'TASK-1')
+        self.assertEqual(count, len(self.calls('agent-browser')))
+
+    def test_resume_uploads_existing_capture_and_preserves_local_only_runs(self):
+        (self.root / 'native').touch()
+        count = len(self.calls('agent-browser'))
+        self.call('resume', 'TASK-1')
+        self.assertEqual(count, len(self.calls('agent-browser')))
+        self.assertEqual(read_json(self.run / 'result.json')['evidence']['status'], 'published')
+        self.request['publish'] = False; write_json(self.run / 'request.json', self.request)
+        self.result['status'] = 'ready_local'; write_json(self.run / 'result.json', self.result)
+        uploads = len(self.calls('gh'))
+        self.call('resume', 'TASK-1')
+        self.assertEqual(uploads, len(self.calls('gh')))
+        self.assertEqual(count, len(self.calls('agent-browser')))
 
 
 if __name__ == "__main__":
