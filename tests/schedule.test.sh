@@ -426,6 +426,10 @@ file_has "$RUNS/FIRE/scheduled.log" "firing FIRE as angel"         "fire: the ru
 file_has "$RUNS/FIRE/scheduled.log" "fake run-task.sh dispatched FIRE" "fire: run-task output lands in the run log"
 file_has "$RUNS/FIRE/scheduled.log" "run-task.sh exited 0"         "fire: the run log records the exit status"
 exists "fire: the brief survives its run" "$RUNS/FIRE/brief.md"
+# TEMP-DEBUG (remove before finishing)
+echo "TEMP-DEBUG scheduled.log begin"; cat "$RUNS/FIRE/scheduled.log"; echo "TEMP-DEBUG scheduled.log end"
+echo "TEMP-DEBUG sudo.log begin"; cat "$SUDOLOG"; echo "TEMP-DEBUG sudo.log end"
+echo "TEMP-DEBUG calls begin"; cat "$CALLS"; echo "TEMP-DEBUG calls end"
 
 # ---------------------------------------------------------------------------
 echo "== --cancel: disarm completely, keep the brief =="
