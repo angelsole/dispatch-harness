@@ -44,7 +44,7 @@ fi
 echo "== wall: static checks =="
 if [ -x "$WALL" ]; then ok "wall.sh is executable"; else bad "wall.sh is executable"; fi
 for f in wall/server.js wall/wall.js wall/scene.js wall/world-canvas.js wall/room.js \
-         wall/cost.js wall/console/console.js wall/fixtures/seed.js wall/fixtures/city.js; do
+         wall/cost.js wall/actions.js wall/console/console.js wall/console/control.js wall/fixtures/seed.js wall/fixtures/city.js; do
   if node --check "$SRC/$f" 2>/dev/null; then ok "node --check $f"; else bad "node --check $f"; fi
 done
 check "console: JavaScript source contains no binary NUL byte" \

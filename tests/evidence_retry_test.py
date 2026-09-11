@@ -132,12 +132,14 @@ class EvidenceRetryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stderr)
         evidence = json.loads(result.stdout)["result"]["evidence"]
         self.assertEqual(evidence["status"], "publish_failed")
+        self.assertEqual(evidence["auth_provider"], "gh")
         self.assertIn("dispatch login gh --for-run TASK-1 --on mini", evidence["action"])
         self.assertIn("dispatch resume TASK-1 --on mini", evidence["action"])
         count = len(self.calls("agent-browser")); (self.root / "gh-expired").unlink()
         self.call("evidence", "TASK-1", "--publish")
         self.assertEqual(count, len(self.calls("agent-browser")))
         self.assertNotIn("action", read_json(self.run / "evidence.json"))
+        self.assertNotIn("auth_provider", read_json(self.run / "evidence.json"))
         self.unchanged_verdict()
 
     def test_no_publish_is_pinned_locally_and_across_remote_calls(self):

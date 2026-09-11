@@ -62,6 +62,7 @@ GATE_ENV=(env -u IMPLEMENTER_PROVIDER -u IMPLEMENTER_MODEL -u IMPLEMENTER_EFFORT
           -u HARNESS_ESCALATION -u HARNESS_ESCALATION_STEPS
           -u HARNESS_PROFILES -u HARNESS_VISUAL_ROUNDS
           -u HARNESS_WALL_URL -u HARNESS_WALL_TOKEN -u HARNESS_GATE_STEP
+          -u WALL_LINEAR_DISPATCH_CONFIG -u WALL_LINEAR_WEBHOOK_SECRET
           HARNESS_DETACH=0 HARNESS_PREFLIGHT=off)
 # HARNESS_PREFLIGHT=off: the capacity preflight shells out to `npx ccusage@latest`
 # — a registry round-trip of 3-6 s — and 21 suites never fake npx, so every one

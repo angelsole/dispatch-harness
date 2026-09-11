@@ -44,6 +44,16 @@ code**, against your repositories. Be clear-eyed about what that means.
 
 ## Credentials, and how they travel
 
+Enabling [Dispatch from Linear](linear-dispatch.md) authorizes signed agent
+delegations and replies to start or resume code execution on the wall host.
+`WALL_LINEAR_DISPATCH_CONFIG` pins the workspace, OAuth app, team/project routes,
+repositories and execution accounts; optional `allowed_users` narrows the actors.
+Task text cannot select a shell command, host, arbitrary repo path or account.
+The bridge validates identity after HMAC verification and commits private event
+data in a mode-600 SQLite database under a mode-700 directory. Run locks, saved
+host/operator identity and durable operation receipts also apply to Linear
+recovery. The wall's unauthenticated GET routes gain no execution controls.
+
 Every credential the harness reads is a file you create by hand, mode 600, in
 `HARNESS_DIR` — never a value in a config file the repo ships, never an argument.
 [Local config files](reference.md#local-config-files) lists them all; the Linear
@@ -99,6 +109,35 @@ If your worker loads an MCP server (via `MCP_CONFIG`) exposing destructive tools
 ```
 
 Deny lists are cheap insurance; add to them liberally.
+
+## Console authorization
+
+`dispatch ui` starts a separate local control console bound to `127.0.0.1` on
+an available port. Its private launch link contains a random per-process token
+in the URL fragment. The browser removes the fragment from the address bar,
+keeps it in tab session storage, and authenticates control requests with a
+Bearer header. Do not share that link; it authorizes recovery of the current
+operator's local tasks. A server restart requires a fresh link.
+
+Only `/api/control/runs` and `/api/control/actions` use this credential. The
+shared ingest token cannot authorize them. Control requires a loopback client,
+the exact bound Host, and matching Origin for POST; cross-site requests and
+non-JSON actions are rejected. The page cannot be framed. The existing wall's
+monitoring GET routes retain their read-only access model.
+
+The service accepts fixed typed operations, never supplied shell commands.
+It checks the saved host and operator, preserves the run's account paths and
+publication policy, drops ambient credential overrides from the launcher's
+terminal, validates the displayed revision under the run lock, and
+records an operation receipt before modifying the brief or launching recovery.
+Duplicate operation IDs replay their receipt; a different payload under the
+same ID is rejected. Symlinked run metadata and operation receipts are refused.
+Partial or unrecognized records cannot enable an action.
+
+This is authorization for the local operator, not isolation from other
+processes running as that OS user. Run records and browser session storage
+remain sensitive local data. Remote execution control is not exposed by this
+interface; use the planner on that execution machine.
 
 ## The wall ingest token
 

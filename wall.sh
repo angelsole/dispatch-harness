@@ -69,6 +69,10 @@
 #                      of <HARNESS_DIR>/linear-webhook-secret is used if that
 #                      file exists — nothing generates it, the operator
 #                      pastes it, and it is never printed.
+#   WALL_LINEAR_DISPATCH_CONFIG
+#                      opt-in JSON repository/account routes for the Linear app.
+#                      Signed agent delegations and replies can execute local
+#                      tasks when configured; see docs/linear-dispatch.md.
 #
 # The same server also serves /console — the functional ops board over the same
 # run data: what each agent is doing right now, what is blocked, and the attach
@@ -187,7 +191,7 @@ command -v node >/dev/null 2>&1 || {
 # directory up the moment the first dispatch creates it.
 [ -d "$RUNS" ] || echo "wall.sh: $RUNS does not exist yet — showing the idle screen"
 
-exec env WALL_PORT="$PORT" WALL_HOST="$HOST" WALL_RUNS="$RUNS" WALL_CREW="$CREW" \
+exec env HARNESS_DIR="$HARNESS_DIR" WALL_PORT="$PORT" WALL_HOST="$HOST" WALL_RUNS="$RUNS" WALL_CREW="$CREW" \
   WALL_INGEST_TOKEN="${WALL_INGEST_TOKEN:-}" \
   WALL_LINEAR_WEBHOOK_SECRET="${WALL_LINEAR_WEBHOOK_SECRET:-}" \
   WALL_CITY="$CITY" node "$SRC/wall/server.js"

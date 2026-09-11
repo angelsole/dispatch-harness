@@ -422,6 +422,7 @@ linear_content_action() {  # $1 = action, $2 = parameter
 # variable takes an enum as a plain JSON string, so `type` needs no guess about
 # quoting.
 linear_activity() {  # $1 = session id, $2 = content JSON, $3 = "ephemeral"
+  [ ! -e "$RUN_DIR/linear-stopped" ] || return 0
   local gql eph=false
   [ "${3:-}" != ephemeral ] || eph=true
   gql=$(jq -cn --arg sid "$1" --argjson content "$2" --argjson eph "$eph" \
@@ -484,6 +485,10 @@ linear_session_stage() {  # $1 = stage text
       body=$(linear_file_body "$RUN_DIR/QUESTIONS.md" "$1")
       instructions="
 Answer in the run's brief and re-dispatch, or \`attach.sh $TICKET\`."
+      if [ -e "$RUN_DIR/linear-origin.json" ]; then
+        instructions="
+Reply here in Linear to save your answer and continue this task."
+      fi
       linear_activity "$sid" "$(linear_content elicitation "$body" "$instructions")"
       ;;
     deferred:*)
@@ -507,6 +512,7 @@ Answer in the run's brief and re-dispatch, or \`attach.sh $TICKET\`."
 
 # The one line stage() appends. Nothing below it may fail a run.
 linear_stage_report() {  # $1 = stage text
+  [ ! -e "$RUN_DIR/linear-stopped" ] || return 0
   [ "${HARNESS_TICKET_SYNC:-1}" = 1 ] || return 0
   linear_ident "$TICKET" >/dev/null 2>&1 || return 0
   local card=0

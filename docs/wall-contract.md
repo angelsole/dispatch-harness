@@ -8,6 +8,11 @@ file the wall reads, every field it takes out of it, exactly how much
 malformedness it tolerates, the reports a run may POST to it instead, and the
 two files it writes.
 
+This is the display/telemetry contract. The optional [Linear dispatcher](linear-dispatch.md)
+has a separate execution contract and SQLite event store; it is enabled only by
+`WALL_LINEAR_DISPATCH_CONFIG`. The existing local console controls have their
+own authenticated boundary described in [Ghost Shift](wall.md).
+
 It exists because the format was, until now, real but unwritten. The stage text
 in particular was parsed by three independent copies of one table, none of which
 knew about the others. Everything below is either **pinned by a test** — the
@@ -230,7 +235,7 @@ and no dispatch sends anything.
 | `POST /api/ingest/hook` | `{run, at, host, session_id, cwd, hook_event_name, prompt_id, tool_name, reason, tool_input:{command, file_path, description}}` — written by `lib/wall-hook.sh` | `204` |
 | `POST /v1/metrics` | OTLP/HTTP JSON `ExportMetricsServiceRequest` from the worker's own exporter | `200 {}` |
 | `POST /v1/logs`, `POST /v1/traces` | anything | `200 {}`, discarded unread |
-| `POST /webhooks/linear` | a Linear webhook delivery, signed — see below | `200 {}`, kept nowhere |
+| `POST /webhooks/linear` | a Linear webhook delivery, signed — see below | `200 {}`; discarded by default, durably queued when the Linear dispatcher is enabled |
 
 `Authorization: Bearer <WALL_INGEST_TOKEN>` must match exactly, or `401`. A body
 over 1 MiB is `413`; a body that is not a JSON object is `400`. `GET` on any of
@@ -246,8 +251,10 @@ secret unset the route is the 404 of an unknown path, and a body over 1 MiB is
 or wrong, or a `webhookTimestamp` more than 60 s older or newer than the wall's
 clock, is a `401` with an empty body; a verified delivery is answered `200 {}`,
 named on stdout as
-`[wall] linear webhook: <type> <action>`, and stored nowhere — the two-files
-contract below keeps holding.
+`[wall] linear webhook: <type> <action>`. Without `WALL_LINEAR_DISPATCH_CONFIG`
+it is stored nowhere and the two-files contract below keeps holding. With that
+configuration, the separate [dispatcher contract](linear-dispatch.md#delivery-and-recovery-contract)
+defines durable storage, identity checks and error responses.
 
 Two rules make this additive rather than a change to the format:
 

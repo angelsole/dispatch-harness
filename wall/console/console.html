@@ -12,7 +12,7 @@
 <header class="bar">
   <h1>OPS CONSOLE</h1>
   <div class="counts">
-    <span class="count alarm" id="n-alarm" hidden><b>0</b> needs input</span>
+    <span class="count alarm" id="n-alarm" hidden><b>0</b> need attention</span>
     <span class="count active"><b id="n-active">0</b> running</span>
     <span class="count done"><b id="n-done">0</b> recent</span>
   </div>
@@ -21,6 +21,7 @@
 </header>
 
 <main>
+  <p id="console-access" class="console-access" role="status"></p>
   <section id="summary" class="board">
     <h2 id="summary-window"></h2>
     <div class="tiles" id="summary-tiles"></div>
@@ -29,7 +30,7 @@
   </section>
 
   <section id="alarms" class="board loud" hidden>
-    <h2>Needs input</h2>
+    <h2>Needs attention</h2>
     <div class="rows" id="alarm-rows"></div>
   </section>
 
@@ -46,11 +47,12 @@
 </main>
 
 <p class="foot">
-  Read-only. This machine's runs, plus whatever other machines report in.
+  <span id="console-mode">Read-only monitoring. </span>This machine's runs, plus whatever other machines report in.
   The ambient wall is at <a href="/">/</a>.
 </p>
 
 <script src="/console/cost.js"></script>
+<script src="/console/control.js"></script>
 <script src="/console/console.js"></script>
 </body>
 </html>

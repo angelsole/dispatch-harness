@@ -24,6 +24,13 @@ the implementer and reviewer keep their own model pins. Why it is built this way
 
 ## Quickstart
 
+**From Linear:** with the [Mini app dispatcher](docs/linear-dispatch.md) enabled
+on an execution host, delegate a described issue to Mini. It starts Dispatch,
+asks questions in the issue's agent session, accepts your replies there, and
+returns the reviewed PR. The project selects the repository; the issue's
+assignee selects a saved Mini station, falling back to the parent issue's
+assignee and then the person who delegated it.
+
 Install once on each execution machine:
 
 ```bash
@@ -85,9 +92,13 @@ receive new harness behavior; `--symlink` is for harness development.
 
 **Watching it.** `statusline.sh` puts a line per active run in every Claude
 session on the machine, and `status.sh --watch` is the same picture as a
-zero-config live dashboard in any terminal. Three helpers cover the rest of a
-run's life: `attach.sh <RUN-ID>` steps into the worker's live session with its
-context intact, `preview.sh <RUN-ID>` runs the dev server in the worktree to see
+zero-config live dashboard in any terminal. **`dispatch ui` opens a local recovery
+console:** follow its private browser link to read questions, save answers, resume
+stopped work, and recover frontend evidence. Each task shows its saved account,
+execution machine, and checkpoint. See [Local recovery console](docs/wall.md#local-recovery-console).
+Three helpers cover the rest of a
+run's life: `attach.sh <RUN-ID>` forks a separate conversation with the worker's
+context, `preview.sh <RUN-ID>` runs the dev server in the worktree to see
 the change before approving, and `cleanup.sh <RUN-ID>` promotes the run and
 removes the worktree.
 
@@ -218,6 +229,7 @@ This page is the front door; everything else lives under [`docs/`](docs/).
 | [Decision log](docs/adr/README.md) | The architecture decisions behind the pipeline, dated and one per file: why no model grades its own homework, why findings must survive refutation, why the verifier never gates, and what each of those costs |
 | [Trust me, said the reviewer](docs/verified-grounding.md) | Why refutations must cite repository code that the harness verifies byte-for-byte |
 | [Security](docs/security.md) | The threat model of an unattended, code-executing pipeline, and the deny list that bounds the worker |
+| [Mini credentials](docs/mini-credentials.md) | Persistent logins, account selection from Linear, renewal, and the limits of shared macOS profiles |
 | [Development](docs/development.md) | This repo's own gate, its suites (`tests/*.test.sh`), and the docs-as-tests pass that keeps these pages honest |
 | [Ghost Shift](docs/wall.md) | The big-screen wall: the city, the district, the ledger and the ops console |
 | [The wall's data contract](docs/wall-contract.md) | Which run-dir files the wall reads, and how much half-written-ness each one tolerates |

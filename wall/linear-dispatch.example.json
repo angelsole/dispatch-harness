@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "organization_id": "00000000-0000-4000-8000-000000000001",
+  "app_user_id": "00000000-0000-4000-8000-000000000003",
+  "accounts": {
+    "00000000-0000-4000-8000-000000000004": "teammate"
+  },
+  "routes": [
+    {
+      "team": "TEAM",
+      "repo": "/absolute/path/to/repository",
+      "publish": true
+    }
+  ]
+}

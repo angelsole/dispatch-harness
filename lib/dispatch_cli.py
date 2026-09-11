@@ -1,5 +1,6 @@
 """The user/agent interface: local conversation, durable runs, optional SSH."""
 import argparse
+import contextlib
 import getpass
 import json
 import os
@@ -11,6 +12,7 @@ import socket
 import subprocess
 import sys
 import time
+import threading
 import uuid
 
 from planner import DEFAULT_MODELS, prompt as planner_prompt
@@ -23,14 +25,14 @@ AUTH_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
              "CODEX_ACCESS_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
              "GITHUB_ENTERPRISE_TOKEN", "HARNESS_CODEX_HOME_FALLBACK")
 ACCOUNT_VARS = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR")
-COMMANDS = ("chat", "station", "stations", "init", "run", "status", "wait", "resume", "evidence", "doctor", "login")
+COMMANDS = ("chat", "station", "stations", "init", "run", "status", "wait", "resume", "evidence", "doctor", "login", "ui")
 
 
 def parser():
     p = argparse.ArgumentParser(prog="dispatch", description="Local-first coding tasks, with optional shared Mini stations.",
         epilog="Examples: dispatch 'Fix checkout' | dispatch station --on mini --owner teammate | "
                "dispatch run --brief brief.md | dispatch status | dispatch resume RUN-ID | "
-               "dispatch evidence RUN-ID --publish")
+               "dispatch evidence RUN-ID --publish | dispatch ui")
     p.add_argument("command", nargs="?", default="chat", help="command or a quoted task description")
     p.add_argument("arguments", nargs="*")
     p.add_argument("--on", metavar="SSH_HOST", help="execute on an SSH host; default: this machine")
@@ -230,6 +232,19 @@ def resume(args, runtime):
         raise DispatchError("resume needs one run ID")
     directory = run_directory(runtime, args.arguments[0])
     current = status(directory)
+    if current["state"] == "running":
+        saved = read_json(directory / "request.json")
+        if args.owner is not None and args.owner != saved.get("account", ""):
+            raise DispatchError("this run is pinned to another account; resume without --owner")
+        emit(current, args.json)
+        return 0
+    with run_lock(directory) as lock:
+        return resume_locked(args, runtime, directory, lock)
+
+
+def resume_locked(args, runtime, directory, lock, *, background_evidence=False):
+    """Shared resume operation; callers must own the run lock."""
+    current = status(directory, running=is_running_legacy(directory))
     saved = read_json(directory / "request.json")
     if saved and args.owner is not None and args.owner != saved.get("account", ""):
         raise DispatchError("this run is pinned to account " + (saved.get("account") or "current") + "; resume without --owner")
@@ -242,43 +257,42 @@ def resume(args, runtime):
             args.capture = media["status"] in ("failed", "not_run") or not media.get("artifacts")
             args.publish = bool(saved.get("publish", True) and result.get("pr_url"))
             if args.capture or args.publish:
-                return evidence(args, runtime)
+                return evidence(args, runtime, held_lock=lock, background=background_evidence)
     if current["state"] in ("running", "ready", "ready_local"):
         emit(current, args.json)
         return 0
     if saved.get("publish", True) and os.environ.get("HARNESS_PUBLISH") == "0":
         raise DispatchError("this run is pinned to publishing; it cannot restart from a --no-publish session")
-    with run_lock(directory) as lock:
-        request = read_json(directory / "request.json")
-        if not request:
-            result = read_json(directory / "result.json")
-            repo = read_text(directory / "repo")
-            branch = result.get("branch") or read_text(directory / "branch")
-            if not repo or not branch:
-                raise DispatchError("legacy run is missing repo/branch metadata; resume it with run-task.sh once")
-            owner = read_text(directory / "owner")
-            if args.owner is None:
-                args.owner = owner
-            env = account_environment(args)
-            request = {"version": 1, "id": directory.name, "repo": repo, "branch": branch,
-                       "account": owner, "account_paths": {key: env[key] for key in ACCOUNT_VARS if key in env},
-                       "host": socket.gethostname(), "publish": True}
-            write_json(directory / "request.json", request)
-        if request.get("host") != socket.gethostname():
-            raise DispatchError("this run belongs to " + request["host"] + "; resume it on that host")
-        env = account_environment(args, request)
-        if args.brief:
-            atomic_write(directory / "brief.md", read_brief(args.brief))
-        last = read_json(directory / "launch.json")
-        if current["state"] == "needs_input" and brief_digest(directory) == last.get("brief_sha256"):
-            raise DispatchError(current["action"])
-        issue = pipeline_issue(runtime, request, env, resuming=True)
-        if issue:
-            write_json(directory / "waiting.json", issue)
-        else:
-            emit(launch(runtime, directory, request, env, lock, resume=True), args.json)
-            return 0
-    emit(status(directory), args.json)
+    request = read_json(directory / "request.json")
+    if not request:
+        result = read_json(directory / "result.json")
+        repo = read_text(directory / "repo")
+        branch = result.get("branch") or read_text(directory / "branch")
+        if not repo or not branch:
+            raise DispatchError("legacy run is missing repo/branch metadata; resume it with run-task.sh once")
+        owner = read_text(directory / "owner")
+        if args.owner is None:
+            args.owner = owner
+        env = account_environment(args)
+        request = {"version": 1, "id": directory.name, "repo": repo, "branch": branch,
+                   "account": owner, "account_paths": {key: env[key] for key in ACCOUNT_VARS if key in env},
+                   "host": socket.gethostname(), "publish": True}
+        write_json(directory / "request.json", request)
+    if request.get("host") != socket.gethostname():
+        raise DispatchError("this run belongs to " + request["host"] + "; resume it on that host")
+    env = account_environment(args, request)
+    if args.brief:
+        atomic_write(directory / "brief.md", read_brief(args.brief))
+    last = read_json(directory / "launch.json")
+    if current["state"] == "needs_input" and brief_digest(directory) == last.get("brief_sha256"):
+        raise DispatchError(current["action"])
+    issue = pipeline_issue(runtime, request, env, resuming=True)
+    if issue:
+        write_json(directory / "waiting.json", issue)
+    else:
+        emit(launch(runtime, directory, request, env, lock, resume=True), args.json)
+        return 0
+    emit(status(directory, running=False), args.json)
     return 3
 
 
@@ -320,7 +334,7 @@ def chat(args, runtime):
     os.execvpe(command[0], command, env)
 
 
-def evidence(args, runtime):
+def evidence(args, runtime, *, held_lock=None, background=False):
     if len(args.arguments) != 1:
         raise DispatchError("evidence needs one run ID")
     directory = run_directory(runtime, args.arguments[0])
@@ -335,7 +349,7 @@ def evidence(args, runtime):
             if not (current.get("result") or {}).get("evidence"):
                 print("  No frontend evidence has been recorded for this run.")
         return 0
-    with run_lock(directory) as lock:
+    with contextlib.nullcontext(held_lock) if held_lock is not None else run_lock(directory) as lock:
         if is_running_legacy(directory):
             raise DispatchError("this run has a live driver; wait for it to finish")
         # Re-read under the lock; status() would see this operation itself as a
@@ -379,9 +393,17 @@ exec python3 "$runtime/lib/evidence_retry.py" "$@"
         # If the client goes away, the recorder retains the lock until its own
         # cleanup finishes. Browser/server children do not inherit it further.
         with (directory / "demo-driver.log").open("ab") as log:
+            if background:
+                process = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=log,
+                                           stderr=log, start_new_session=True, pass_fds=(lock.fileno(),))
+                threading.Thread(target=process.wait, daemon=True).start()
+                emit({"id": directory.name, "state": "running", "account": saved.get("account") or "current",
+                      "stage": "Recovering frontend evidence", "pid": process.pid}, args.json)
+                return 0
             rc = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=log,
                                 pass_fds=(lock.fileno(),)).returncode
-    emit(status(directory), args.json)
+    emit(status(directory, running=is_running_legacy(directory)) if held_lock is not None
+         else status(directory), args.json)
     if rc:
         print("dispatch: evidence retry did not complete; see demo-driver.log and demo.log", file=sys.stderr)
     return rc
@@ -443,6 +465,8 @@ def main(argv=None):
         raise DispatchError("publishing is disabled for this session; use evidence --capture to save locally")
     if args.hands_off and command not in ("chat", "station"):
         raise DispatchError("--hands-off applies to chat or station; background workers use the harness's task permissions")
+    if command == "ui" and args.on:
+        raise DispatchError("the console controls local runs; open it on the execution machine")
     if args.on:
         return remote(args, argv)
     if args.remote_harness:
@@ -455,6 +479,18 @@ def main(argv=None):
         args.command = "chat"
     if args.no_publish and args.command not in ("chat", "run"):
         raise DispatchError("--no-publish is supported for a new chat or run; publication is pinned on existing runs")
+    if args.command == "ui":
+        if args.arguments or args.owner or args.repo:
+            raise DispatchError("ui uses saved run accounts and repositories; run dispatch ui without task options")
+        node = shutil.which("node")
+        server = Path(__file__).resolve().parents[1] / "wall/server.js"
+        if not node or not server.is_file():
+            raise DispatchError("the console needs Node 20+ and an up-to-date harness installation")
+        env = dict(os.environ, WALL_CONTROL="1", WALL_HOST="127.0.0.1", WALL_PORT="0",
+                   WALL_RUNS=str(runtime / "runs"), WALL_INGEST_TOKEN="", WALL_LINEAR_WEBHOOK_SECRET="")
+        for key in ("HARNESS_SKIP_REVIEW", "HARNESS_REDISPATCH", "HARNESS_RESUME", "DISPATCH_REMOTE_HOST"):
+            env.pop(key, None)
+        os.execve(node, [node, str(server)], env)
     if args.command == "chat":
         chat(args, runtime)
     if args.command == "run":

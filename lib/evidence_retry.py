@@ -59,10 +59,12 @@ def retry(run, capture, publish):
                 authenticated = False
             if not authenticated:
                 manifest.update(status="publish_failed", reason="GitHub login is unavailable; the captured media is saved.",
+                    auth_provider="gh",
                     action=repair_command("gh", run_id=run.name) + " ; " +
                            command_on_host(["dispatch", "resume", run.name]))
                 return 3
             manifest.pop("action", None)
+            manifest.pop("auth_provider", None)
             # Archived media is independent of a worktree. Its hashes and the
             # live PR's head prove which commit it represents, even after cleanup.
             manifest = demo.publish(run, repo, result["pr_url"], manifest, check_worktree=False)

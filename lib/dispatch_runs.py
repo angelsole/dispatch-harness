@@ -14,6 +14,7 @@ import shlex
 import socket
 import subprocess
 import time
+import threading
 import uuid
 
 
@@ -116,14 +117,14 @@ def is_running(directory):
     return is_legacy_running(directory)
 
 
-def status(directory):
+def status(directory, *, running=None):
     if not directory.is_dir():
         raise DispatchError("unknown run: " + directory.name)
     request = read_json(directory / "request.json")
     result = read_json(directory / "result.json")
     launch = read_json(directory / "launch.json")
     waiting = read_json(directory / "waiting.json")
-    alive = is_running(directory)
+    alive = is_running(directory) if running is None else running
     # A previous result stays available during retry; it is not this attempt's
     # verdict until write_result has run again.
     fresh_result = bool(result) and (directory / "result.json").stat().st_mtime >= launch.get("started", 0)
@@ -170,6 +171,8 @@ def brief_digest(directory):
 
 
 def launch(runtime, directory, request, env, lock, resume=False):
+    if (directory / "linear-stopped").exists():
+        raise DispatchError("This Linear session was stopped; delegate a new session to start another task")
     if is_legacy_running(directory):
         raise DispatchError("this run already has a live driver")
     (directory / "waiting.json").unlink(missing_ok=True)
@@ -185,6 +188,9 @@ def launch(runtime, directory, request, env, lock, resume=False):
             cwd=request["repo"], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
             start_new_session=True, pass_fds=(lock.fileno(),),
         )
+    # The CLI may exit immediately; the Linear worker may live for weeks. Reap
+    # completed children in either host without waiting for the task here.
+    threading.Thread(target=process.wait, daemon=True).start()
     atomic_write(directory / "driver.pid", str(process.pid) + "\n")
     return {"id": directory.name, "state": "running", "pid": process.pid,
             "account": request.get("account") or "current", "logs": str(directory)}

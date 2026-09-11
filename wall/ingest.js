@@ -9,8 +9,9 @@
 // telemetry beside it.
 //
 // A fourth route, POST /webhooks/linear, is Linear's own: what it delivers is
-// verified against Linear's HMAC signature and kept nowhere — it exists so the
-// app may subscribe to Agent session events, not because anything reads them.
+// verified against Linear's HMAC signature. With an explicit dispatcher config,
+// agent session events are durably queued before acknowledgement; without it,
+// the existing outbound-only integration still accepts and discards deliveries.
 //
 // Fail-closed: with WALL_INGEST_TOKEN unset every report route below is a 404
 // and the wall is the read-only server it has always been; the Linear webhook
@@ -22,6 +23,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const LinearAgent = require('./linear-agent.js').create();
 
 const MAX_BODY = 1 << 20;            // 1 MiB, then 413
 const LINEAR_WINDOW_MS = 60 * 1000;  // a Linear delivery older or newer is a replay
@@ -498,14 +500,19 @@ function handle(req, res, pathname) {
       if (LINEAR_SECRET === '') return send(res, 404, 'wall: no such page\n');
       const verdict = verifyLinear(req, text);
       if (verdict.code) {
+        // Report delivery failures without logging the signature or issue body.
+        console.warn('[wall] linear webhook rejected: HTTP ' + verdict.code);
         return send(res, verdict.code, verdict.code === 400 ? 'wall: bad JSON\n' : '');
       }
       try {
         console.log('[wall] linear webhook: ' + (logLabel(verdict.payload.type) || '?') +
           ' ' + (logLabel(verdict.payload.action) || '?'));
-        return send(res, 200, '{}', 'application/json; charset=utf-8');
+        return LinearAgent.receive(verdict.payload).then(code =>
+          send(res, code, '{}', 'application/json; charset=utf-8'), () =>
+          send(res, 503, '{}', 'application/json; charset=utf-8'));
       } catch {
-        return send(res, 204);
+        console.error('[wall] linear webhook receiver failed; delivery needs retry.');
+        return send(res, 503);
       }
     });
   }
@@ -537,6 +544,7 @@ function handle(req, res, pathname) {
 }
 
 module.exports = {
+  startLinear: LinearAgent.start, stopLinear: LinearAgent.close,
   handles, handle, enabled, telemetryFor, remoteEntries,
   STORE_FILE, MAX_BODY, PRUNE_S, PII,
   // The suites drive the store directly for the aggregation rules: those are

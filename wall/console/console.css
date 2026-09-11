@@ -309,6 +309,34 @@ main { padding: 14px 16px 4px; }
 .foot { padding: 0 16px 20px; color: var(--faint); font-size: 12px; }
 .foot a { color: var(--dim); }
 
+.console-access { color: var(--dim); margin: 0 0 16px; }
+.terminal-details { margin: 10px 0; color: var(--dim); }
+.terminal-details summary { cursor: pointer; margin-bottom: 8px; }
+.control-panel { padding: 14px 0; max-width: 800px; }
+.control-context { color: var(--dim); overflow-wrap: anywhere; margin: 0 0 8px; }
+.checkpoint, .answer-help { color: var(--dim); font-size: 12px; }
+.control-reason, .control-stale { color: var(--wait); }
+.control-panel h3 { font-size: 14px; margin: 18px 0 8px; }
+.question { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; padding: 12px; background: var(--bg); }
+.answer label { display: block; font-weight: 600; margin-bottom: 6px; }
+.answer textarea {
+  display: block; width: 100%; resize: vertical; min-height: 100px;
+  padding: 12px; border: 1px solid var(--dim); border-radius: 4px;
+  background: var(--bg); color: var(--ink); font: inherit;
+}
+.answer textarea:focus-visible, .control-panel button:focus-visible { outline: 2px solid var(--a-opus); outline-offset: 2px; }
+.control-buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.control-panel button {
+  min-height: 44px; padding: 8px 14px; border: 1px solid var(--rule);
+  border-radius: 4px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.control-primary { background: var(--ink); color: var(--bg); }
+.control-secondary { background: var(--panel); color: var(--ink); }
+.control-panel button:disabled { opacity: .45; cursor: default; }
+.control-panel [hidden] { display: none; }
+.control-message { color: var(--ink); overflow-wrap: anywhere; }
+.login-handoff code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 8px; }
+
 /* --- a phone ------------------------------------------------------------------
    Additive: below 560px the same eleven spans of a line reflow into one card.
    Every item that can hold an unbounded string is shrinkable and clipped here,

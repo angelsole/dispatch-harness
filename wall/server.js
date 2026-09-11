@@ -59,6 +59,10 @@ const HOST = process.env.WALL_HOST || '0.0.0.0';
 const RUNS = process.env.WALL_RUNS ||
   path.join(process.env.HOME || '.', '.claude/harness/runs');
 const POLL_MS = Math.max(100, num(process.env.WALL_POLL_MS, 1000));
+const Actions = require('./actions.js').create({
+  enabled: process.env.WALL_CONTROL === '1', host: HOST, runs: RUNS,
+  runtime: process.env.HARNESS_DIR || path.join(process.env.HOME || '.', '.claude/harness'),
+});
 
 const MAX_FINISHED = 24;  // compact cap on the JSON feed; live runs are never discarded
 const FEED_LINES = 48;    // tail of feed.log shipped per run
@@ -1044,6 +1048,9 @@ function buildCity(records, at) {
 // both windows, and draw what is left.
 function cityNow(scanned, at) {
   loadLedger();
+  // A recovery console can coexist with the office wall, which owns this
+  // ledger. It must never append to or prune the other process's snapshot.
+  if (Actions.enabled) return buildCity([...ledger.values()], at);
   const start = weekStartOf(at);
   flushPending();
   observe(scanned, start, weekEndOf(at));
@@ -1074,6 +1081,7 @@ const STATIC = {
   '/console/console.html': [path.join('console', 'console.html'), 'text/html; charset=utf-8'],
   '/console/console.css': [path.join('console', 'console.css'), 'text/css; charset=utf-8'],
   '/console/console.js': [path.join('console', 'console.js'), 'text/javascript; charset=utf-8'],
+  '/console/control.js': [path.join('console', 'control.js'), 'text/javascript; charset=utf-8'],
   '/console/cost.js': ['cost.js', 'text/javascript; charset=utf-8'],
 };
 
@@ -1388,9 +1396,13 @@ function serveStatic(res, entry) {
 
 const server = http.createServer((req, res) => {
   try {
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
     const requestUrl = new URL(req.url || '/', 'http://wall.local');
     const url = requestUrl.pathname;
     const consoleView = requestUrl.searchParams.get('view') === 'console';
+    if (Actions.handles(url)) return Actions.handle(req, res, url);
     // Before the GET routing and narrowed to the four ingest paths: every other
     // method-and-path pair reaches exactly the handler it always did.
     if (req.method === 'POST' && Ingest.handles(url)) return Ingest.handle(req, res, url);
@@ -1430,11 +1442,17 @@ server.on('error', (err) => {
 // finish epoch and a diff, so tests/wall.test.sh calls them directly instead of
 // staging a run dir per rule. Nothing listens in that mode.
 if (require.main === module) {
-  seedFixtureCity(Math.floor(Date.now() / 1000));
+  Ingest.startLinear();
+  if (!Actions.enabled) seedFixtureCity(Math.floor(Date.now() / 1000));
   server.listen(PORT, HOST, () => {
     // The bound port, not the requested one: --port 0 asks the OS for a free one,
     // which is how tests and a second wall on the same box stay collision-free.
     const bound = server.address().port;
+    if (Actions.enabled) {
+      console.log(`[dispatch] Open your private console: ${Actions.url(bound)}`);
+      console.log('[dispatch] Keep this terminal open. Ctrl-C closes the console; accepted tasks keep running.');
+      return;
+    }
     console.log(`[wall] serving ${RUNS}`);
     console.log(`[wall] city ledger ${CITY_FILE}`);
     if (Ingest.enabled()) console.log(`[wall] ingest store ${Ingest.STORE_FILE}`);
@@ -1443,6 +1461,7 @@ if (require.main === module) {
 
   for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => {
+      Ingest.stopLinear();
       server.close();
       if (Ingest.enabled()) Ingest.writeNow();
       process.exit(0);

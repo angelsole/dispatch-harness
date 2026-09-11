@@ -114,6 +114,10 @@ class DispatchTests(unittest.TestCase):
     def call(self, *args, check=True):
         return self.shell([self.cli, *args], check=check, cwd=self.repo)
 
+    def console(self, operation, body=None):
+        return json.loads(self.shell(['python3', str(self.runtime / 'lib/dispatch_actions.py'), operation],
+                                    input=json.dumps(body or {})).stdout)
+
     def run_task(self, run_id="TASK-1", *extra):
         return self.call("run", "--id", run_id, "--brief", str(self.brief), "--json", *extra, check=False)
 
@@ -134,6 +138,51 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("local codex", out.stdout)
         self.assertIn("gpt-6-astra", self.events('chat')[0]['args'])
         self.assertEqual(self.events('implement'), [])
+
+    def test_ui_launches_private_local_console_without_starting_work(self):
+        import re
+        import selectors
+        import urllib.error
+        import urllib.request
+        ledger = self.runtime / 'wall-city.jsonl'
+        old_city = json.dumps(dict(id='OLD-1', epoch=1)) + '\n'
+        ledger.write_text(old_city)
+        self.env.update(WALL_INGEST_TOKEN='shared-wall-token', WALL_CITY=str(ledger))
+        with subprocess.Popen([self.cli, 'ui'], env=self.env, cwd=self.repo,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+            try:
+                output = b''
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    deadline = time.monotonic() + 10
+                    while b'#control=' not in output and time.monotonic() < deadline:
+                        if selector.select(timeout=.1):
+                            chunk = os.read(process.stdout.fileno(), 4096)
+                            if not chunk:
+                                break
+                            output += chunk
+                match = re.search(rb'(http://127\.0\.0\.1:\d+)/console#control=([a-f0-9]{64})', output)
+                self.assertIsNotNone(match, output.decode())
+                origin, token = (part.decode() for part in match.groups())
+                with urllib.request.urlopen(origin + '/console') as page:
+                    self.assertIn(b'/console/control.js', page.read())
+                    self.assertIn("frame-ancestors 'none'", page.headers['Content-Security-Policy'])
+                request = urllib.request.Request(origin + '/api/control/runs',
+                                                 headers={'Authorization': 'Bearer ' + token})
+                with urllib.request.urlopen(request) as response:
+                    self.assertEqual(json.load(response)['tasks'], [])
+                with urllib.request.urlopen(origin + '/api/runs?view=console') as response:
+                    self.assertEqual(json.load(response)['runs'], [])
+                self.assertEqual(ledger.read_text(), old_city)
+                request = urllib.request.Request(origin + '/api/ingest/stage', data=b'{}',
+                                                 headers={'Authorization': 'Bearer shared-wall-token'})
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(request)
+                self.assertEqual(error.exception.code, 404)
+                self.assertEqual(self.events('implement'), [])
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
 
     def test_empty_start_bootstraps_both_planners_with_model_and_protocol(self):
         for provider, model in (('codex', 'gpt-6-astra'), ('claude', 'fable')):
@@ -207,9 +256,44 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(self.call('evidence', 'DEMO-LOCAL', '--capture', check=False).returncode, 1)
         storyboard.write_text(original)
         recovered = json.loads(self.call('resume', 'DEMO-LOCAL', '--json').stdout)
+        self.assertEqual(recovered['state'], 'ready_local')
         self.assertEqual(recovered['result']['evidence']['status'], 'captured')
         self.assertEqual(models, (len(self.events('implement')), len(self.events('review'))))
         self.assertEqual(gates, (self.root / 'gates').read_bytes())
+
+        # The console detaches evidence recovery and retains the same run lock.
+        storyboard.unlink()
+        self.assertEqual(self.call('evidence', 'DEMO-LOCAL', '--capture', check=False).returncode, 1)
+        storyboard.write_text(original)
+        task = self.console('list')['tasks'][0]
+        body = dict(id=task['id'], action='resume', revision=task['revision'], operation_id='e' * 32)
+        accepted = self.console('apply', body)
+        self.assertEqual(accepted['state'], 'running', accepted)
+        self.assertEqual(self.console('apply', body), accepted)
+        recovered = self.wait('DEMO-LOCAL')
+        self.assertEqual(recovered['state'], 'ready_local')
+        self.assertEqual(recovered['result']['evidence']['status'], 'captured')
+        self.assertEqual(models, (len(self.events('implement')), len(self.events('review'))))
+        self.assertEqual(gates, (self.root / 'gates').read_bytes())
+
+    def test_console_answer_resumes_saved_run_once(self):
+        (self.root / 'ask-question').touch()
+        self.run_task('QUESTION-1', '--no-publish')
+        self.assertEqual(self.wait('QUESTION-1')['state'], 'needs_input')
+        task = self.console('list')['tasks'][0]
+        self.assertEqual(task['questions'], 'Which colour?')
+        (self.root / 'ask-question').unlink()
+        body = dict(id=task['id'], action='answer_resume', revision=task['revision'],
+                    operation_id='a' * 32, answer='Use blue for the selected option.')
+        accepted = self.console('apply', body)
+        self.assertEqual(accepted['state'], 'running', accepted)
+        self.assertEqual(self.console('apply', body), accepted)
+        self.assertEqual(self.wait('QUESTION-1')['state'], 'ready_local')
+        brief = (self.runtime / 'runs/QUESTION-1/brief.md').read_text()
+        self.assertIn(self.brief.read_text(), brief)
+        self.assertEqual(brief.count(body['answer']), 1)
+        self.assertEqual(len(self.events('implement')), 2)
+        self.assertEqual(self.events('gh'), [])
 
     def test_local_claude_profile_discovers_shared_protocol(self):
         profile = self.home / 'accounts/teammate'

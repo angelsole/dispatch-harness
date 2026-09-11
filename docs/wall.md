@@ -217,15 +217,16 @@ recent feed. Every cost figure is a list-price counterfactual (`wall/cost.js`
 reads what `run-task.sh` already recorded and re-prices nothing): both plans
 are flat-rate, so none of it is money spent.
 
-Click a row and it opens: the run's title, why it is blocked when it is, the
-tail of `feed.log`, and the one control the console has —
+Click a row and it opens the run's title, why it is blocked, the tail of
+`feed.log`, and an expandable terminal handoff —
 
 ```bash
 ~/.claude/harness/attach.sh <RUN-ID>
 ```
 
-— as a copy-able command. Everything the console can *do* is that paste. It
-never mutates a run, and it draws this machine's `WALL_RUNS` plus whatever other
+— as a copy-able command. Attachment forks a separate worker conversation;
+it does not steer the running worker. The normal wall never mutates a run,
+and draws this machine's `WALL_RUNS` plus whatever other
 machines have [reported in](#ingest). A reported run wears a dashed host chip
 and a hatched row, and where its paste would be it carries the machine's name
 instead: `attach.sh` opens a session here, and that run is not here. To follow
@@ -244,6 +245,57 @@ is the second, and shares not a line of code with the first. Lifting that layer
 into its own directory so N frontends (web, mobile, pixel) hang cleanly off it
 is deferred work and nothing here does it — this is only the proof that the
 seam is real.
+
+## Local recovery console
+
+Run `dispatch ui` on the execution machine, then open the private link it prints.
+This needs Node 20+ and an updated harness installation. It starts a separate
+console on an available loopback port, so it can coexist with the office wall.
+Keep that launcher running while using the console. Closing it does not stop
+an accepted task or evidence recovery.
+
+From a source checkout, `./dispatch.sh ui` uses that checkout's console with
+the existing installation's saved runs. This also lets you try the interface
+before updating the installed scripts.
+
+The **Needs attention** list includes saved login blockers, stopped runs, and
+completed runs with recoverable frontend evidence. Expand a task to see:
+
+- The full question and an answer field. **Save answer and resume** records the
+  question and decision in the brief, then invokes ordinary checkpoint-aware
+  recovery. Blank answers are rejected. An unsent answer survives live updates.
+- **Resume run**, or **Recover frontend evidence** when only capture/upload is
+  missing. Evidence recovery does not rerun coding agents. Scheduled capacity
+  retries are left to their scheduler.
+- The saved account, machine, and last checkpoint. A recorded checkpoint is
+  not a promise of reuse: the runner validates its inputs on resume. An answer
+  changes the brief and can require earlier stages again.
+- A saved-account sign-in command when authentication is required. Complete
+  sign-in in the terminal, then choose **Check login and resume**. An evidence
+  upload blocked by GitHub login offers the same saved-account handoff and
+  **Check login and recover frontend evidence**.
+
+Every action rechecks state under the run lock. A stale tab must refresh its
+details before submitting, and a lost response can replay the same operation
+receipt without starting work again. Decisions and receipts remain under the
+run's `console-operations/` directory. If recovery fails after saving an answer,
+the answer remains in the brief and the failure is displayed.
+While a submitted answer's outcome is unknown, its field stays fixed for receipt
+retries. **Refresh details** keeps the draft and lets you review it again.
+
+Controls apply only to local runs carrying a saved request with the current
+operator identity. Mirrored, remote, older runs without that identity, and
+another operator's runs remain read-only. Use the planner on the execution
+machine for those cases. The UI does not change accounts, launch additional
+writers in active worktrees, or introduce a worker chat channel.
+
+The local interface uses authenticated `GET /api/control/runs` and
+`POST /api/control/actions`. The existing `/api/runs`, `/api/stream`, and ambient
+wall keep their monitoring contract. `WALL_CONTROL=1` is the launcher's internal
+switch and refuses non-loopback hosts or a different runs directory. The
+private link's token is independent of ingest credentials and stored only for
+the browser tab's session; restarting the console requires its new link.
+See [Console authorization](security.md#console-authorization).
 
 ## Ingest
 
@@ -288,7 +340,7 @@ delay or fail a run:
 | `POST /api/ingest/stage` | `run-task.sh`, on every stage handoff | the stage text and the run's identity: host, owner, repo, provider, model, worktree, branch, base, PR URL, status |
 | `POST /api/ingest/hook` | `lib/wall-hook.sh`, from the worker's `PostToolUse` / `Stop` / `SessionEnd` hooks | the event name, the session, and the tool name plus its command / file path / description, each capped at 200 characters |
 | `POST /v1/metrics` | the worker's own OpenTelemetry exporter | `claude_code.token.usage`, `claude_code.cost.usage`, `claude_code.session.count` |
-| `POST /webhooks/linear` | Linear itself, not a run — its agent-session events, the subscription that unlocks agent sessions on the app | Linear → wall, signed, nothing stored: verified against the signing secret, answered `200 {}`, discarded |
+| `POST /webhooks/linear` | Linear agent-session events | Signed and discarded by default; with `WALL_LINEAR_DISPATCH_CONFIG`, validated and durably queued for [dispatch and replies](linear-dispatch.md) before `200 {}` |
 
 A run the wall has never seen on disk becomes a **row of its own**, marked
 remote. A run that is *both* on disk (mirrored) and reporting is **one row** —
@@ -317,7 +369,7 @@ board. An entry nothing has updated for seven days is pruned.
 `/api/runs` and `/api/stream` without `?view=console` return exactly what they
 returned before ingest existed: no telemetry on any run, and no remote rows at
 all. The city, the towers, the district and the summary are computed from the
-disk alone. There is still no auth on any GET route, and the token is a
+disk alone. The existing monitoring GET routes remain unauthenticated, and the ingest token is a
 LAN-dashboard secret, not a vendor credential — see
 [Security](security.md#the-wall-ingest-token). The one public path is
 `/webhooks/linear`, and it is authenticated by Linear's HMAC signature, not

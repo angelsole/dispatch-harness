@@ -79,6 +79,12 @@ current snapshot with exit 124. A finished draft PR is `ready`; a reviewed
 local branch is `ready_local`. A stopped process is reported as interrupted,
 not left with an indefinitely growing stage timer.
 
+For browser-based recovery, `dispatch ui` prints a private local console link.
+It shows questions, saves answers to the brief, and offers the applicable resume
+or frontend-evidence action. Accounts stay pinned to the saved task. See
+[Local recovery console](wall.md#local-recovery-console) for sign-in handoffs,
+checkpoint behavior, and the boundary between local controls and shared monitoring.
+
 `dispatch resume ID` keeps the saved account configuration and restarts a
 stopped task. On a finished run with missing frontend evidence, it selects
 capture or upload-only recovery automatically. A captured local-only run and a
@@ -788,6 +794,10 @@ sweep it decided on could not be carried out, so a nightly agent's log is quiet
 until something is actually wrong.
 
 ## Ticket sync
+
+To start tasks by delegating them to the Mini app in Linear, and answer the
+agent's questions there, enable [Dispatch from Linear](linear-dispatch.md).
+It consumes signed agent-session events and reuses the outbound layers below.
 
 An overnight run has no orchestrator watching for its result, and a teammate
 looking at Linear used to have no way to tell that a ticket was being built at

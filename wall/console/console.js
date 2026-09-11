@@ -7,13 +7,14 @@
 // Phaser). Its whole dependency is the two endpoints above, which is the point:
 // wall/server.js is the run-data layer, and this is its second frontend.
 //
-// Read-only, like everything else that reads a run dir. The one control it
-// offers is a command to paste: attach.sh steps into the session, from a
-// terminal, where an operator can be asked to confirm.
+// The default wall is read-only. dispatch ui adds authenticated local recovery
+// controls, backed by the same locked lifecycle as the CLI.
 
 (function () {
   const POLL_MS = 4000;
   const MAX_FEED = 48;
+  const control = window.DispatchControl;
+  let latestFrame = null;
 
   // Actor -> hue, one entry per `key` in wall/stage-vocab.json. The colours are
   // the CSS custom properties; tests/wall.test.sh holds this list against the
@@ -73,7 +74,7 @@
       run.state, run.stage, run.actor, run.actorKey, run.provider, run.activity,
       run.projectLabel, run.title, run.diff, run.turns, run.cost, run.gateRounds,
       run.gate, run.outcome, run.prUrl, run.demoUrl, run.branch, run.blocked,
-      run.reason, run.remote, run.host, run.telemetry, (run.feed || []).length,
+      run.reason, run.remote, run.host, run.telemetry, run.controlRevision, (run.feed || []).length,
       (run.feed || []).map((f) => f.text).join('\\u0000'),
     ]);
   }
@@ -261,10 +262,13 @@
     if (demo) meta.push(demo);
 
     const why = run.blocked || run.reason;
-    return h('div', { class: 'detail' }, [
+    return h('div', { class: 'run-readout' }, [
       run.title ? h('p', { class: 'title', text: run.title }) : null,
       why ? h('p', { class: 'why', text: why }) : null,
-      h('div', { class: 'attach' }, [code, copy]),
+      h('details', { class: 'terminal-details' }, [
+        h('summary', { text: run.remote ? 'Execution machine' : 'Open a separate worker conversation' }),
+        h('div', { class: 'attach' }, [code, copy]),
+      ]),
       meta.length ? h('p', { class: 'meta' }, meta) : null,
       feedBlock(run),
     ]);
@@ -309,9 +313,16 @@
 
   function paintDetail(entry, run) {
     const existing = entry.article.querySelector('.detail');
-    if (existing) existing.remove();
     entry.button.setAttribute('aria-expanded', open.has(run.id) ? 'true' : 'false');
-    if (open.has(run.id)) entry.article.appendChild(detail(run));
+    if (!open.has(run.id)) { if (existing) existing.remove(); return; }
+    if (existing) {
+      existing.querySelector('.run-readout').replaceChildren(...detail(run).children);
+    } else {
+      entry.article.appendChild(h('div', { class: 'detail' }, [
+        control && control.enabled && !run.remote ? control.mount(run.id) : null,
+        detail(run),
+      ]));
+    }
   }
 
   function paint(run, first) {
@@ -361,7 +372,9 @@
   let firstPaint = true;
 
   function render(frame) {
-    const runs = Array.isArray(frame.runs) ? frame.runs.filter((r) => r && typeof r.id === 'string') : [];
+    latestFrame = frame;
+    const raw = Array.isArray(frame.runs) ? frame.runs.filter((r) => r && typeof r.id === 'string') : [];
+    const runs = control && control.enabled ? control.decorate(raw) : raw;
     runsDir = typeof frame.runsDir === 'string' ? frame.runsDir : runsDir;
     serverAt = Number(frame.at) || Math.floor(Date.now() / 1000);
     serverGot = Date.now();
@@ -453,6 +466,7 @@
   }
 
   poll();
+  if (control) control.subscribe(() => { if (latestFrame) render(latestFrame); });
 
   if (typeof EventSource === 'function') {
     const es = new EventSource('/api/stream?view=console');
