@@ -26,10 +26,11 @@ mode_of() { m=$(stat -f %Lp "$1" 2>/dev/null) || m=$(stat -c %a "$1" 2>/dev/null
 # or token: every assertion must come from the fixture alone.
 fixture() {
   env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u GH_CONFIG_DIR -u HARNESS_OWNER \
+    -u HARNESS_DIR \
     -u DISPATCH_STATION_DIR -u DISPATCH_PLANNER -u DISPATCH_MODEL -u QM_CREW \
     -u CLAUDE_SKILLS_DIR -u CODEX_SKILLS_DIR -u CLAUDE_SETTINGS_FILE \
     -u CLAUDE_CODE_OAUTH_TOKEN \
-    HOME="$FIXTURE_HOME" HARNESS_DIR="$H" PATH="$BIN:$PATH" CAPTURE="$CAPTURE" \
+    HOME="$FIXTURE_HOME" PATH="$BIN:$PATH" CAPTURE="$CAPTURE" \
     CODEX_BIN=codex CLAUDE_BIN=claude "$@"
 }
 station() { fixture bash "$H/station.sh" "$@"; }
