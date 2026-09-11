@@ -358,7 +358,9 @@ harness_oauth_token() {  # [$1 = strict]; sets CLAUDE_CODE_OAUTH_TOKEN
 seat_exec() {  # $1 = seat, [VAR=value ...] -- command [args ...]
   local seat="$1"; shift
   [ $# -gt 0 ] || { echo "seat_exec: needs a seat and a command" >&2; return 2; }
-  local pairs=() name
+  local pairs=() name wall_token=""
+  [ "${SEAT_EXEC_PRESERVE_WALL_TOKEN:-0}" != 1 ] \
+    || wall_token="${HARNESS_WALL_TOKEN:-}"
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do
     name="${1%%=*}"
     case "$1:$name" in
@@ -377,6 +379,12 @@ seat_exec() {  # $1 = seat, [VAR=value ...] -- command [args ...]
   # sudo keeps the caller's umask unless sudoers overrides it.
   umask 002
   if [ "$(id -un)" != "$seat" ]; then
+    if [ -n "$wall_token" ]; then
+      # Preserve the wall credential from the environment by name. Its value
+      # must never be an argv element visible to other local users.
+      exec sudo -n -u "$seat" -H --preserve-env=HARNESS_WALL_TOKEN \
+        ${pairs[@]+"${pairs[@]}"} "$@"
+    fi
     exec sudo -n -u "$seat" -H ${pairs[@]+"${pairs[@]}"} "$@"
   fi
   # Direct path: build the same explicit environment in-process by unsetting
@@ -389,6 +397,7 @@ seat_exec() {  # $1 = seat, [VAR=value ...] -- command [args ...]
   for var in ${pairs[@]+"${pairs[@]}"}; do
     export "${var%%=*}=${var#*=}"
   done
+  [ -z "$wall_token" ] || export HARNESS_WALL_TOKEN="$wall_token"
   [ -n "${HARNESS_OWNER:-}" ] || export HARNESS_OWNER="$seat"
   harness_oauth_token
   exec "$@"
@@ -409,9 +418,10 @@ seat_run() {  # $1 = seat, rest = command + args
     export "${var?}" 2>/dev/null || true
   done
   for var in $(compgen -e 2>/dev/null | grep -E '^(HARNESS_|IMPLEMENTER_|REVIEWER_|ZAI_API_KEY_FILE)'); do
-    pairs+=("$var=${!var}")
+    [ "$var" = HARNESS_WALL_TOKEN ] || pairs+=("$var=${!var}")
   done
-  seat_exec "$seat" ${pairs[@]+"${pairs[@]}"} -- "$@"
+  SEAT_EXEC_PRESERVE_WALL_TOKEN=1 \
+    seat_exec "$seat" ${pairs[@]+"${pairs[@]}"} -- "$@"
 }
 
 # A 0600 token file is a login: every script that sources this library runs

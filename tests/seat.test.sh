@@ -191,6 +191,16 @@ check 'seat_exec: sudo argv is exactly -n -u SEAT -H, pairs, command' \
   "$(cat "$SUDO_LOG")" "$(cat "$expected")"
 file_has_not "$SUDO_LOG" '--' 'seat_exec: the separator never reaches sudo'
 
+: > "$SUDO_LOG"
+fixture env HARNESS_WALL_TOKEN=probe-must-not-receive bash -s "$LIB" <<'SNIP'
+. "$1"
+seat_exec angel "PATH=$PATH" -- /opt/dispatch/seat-probe.sh
+SNIP
+file_has_not "$SUDO_LOG" '--preserve-env=HARNESS_WALL_TOKEN' \
+  'seat_exec: unrelated seat commands do not inherit the service wall token'
+file_has_not "$SUDO_LOG" 'probe-must-not-receive' \
+  'seat_exec: ambient wall token is not passed without the seat_run marker'
+
 printf '42' > "$SUDO_RC"
 fixture bash -s "$LIB" >/dev/null <<'SNIP'
 . "$1"
@@ -331,7 +341,8 @@ chmod 600 "$FIXTURE_HOME/.claude/oauth-token"
 : > "$SUDO_LOG"
 fixture bash -s "$LIB" <<'SNIP'
 . "$1"
-export HARNESS_KNOB=carried-along IMPLEMENTER_EFFORT=high SPECTATOR=ambient-noise
+export HARNESS_KNOB=carried-along HARNESS_WALL_TOKEN=wall-secret-42 \
+  IMPLEMENTER_EFFORT=high SPECTATOR=ambient-noise
 seat_run bea /bin/echo hi
 SNIP
 line_is "$SUDO_LOG" 'bea' 'seat_run: sudo is asked for the named seat'
@@ -342,6 +353,9 @@ file_has "$SUDO_LOG" 'IMPLEMENTER_EFFORT=high' 'seat_run: implementer knobs are 
 file_has "$SUDO_LOG" '/bin/echo' 'seat_run: the command follows the pairs'
 line_is "$SUDO_LOG" 'hi' 'seat_run: arguments stay single argv elements'
 file_has_not "$SUDO_LOG" 'SPECTATOR=' 'seat_run: nothing outside the sweep is carried'
+file_has "$SUDO_LOG" '--preserve-env=HARNESS_WALL_TOKEN' \
+  'seat_run: sudo preserves the wall token without putting its value in argv'
+file_has_not "$SUDO_LOG" 'wall-secret-42' 'seat_run: the wall token value never rides the command line'
 file_has_not "$SUDO_LOG" 'seat-test-token-9' 'seat_run: the token never rides the command line'
 file_has_not "$SUDO_LOG" 'CLAUDE_CODE_OAUTH_TOKEN=' 'seat_run: the token is never even named on argv'
 rm -f "$FIXTURE_HOME/.claude/oauth-token"
