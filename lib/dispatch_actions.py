@@ -68,13 +68,7 @@ def valid_request(request, run_id):
     account = request.get("account")
     if not isinstance(account, str) or (account and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", account)):
         return False
-    paths = request.get("account_paths")
-    if not isinstance(paths, dict) or type(request.get("publish")) is not bool:
-        return False
-    allowed = {"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR"}
-    return not (set(paths) - allowed) and all(
-        isinstance(value, str) and "\0" not in value and Path(value).is_absolute()
-        for value in paths.values())
+    return type(request.get("publish")) is bool
 
 
 def view(runtime, run_id, *, locked=False):
@@ -195,7 +189,7 @@ def apply(runtime, body, *, source="console"):
             raise DispatchError("Write an answer before resuming.")
         if body["action"] != "answer_resume" and answer:
             raise DispatchError("This action does not accept an answer.")
-        receipts.mkdir(mode=0o700, exist_ok=True)
+        receipts.mkdir(mode=0o770, exist_ok=True)
         response = {"id": body["id"], "operation_id": operation_id, "state": "accepted",
                     "message": "Request recorded; its outcome is not confirmed. Refresh task details before submitting again."}
         record = {"fingerprint": fingerprint, "at": time.time(), "operator": getpass.getuser(),

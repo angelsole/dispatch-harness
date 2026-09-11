@@ -18,26 +18,23 @@ import uuid
 from planner import DEFAULT_MODELS, prompt as planner_prompt
 from dispatch_runs import (DispatchError, atomic_write, brief_digest, command_on_host,
                            launch, read_json, read_text, run_directory, run_lock,
-                           status, write_json, repair_command)
+                           seat_probe_state, status, write_json, repair_command)
 
 AUTH_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
              "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "OPENAI_BASE_URL",
              "CODEX_ACCESS_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
              "GITHUB_ENTERPRISE_TOKEN", "HARNESS_CODEX_HOME_FALLBACK")
-ACCOUNT_VARS = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR")
 COMMANDS = ("chat", "station", "stations", "init", "run", "status", "wait", "resume", "evidence", "doctor", "login", "ui")
 
 
 def parser():
-    p = argparse.ArgumentParser(prog="dispatch", description="Local-first coding tasks, with optional shared Mini stations.",
-        epilog="Examples: dispatch 'Fix checkout' | dispatch station --on mini --owner teammate | "
-               "dispatch run --brief brief.md | dispatch status | dispatch resume RUN-ID | "
-               "dispatch evidence RUN-ID --publish | dispatch ui")
+    p = argparse.ArgumentParser(prog="dispatch", description="Local-first coding tasks, with seats as OS users.",
+        epilog="Examples: dispatch 'Fix checkout' | dispatch run --brief brief.md | "
+               "dispatch status | dispatch resume RUN-ID | dispatch evidence RUN-ID --publish | dispatch ui")
     p.add_argument("command", nargs="?", default="chat", help="command or a quoted task description")
     p.add_argument("arguments", nargs="*")
     p.add_argument("--on", metavar="SSH_HOST", help="execute on an SSH host; default: this machine")
-    p.add_argument("--owner", help="explicitly select a saved station account")
-    p.add_argument("--accounts-dir", default=os.environ.get("QM_ACCOUNTS_DIR", str(Path.home() / "accounts")))
+    p.add_argument("--owner", help="run as this seat; only the runtime's owning account may act for another seat")
     p.add_argument("--remote-harness", help="absolute installation path on the SSH host")
     p.add_argument("--repo", "--dir", dest="repo", help="repository/directory on the execution machine")
     p.add_argument("--planner", choices=("codex", "claude"), default=os.environ.get("DISPATCH_PLANNER", "codex"))
@@ -62,41 +59,77 @@ def executable(provider, env):
     return env.get({"codex": "CODEX_BIN", "claude": "CLAUDE_BIN"}.get(provider, ""), provider)
 
 
-def account_environment(args, saved=None):
+def _require_seat_allowed(owner, runtime):
+    if not owner or owner == getpass.getuser():
+        return
+    # Acting for another seat means launching work inside a home this process
+    # cannot reach. Only the account that owns the shared runtime (the service
+    # user) may do that; everybody else gets the SSH instruction instead.
+    if runtime.stat().st_uid != os.getuid():
+        host = os.environ.get("DISPATCH_REMOTE_HOST") or socket.gethostname()
+        raise DispatchError("logins and stations belong to the account holder: ssh " + owner + "@" + host +
+                            ", then run station.sh there")
+
+
+def resolve_owner(args, runtime):
+    """The seat a command acts for, once validated; "" means the current user."""
+    owner = args.owner if args.owner is not None else os.environ.get("HARNESS_OWNER", "")
+    if not owner or owner == getpass.getuser():
+        return ""
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", owner):
+        raise DispatchError("invalid seat name: " + owner)
+    _require_seat_allowed(owner, runtime)
+    if subprocess.run(["id", "-u", owner], capture_output=True).returncode:
+        raise DispatchError("unknown seat " + owner + "; there is no user by that name on this machine")
+    return owner
+
+
+def account_environment(args, saved=None, runtime=None):
     env = dict(os.environ)
     env["PATH"] += os.pathsep + os.pathsep.join((str(Path.home() / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"))
-    owner = args.owner if args.owner is not None else env.get("HARNESS_OWNER", "")
     if saved:
+        # A saved request names the run's seat; the ambient HARNESS_OWNER and
+        # any seat lookup belong to new runs, not to a run already pinned.
         owner = saved.get("account", "")
         if args.owner is not None and args.owner != owner:
             raise DispatchError("this run is pinned to account " + (owner or "current") + "; resume without --owner")
-    if owner and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", owner):
-        raise DispatchError("invalid station account name")
-    if owner:
-        root = Path(args.accounts_dir).expanduser().absolute() / owner
-        if not saved and not root.is_dir():
-            raise DispatchError("unknown account " + owner + "; use dispatch stations")
+        _require_seat_allowed(owner, runtime)
+    else:
+        owner = resolve_owner(args, runtime) if runtime is not None else ""
+    # A pinned run sheds ambient credentials even when it dispatches as the
+    # current account: the overrides belong to whichever terminal resumed it.
+    if owner or saved:
         for key in AUTH_VARS:
             env.pop(key, None)
-        for key, provider in zip(ACCOUNT_VARS, ("claude", "codex", "gh")):
-            env[key] = str(root / provider)
-    if saved:
-        for key in ACCOUNT_VARS:
-            value = saved.get("account_paths", {}).get(key)
-            if value is None:
-                env.pop(key, None)
-            else:
-                env[key] = value
-    # Absence is meaningful: native Claude uses ~/.claude.json, while setting
-    # CLAUDE_CONFIG_DIR=~/.claude selects ~/.claude/.claude.json instead, losing
-    # the native account's onboarding and project MCP configuration.
-    for key in ACCOUNT_VARS:
-        if env.get(key):
-            env[key] = str(Path(env[key]).expanduser().absolute())
-        else:
+        # Config-dir overrides were the old shared-account mechanism; with seats
+        # they would only ever point a login at somebody else's credentials.
+        for key in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR"):
             env.pop(key, None)
     env["HARNESS_OWNER"] = owner
     return env
+
+
+def crew_seats(runtime):
+    """The seats this machine dispatches for: the accounts mapping, else QM_CREW.
+
+    Shares the bridge's mapping so `dispatch stations` and the Quartermaster
+    can never disagree about who the crew is.
+    """
+    names = []
+    try:
+        accounts = json.loads((runtime / "linear-dispatch.json").read_text()).get("accounts")
+        if isinstance(accounts, dict):
+            names = [value for value in accounts.values() if isinstance(value, str)]
+    except (OSError, ValueError):
+        names = []
+    if not any(name.strip() for name in names):
+        names = os.environ.get("QM_CREW", "").split()
+    seats, seen = [], set()
+    for name in sorted(names):
+        if name and name not in seen:
+            seen.add(name)
+            seats.append(name)
+    return seats
 
 
 def auth_ok(provider, env):
@@ -175,9 +208,17 @@ def pipeline_issue(runtime, request, env, resuming=False):
         if out.returncode:
             raise DispatchError("could not read repository configuration")
         provider = out.stdout.strip()
-    if not checkpoint and provider == "anthropic" and not auth_ok("claude", env):
-        return {"provider": "claude", "reason": "Claude implementer login is unavailable; the task is saved.",
-                "action": repair_command("claude", request.get("account")) + " ; dispatch resume " + request["id"]}
+    if not checkpoint and provider == "anthropic":
+        owner = request.get("account", "")
+        if owner and owner != getpass.getuser():
+            # The seat's home is closed to this process; ask from inside it.
+            probe = seat_probe_state(runtime, owner)
+            healthy = bool(probe) and probe.get("claude") == "inside"
+        else:
+            healthy = auth_ok("claude", env)
+        if not healthy:
+            return {"provider": "claude", "reason": "Claude implementer login is unavailable; the task is saved.",
+                    "action": repair_command("claude", request.get("account")) + " ; dispatch resume " + request["id"]}
     return None
 
 
@@ -191,7 +232,7 @@ def read_brief(path):
 def submit(args, runtime):
     if not args.brief:
         raise DispatchError("run needs --brief FILE; use dispatch 'task description' to have the planner write it")
-    env = account_environment(args)
+    env = account_environment(args, runtime=runtime)
     repo = repository(args.repo, env)
     run_id = args.id or ("adhoc-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
     directory = run_directory(runtime, run_id)
@@ -200,13 +241,15 @@ def submit(args, runtime):
     if check.returncode or branch.startswith("-"):
         raise DispatchError("invalid task branch")
     text = read_brief(args.brief)
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Group-writable run dir: the seat that executes the run writes status and
+    # results here through the runtime's shared group.
+    os.umask(0o007)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o770)
     with run_lock(directory) as lock:
         if any((directory / name).exists() for name in ("request.json", "result.json", "started", "status", "driver.pid", "arm", "publish", "worktree")) or is_running_legacy(directory):
             raise DispatchError("run already exists; use dispatch status " + run_id + " or dispatch resume " + run_id)
         request = {"version": 1, "id": run_id, "repo": repo, "branch": branch,
                    "account": env.get("HARNESS_OWNER", ""),
-                   "account_paths": {key: env[key] for key in ACCOUNT_VARS if key in env},
                    "operator": getpass.getuser(), "host": socket.gethostname(),
                    "created": time.time(), "publish": not args.no_publish and env.get("HARNESS_PUBLISH", "1") != "0"}
         atomic_write(directory / "brief.md", text)
@@ -273,14 +316,13 @@ def resume_locked(args, runtime, directory, lock, *, background_evidence=False):
         owner = read_text(directory / "owner")
         if args.owner is None:
             args.owner = owner
-        env = account_environment(args)
         request = {"version": 1, "id": directory.name, "repo": repo, "branch": branch,
-                   "account": owner, "account_paths": {key: env[key] for key in ACCOUNT_VARS if key in env},
+                   "account": owner,
                    "host": socket.gethostname(), "publish": True}
         write_json(directory / "request.json", request)
     if request.get("host") != socket.gethostname():
         raise DispatchError("this run belongs to " + request["host"] + "; resume it on that host")
-    env = account_environment(args, request)
+    env = account_environment(args, request, runtime=runtime)
     if args.brief:
         atomic_write(directory / "brief.md", read_brief(args.brief))
     last = read_json(directory / "launch.json")
@@ -297,12 +339,18 @@ def resume_locked(args, runtime, directory, lock, *, background_evidence=False):
 
 
 def chat(args, runtime):
-    env = account_environment(args)
+    env = account_environment(args, runtime=runtime)
+    if env.get("HARNESS_OWNER"):
+        # An interactive planner is the account holder's own session; acting for
+        # a seat is what background runs (dispatch run) are for.
+        host = os.environ.get("DISPATCH_REMOTE_HOST") or socket.gethostname()
+        raise DispatchError("the interactive planner belongs to the account holder: ssh " + env["HARNESS_OWNER"] +
+                            "@" + host + ", then run station.sh start there")
     if args.no_publish:
         env["HARNESS_PUBLISH"] = "0"
     provider = args.planner
     if not auth_ok(provider, env):
-        raise DispatchError(provider + " login is unavailable; " + repair_command(provider, env.get("HARNESS_OWNER"), env))
+        raise DispatchError(provider + " login is unavailable; " + repair_command(provider, env.get("HARNESS_OWNER")))
     cwd = str(Path(args.repo or os.getcwd()).expanduser().resolve())
     if not Path(cwd).is_dir():
         raise DispatchError("working directory does not exist: " + cwd)
@@ -317,11 +365,11 @@ def chat(args, runtime):
     if provider == "codex":
         command += ["-C", cwd, "--add-dir", str(runtime / "runs")]
     else:
-        # Claude discovers skills inside its selected config directory.
-        # A peer profile can have working auth without any personal skills.
+        # Claude discovers skills inside its config directory — the user's own
+        # ~/.claude here; a seat's planner links its own in station.sh setup.
         for skill in ("dispatch", "briefed-dispatch", "dispatch-pixel"):
             source = runtime / "planner-skills" / skill
-            target = Path(env.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "skills" / skill
+            target = Path.home() / ".claude" / "skills" / skill
             enabled = skill != "dispatch-pixel" or (Path.home() / ".agents/skills" / skill / "SKILL.md").is_file()
             if enabled and (source / "SKILL.md").is_file() and not target.exists() and not target.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -364,7 +412,7 @@ def evidence(args, runtime, *, held_lock=None, background=False):
             raise DispatchError("this run has no saved account context; evidence is available read-only")
         if saved.get("host") != socket.gethostname():
             raise DispatchError("retry evidence on the execution host: " + str(saved.get("host")))
-        env = account_environment(args, saved)
+        env = account_environment(args, saved, runtime=runtime)
         # Tokens are never saved with a request. An ambient token from another
         # session must not override the run's saved GitHub CLI profile.
         for key in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"):
@@ -523,45 +571,57 @@ def main(argv=None):
             raise DispatchError("this run has no saved account context")
         if saved.get("host") != socket.gethostname():
             raise DispatchError("log in on the execution host: " + str(saved.get("host")))
-    env = account_environment(args, saved)
-    if saved and env.get("HARNESS_OWNER"):
-        args.accounts_dir = str(Path(env["CODEX_HOME"]).parent.parent)
-    if args.command == "init":
-        return subprocess.run(["bash", str(runtime / "setup-repo.sh"), repository(args.repo, env), "--write"], env=env).returncode
     if args.command in ("station", "login"):
+        if saved and saved.get("account") and saved["account"] != getpass.getuser():
+            # The login for a seat-owned run cannot be held from another
+            # account's terminal, even on the execution host.
+            host = os.environ.get("DISPATCH_REMOTE_HOST") or socket.gethostname()
+            raise DispatchError("this run dispatches as seat '" + saved["account"] + "'; its login belongs to that "
+                                "account: ssh " + saved["account"] + "@" + host + ", then run station.sh login there")
+        # station.sh acts for whoever runs it. Only an explicitly typed --owner
+        # is forwarded, and station.sh itself answers it with the SSH path.
         command = ["bash", str(runtime / "station.sh")]
         command += ["start"] if args.command == "station" else ["login"] + args.arguments
-        for flag, value in (("--owner", env.get("HARNESS_OWNER")), ("--accounts-dir", args.accounts_dir),
-                            ("--dir", args.repo), ("--planner", args.planner), ("--model", args.model)):
+        for flag, value in (("--dir", args.repo), ("--planner", args.planner), ("--model", args.model)):
             if value:
                 command += [flag, value]
+        if args.owner is not None:
+            command += ["--owner", args.owner]
         if args.browser:
             command += ["--browser"]
         if args.hands_off:
             command += ["--hands-off"]
-        os.execvpe(command[0], command, env)
+        os.execvpe(command[0], command, dict(os.environ, HARNESS_DIR=str(runtime)))
+    env = account_environment(args, saved, runtime=runtime)
+    if args.command == "init":
+        return subprocess.run(["bash", str(runtime / "setup-repo.sh"), repository(args.repo, env), "--write"], env=env).returncode
     if args.command == "stations":
         values = []
-        for root in sorted(Path(args.accounts_dir).expanduser().glob("*")):
-            if not root.is_dir() or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", root.name):
-                continue
-            args.owner = root.name
-            selected = account_environment(args)
-            values.append({"account": root.name, **{provider: "signed_in" if auth_ok(provider, selected) else "login_needed"
-                                                    for provider in ("codex", "claude", "gh")}})
+        for seat in crew_seats(runtime):
+            probe = seat_probe_state(runtime, seat)
+            values.append({"account": seat,
+                           **{provider: "signed_in" if probe and probe.get(provider) == "inside" else "login_needed"
+                              for provider in ("codex", "claude", "gh")}})
         if args.json:
             print(json.dumps(values, indent=2))
         else:
             for item in values:
                 print("{account}: codex={codex} claude={claude} gh={gh}".format(**item))
-            print("Select explicitly: dispatch station --owner NAME. Login checks do not measure remaining credits.")
+            print("Open a seat's station over ssh: ssh NAME@" + socket.gethostname() +
+                  ". Login checks do not measure remaining credits.")
         return 0
     if args.command == "doctor":
-        healthy = auth_ok(args.planner, env)
-        checks = {"planner": args.planner, "account": env.get("HARNESS_OWNER") or "current",
+        owner = env.get("HARNESS_OWNER")
+        if owner:
+            # The seat's planner login can only be asked about from inside it.
+            probe = seat_probe_state(runtime, owner)
+            healthy = bool(probe) and probe.get(args.planner) == "inside"
+        else:
+            healthy = auth_ok(args.planner, env)
+        checks = {"planner": args.planner, "account": owner or "current",
                   "login": "signed_in" if healthy else "login_needed"}
         if not healthy:
-            checks["action"] = repair_command(args.planner, env.get("HARNESS_OWNER"), env)
+            checks["action"] = repair_command(args.planner, owner)
         if args.pipeline:
             request = {"id": "doctor", "repo": repository(args.repo, env), "account": env.get("HARNESS_OWNER")}
             issue = pipeline_issue(runtime, request, env)
