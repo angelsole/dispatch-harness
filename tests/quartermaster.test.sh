@@ -179,24 +179,28 @@ if [ "\$#" -eq 2 ] && [ "\$1" = -u ] && grep -qx -- "\$2" "$SEATS"; then
 fi
 exec /usr/bin/id "\$@"
 EOF
-cat > "$FAKES/sudo" <<EOF
-#!/usr/bin/env bash
+# Fixture paths are baked in through %q; the body is a quoted heredoc so "$1"
+# keeps its quotes — an unquoted append splits a pair value at its spaces and
+# hands env the words as a command line.
+{ printf '#!/usr/bin/env bash\nSUDO_LOG=%q\nSEAT_HOMES=%q\n' "$SUDO_LOG" "$SEAT_HOMES"
+  cat <<'EOF'
 # seat_exec always sends at least the PATH pair, so pairs is never empty and
 # the plain expansion below is safe without set -u.
 seat=""; pairs=()
-while [ \$# -gt 0 ]; do
-  case \$1 in
-    -u) seat=\$2; shift 2 ;;
+while [ $# -gt 0 ]; do
+  case $1 in
+    -u) seat=$2; shift 2 ;;
     -n|-H) shift ;;
-    [A-Za-z_]*=*) pairs+=(\$1); shift ;;
+    [A-Za-z_]*=*) pairs+=("$1"); shift ;;
     *) break ;;
   esac
 done
-[ -n "\$seat" ] && [ \$# -gt 0 ] || { echo "fake sudo: unsupported invocation: \$*" >&2; exit 1; }
-printf 'seat=%s argv=%s\n' "\$seat" "\$*" >> "$SUDO_LOG"
-exec env -i HOME="$SEAT_HOMES/\$seat" USER="\$seat" LOGNAME="\$seat" \\
-  TERM="\${TERM:-dumb}" "\${pairs[@]}" "\$@"
+[ -n "$seat" ] && [ $# -gt 0 ] || { echo "fake sudo: unsupported invocation: $*" >&2; exit 1; }
+printf 'seat=%s argv=%s\n' "$seat" "$*" >> "$SUDO_LOG"
+exec env -i HOME="$SEAT_HOMES/$seat" USER="$seat" LOGNAME="$seat" \
+  TERM="${TERM:-dumb}" "${pairs[@]}" "$@"
 EOF
+} > "$FAKES/sudo"
 
 # The planner stand-in: records the identity it ran under and simulates a
 # planner per $CLAUDE_MODE — the good citizen, the timeout that dies after a

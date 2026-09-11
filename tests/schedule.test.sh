@@ -103,24 +103,28 @@ if [ "\$#" -eq 2 ] && [ "\$1" = -u ] && grep -qx -- "\$2" "$SEATS"; then
 fi
 exec /usr/bin/id "\$@"
 EOF
-cat > "$FAKES/sudo" <<EOF
-#!/usr/bin/env bash
+# Fixture paths are baked in through %q; the body is a quoted heredoc so "$1"
+# keeps its quotes — an unquoted append splits a pair value like the canary's
+# "it is 08:10" and hands env the words as a command line.
+{ printf '#!/usr/bin/env bash\nSUDOLOG=%q\nSEAT_HOMES=%q\n' "$SUDOLOG" "$SEAT_HOMES"
+  cat <<'EOF'
 # seat_exec always sends at least the PATH pair, so pairs is never empty and
 # the plain expansion below is safe without set -u.
 seat=""; pairs=()
-while [ \$# -gt 0 ]; do
-  case \$1 in
-    -u) seat=\$2; shift 2 ;;
+while [ $# -gt 0 ]; do
+  case $1 in
+    -u) seat=$2; shift 2 ;;
     -n|-H) shift ;;
-    [A-Za-z_]*=*) pairs+=(\$1); shift ;;
+    [A-Za-z_]*=*) pairs+=("$1"); shift ;;
     *) break ;;
   esac
 done
-[ -n "\$seat" ] && [ \$# -gt 0 ] || { echo "fake sudo: unsupported invocation: \$*" >&2; exit 1; }
-printf 'seat=%s argv=%s\n' "\$seat" "\$*" >> "$SUDOLOG"
-exec env -i HOME="$SEAT_HOMES/\$seat" USER="\$seat" LOGNAME="\$seat" \\
-  TERM="\${TERM:-dumb}" "\${pairs[@]}" "\$@"
+[ -n "$seat" ] && [ $# -gt 0 ] || { echo "fake sudo: unsupported invocation: $*" >&2; exit 1; }
+printf 'seat=%s argv=%s\n' "$seat" "$*" >> "$SUDOLOG"
+exec env -i HOME="$SEAT_HOMES/$seat" USER="$seat" LOGNAME="$seat" \
+  TERM="${TERM:-dumb}" "${pairs[@]}" "$@"
 EOF
+} > "$FAKES/sudo"
 # The pipeline stand-in: every fired run appends one record, so "exactly once"
 # is a line count, and the environment it saw is asserted field by field.
 cat > "$SRCDIR/run-task.sh" <<EOF
@@ -426,10 +430,6 @@ file_has "$RUNS/FIRE/scheduled.log" "firing FIRE as angel"         "fire: the ru
 file_has "$RUNS/FIRE/scheduled.log" "fake run-task.sh dispatched FIRE" "fire: run-task output lands in the run log"
 file_has "$RUNS/FIRE/scheduled.log" "run-task.sh exited 0"         "fire: the run log records the exit status"
 exists "fire: the brief survives its run" "$RUNS/FIRE/brief.md"
-# TEMP-DEBUG (remove before finishing)
-echo "TEMP-DEBUG scheduled.log begin"; cat "$RUNS/FIRE/scheduled.log"; echo "TEMP-DEBUG scheduled.log end"
-echo "TEMP-DEBUG sudo.log begin"; cat "$SUDOLOG"; echo "TEMP-DEBUG sudo.log end"
-echo "TEMP-DEBUG calls begin"; cat "$CALLS"; echo "TEMP-DEBUG calls end"
 
 # ---------------------------------------------------------------------------
 echo "== --cancel: disarm completely, keep the brief =="
