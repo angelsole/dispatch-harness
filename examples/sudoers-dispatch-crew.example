@@ -1,0 +1,30 @@
+# Sudoers fragment for a dispatch crew: seats are OS users, and the service
+# account that runs the wall, the Linear bridge and the Quartermaster may
+# become a seat for exactly three harness-owned commands.
+#
+# Copy to /etc/sudoers.d/dispatch-crew AS ROOT, via visudo so the syntax is
+# checked before anything takes effect:
+#
+#   sudo visudo -f /etc/sudoers.d/dispatch-crew
+#
+# Replace every placeholder value for your site:
+#
+#   DISPATCH_SERVICE  the service account: the one that owns the shared
+#                     runtime (HARNESS_DIR) and runs the wall server
+#   DISPATCH_SEATS    every crew seat, comma-separated
+#   /opt/dispatch     your real HARNESS_DIR, resolved — no symlink components:
+#                     sudo matches the literal command path it is given
+#
+# The command list is deliberately exactly these three. run-task.sh dispatches
+# a task, capacity.sh reads a seat's remaining block, seat-probe.sh reports a
+# seat's login state — that is the whole surface the service account needs to
+# act as a seat. NOPASSWD keeps unattended runs unattended; SETENV is what lets
+# seat_exec pass its explicit VAR=value pairs (everything else is dropped by
+# sudo's env_reset). Never widen this to ALL commands or add a shell: either
+# would hand the service account every seat's identity, which is precisely
+# what seats exist to prevent.
+
+User_Alias DISPATCH_SERVICE = dispatchsvc
+Runas_Alias DISPATCH_SEATS = seat1, seat2
+
+DISPATCH_SERVICE ALL = (DISPATCH_SEATS) NOPASSWD:SETENV: /opt/dispatch/run-task.sh, /opt/dispatch/capacity.sh, /opt/dispatch/seat-probe.sh

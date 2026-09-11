@@ -107,7 +107,7 @@ FILES=(
   lib profiles mirror.sh capacity.sh run-task.sh schedule.sh quartermaster.sh sync-pr.sh status.sh statusline.sh
   metrics.sh attach.sh cleanup.sh janitor.sh lessons.sh preview.sh station.sh dispatch.sh wall.sh wall demo-auth.sh
   auth-capture.py verify.py repos.conf.sh setup-repo.sh worker-settings.json setup-ai-settings.json
-  planner-settings.json spec-critic.sh spec-critic-settings.json brief-template.md
+  planner-settings.json spec-critic.sh spec-critic-settings.json brief-template.md seat-probe.sh
 )
 
 link_or_copy() {  # $1 = source path, $2 = dest path
@@ -318,7 +318,7 @@ echo
 echo "Installed into $HARNESS_DIR (mode: $MODE)."
 echo "Next: pin your repos in $HARNESS_DIR/repos.local.sh — see README.md."
 echo "Local Astra planner: $DISPATCH_COMMAND (Codex: \$dispatch; Claude: /dispatch)."
-echo "Mini station: $DISPATCH_COMMAND station --on mini --owner NAME"
+echo "Mini station: ssh SEAT@mini, then station.sh start (each seat is an OS user)"
 case ":$PATH:" in *":$DISPATCH_BIN_DIR:"*) ;; *) echo "Add $DISPATCH_BIN_DIR to PATH to use the short dispatch command." ;; esac
 if [ "$PIXEL" = yes ]; then
   echo
