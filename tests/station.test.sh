@@ -120,8 +120,7 @@ printf '%s\n' "$@" > "$CAPTURE/ssh.args"
 # Execute the transported command under a different HOME, just like SSH.
 for arg in "$@"; do command_line="$arg"; done
 if [ "${FAKE_SSH_EXEC:-0}" = 1 ]; then
-  HOME="$FAKE_REMOTE_HOME" HARNESS_DIR="$FAKE_REMOTE_HOME/.claude/harness" \
-    bash -c "$command_line"
+  HOME="$FAKE_REMOTE_HOME" bash -c "$command_line"
 fi
 CLI
 chmod +x "$BIN"/*
@@ -269,10 +268,11 @@ station --host bob@mini --dir "$WEIRD_DIR" >/dev/null
 has "$CAPTURE/ssh.args" 'bob@mini' 'remote: another seat is reached by SSHing in as it'
 REMOTE_HOME="$ROOT/remote home"
 mkdir -p "$REMOTE_HOME/.claude"
-ln -s "$H" "$REMOTE_HOME/.claude/harness"
+printf '%s\n' "$H" > "$REMOTE_HOME/.claude/harness-dir"
 FAKE_SSH_EXEC=1 FAKE_REMOTE_HOME="$REMOTE_HOME" station --host mini --dir "$WEIRD_DIR" >/dev/null
 check 'remote: quote survives SSH and tmux' "$(cat "$CAPTURE/dir")" "$WEIRD_DIR"
 absent "$WEIRD_DIR/INJECTED" 'remote: shell syntax never executes'
+absent "$REMOTE_HOME/.claude/harness" 'remote: shared runtime needs no per-seat harness link'
 FAKE_SSH_EXEC=1 FAKE_REMOTE_HOME="$REMOTE_HOME" station --host mini --dir "$WEIRD_DIR" --hands-off >/dev/null
 has "$CAPTURE/codex.args" '--dangerously-bypass-approvals-and-sandbox' 'remote: hands-off survives SSH and tmux'
 check 'remote: hands-off has separate session' "$(cat "$CAPTURE/session")" "dispatch-$ME-codex-gpt-6-astra-hands-off"
@@ -339,6 +339,8 @@ for skill in dispatch briefed-dispatch; do
   if [ -e "$FIXTURE_HOME/.claude/skills/$skill" ]; then ok "setup: links $skill into ~/.claude/skills"; else bad "setup: links $skill into ~/.claude/skills"; fi
 done
 check 'setup: exactly one HARNESS_DIR profile line' "$(grep -c '^export HARNESS_DIR=' "$FIXTURE_HOME/.zprofile")" 1
+check 'setup: runtime pointer names the shared installation' \
+  "$(cat "$FIXTURE_HOME/.claude/harness-dir")" "$H"
 # A second run keeps every login, replaces the profile line, adds nothing.
 fixture env DISPATCH_STATION_DIR="$ROOT/work" \
   bash "$H/station.sh" setup > "$ROOT/setup2.out" 2>&1 </dev/null

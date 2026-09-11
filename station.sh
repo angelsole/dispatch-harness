@@ -104,12 +104,13 @@ if [ -n "$HOST" ]; then
   if [ -n "$REMOTE_HARNESS" ]; then
     case "$REMOTE_HARNESS" in /*) ;; *) usage_error "--remote-harness must be an absolute remote path" ;; esac
     remote_script="$(shell_args "$REMOTE_HARNESS/station.sh")"
+    remote_cmd="exec bash $remote_script $(shell_args ${REMOTE_ARGS[@]+"${REMOTE_ARGS[@]}"})"
   else
-    remote_script='"$HOME/.claude/harness/station.sh"'
+    remote_cmd='IFS= read -r HARNESS_DIR < "$HOME/.claude/harness-dir" || { echo "station: shared harness is not configured; run its station.sh setup by absolute path or pass --remote-harness" >&2; exit 1; }; case "$HARNESS_DIR" in /*) ;; *) echo "station: invalid shared harness path" >&2; exit 1;; esac; export HARNESS_DIR; exec bash "$HARNESS_DIR/station.sh" '
+    remote_cmd+="$(shell_args ${REMOTE_ARGS[@]+"${REMOTE_ARGS[@]}"})"
   fi
   # No login shell: startup files may start a program or change identities.
   # station.sh supplies the usual macOS binary directories itself.
-  remote_cmd="exec bash $remote_script $(shell_args ${REMOTE_ARGS[@]+"${REMOTE_ARGS[@]}"})"
   ssh_args=(-o ConnectTimeout=8 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
   if [ "$ACTION" = doctor ]; then ssh_args+=(-o BatchMode=yes); else ssh_args+=(-t); fi
   exec ssh "${ssh_args[@]}" "$HOST" "$remote_cmd"
@@ -203,7 +204,7 @@ fi
 # One line, in the first shell profile that exists, and only ever one line:
 # repeated setup runs replace it rather than stacking.
 write_profile_line() {
-  local profile="" tmp candidate
+  local profile="" tmp candidate pointer="$CLAUDE_DIR/harness-dir"
   for candidate in "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
     [ -f "$candidate" ] && { profile="$candidate"; break; }
   done
@@ -213,6 +214,9 @@ write_profile_line() {
   printf 'export HARNESS_DIR=%q\n' "$HARNESS_DIR" >> "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$profile"
+  tmp="$pointer.dispatch-tmp"
+  (umask 077; printf '%s\n' "$HARNESS_DIR" > "$tmp")
+  mv "$tmp" "$pointer"
   echo "[ok] step 5/5: HARNESS_DIR set in $(basename "$profile")"
 }
 

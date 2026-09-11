@@ -127,7 +127,7 @@ way to do it from your own account, by design:
 
 ```bash
 dispatch stations --on mini        # which seats have logins configured
-ssh -t teammate@mini '~/.claude/harness/station.sh start'
+dispatch station --on teammate@mini
 ```
 
 `dispatch station --on mini` opens or reconnects your own planner on the Mini;
@@ -174,13 +174,14 @@ logins, and their laptop needs neither the harness nor the model CLIs. With
 SSH access to `mini` already configured, they run:
 
 ```bash
-ssh -t you@mini '~/.claude/harness/station.sh setup'
+ssh -t you@mini '/Users/dispatchsvc/.claude/harness/station.sh setup'
 ```
 
 `setup` acts for whoever is logged in. It checks the shared tools, stores a
 Claude token (step 1), walks the GitHub and Codex device logins (steps 2 and
-3), links the planner skills into `~/.claude` (step 4) and writes one
-`HARNESS_DIR` line into the shell profile (step 5), then runs `doctor`. Every
+3), links the planner skills into `~/.claude` (step 4), and writes one
+`HARNESS_DIR` line into the shell profile plus a private runtime pointer for
+non-login SSH commands (step 5), then runs `doctor`. Every
 step is idempotent: an existing login is kept, a skipped or cancelled login
 stops setup with the completed ones intact, a repeated run replaces the single
 profile line instead of stacking another, and re-running continues where it
@@ -191,8 +192,8 @@ that are cached but rejected when the CLI starts.
 Direct launches and troubleshooting use the same script as your own login:
 
 ```bash
-~/.claude/harness/station.sh --dir /path/to/repos
-ssh -t you@mini '~/.claude/harness/station.sh --dir /remote/path/to/repos --planner claude'
+"$HARNESS_DIR/station.sh" --dir /path/to/repos
+dispatch station --on you@mini --dir /remote/path/to/repos --planner claude
 ```
 
 `mini` is an SSH alias you configure normally; the user in `you@mini` is the
@@ -216,9 +217,9 @@ named person's station (`ssh <name>@<host>`).
 repair, as the seat:
 
 ```bash
-ssh -t you@mini '~/.claude/harness/station.sh login codex'
-ssh -t you@mini '~/.claude/harness/station.sh login claude'
-ssh -t you@mini '~/.claude/harness/station.sh login gh'
+dispatch login codex --on you@mini
+dispatch login claude --on you@mini
+dispatch login gh --on you@mini
 ```
 
 Codex uses `codex login --device-auth`. Enable device login in your ChatGPT
@@ -1331,7 +1332,7 @@ else.
 **4. Run `station.sh setup` once per seat.**
 
 ```bash
-ssh -t dana@mini '~/.claude/harness/station.sh setup'
+ssh -t dana@mini '/Users/dispatchsvc/.claude/harness/station.sh setup'
 ```
 
 That is the whole per-seat onboarding: the five idempotent steps — Claude token
