@@ -287,7 +287,7 @@ EOF
 }
 
 arm() {  # $1 ticket, $2 repo path, $3 branch, $4 when
-  local ticket="$1" repo branch="$3" fire plist wrapper run_dir now
+  local ticket="$1" repo branch="$3" fire plist wrapper run_dir now seat
 
   validate_ticket "$1"
   [ -n "$branch" ] || fail "branch name is empty"
@@ -302,9 +302,15 @@ arm() {  # $1 ticket, $2 repo path, $3 branch, $4 when
   fire=$(fire_epoch "$4") || exit 1
 
   # The OS user the run dispatches as: HARNESS_OWNER when the service user
-  # schedules on a seat's behalf, else the scheduling user. Exported before the
-  # snapshot so the HARNESS_* sweep carries it into the wrapper.
-  export HARNESS_SEAT="${HARNESS_OWNER:-$(id -un)}"
+  # schedules on a seat's behalf, else the scheduling user. Validate it before
+  # creating a one-shot: the wrapper consumes itself before it launches.
+  seat="${HARNESS_OWNER:-$(id -un)}"
+  case "$seat" in
+    ''|[!a-z_]*|*[!a-z0-9_-]*|?????????????????????????????????*)
+      fail "invalid seat name: $seat" ;;
+  esac
+  seat_exists "$seat" || fail "no user named '$seat' on this machine"
+  export HARNESS_SEAT="$seat"
 
   plist=$(plist_for "$ticket")
   wrapper="$run_dir/scheduled-run.sh"

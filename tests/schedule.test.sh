@@ -219,6 +219,13 @@ out=$(sched AHEAD "$REPO" fix/ahead "2027-02-31 09:00"); rc=$?
 check "guard: impossible date exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
 has "$out" "no such date" "guard: impossible date is rejected, not normalised"
 
+out=$(HARNESS_OWNER=dnaa sched AHEAD "$REPO" fix/ahead "$AHEAD_HHMM"); rc=$?
+check "guard: unknown scheduled seat exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
+has "$out" "no user named 'dnaa'" "guard: unknown scheduled seat is rejected before arming"
+out=$(HARNESS_OWNER='Bad Seat' sched AHEAD "$REPO" fix/ahead "$AHEAD_HHMM"); rc=$?
+check "guard: invalid scheduled seat exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
+has "$out" "invalid seat name" "guard: scheduled seat uses the dispatch seat syntax"
+
 out=$(sched AHEAD "$REPO" fix/ahead); rc=$?
 check "guard: wrong argument count exits 2" "$rc" "2"
 absent "guard: no agent survives the guard block" "$(plist_of AHEAD)"
