@@ -25,7 +25,7 @@ class ConsoleActionsTests(unittest.TestCase):
         self.env.start()
         write_json(self.run / 'request.json', {'version': 1, 'id': 'TASK-1', 'repo': str(self.runtime), 'branch': 'test',
                    'operator': getpass.getuser(), 'host': socket.gethostname(), 'account': 'saved-owner',
-                   'account_paths': {}, 'publish': True})
+                   'publish': True})
         write_json(self.run / 'result.json', {'status': 'needs_input'})
         (self.run / 'brief.md').write_text('# Fix checkout\nKeep the original requirements.\n')
         (self.run / 'QUESTIONS.md').write_text('Should guests be allowed to check out?\n')
@@ -56,7 +56,6 @@ class ConsoleActionsTests(unittest.TestCase):
         self.assertEqual(task['account'], 'saved-owner')
         self.assertEqual(task['checkpoint']['stage'], 'gated')
         self.assertIn('checked before reuse', task['checkpoint']['description'])
-        self.assertNotIn('account_paths', task)
 
     def test_answer_saved_once_and_duplicate_operation_replayed(self):
         with mock.patch('dispatch_cli.resume_locked', side_effect=self.launch) as resume:
@@ -130,14 +129,14 @@ class ConsoleActionsTests(unittest.TestCase):
 
     def test_incomplete_or_unrecognized_requests_cannot_enable_actions(self):
         original = read_json(self.run / 'request.json')
-        for key in ('version', 'id', 'repo', 'branch', 'account', 'account_paths', 'publish'):
+        for key in ('version', 'id', 'repo', 'branch', 'account', 'publish'):
             changed = dict(original)
             changed.pop(key)
             with self.subTest(missing=key):
                 write_json(self.run / 'request.json', changed)
                 self.assertEqual(self.view()['actions'], [])
         for patch in ({'version': 2}, {'version': True}, {'id': 'OTHER-1'},
-                      {'publish': 'false'}, {'account_paths': []}, {'account_paths': {'CODEX_HOME': 'relative'}},
+                      {'publish': 'false'}, {'account': 7},
                       {'repo': 'relative'}, {'branch': '-invalid'}, {'account': 'invalid owner'}):
             with self.subTest(patch=patch):
                 write_json(self.run / 'request.json', dict(original, **patch))

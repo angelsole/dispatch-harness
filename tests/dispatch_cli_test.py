@@ -22,7 +22,7 @@ def event(kind):
         out.write(json.dumps({'kind':kind, 'args':args, 'codex':os.environ.get('CODEX_HOME'),
             'claude':os.environ.get('CLAUDE_CONFIG_DIR'), 'gh':os.environ.get('GH_CONFIG_DIR'),
             'token':os.environ.get('OPENAI_API_KEY'), 'owner':os.environ.get('HARNESS_OWNER'),
-            'publish':os.environ.get('HARNESS_PUBLISH'),
+            'publish':os.environ.get('HARNESS_PUBLISH'), 'oauth':os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'),
             'mcp':list(claude_config.get('mcpServers',{}))})+'\n')
 if name == 'claude' and args[:2] == ['auth','status']:
     good = not (root/'claude-expired').exists() and claude_config.get('loggedIn',True)
@@ -78,6 +78,52 @@ class DispatchTests(unittest.TestCase):
             HARNESS_REVIEW_MIN_SECONDS="0", HARNESS_TICKET_SYNC="0")
         for name in ("claude", "codex", "gh", "curl", "osascript", "caffeinate"):
             target = self.bin / name; target.write_text(FAKE); target.chmod(0o755)
+        # Seats are OS users, so the fixtures fake the two binaries that talk to
+        # the account database. `id` answers only for names registered through
+        # self.seat() and delegates everything else to the real binary; `sudo`
+        # replays env_reset (empty environment + the VAR=value pairs from the
+        # command line + HOME from the fixture seat homes) and logs each
+        # crossing. FAKE_SUDO_KEEP carries fixture plumbing a real sudoers file
+        # would never see.
+        (self.root / "seats").write_text("")
+        (self.root / "seat-homes").mkdir()
+        self.env.update(FAKE_SEAT_HOMES=str(self.root / "seat-homes"),
+                        FAKE_SUDO_KEEP="DISPATCH_TEST_DATA DISPATCH_DETACHED",
+                        FAKE_SUDO_LOG=str(self.root / "sudo.log"))
+        target = self.bin / "id"
+        target.write_text('#!/usr/bin/env python3\n'
+                          'import os, pathlib, sys\n'
+                          'seats = set((pathlib.Path(os.environ["FAKE_SEAT_HOMES"]).parent / "seats").read_text().split())\n'
+                          'args = sys.argv[1:]\n'
+                          'if len(args) == 2 and args[0] == "-u" and args[1] in seats:\n'
+                          '    print(2000 + sorted(seats).index(args[1])); sys.exit(0)\n'
+                          'os.execv("/usr/bin/id", ["id"] + args)\n')
+        target.chmod(0o755)
+        target = self.bin / "sudo"
+        target.write_text('#!/usr/bin/env python3\n'
+                          'import json, os, pathlib, re, sys\n'
+                          'args = sys.argv[1:]; seat = None; pairs = []; i = 0\n'
+                          'while i < len(args):\n'
+                          '    if args[i] == "-u":\n'
+                          '        seat = args[i + 1]; i += 2; continue\n'
+                          '    if args[i].startswith("-"):\n'
+                          '        i += 1; continue\n'
+                          '    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", args[i]):\n'
+                          '        pairs.append(args[i]); i += 1; continue\n'
+                          '    break\n'
+                          'command = args[i:]\n'
+                          'if seat is None or not command:\n'
+                          '    print("fake sudo: unsupported invocation: " + " ".join(sys.argv[1:]), file=sys.stderr); sys.exit(1)\n'
+                          'env = {name: os.environ[name] for name in os.environ.get("FAKE_SUDO_KEEP", "").split()\n'
+                          '       if name in os.environ}\n'
+                          'env.update(dict(pair.split("=", 1) for pair in pairs))\n'
+                          'env["HOME"] = str(pathlib.Path(os.environ["FAKE_SEAT_HOMES"]) / seat)\n'
+                          'env["USER"] = env["LOGNAME"] = seat\n'
+                          'env.setdefault("TERM", os.environ.get("TERM", "dumb"))\n'
+                          'with open(os.environ["FAKE_SUDO_LOG"], "a") as out:\n'
+                          '    out.write(json.dumps({"seat": seat, "pairs": pairs, "argv": command}) + "\\n")\n'
+                          'os.execvpe(command[0], command, env)\n')
+        target.chmod(0o755)
         self.shell(["bash", str(SOURCE / "install.sh"), "--copy", "--no-statusline", "--no-pixel"])
         self.cli = str(self.home / ".local/bin/dispatch")
         self.repo = self.root / "app"
@@ -131,6 +177,24 @@ class DispatchTests(unittest.TestCase):
     def events(self, kind):
         path = self.root / "events"
         return [e for e in map(json.loads, path.read_text().splitlines()) if e['kind'] == kind] if path.exists() else []
+
+    def seat(self, name, claude=True):
+        """Register an OS-user seat and give it credential dirs in its own home.
+
+        A seat without a claude dir is one whose probe answers 'missing' — the
+        state a blocked run waits on.
+        """
+        seats = self.root / "seats"
+        seats.write_text(seats.read_text() + name + "\n")
+        home = self.root / "seat-homes" / name
+        directories = [".codex", ".config/gh"] + ([".claude"] if claude else [])
+        for directory in directories:
+            (home / directory).mkdir(parents=True, exist_ok=True)
+        return home
+
+    def sudo_log(self):
+        path = self.root / "sudo.log"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def test_local_chat_only_needs_selected_login(self):
         (self.root / "claude-expired").touch(); (self.root / "gh-expired").touch()
@@ -295,12 +359,21 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(len(self.events('implement')), 2)
         self.assertEqual(self.events('gh'), [])
 
-    def test_local_claude_profile_discovers_shared_protocol(self):
-        profile = self.home / 'accounts/teammate'
-        profile.mkdir(parents=True)
-        self.call('Inspect checkout', '--planner', 'claude', '--owner', 'teammate')
-        self.assertTrue((profile / 'claude/skills/dispatch/SKILL.md').is_file())
-        self.assertTrue((profile / 'claude/skills/dispatch/references/pipeline.md').is_file())
+    def test_chat_links_the_shared_protocol_into_the_own_claude(self):
+        self.call('Inspect checkout', '--planner', 'claude')
+        skill = self.home / '.claude/skills/dispatch'
+        self.assertTrue((skill / 'SKILL.md').is_file())
+        self.assertTrue((skill / 'references/pipeline.md').is_file())
+        # When the account's own copy is gone, chat relinks it from the shared
+        # runtime — never from another account's home.
+        shutil.rmtree(self.home / '.claude/skills')
+        self.call('Fix checkout', '--planner', 'claude')
+        self.assertTrue((skill / 'SKILL.md').is_file())
+        self.assertEqual(skill.resolve(), (self.runtime / 'planner-skills/dispatch').resolve())
+        self.seat('teammate')
+        denied = self.call('Inspect checkout', '--planner', 'claude', '--owner', 'teammate', check=False)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertIn('ssh teammate@', denied.stderr)
 
     def test_native_claude_keeps_login_and_project_connections(self):
         (self.home / '.claude.json').write_text(json.dumps({'loggedIn':True,'mcpServers':{'linear':{}}}))
@@ -309,7 +382,7 @@ class DispatchTests(unittest.TestCase):
         event = self.events('chat')[-1]
         self.assertIsNone(event['claude'])
         self.assertEqual(event['mcp'], ['linear'])
-        self.call('login', 'claude')
+        self.call('login', 'claude', '--browser')
         event = self.events('chat')[-1]
         self.assertEqual(event['args'][:2], ['auth', 'login'])
         self.assertIsNone(event['claude'])
@@ -317,40 +390,47 @@ class DispatchTests(unittest.TestCase):
 
     def test_explicit_default_claude_directory_remains_explicit(self):
         self.env['CLAUDE_CONFIG_DIR'] = str(self.home / '.claude')
-        (self.home / '.claude.json').write_text(json.dumps({'loggedIn':False}))
+        (self.home / '.claude.json').write_text(json.dumps({'loggedIn':True,'mcpServers':{'linear':{}}}))
         (self.home / '.claude/.claude.json').write_text(json.dumps({'loggedIn':True,'mcpServers':{'profile-tracker':{}}}))
         self.call('Inspect checkout', '--planner', 'claude')
         event = self.events('chat')[-1]
         self.assertEqual(event['claude'], str(self.home / '.claude'))
         self.assertEqual(event['mcp'], ['profile-tracker'])
-        self.call('login', 'claude')
-        self.assertEqual(self.events('chat')[-1]['claude'], str(self.home / '.claude'))
+        # The login runs through station.sh, which clears config-directory
+        # overrides: an explicit directory selects the planner's connection,
+        # never whose credentials a login refreshes.
+        self.call('login', 'claude', '--browser')
+        login = self.events('chat')[-1]
+        self.assertIsNone(login['claude'])
+        self.assertEqual(login['mcp'], ['linear'])
         (self.root / 'claude-expired').touch()
         out = self.call('Inspect checkout', '--planner', 'claude', check=False)
-        self.assertIn('CLAUDE_CONFIG_DIR=', out.stderr)
+        self.assertIn('claude login is unavailable', out.stderr)
+        self.assertIn('dispatch login claude', out.stderr)
 
-    def test_native_run_restores_absent_account_overrides_on_resume(self):
+    def test_native_run_restores_saved_identity_over_ambient_owner(self):
         (self.root / 'claude-expired').touch()
         value = json.loads(self.run_task().stdout)
         self.assertEqual(value['state'], 'waiting_for_auth')
         request = json.loads((self.runtime / 'runs/TASK-1/request.json').read_text())
-        self.assertEqual(request['account_paths'], {})
+        self.assertEqual(request['account'], '')
+        self.assertNotIn('account_paths', request)
         self.assertIn('dispatch login claude --for-run TASK-1', value['action'])
         self.assertNotEqual(self.call('doctor', '--for-run', 'TASK-1', check=False).returncode, 0)
         self.assertNotEqual(self.call('login', 'claude', '--for-run', 'TASK-1', '--owner', 'other', check=False).returncode, 0)
         (self.root / 'claude-expired').unlink()
-        self.env.update(HARNESS_OWNER='other-station', CLAUDE_CONFIG_DIR=str(self.root/'other-claude'),
-                        CODEX_HOME=str(self.root/'other-codex'), GH_CONFIG_DIR=str(self.root/'other-gh'))
-        self.call('login', 'claude', '--for-run', 'TASK-1')
-        self.assertIsNone(self.events('chat')[-1]['claude'])
+        # A stale ambient HARNESS_OWNER names a seat for NEW runs only; this
+        # run is pinned to the current account and resumes as itself.
+        self.env.update(HARNESS_OWNER='other-station')
         self.call('resume', 'TASK-1')
         self.assertEqual(self.wait()['state'], 'ready')
         implementer = self.events('implement')[0]
         self.assertIsNone(implementer['claude'])
         self.assertIsNone(implementer['gh'])
         self.assertEqual(implementer['owner'], '')
+        self.assertEqual(self.sudo_log(), [])
 
-    def test_legacy_request_keeps_explicit_default_account_paths(self):
+    def test_legacy_account_paths_in_a_request_are_ignored(self):
         (self.root / 'claude-expired').touch()
         self.run_task()
         path = self.runtime / 'runs/TASK-1/request.json'
@@ -359,11 +439,11 @@ class DispatchTests(unittest.TestCase):
                                    (('CLAUDE_CONFIG_DIR','.claude'),('CODEX_HOME','.codex'),('GH_CONFIG_DIR','.config/gh'))}
         path.write_text(json.dumps(request))
         (self.root / 'claude-expired').unlink()
-        self.call('login', 'claude', '--for-run', 'TASK-1')
-        self.assertEqual(self.events('chat')[-1]['claude'], str(self.home / '.claude'))
         self.call('resume', 'TASK-1')
         self.assertEqual(self.wait()['state'], 'ready')
-        self.assertEqual(self.events('implement')[0]['claude'], str(self.home / '.claude'))
+        # Nothing reads the old shared-account mechanism back: the run executes
+        # with no re-exported config directories.
+        self.assertIsNone(self.events('implement')[0]['claude'])
 
     def test_hands_off_is_explicit_for_each_planner(self):
         flags = {'codex': '--dangerously-bypass-approvals-and-sandbox',
@@ -409,17 +489,16 @@ class DispatchTests(unittest.TestCase):
                           f'env["HOME"]={str(remote_home)!r}\n'
                           'sys.exit(subprocess.run(["bash","-c",sys.argv[-1]],env=env).returncode)\n')
         script.chmod(0o755)
-        (remote_home / 'accounts/teammate').mkdir(parents=True)
-        for provider, flag in (('codex', '--dangerously-bypass-approvals-and-sandbox'),
-                               ('claude', '--dangerously-skip-permissions')):
+        self.seat('teammate')
+        for provider in ('codex', 'claude'):
             with self.subTest(provider=provider):
-                self.call("Fix checkout's price", '--planner', provider, '--hands-off',
-                          '--on', 'mini', '--owner', 'teammate')
-                event = self.events('chat')[-1]
-                self.assertIn(flag, event['args'])
-                self.assertIn("Fix checkout's price", event['args'][-1])
-                self.assertEqual(event['owner'], 'teammate')
-                self.assertEqual(event['codex'], str(remote_home / 'accounts/teammate/codex'))
+                # An interactive planner is the account holder's own session:
+                # even hands-off cannot hold it for another seat.
+                out = self.call("Fix checkout's price", '--planner', provider, '--hands-off',
+                                '--on', 'mini', '--owner', 'teammate', check=False)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn('ssh teammate@', out.stderr)
+        self.assertEqual(self.events('chat'), [])
         # The actual SSH-to-tmux launch is covered by station.test.sh. Here
         # observe the Python CLI's handoff to station.sh on both execution hosts.
         for runtime in (self.runtime, remote_runtime):
@@ -510,18 +589,20 @@ class DispatchTests(unittest.TestCase):
         self.call('resume', 'TASK-1'); self.wait()
         self.assertEqual(len(self.events('implement')), 2)
 
-    def test_custom_account_repair_and_resume_keep_same_profile(self):
-        accounts = self.root / "custom ' accounts"
-        (accounts / 'teammate').mkdir(parents=True)
-        (self.root / 'claude-expired').touch()
-        result = self.run_task('TASK-1', '--owner', 'teammate', '--accounts-dir', str(accounts))
+    def test_seat_run_repair_points_into_the_seat_and_stays_pinned(self):
+        self.seat('teammate', claude=False)
+        result = self.run_task('TASK-1', '--owner', 'teammate')
         value = json.loads(result.stdout)
-        self.assertIn('--for-run TASK-1', value['action'])
-        (self.root / 'claude-expired').unlink()
-        self.call('login', 'claude', '--for-run', 'TASK-1')
-        self.assertEqual(self.events('chat')[-1]['claude'], str(accounts / 'teammate/claude'))
-        self.call('resume', 'TASK-1'); self.wait()
-        self.assertEqual(self.events('implement')[0]['claude'], str(accounts / 'teammate/claude'))
+        self.assertEqual(value['state'], 'waiting_for_auth')
+        self.assertIn('ssh teammate@', value['action'])
+        self.assertIn('station.sh login claude', value['action'])
+        self.assertNotIn('--for-run', value['action'])
+        # The login lands inside the seat's own account; completing it from the
+        # seat's side (its claude dir now exists) unblocks the saved run.
+        (self.root / 'seat-homes/teammate/.claude').mkdir()
+        self.call('resume', 'TASK-1')
+        self.assertEqual(self.wait()['state'], 'ready')
+        self.assertEqual(self.events('implement')[0]['owner'], 'teammate')
         self.assertNotEqual(self.call('resume', 'TASK-1', '--owner', 'someoneelse', check=False).returncode, 0)
 
     def test_review_failure_resumes_after_implementation_and_gate(self):
@@ -542,19 +623,35 @@ class DispatchTests(unittest.TestCase):
         (self.root / 'claude-expired').unlink()
         self.call('resume', 'TASK-1'); self.assertEqual(self.wait()['state'], 'ready')
 
-    def test_account_pinned_and_credentials_not_serialized(self):
-        account = self.home / 'accounts/teammate'
-        account.mkdir(parents=True)
+    def test_seat_run_launches_through_sudo_with_explicit_pairs_only(self):
+        home = self.seat('teammate')
+        (home / '.claude/oauth-token').write_text('seat-token-never-in-argv\n')
+        (home / '.claude/oauth-token').chmod(0o600)
         self.env['OPENAI_API_KEY'] = 'ambient-secret-do-not-copy'
         self.run_task('TASK-1', '--owner', 'teammate', '--no-publish'); self.wait()
         event = self.events('implement')[0]
         self.assertEqual(event['owner'], 'teammate')
         self.assertIsNone(event['token'])
-        self.assertEqual(event['claude'], str(account / 'claude'))
+        # The seat's own credentials are read inside the seat, never re-exported
+        # as config directories by the launching account.
+        self.assertIsNone(event['claude'])
+        self.assertIsNone(event['codex'])
+        self.assertIsNone(event['gh'])
         request = (self.runtime / 'runs/TASK-1/request.json').read_text()
         self.assertNotIn('ambient-secret', request)
-        checkpoint = (self.runtime / 'runs/TASK-1/checkpoint.json').read_text()
-        self.assertNotIn(str(account), checkpoint)
+        self.assertNotIn(str(home), request)
+        launches = [entry for entry in self.sudo_log() if entry['argv'][0].endswith('run-task.sh')]
+        self.assertTrue(launches)
+        for entry in launches:
+            self.assertEqual(entry['seat'], 'teammate')
+            self.assertIn('HARNESS_OWNER=teammate', entry['pairs'])
+            self.assertIn('HARNESS_DIR=' + str(self.runtime), entry['pairs'])
+            # argv is ps(1)-visible: no token, no inherited secret, no config
+            # directory override may ride the command line.
+            for pair in entry['pairs']:
+                self.assertFalse(pair.startswith(('OPENAI_API_KEY=', 'CLAUDE_CODE_OAUTH_TOKEN=',
+                                                  'GH_TOKEN=', 'CLAUDE_CONFIG_DIR=', 'CODEX_HOME=',
+                                                  'GH_CONFIG_DIR=')), pair)
 
     def test_duplicate_start_and_live_resume_do_not_duplicate_work(self):
         (self.root / 'hold-worker').touch()
@@ -600,7 +697,10 @@ class DispatchTests(unittest.TestCase):
         (self.root / 'gh-expired').unlink()
         self.env['CLAUDE_CONFIG_DIR'] = str(self.home / '.claude')
         self.call('login', 'gh', '--for-run', 'REMOTE-1', '--on', 'mini')
-        self.assertEqual(self.events('gh')[-1]['claude'], str(remote_home / '.claude'))
+        # The login runs as the account holder with ambient config-directory
+        # overrides cleared: an override pointing into another home must not
+        # steer whose credentials get refreshed.
+        self.assertIsNone(self.events('gh')[-1]['claude'])
         self.call('resume', 'REMOTE-1', '--on', 'mini')
         value = json.loads(self.call('wait', 'REMOTE-1', '--on', 'mini', '--timeout', '35', '--json').stdout)
         self.assertEqual(value['state'], 'ready', value)

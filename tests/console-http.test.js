@@ -22,7 +22,7 @@ test('local HTTP actions require a private token, correct host and same origin',
   const directory = path.join(runtime, 'runs/TASK-1');
   fs.mkdirSync(directory, { recursive: true });
   const write = (name, value) => fs.writeFileSync(path.join(directory, name), JSON.stringify(value));
-  write('request.json', { version: 1, id: 'TASK-1', repo: runtime, branch: 'task', account: '', account_paths: {},
+  write('request.json', { version: 1, id: 'TASK-1', repo: runtime, branch: 'task', account: '',
     operator: os.userInfo().username, host: os.hostname(), publish: false });
   write('result.json', { status: 'needs_input' });
   write('checkpoint.json', { stage: 'gated' });

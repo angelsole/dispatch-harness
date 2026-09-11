@@ -37,7 +37,7 @@ class EvidenceRetryTests(unittest.TestCase):
             path = self.bin / name
             path.write_text('#!/bin/sh\necho "unexpected model call" >&2\nexit 99\n'); path.chmod(0o755)
         manifest = self.capture()
-        self.request = dict(repo=str(self.repo), account="", account_paths={}, publish=True, host=socket.gethostname())
+        self.request = dict(repo=str(self.repo), account="", publish=True, host=socket.gethostname())
         self.result = dict(status="ready", attempt=2, worktree=str(self.repo),
             pr_url="https://github.com/team/app/pull/12", evidence=manifest, demo_url="",
             gate="passed", metrics={"tokens": 1234}, review="passed")
@@ -101,9 +101,8 @@ class EvidenceRetryTests(unittest.TestCase):
         self.unchanged_verdict()
         self.assertIn("cleaned up", self.call("evidence", "TASK-1", "--capture", check=False).stderr)
 
-    def test_saved_custom_account_is_restored_and_conflicting_owner_refused(self):
-        self.request.update(account="teammate", account_paths={k: str(self.root / "custom ' accounts" / k)
-            for k in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR")})
+    def test_saved_seat_is_restored_and_conflicting_owner_refused(self):
+        self.request.update(account="teammate")
         write_json(self.run / "request.json", self.request)
         self.env.update(HARNESS_OWNER="other", GH_CONFIG_DIR="/wrong", GH_TOKEN="ambient-fixture")
         (self.root / "native").touch()
@@ -111,8 +110,11 @@ class EvidenceRetryTests(unittest.TestCase):
         for call in self.calls("gh"):
             self.assertEqual(call["account"]["HARNESS_OWNER"], "teammate")
             self.assertIsNone(call["account"]["GH_TOKEN"])
-            for key, value in self.request["account_paths"].items():
-                self.assertEqual(call["account"][key], value)
+            # A saved seat never resurrects config-dir overrides: they were the
+            # old shared-account mechanism, and one pointing at another home
+            # would borrow that person's login.
+            for key in ("GH_CONFIG_DIR", "CODEX_HOME", "CLAUDE_CONFIG_DIR"):
+                self.assertIsNone(call["account"][key], key)
         out = self.call("evidence", "TASK-1", "--capture", "--owner", "other", check=False)
         self.assertIn("pinned to account", out.stderr)
 

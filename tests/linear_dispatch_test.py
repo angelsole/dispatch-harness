@@ -85,6 +85,23 @@ class QueueTests(unittest.TestCase):
         with self.store.connect() as db:
             return db.execute('SELECT count(*) FROM events').fetchone()[0]
 
+    def fake_id(self, *seats):
+        """A minimal `id` that knows only the named seats; all else delegates."""
+        bin = self.runtime / 'bin'
+        bin.mkdir(exist_ok=True)
+        (bin / 'seats').write_text('\n'.join(seats) + '\n')
+        (bin / 'id').write_text('#!/usr/bin/env python3\n'
+                                'import os, pathlib, sys\n'
+                                'seats = set((pathlib.Path(__file__).parent / "seats").read_text().split())\n'
+                                'args = sys.argv[1:]\n'
+                                'if len(args) == 2 and args[0] == "-u" and args[1] in seats:\n'
+                                '    print(2000); sys.exit(0)\n'
+                                'os.execv("/usr/bin/id", ["id"] + args)\n')
+        (bin / 'id').chmod(0o755)
+        patcher = mock.patch.dict(os.environ, PATH=str(bin) + os.pathsep + os.environ.get('PATH', ''))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_durable_deduplication_uses_session_and_activity_not_delivery_timestamp(self):
         event = delivery()
         self.assertEqual(self.store.enqueue(event, self.config), 200)
@@ -149,44 +166,47 @@ class QueueTests(unittest.TestCase):
 
     def test_assignee_then_parent_then_delegator_selects_station(self):
         self.config['accounts'] = {USER: 'initiator', OTHER_USER: 'assigned'}
-        root = self.runtime / 'accounts'
-        for owner in self.config['accounts'].values():
-            (root / owner).mkdir(parents=True)
+        self.fake_id('initiator', 'assigned')
+        healthy = {'claude': 'inside', 'codex': 'inside', 'gh': 'inside', 'token': 'ok'}
         self.store.enqueue(delivery(), self.config)
         worker = ld.Worker(self.runtime, self.config, self.store, FakeLinear())
         session = self.store.session(SESSION)
         issue = copy.deepcopy(ISSUE_DATA)
-        with mock.patch.dict(os.environ, {'QM_ACCOUNTS_DIR': str(root)}):
+        with mock.patch.object(ld, 'seat_probe_state', return_value=healthy):
             self.assertEqual(worker.execution_account(worker.route(issue), issue, session), ('initiator', 'session_creator'))
             issue['parent'] = {'assignee': {'id': OTHER_USER}}
             self.assertEqual(worker.execution_account(worker.route(issue), issue, session), ('assigned', 'parent_assignee'))
             issue['assignee'] = {'id': USER}
             self.assertEqual(worker.execution_account(worker.route(issue), issue, session), ('initiator', 'assignee'))
-            issue['assignee'] = {'id': PROJECT}
-            with self.assertRaises(ld.AccountSelection):
-                worker.execution_account(worker.route(issue), issue, session)
+        issue['assignee'] = {'id': PROJECT}
+        with self.assertRaises(ld.AccountSelection):
+            worker.execution_account(worker.route(issue), issue, session)
+        # A mapped name that is not a user on this machine is the same ask.
+        self.config['accounts'][PROJECT] = 'ghost'
+        issue['assignee'] = {'id': PROJECT}
+        with self.assertRaises(ld.AccountSelection):
+            worker.execution_account(worker.route(issue), issue, session)
 
     def test_missing_station_asks_without_borrowing_the_operator_login(self):
         self.config['accounts'] = {USER: 'missing-station'}
+        self.fake_id()
         self.store.enqueue(delivery(), self.config)
         api = FakeLinear()
-        with mock.patch.dict(os.environ, {'QM_ACCOUNTS_DIR': str(self.runtime / 'accounts')}):
-            ld.Worker(self.runtime, self.config, self.store, api).step()
+        ld.Worker(self.runtime, self.config, self.store, api).step()
         self.assertEqual(api.activities[-1]['type'], 'elicitation')
+        self.assertIn('needs setup', api.activities[-1]['body'])
         self.assertFalse((self.runtime / 'runs').exists())
 
     def test_station_alias_cannot_borrow_another_persons_credentials(self):
         self.config['accounts'] = {USER: 'teammate'}
-        root = self.runtime / 'accounts'
-        (root / 'teammate').mkdir(parents=True)
-        (root / 'other/codex').mkdir(parents=True)
-        (root / 'teammate/codex').symlink_to(root / 'other/codex', target_is_directory=True)
+        self.fake_id('teammate')
         self.store.enqueue(delivery(), self.config)
         api = FakeLinear()
-        with mock.patch.dict(os.environ, {'QM_ACCOUNTS_DIR': str(root)}):
+        with mock.patch.object(ld, 'seat_probe_state',
+                               return_value={'claude': 'inside', 'codex': 'outside', 'gh': 'inside'}):
             ld.Worker(self.runtime, self.config, self.store, api).step()
         self.assertEqual(api.activities[-1]['type'], 'elicitation')
-        self.assertIn('outside its profile', api.activities[-1]['body'])
+        self.assertIn('outside its home', api.activities[-1]['body'])
         self.assertFalse((self.runtime / 'runs').exists())
 
     def test_stop_before_created_survives_restart_and_never_launches(self):
@@ -245,6 +265,8 @@ class LifecycleTests(unittest.TestCase):
     call = fixture.DispatchTests.call
     wait = fixture.DispatchTests.wait
     run_task = fixture.DispatchTests.run_task
+    seat = fixture.DispatchTests.seat
+    sudo_log = fixture.DispatchTests.sudo_log
 
     def setUp(self):
         fixture.DispatchTests.setUp(self)
@@ -300,15 +322,23 @@ class LifecycleTests(unittest.TestCase):
     def test_parent_selected_station_stays_pinned_after_reassignment_and_restart(self):
         self.config['accounts'] = {USER: 'initiator', OTHER_USER: 'assigned'}
         for owner in self.config['accounts'].values():
-            (self.home / 'accounts' / owner).mkdir(parents=True)
+            self.seat(owner)
         self.api.issue_data['parent'] = {'assignee': {'id': OTHER_USER}}
         (self.root / 'ask-question').touch()
         self.send(delivery())
         self.assertEqual(self.wait(self.run_id)['state'], 'needs_input')
         request = read_json(self.run / 'request.json')
         self.assertEqual(request['account'], 'assigned')
-        self.assertEqual(request['account_paths']['CODEX_HOME'], str(self.home / 'accounts/assigned/codex'))
+        self.assertNotIn('account_paths', request)
         self.assertEqual(read_json(self.run / 'linear-origin.json')['account_source'], 'parent_assignee')
+        launches = [entry for entry in self.sudo_log() if entry['argv'][0].endswith('run-task.sh')]
+        self.assertTrue(launches)
+        for entry in launches:
+            self.assertEqual(entry['seat'], 'assigned')
+            self.assertIn('HARNESS_OWNER=assigned', entry['pairs'])
+            self.assertFalse([pair for pair in entry['pairs']
+                              if pair.startswith(('CLAUDE_CODE_OAUTH_TOKEN=', 'GH_TOKEN=',
+                                                  'CLAUDE_CONFIG_DIR=', 'CODEX_HOME=', 'GH_CONFIG_DIR='))])
         self.api.issue_data['assignee'] = {'id': USER}
         (self.root / 'ask-question').unlink()
         self.worker = ld.Worker(self.runtime, self.config, ld.Store(self.runtime), self.api)
@@ -319,6 +349,8 @@ class LifecycleTests(unittest.TestCase):
         for event in events:
             if event.get('kind') == 'implement':
                 self.assertEqual(event['owner'], 'assigned')
+                self.assertIsNone(event['claude'])
+                self.assertIsNone(event['codex'])
 
     def test_auth_block_is_saved_and_can_resume_from_linear(self):
         (self.root / 'claude-expired').touch()
