@@ -356,6 +356,12 @@ printf 'not-started' > "$CAPTURE/session"
 fixture env DISPATCH_STATION_DIR="$ROOT/work" \
   bash "$H/station.sh" setup > "$ROOT/setup3.out" 2>&1 </dev/null
 check 'setup: never launches the planner itself' "$(cat "$CAPTURE/session")" not-started
+# A fresh seat has no profile assignment yet. Invoking the shared script by its
+# absolute path must derive that installation instead of looking under HOME.
+fixture env -u HARNESS_DIR DISPATCH_STATION_DIR="$ROOT/work" \
+  bash "$H/station.sh" setup > "$ROOT/setup-shared.out" 2>&1 </dev/null
+has "$ROOT/setup-shared.out" 'setup complete' 'setup: shared script works before HARNESS_DIR is configured'
+has "$FIXTURE_HOME/.zprofile" "$H" 'setup: the shared runtime path is written to the profile'
 touch "$CAPTURE/codex-ok"
 
 echo "== usage =="

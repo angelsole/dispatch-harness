@@ -27,11 +27,14 @@
 # repo's configured PREFLIGHT_CMD, capped at 30 seconds; it runs no test gate.
 #
 # Env: DISPATCH_STATION_DIR (default: $HOME), DISPATCH_PLANNER (codex),
-# DISPATCH_MODEL (provider default), HARNESS_DIR (~/.claude/harness),
+# DISPATCH_MODEL (provider default), HARNESS_DIR (the directory containing this script),
 # CODEX_BIN / CLAUDE_BIN (from PATH). Remote defaults resolve on the remote host.
 set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELF="$SELF_DIR/$(basename "$0")"
+# A seat's first setup starts the service-owned shared script before its profile
+# has HARNESS_DIR. The script location is therefore the installed runtime.
+HARNESS_DIR="${HARNESS_DIR:-$SELF_DIR}"
 # shellcheck source=lib/common.sh
 . "$SELF_DIR/lib/common.sh"
 
