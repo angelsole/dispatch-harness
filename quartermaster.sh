@@ -909,7 +909,9 @@ seat_capacity() {  # $1 = seat
   # A pinned ceiling is a number, not a credential, so it may ride the command
   # line — sudo's env_reset would otherwise silently un-pin QM_TOKEN_LIMIT.
   [ -z "$CAPACITY_TOKEN_LIMIT" ] || limit=("CAPACITY_TOKEN_LIMIT=$CAPACITY_TOKEN_LIMIT")
-  json=$(seat_exec "$1" "PATH=$PATH" "HARNESS_DIR=$HARNESS_DIR" ${limit[@]+"${limit[@]}"} -- "$SELF_DIR/capacity.sh" --seat-json 2>/dev/null) || return 1
+  json=$(seat_exec "$1" "PATH=$PATH" "HARNESS_DIR=$HARNESS_DIR" \
+    "CAPACITY_TIMEOUT=$CAPACITY_TIMEOUT" ${limit[@]+"${limit[@]}"} \
+    -- "$SELF_DIR/capacity.sh" --seat-json 2>/dev/null) || return 1
   CAP_REMAINING=$(printf '%s' "$json" | jq -r '.remaining // empty' 2>/dev/null)
   CAP_LIMIT=$(printf '%s' "$json" | jq -r '.limit // empty' 2>/dev/null)
   CAP_USED=$(printf '%s' "$json" | jq -r '.used // empty' 2>/dev/null)

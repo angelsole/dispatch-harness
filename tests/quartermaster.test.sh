@@ -117,7 +117,8 @@ EOF
 # and local-file only.
 cat > "$FAKES/npx" <<EOF
 #!/usr/bin/env bash
-printf '%s | CLAUDE_CONFIG_DIR=%s\n' "\$*" "\${CLAUDE_CONFIG_DIR-<unset>}" >> "$NPX_LOG"
+printf '%s | CLAUDE_CONFIG_DIR=%s | CAPACITY_TIMEOUT=%s\n' \
+  "\$*" "\${CLAUDE_CONFIG_DIR-<unset>}" "\${CAPACITY_TIMEOUT-<unset>}" >> "$NPX_LOG"
 station=\$(basename "\$(dirname "\${CLAUDE_CONFIG_DIR:-/nowhere/none}")")
 f="$CCUSAGE_DIR/\$station.json"
 [ -f "\$f" ] || { echo "ccusage: no usage data" >&2; exit 1; }
@@ -407,7 +408,7 @@ check "guard: no run was armed by any guard" "$(arm_calls)" "0"
 # ---------------------------------------------------------------------------
 echo "== --report: the plan, and nothing else =="
 # ---------------------------------------------------------------------------
-out=$(qm "" --report); rc=$?
+out=$(qm "QM_CCUSAGE_TIMEOUT=2" --report); rc=$?
 check "report: exits 0" "$rc" "0"
 exists "report: writes the dated report" "$REPORT"
 has "$out" "report: $REPORT" "report: says where the report went"
@@ -441,6 +442,8 @@ file_has "$SUDO_LOG" "seat=bea argv=$SRCABS/capacity.sh --seat-json" \
   "capacity: every crew seat gets its own crossing"
 file_has "$NPX_LOG" "CLAUDE_CONFIG_DIR=$SEAT_HOMES/angel/.claude" \
   "capacity: ccusage parses the seat's own logs, not the operator's"
+file_has "$NPX_LOG" 'CAPACITY_TIMEOUT=2' \
+  "capacity: the configured ccusage timeout crosses into every seat"
 has "$ANGEL" "### Would arm"                    "report: labels the plan as hypothetical"
 has "$ANGEL" "**23:30** \`OLYX-A1\`"            "queue: the top priority takes the first fire time"
 has "$ANGEL" "**02:00** \`OLYX-A2\`"            "queue: the second takes the second fire time"
