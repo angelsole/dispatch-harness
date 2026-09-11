@@ -220,6 +220,14 @@ check 'seat_exec: a non-pair argument is rc 2' "$rc" 2
 has "$errout" 'is not VAR=value' 'seat_exec: names the malformed argument'
 errout=$(fixture bash -s "$LIB" 2>&1 <<'SNIP'
 . "$1"
+seat_exec angel A-B=value -- /bin/true
+SNIP
+)
+rc=$?
+check 'seat_exec: an invalid shell variable name is rc 2' "$rc" 2
+has "$errout" 'is not VAR=value' 'seat_exec: rejects names the direct path cannot export'
+errout=$(fixture bash -s "$LIB" 2>&1 <<'SNIP'
+. "$1"
 seat_exec angel "PATH=$PATH"
 SNIP
 )

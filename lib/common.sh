@@ -358,10 +358,13 @@ harness_oauth_token() {  # [$1 = strict]; sets CLAUDE_CODE_OAUTH_TOKEN
 seat_exec() {  # $1 = seat, [VAR=value ...] -- command [args ...]
   local seat="$1"; shift
   [ $# -gt 0 ] || { echo "seat_exec: needs a seat and a command" >&2; return 2; }
-  local pairs=()
+  local pairs=() name
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do
-    case "$1" in
-      [A-Za-z_]*=*) pairs+=("$1") ;;
+    name="${1%%=*}"
+    case "$1:$name" in
+      *=*:[A-Za-z_]* )
+        case "$name" in *[!A-Za-z0-9_]* ) echo "seat_exec: '$1' is not VAR=value" >&2; return 2 ;; esac
+        pairs+=("$1") ;;
       *) echo "seat_exec: '$1' is not VAR=value" >&2; return 2 ;;
     esac
     shift
