@@ -26,6 +26,7 @@ from dispatch_runs import (DispatchError, atomic_write, read_json, read_text, ru
                            seat_probe_state, status)
 
 UUID = re.compile(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}\Z")
+SEAT = re.compile(r"[a-z_][a-z0-9_-]{0,31}\Z")
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -68,7 +69,7 @@ def configuration(path):
         if type(route.get("publish", True)) is not bool:
             raise DispatchError("Linear route publish must be boolean")
         if not isinstance(route.get("owner", ""), str) or (route.get("owner") and not
-                re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", route["owner"])):
+                SEAT.fullmatch(route["owner"])):
             raise DispatchError("Invalid Linear execution account")
     users = config.get("allowed_users", [])
     if not isinstance(users, list) or not all(uid(user) for user in users):
@@ -76,8 +77,7 @@ def configuration(path):
     accounts = config.get("accounts")
     if accounts is not None:
         if (not isinstance(accounts, dict) or not accounts or
-                any(not uid(user) or not isinstance(owner, str) or not
-                    re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", owner)
+                any(not uid(user) or not isinstance(owner, str) or not SEAT.fullmatch(owner)
                     for user, owner in accounts.items())):
             raise DispatchError("accounts must map Linear user UUIDs to seat names")
         if any("owner" in route for route in routes):

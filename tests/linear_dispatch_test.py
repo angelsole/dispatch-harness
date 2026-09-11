@@ -152,7 +152,8 @@ class QueueTests(unittest.TestCase):
 
     def test_account_mapping_validation_rejects_paths_and_fixed_owner_mix(self):
         path = self.runtime / 'config.json'
-        for accounts in ([], {}, {USER: '../angel'}, {'not-a-uuid': 'angel'}):
+        for accounts in ([], {}, {USER: '../angel'}, {USER: 'Alice'},
+                         {USER: 'a' * 33}, {'not-a-uuid': 'angel'}):
             path.write_text(json.dumps(dict(self.config, accounts=accounts)))
             with self.assertRaises(ld.DispatchError):
                 ld.configuration(path)
