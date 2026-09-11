@@ -6,7 +6,7 @@
 # Subscription capacity left unused at the end of the day is worth nothing
 # tomorrow, while dispatchable work sits in Linear. The crew convention (the
 # label `overnight` plus an assignee = consent plus identity) and the machinery
-# (schedule.sh, briefs at runs/<TICKET>/brief.md, per-station env) already
+# (schedule.sh, briefs at runs/<TICKET>/brief.md, per-seat identity) already
 # exist. This connects them: estimate what each crew member has left, decide
 # how many runs fit, arm them, and tell the crew's phones.
 #
@@ -29,9 +29,10 @@
 #
 # What leaves this machine: the Linear API (read, plus one comment per ticket
 # actually armed), the ntfy push, and — only when --arm self-briefs a ticket —
-# a planner session, then a spec-critic session, both on the owning station's
-# Claude subscription. Capacity
-# accounting stays local-file only: ccusage parses the station's own logs and
+# a planner session, then a spec-critic session, both on this user's own
+# Claude login (a seat's home is closed to the Quartermaster, and the sudoers
+# fragment never hands it a shell as a seat). Capacity accounting stays
+# local-file only: ccusage parses each seat's own logs, as that seat, and
 # contacts no model provider.
 set -u
 
@@ -54,7 +55,6 @@ TAB=$(printf '\t')
 
 # Every knob the evening turns on, all env-tunable: a crew tightens the dial
 # without editing the script.
-ACCOUNTS_DIR="${QM_ACCOUNTS_DIR:-$HOME/accounts}"  # one directory per crew station
 LINEAR_URL="https://api.linear.app/graphql"
 LINEAR_KEY_FILE="${LINEAR_API_KEY_FILE:-$HARNESS_DIR/linear-api-key}"
 TAG="${QM_LABEL:-overnight}"                       # the consent label
@@ -345,15 +345,31 @@ brief_field() {  # $1 = brief path, $2 = field name
     | head -1 | sed -e 's/[[:space:]]*$//' -e 's/^`//' -e 's/`$//'
 }
 
-# A ticket identifier and a station name both become path components under
-# runs/ and accounts/, and both are derived from what a remote API said. Same
-# rule schedule.sh validates its tickets with: letters, digits, dot, dash,
-# underscore, and never leading with a dot.
+# A ticket identifier becomes a path component under runs/, and it is derived
+# from what a remote API said. Same rule schedule.sh validates its tickets
+# with: letters, digits, dot, dash, underscore, and never leading with a dot.
+# A station name is additionally required to be a real seat before anything
+# runs as it — see seat_exists.
 safe_component() {  # $1 = candidate
   case "$1" in
     ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+# The crew: the seats linear-dispatch.json's accounts mapping names when that
+# file exists, else the QM_CREW list (space-separated seat names). Sharing the
+# bridge's mapping keeps the evening from planning for a seat the bridge would
+# refuse — and vice versa. One name per line, deduped.
+crew_list() {
+  local cfg="$HARNESS_DIR/linear-dispatch.json" crew=""
+  if [ -f "$cfg" ]; then
+    crew=$(jq -r '.accounts // {} | to_entries | map(.value) | join(" ")' "$cfg" 2>/dev/null) || crew=""
+  fi
+  if [ -z "${crew// /}" ]; then
+    crew="${QM_CREW:-}"
+  fi
+  printf '%s\n' "$crew" | tr ' ' '\n' | sed '/^$/d' | sort -u
 }
 
 # angel.sole@olyx.nl -> angel. The local part up to the first dot is the
@@ -567,16 +583,13 @@ contain_planner_writes() {  # $1 = checkpoint dir, $2 = ticket
 # reading did not happen.
 #
 # Prints the reason on stderr and returns 1 when the brief must not be armed.
-spec_critic_pass() {  # $1 ticket, $2 candidate, $3 repo, $4 station, $5 station dir, $6 verdict
-  local ticket="$1" candidate="$2" repo="$3" station="$4" dir="$5" verdict="$6"
-  local run_dir="$RUNS/$1" verdict_rel="runs/$1/${6##*/}" n
+spec_critic_pass() {  # $1 ticket, $2 candidate, $3 repo, $4 station, $5 verdict
+  local ticket="$1" candidate="$2" repo="$3" station="$4" verdict="$5"
+  local run_dir="$RUNS/$1" verdict_rel="runs/$1/${5##*/}" n
   [ "$SPEC_CRITIC" = 1 ] || return 0
   (
     unset GH_TOKEN ANTHROPIC_API_KEY
     export HARNESS_DIR="$HARNESS_DIR"
-    export CLAUDE_CONFIG_DIR="$dir/claude"
-    export CODEX_HOME="$dir/codex"
-    export GH_CONFIG_DIR="$dir/gh"
     export HARNESS_OWNER="$station"
     export SPEC_CRITIC_TIMEOUT="$AUTOBRIEF_TIMEOUT"
     [ -z "$AUTOBRIEF_MODEL" ] || export SPEC_CRITIC_MODEL="$AUTOBRIEF_MODEL"
@@ -596,8 +609,8 @@ spec_critic_pass() {  # $1 ticket, $2 candidate, $3 repo, $4 station, $5 station
 
 # Prints the reason on stderr and returns non-zero on failure; silence and 0
 # mean the brief is on disk, has usable headers, and names an armable target.
-autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station, $5 station dir
-  local ticket="$1" title="$2" bodyfile="$3" station="$4" dir="$5"
+autobrief_ticket() {  # $1 ticket, $2 title, $3 body-file, $4 station
+  local ticket="$1" title="$2" bodyfile="$3" station="$4"
   local run_dir="$RUNS/$1" brief="$RUNS/$1/brief.md"
   local repos prompt fence candidate verdict stage planned copyfail snap stray reason r b rc=0
   repos=$(repo_candidates)
@@ -703,13 +716,14 @@ to the path and under the rules given above the fence."
     echo "cannot checkpoint the briefs under runs/ — refusing to plan blind" >&2
     return 1; }
 
-  # Same identity export as arm_ticket: planning tokens belong to the crew
-  # member who owns the ticket, not to whoever's shell the evening ran in.
-  # ANTHROPIC_API_KEY is unset for the same reason run-task.sh launches every
-  # worker with env -u ANTHROPIC_API_KEY: a key exported in the invoking shell
-  # would silently bill the planner to metered API instead of the station's
-  # subscription — and escape the very capacity accounting this script rations
-  # by, since ccusage only sees the subscription's own logs.
+  # Planning runs as this user (the Quartermaster's own Claude login), not as
+  # the seat: a seat's home is closed to the service user, and the sudoers
+  # fragment admits only run-task.sh, capacity.sh and seat-probe.sh — never a
+  # shell. ANTHROPIC_API_KEY is unset for the same reason run-task.sh launches
+  # every worker with env -u ANTHROPIC_API_KEY: a key exported in the invoking
+  # shell would silently bill the planner to metered API instead of this
+  # login's subscription — and escape the very capacity accounting this script
+  # rations by, since ccusage only sees the subscription's own logs.
   # Invocation mirrors run-task.sh's unattended worker — an allow-list plus
   # acceptEdits never prompts, so no stage can block on absent hands.
   (
@@ -721,9 +735,6 @@ to the path and under the rules given above the fence."
     cd "$stage" || { echo "cannot enter the planner's staging dir $stage"; exit 1; }
     unset GH_TOKEN ANTHROPIC_API_KEY
     export HARNESS_DIR="$HARNESS_DIR"
-    export CLAUDE_CONFIG_DIR="$dir/claude"
-    export CODEX_HOME="$dir/codex"
-    export GH_CONFIG_DIR="$dir/gh"
     export HARNESS_OWNER="$station"
     set -- --settings "$SELF_DIR/planner-settings.json" \
            --permission-mode acceptEdits --max-turns 60
@@ -789,7 +800,7 @@ to the path and under the rules given above the fence."
   fi
   # Before publication, not after: a brief that contradicts itself must never sit
   # at the armable path, where tomorrow's pass would read it as approved.
-  if ! reason=$(spec_critic_pass "$ticket" "$candidate" "$r" "$station" "$dir" "$verdict" 2>&1 >/dev/null); then
+  if ! reason=$(spec_critic_pass "$ticket" "$candidate" "$r" "$station" "$verdict" 2>&1 >/dev/null); then
     reject_brief "$candidate" "${brief%.md}.rejected.md"
     printf '%s\n' "$reason" >&2
     return 1
@@ -822,19 +833,16 @@ to the path and under the rules given above the fence."
 # ---------------------------------------------------------------------------
 # Arming
 # ---------------------------------------------------------------------------
-# The station's identity is exported, not inherited: schedule.sh snapshots this
-# environment into the wrapper it writes, so the run that fires at 02:00 is the
-# crew member who consented to it by assigning the ticket. GH_TOKEN is actively
-# unset rather than merely not set: gh prefers a token over its config dir, so
-# one exported in the invoking shell would quietly make every crew member's PR
-# come out of the same account.
-arm_ticket() {  # $1 ticket, $2 repo, $3 branch, $4 when, $5 station, $6 station dir
+# The seat's identity is exported, not inherited: schedule.sh snapshots this
+# environment into the wrapper it writes, so the run that fires at 02:00 is
+# dispatched as the crew member who consented to it by assigning the ticket.
+# GH_TOKEN is actively unset rather than merely not set: gh prefers a token
+# over its own login, so one exported in the invoking shell would quietly make
+# every crew member's PR come out of the same account.
+arm_ticket() {  # $1 ticket, $2 repo, $3 branch, $4 when, $5 seat
   (
     unset GH_TOKEN
     export HARNESS_DIR="$HARNESS_DIR"
-    export CLAUDE_CONFIG_DIR="$6/claude"
-    export CODEX_HOME="$6/codex"
-    export GH_CONFIG_DIR="$6/gh"
     export HARNESS_OWNER="$5"
     export IMPLEMENTER_EFFORT="$EFFORT"
     exec "$SELF_DIR/schedule.sh" "$1" "$2" "$3" "$4"
@@ -863,8 +871,8 @@ ticket_body() {  # $1 = identifier
 # each success into $WORK/eligible so the arming loop below cannot tell the
 # difference; failures become their own reported category, and anything not
 # reached stays in nobrief exactly as before.
-autobrief_pass() {  # $1 = station, $2 = station dir, $3 = fits
-  local station="$1" dir="$2" fits="$3"
+autobrief_pass() {  # $1 = station, $2 = fits
+  local station="$1" fits="$2"
   local id ident title headroom tried reason bodyfile r b
   headroom=$((fits - $(count_of "$WORK/eligible")))
   [ "$headroom" -gt 0 ] || return 0
@@ -880,7 +888,7 @@ autobrief_pass() {  # $1 = station, $2 = station dir, $3 = fits
     bodyfile="$WORK/body-$ident"
     ticket_body "$ident" > "$bodyfile" 2>/dev/null || : > "$bodyfile"
     # stderr carries the reason; stdout is silent on success.
-    if reason=$(autobrief_ticket "$ident" "$title" "$bodyfile" "$station" "$dir" 2>&1 >/dev/null); then
+    if reason=$(autobrief_ticket "$ident" "$title" "$bodyfile" "$station" 2>&1 >/dev/null); then
       r=$(brief_field "$RUNS/$ident/brief.md" Repo)
       b=$(brief_field "$RUNS/$ident/brief.md" Branch)
       printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$ident" "$title" "$r" "$b" >> "$WORK/eligible"
@@ -891,10 +899,31 @@ autobrief_pass() {  # $1 = station, $2 = station dir, $3 = fits
   mv "$WORK/nobrief.keep" "$WORK/nobrief"
 }
 
+# Capacity read as the seat itself: seat_exec runs capacity.sh --seat-json
+# inside the seat's own account, so ccusage parses that seat's ~/.claude logs
+# and nobody else's — the service user never opens a seat's conversations.
+# Sets the CAP_* fields capacity_for defines; non-zero when unknown.
+seat_capacity() {  # $1 = seat
+  local json limit=()
+  seat_exists "$1" || return 1
+  # A pinned ceiling is a number, not a credential, so it may ride the command
+  # line — sudo's env_reset would otherwise silently un-pin QM_TOKEN_LIMIT.
+  [ -z "$CAPACITY_TOKEN_LIMIT" ] || limit=("CAPACITY_TOKEN_LIMIT=$CAPACITY_TOKEN_LIMIT")
+  json=$(seat_exec "$1" "PATH=$PATH" "HARNESS_DIR=$HARNESS_DIR" ${limit[@]+"${limit[@]}"} -- "$SELF_DIR/capacity.sh" --seat-json 2>/dev/null) || return 1
+  CAP_REMAINING=$(printf '%s' "$json" | jq -r '.remaining // empty' 2>/dev/null)
+  CAP_LIMIT=$(printf '%s' "$json" | jq -r '.limit // empty' 2>/dev/null)
+  CAP_USED=$(printf '%s' "$json" | jq -r '.used // empty' 2>/dev/null)
+  CAP_PCT=$(printf '%s' "$json" | jq -r '.pct // empty' 2>/dev/null)
+  CAP_RESET=$(printf '%s' "$json" | jq -r '.reset // empty' 2>/dev/null)
+  case "$CAP_REMAINING$CAP_LIMIT$CAP_USED$CAP_PCT" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
 # One crew member: capacity, their slice of the queue, and what happens to it.
 station_pass() {  # $1 = mode, $2 = station, $3 = median cost
   local mode="$1" station="$2" cost="$3"
-  local dir="$ACCOUNTS_DIR/$2" claude_dir="$ACCOUNTS_DIR/$2/claude"
   local id ident email title reason brief repo branch slot out rc
   local n armed_here fits idx used_slots armed_hdr over_hdr
   local cap_word arms nobrief_n skipped_n refused_n st autobriefed_n briefailed_n
@@ -902,7 +931,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
 
   say "## $station"
   say ""
-  if capacity_for "$claude_dir"; then
+  if seat_capacity "$station"; then
     n=$(runs_that_fit "$CAP_REMAINING" "$cost")
     cap_word="~${CAP_PCT}% left"
     say "- Capacity: ~${CAP_PCT}% of the block's output budget left ($CAP_REMAINING of $CAP_LIMIT tokens; $CAP_USED spent)"
@@ -911,7 +940,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
     n="$FALLBACK_N"
     [ "$n" -le "$MAX_PER_CREW" ] || n="$MAX_PER_CREW"
     cap_word="capacity unknown"
-    say "- Capacity: **unknown** — ccusage could not account for \`$claude_dir\`"
+    say "- Capacity: **unknown** — capacity could not be read as \`$station\` (seat_exec \`capacity.sh --seat-json\`)"
     say "- Room for: $n run(s) — the conservative QM_FALLBACK_N default, not an estimate"
   fi
   say ""
@@ -977,7 +1006,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
     times_n=0; for slot in $TIMES; do times_n=$((times_n + 1)); done
     slots_left=$((times_n - armed_here)); [ "$slots_left" -gt 0 ] || slots_left=0
     arm_cap="$fits"; [ "$slots_left" -lt "$arm_cap" ] && arm_cap="$slots_left"
-    autobrief_pass "$station" "$dir" "$arm_cap"
+    autobrief_pass "$station" "$arm_cap"
   fi
 
   idx="$armed_here"; used_slots=0; armed_hdr=0; over_hdr=0; arms=""
@@ -1000,7 +1029,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
       idx=$((idx + 1)); used_slots=$((used_slots + 1))
       continue
     fi
-    out=$(arm_ticket "$ident" "$repo" "$branch" "$slot" "$station" "$dir"); rc=$?
+    out=$(arm_ticket "$ident" "$repo" "$branch" "$slot" "$station"); rc=$?
     if [ "$rc" -ne 0 ]; then
       printf '%s\t%s\t%s\n' "$ident" "$title" "$(printf '%s' "$out" | tail -1)" \
         >> "$WORK/refused"
@@ -1012,7 +1041,7 @@ station_pass() {  # $1 = mode, $2 = station, $3 = median cost
     sb=""; grep -qxF -- "$ident" "$WORK/autobriefed" 2>/dev/null && sb=" — self-briefed"
     say "- **$slot** \`$ident\` $title — $repo ($branch)$sb"
     if ! linear_comment "$id" \
-      "Armed for $slot by the quartermaster — \`$branch\` in \`$repo\`, on $station's station."; then
+      "Armed for $slot by the quartermaster — \`$branch\` in \`$repo\`, dispatching as $station."; then
       say "  - (the Linear comment failed; the run is armed regardless)"
     fi
     arms="${arms:+$arms, }$ident $slot"
@@ -1210,20 +1239,13 @@ EOF
   line "median $cost tok/run"
   [ -z "$LINEAR_NOTE" ] || line "queue unavailable: $LINEAR_NOTE"
 
-  stations=""
-  if [ -d "$ACCOUNTS_DIR" ]; then
-    for station in "$ACCOUNTS_DIR"/*/; do
-      [ -d "$station" ] || continue
-      stations="$stations$(basename "$station")
-"
-    done
-  fi
+  stations="$(crew_list)"
   if [ -z "$stations" ]; then
     say "## No crew"
     say ""
-    say "No station directories under \`$ACCOUNTS_DIR\` — there is nobody to dispatch for."
+    say "No seats named in \`linear-dispatch.json\` or \`QM_CREW\` — there is nobody to dispatch for."
     say ""
-    line "no crew stations under $ACCOUNTS_DIR"
+    line "no crew seats configured"
   fi
 
   # fd 3 keeps the station list out of stdin, which schedule.sh, curl and npx
@@ -1235,9 +1257,9 @@ EOF
 $stations
 EOF
 
-  # Tagged and assigned, but the assignee has no station on this machine. Worth
-  # a line of its own: that is a crew member nobody here can dispatch for, not
-  # a defect in the queue.
+  # Tagged and assigned, but the assignee maps to a name that is not a seat on
+  # this machine. Worth a line of its own: that is a crew member nobody here
+  # can dispatch for, not a defect in the queue.
   : > "$WORK/orphans"
   while IFS= read -r row; do
     [ -n "$row" ] || continue
@@ -1245,7 +1267,7 @@ EOF
     email=$(printf '%s' "$row" | cut -f3)
     title=$(printf '%s' "$row" | cut -f4)
     station=$(station_for "$email")
-    if safe_component "$station" && [ -d "$ACCOUNTS_DIR/$station" ]; then continue; fi
+    if safe_component "$station" && seat_exists "$station"; then continue; fi
     printf '%s\t%s\t%s\t%s\n' "$ident" "$title" "$email" "$station" >> "$WORK/orphans"
   done < "$WORK/issues"
   orphan_n=$(count_of "$WORK/orphans")
@@ -1254,17 +1276,17 @@ EOF
     say ""
     while IFS="$TAB" read -r ident title email station; do
       [ -n "$ident" ] || continue
-      say "- \`$ident\` $title — $email maps to \`$station\`, which has no directory under \`$ACCOUNTS_DIR\`"
+      say "- \`$ident\` $title — $email maps to \`$station\`, which is not a user on this machine"
     done < "$WORK/orphans"
     say ""
-    line "$orphan_n ticket(s) for a station this machine does not have"
+    line "$orphan_n ticket(s) for a seat this machine does not have"
   fi
 
   say "---"
   say ""
-  say "Capacity is estimated from each station's own Claude logs (\`ccusage blocks\`);"
-  say "no model provider was contacted. Linear was read, and commented on only for"
-  say "the tickets this run actually armed."
+  say "Capacity is estimated from each seat's own Claude logs (\`ccusage blocks\`,"
+  say "read as that seat); no model provider was contacted. Linear was read, and"
+  say "commented on only for the tickets this run actually armed."
 
   cp "$REPORT" "$QM_DIR/$today.md" || fail "cannot write $QM_DIR/$today.md"
   cat "$QM_DIR/$today.md"
@@ -1301,8 +1323,8 @@ Run quartermaster.sh --report from your own timer instead."
 
 # launchd hands a job an almost empty environment, so the agent carries a
 # snapshot of the shell that installed it — the same trick, for the same
-# reason, as schedule.sh's wrapper. GH_TOKEN is not swept in: the per-station
-# GH_CONFIG_DIR is what decides which account opens a PR.
+# reason, as schedule.sh's wrapper. No credential is swept in: each armed run
+# launches as its seat, whose own gh login decides which account opens a PR.
 env_names() {
   { compgen -e 2>/dev/null | grep -E '^(HARNESS|QM)_[A-Za-z0-9_]+$'
     printf '%s\n' HARNESS_DIR LINEAR_API_KEY_FILE HOME PATH
