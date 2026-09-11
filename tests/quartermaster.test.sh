@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # The quartermaster contract: at 19:00 it reads the overnight queue out of
-# Linear, estimates what each crew station has left from that station's own
-# local Claude logs, decides how many runs fit, and either reports the plan or
-# arms it through schedule.sh — idempotently, and without ever touching a model
-# provider.
+# Linear, estimates what each crew seat has left from that seat's own local
+# Claude logs (read as the seat, through seat_exec), decides how many runs
+# fit, and either reports the plan or arms it through schedule.sh —
+# idempotently, and without ever touching a model provider.
 #
 # Nothing real is contacted. `npx` (ccusage), `curl` (Linear + ntfy), `uname`
 # and `launchctl` are fake binaries on PATH that answer from canned files and
 # record what they were asked to do — the technique tests/schedule.test.sh uses
 # — and schedule.sh itself is a stand-in beside the script under test, so the
-# arming path is asserted argument by argument and variable by variable.
+# arming path is asserted argument by argument and variable by variable. The
+# crew are OS users: `id` answers only for the seats this fixture registers,
+# and `sudo` replays env_reset, so the capacity crossing is real.
 #
 # Usage: bash tests/quartermaster.test.sh
 set -u
@@ -31,7 +33,8 @@ file_has() { if grep -qF -- "$2" "$1" 2>/dev/null; then ok "$3"; else bad "$3 (m
 # --- fixture -----------------------------------------------------------------
 FHOME="$ROOT/home"; AGENTS="$FHOME/Library/LaunchAgents"
 HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"
-ACCOUNTS="$ROOT/accounts"
+SEATS="$ROOT/seats"; SEAT_HOMES="$ROOT/seat-homes"
+SUDO_LOG="$ROOT/sudo.log"
 SRCDIR="$ROOT/src"; FAKES="$ROOT/bin"
 KEYFILE="$HARNESS/linear-api-key"
 SCHED_CALLS="$ROOT/schedule-calls.log"
@@ -51,10 +54,10 @@ UNAME_STATE="$ROOT/fake-uname"
 CCUSAGE_DIR="$ROOT/ccusage"
 
 mkdir -p "$AGENTS" "$RUNS" "$SRCDIR" "$FAKES" "$CCUSAGE_DIR" \
-  "$ACCOUNTS/angel/claude" "$ACCOUNTS/angel/codex" "$ACCOUNTS/angel/gh" \
-  "$ACCOUNTS/bea/claude"
+  "$SEAT_HOMES/angel" "$SEAT_HOMES/bea"
+printf 'angel\nbea\n' > "$SEATS"
 : > "$SCHED_CALLS"; : > "$SCHED_LIST"; : > "$CURL_LOG"; : > "$LINEAR_REQUESTS"; : > "$COMMENTS"
-: > "$NTFY_LOG"; : > "$NPX_LOG"; : > "$LC_LOG"
+: > "$NTFY_LOG"; : > "$NPX_LOG"; : > "$LC_LOG"; : > "$SUDO_LOG"
 printf 'Darwin\n' > "$UNAME_STATE"
 printf 'lin_api_TESTKEY\n' > "$KEYFILE"; chmod 600 "$KEYFILE"
 printf 'HARNESS_NTFY_TOPIC="qm-test-topic"\n' > "$HARNESS/notify.conf"
@@ -108,9 +111,10 @@ date +%s > "$RUNS/\$1/scheduled"
 echo "[schedule] \$1 armed for \$4"
 EOF
 
-# ccusage stand-in. Answers only from a canned file chosen by the station whose
-# CLAUDE_CONFIG_DIR it was handed — which is also the assertion that capacity
-# accounting is per-station and local-file only.
+# ccusage stand-in. Answers only from a canned file chosen by the seat whose
+# CLAUDE_CONFIG_DIR capacity.sh handed it (the seat's own ~/.claude, set inside
+# the seat) — which is also the assertion that capacity accounting is per-seat
+# and local-file only.
 cat > "$FAKES/npx" <<EOF
 #!/usr/bin/env bash
 printf '%s | CLAUDE_CONFIG_DIR=%s\n' "\$*" "\${CLAUDE_CONFIG_DIR-<unset>}" >> "$NPX_LOG"
@@ -161,6 +165,37 @@ EOF
 cat > "$FAKES/launchctl" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$LC_LOG"
+EOF
+
+# Seats are OS users. `id` answers only for the seats registered above and
+# delegates everything else to the real binary; `sudo` replays env_reset — the
+# child sees exactly the VAR=value pairs from the command line, plus the HOME
+# sudo -H resolves for the seat, and nothing else. Every crossing is logged,
+# because "which user ran capacity.sh" is itself part of the contract.
+cat > "$FAKES/id" <<EOF
+#!/usr/bin/env bash
+if [ "\$#" -eq 2 ] && [ "\$1" = -u ] && grep -qx -- "\$2" "$SEATS"; then
+  echo 2000; exit 0
+fi
+exec /usr/bin/id "\$@"
+EOF
+cat > "$FAKES/sudo" <<EOF
+#!/usr/bin/env bash
+# seat_exec always sends at least the PATH pair, so pairs is never empty and
+# the plain expansion below is safe without set -u.
+seat=""; pairs=()
+while [ \$# -gt 0 ]; do
+  case \$1 in
+    -u) seat=\$2; shift 2 ;;
+    -n|-H) shift ;;
+    [A-Za-z_]*=*) pairs+=(\$1); shift ;;
+    *) break ;;
+  esac
+done
+[ -n "\$seat" ] && [ \$# -gt 0 ] || { echo "fake sudo: unsupported invocation: \$*" >&2; exit 1; }
+printf 'seat=%s argv=%s\n' "\$seat" "\$*" >> "$SUDO_LOG"
+exec env -i HOME="$SEAT_HOMES/\$seat" USER="\$seat" LOGNAME="\$seat" \\
+  TERM="\${TERM:-dumb}" "\${pairs[@]}" "\$@"
 EOF
 
 # The planner stand-in: records the identity it ran under and simulates a
@@ -240,7 +275,7 @@ claude_calls() { grep -c '^call ' "$CLAUDE_LOG" 2>/dev/null | tr -d ' '; }
 critic_calls() { grep -c '^critic ' "$CLAUDE_LOG" 2>/dev/null | tr -d ' '; }
 
 chmod +x "$SRCDIR/schedule.sh" "$FAKES/npx" "$FAKES/curl" "$FAKES/uname" "$FAKES/launchctl" \
-  "$FAKES/claude"
+  "$FAKES/id" "$FAKES/sudo" "$FAKES/claude"
 
 # --- canned data -------------------------------------------------------------
 # One completed block at 400k output tokens is the ceiling; the active block has
@@ -321,17 +356,22 @@ hist HIST-3 50000
 TODAY=$(date '+%Y-%m-%d')
 REPORT="$RUNS/quartermaster/$TODAY.md"
 QM_ROOTS="$ROOT"   # where every run may discover repos; one scenario narrows it
+QM_CREW_LIST="angel bea"   # the fallback crew; one scenario empties it
 
 qm() {  # $1 = space-separated VAR=VAL overrides (may be empty), rest = argv
   local overrides="$1"; shift
-  # QM_REPO_ROOTS is fixture-wide, not autobrief-only: arming validates every
-  # brief against the repos discovered under it, so a run without it would arm
-  # nothing at all. It travels in its own variable rather than in $overrides
-  # because one scenario narrows it and env's duplicate-assignment order is not
-  # something to bet a suite on.
+  # QM_REPO_ROOTS and QM_CREW are fixture-wide, not autobrief-only: arming
+  # validates every brief against the repos discovered under the roots, and the
+  # crew is who gets planned for — a run without either would do nothing at
+  # all. They travel in their own variables rather than in $overrides because
+  # scenarios narrow them and env's duplicate-assignment order is not something
+  # to bet a suite on. The -u flags keep an ambient identity from a real
+  # operator shell out of every assertion below.
   # shellcheck disable=SC2086
-  env HOME="$FHOME" HARNESS_DIR="$HARNESS" QM_ACCOUNTS_DIR="$ACCOUNTS" \
+  env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u GH_CONFIG_DIR -u HARNESS_OWNER \
+      HOME="$FHOME" HARNESS_DIR="$HARNESS" \
       LINEAR_API_KEY_FILE="$KEYFILE" PATH="$FAKES:$PATH" GH_TOKEN=leak-me-not \
+      QM_CREW="$QM_CREW_LIST" \
       QM_REPO_ROOTS="$QM_ROOTS" \
       $overrides bash "$SRCDIR/quartermaster.sh" "$@" 2>&1
 }
@@ -389,6 +429,14 @@ has "$ANGEL" "~75% of the block's output budget left (300000 of 400000 tokens; 1
   "capacity: remaining is the completed-block ceiling minus the active block"
 has "$ANGEL" "Room for: 3 run(s) at 50000 tokens each (safety 0.5, cap 3)" \
   "capacity: N = floor(remaining x safety / median cost)"
+# The read happened as the seat, through sudo, with only explicit pairs — and
+# ccusage was pointed at that seat's own ~/.claude inside it.
+file_has "$SUDO_LOG" "seat=angel argv=$SRCABS/capacity.sh --seat-json" \
+  "capacity: the read crosses into the seat it accounts for"
+file_has "$SUDO_LOG" "seat=bea argv=$SRCABS/capacity.sh --seat-json" \
+  "capacity: every crew seat gets its own crossing"
+file_has "$NPX_LOG" "CLAUDE_CONFIG_DIR=$SEAT_HOMES/angel/.claude" \
+  "capacity: ccusage parses the seat's own logs, not the operator's"
 has "$ANGEL" "### Would arm"                    "report: labels the plan as hypothetical"
 has "$ANGEL" "**23:30** \`OLYX-A1\`"            "queue: the top priority takes the first fire time"
 has "$ANGEL" "**02:00** \`OLYX-A2\`"            "queue: the second takes the second fire time"
@@ -407,15 +455,16 @@ has "$ANGEL" "### Beyond tonight's capacity" \
 has_not "$ANGEL" "OLYX-B1"                      "crew: angel's section holds none of bea's work"
 
 BEA=$(section bea)
-has "$BEA" "Capacity: **unknown**"              "capacity: a station ccusage cannot account for says so"
+has "$BEA" "Capacity: **unknown** — capacity could not be read as \`bea\`" \
+  "capacity: a seat the crossing cannot account for is named"
 has "$BEA" "Room for: 1 run(s) — the conservative QM_FALLBACK_N default" \
   "capacity: an unusable estimate falls back to QM_FALLBACK_N"
 has "$BEA" "**23:30** \`OLYX-B1\`"              "crew: bea's own queue gets bea's first fire time"
 
 UNKNOWN=$(section "Unknown stations")
-has "$UNKNOWN" "OLYX-Z1"                        "mapping: a ticket with no station on this machine is reported"
-has "$UNKNOWN" "sam.jones@olyx.nl maps to \`sam\`" \
-  "mapping: the local part up to the first dot is the station name"
+has "$UNKNOWN" "OLYX-Z1"                        "mapping: a ticket with no seat on this machine is reported"
+has "$UNKNOWN" "sam.jones@olyx.nl maps to \`sam\`, which is not a user on this machine" \
+  "mapping: a missing seat is a missing OS user, nothing else"
 
 # ---------------------------------------------------------------------------
 echo "== the report reaches the phone =="
@@ -532,12 +581,30 @@ file_has "$REPORT" "Linear returned no usable issue list (bad filter)" \
   "degrade: GraphQL errors are not mistaken for a successful queue"
 mv "$ROOT/linear-before-error.json" "$LINEAR_JSON"
 
-out=$(qm "QM_ACCOUNTS_DIR=$ROOT/no-such-crew" --report); rc=$?
-check "degrade: no crew directory still exits 0" "$rc" "0"
+QM_CREW_LIST=""
+out=$(qm "" --report); rc=$?
+check "degrade: no crew still exits 0" "$rc" "0"
 file_has "$REPORT" "there is nobody to dispatch for" "degrade: an empty crew is stated plainly"
+QM_CREW_LIST="angel bea"
 
 check "degrade: nothing was armed through any of that" "$(arm_calls)" "0"
 check "degrade: no markers appeared" "$(markers)" "0"
+
+# ---------------------------------------------------------------------------
+echo "== the crew is the bridge's mapping, then the list =="
+# ---------------------------------------------------------------------------
+# linear-dispatch.json's accounts decide who gets planned for when it exists;
+# QM_CREW is the fallback when it does not (or maps nobody). The evening and
+# the Linear bridge must never disagree about who a seat is.
+printf '{"accounts": {"bea.torres@olyx.nl": "bea"}}\n' > "$HARNESS/linear-dispatch.json"
+qm "" --report >/dev/null
+has "$(cat "$REPORT")" "## bea"   "crew: linear-dispatch.json names the crew"
+has_not "$(cat "$REPORT")" "## angel" \
+  "crew: a seat the mapping omits is not planned for, QM_CREW notwithstanding"
+printf '{"accounts": {}}\n' > "$HARNESS/linear-dispatch.json"
+qm "" --report >/dev/null
+has "$(cat "$REPORT")" "## angel" "crew: a mapping with no accounts falls back to QM_CREW"
+rm -f "$HARNESS/linear-dispatch.json"
 
 # ---------------------------------------------------------------------------
 echo "== --arm: hands the plan to schedule.sh =="
@@ -552,12 +619,11 @@ file_has "$SCHED_CALLS" "argv:OLYX-A1 $REPO fix/a1 23:30" "arm: ticket, repo, br
 file_has "$SCHED_CALLS" "argv:OLYX-A2 $REPO fix/a2 02:00" "arm: the second run takes the second fire time"
 file_has "$SCHED_CALLS" "argv:OLYX-A3 $REPO fix/a3 04:30" "arm: the third run takes the third fire time"
 file_has "$SCHED_CALLS" "argv:OLYX-B1 $REPO fix/b1 23:30" "arm: each crew member's times start again at the first slot"
-file_has "$SCHED_CALLS" "owner:angel"                     "arm: HARNESS_OWNER is the station"
-file_has "$SCHED_CALLS" "claude:$ACCOUNTS/angel/claude"   "arm: CLAUDE_CONFIG_DIR is the station's"
-file_has "$SCHED_CALLS" "codex:$ACCOUNTS/angel/codex"     "arm: CODEX_HOME is the station's"
-file_has "$SCHED_CALLS" "gh:$ACCOUNTS/angel/gh"           "arm: GH_CONFIG_DIR is the station's"
+file_has "$SCHED_CALLS" "owner:angel"                     "arm: HARNESS_OWNER is the seat"
+file_has "$SCHED_CALLS" "claude:<unset>"                  "arm: no Claude config dir is re-exported"
+file_has "$SCHED_CALLS" "codex:<unset>"                   "arm: the seat's own ~/.codex is its codex login"
+file_has "$SCHED_CALLS" "gh:<unset>"                      "arm: the seat's own gh login opens its PRs"
 file_has "$SCHED_CALLS" "owner:bea"                       "arm: bea's runs go out under bea's identity"
-file_has "$SCHED_CALLS" "claude:$ACCOUNTS/bea/claude"     "arm: bea's runs carry bea's Claude config"
 file_has "$SCHED_CALLS" "effort:high"                     "arm: IMPLEMENTER_EFFORT is pinned high"
 file_has "$SCHED_CALLS" "harnessdir:$HARNESS"             "arm: the harness dir travels with the schedule"
 if grep -q '^ghtoken:leak-me-not' "$SCHED_CALLS"; then
@@ -697,8 +763,8 @@ file_has "$CLAUDE_LOG" "/brief.candidate.TICKET-DATA-" \
   "autobrief: the planner writes a non-armable candidate, not brief.md"
 check "autobrief: every planner call gets its own fence marker" \
   "$(grep -o '<<<BEGIN TICKET-DATA-[A-Za-z0-9]*>>>' "$CLAUDE_LOG" | sort -u | grep -c '' | tr -d ' ')" "2"
-file_has "$CLAUDE_LOG" "config:$ACCOUNTS/angel/claude" \
-  "autobrief: the planner runs as the owning station"
+file_has "$CLAUDE_LOG" "config:<unset>" \
+  "autobrief: the planner runs on this user's own login, no config-dir override"
 has_not "$(cat "$CLAUDE_LOG")" "anthropic:leak-me-not" \
   "autobrief: a stray ANTHROPIC_API_KEY cannot bill the planner to the API"
 
@@ -802,8 +868,8 @@ check "critic: a clean verdict arms the run" "$(arm_calls)" "$((before_arms + 1)
 exists "critic: the winning candidate promotes its matching verdict" \
   "$RUNS/OLYX-CR2/spec-critic.json"
 check "critic: exactly one critic pass" "$(critic_calls)" "1"
-file_has "$CLAUDE_LOG" "config:$ACCOUNTS/angel/claude" \
-  "critic: the pass runs as the owning station"
+file_has "$CLAUDE_LOG" "critic anthropic:<unset> config:<unset>" \
+  "critic: the pass runs on this user's own login"
 has_not "$(cat "$CLAUDE_LOG")" "critic anthropic:leak-me-not" \
   "critic: a stray ANTHROPIC_API_KEY cannot bill it to the API"
 CRITIC_PROMPT=$(awk '/^critic-prompt-begin$/{f=1;next} /^critic-prompt-end$/{f=0} f' "$CLAUDE_LOG")
