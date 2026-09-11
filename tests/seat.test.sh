@@ -15,6 +15,7 @@ set -u
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 LIB="$SRC/lib/common.sh"
+PROBE="$SRC/seat-probe.sh"
 SUDOERS="$SRC/examples/sudoers-dispatch-crew.example"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/seat-test.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
@@ -297,6 +298,14 @@ printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN-<unset>}"
 SNIP
 )
 check 'token: an empty file exports nothing' "$out" '<unset>'
+
+out=$(fixture bash "$PROBE")
+has "$out" 'token=ok' 'probe: token mode uses the shared file-mode helper'
+if grep -q '^mode_of()' "$PROBE"; then
+  bad 'probe: does not duplicate the shared file-mode helper'
+else
+  ok 'probe: does not duplicate the shared file-mode helper'
+fi
 
 echo "== seat_exec without sudo: the caller already is the seat =="
 printf 'seat-test-token-9\n' > "$FIXTURE_HOME/.claude/oauth-token"

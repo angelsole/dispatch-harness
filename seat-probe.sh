@@ -16,6 +16,9 @@
 # 0: a missing login is an expected state the caller words as "needs setup",
 # not a probe failure.
 set -u
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$SELF_DIR/lib/common.sh"
 
 # Physical resolution, both sides: a symlinked home must not make a linked
 # credential directory look inside (or vice versa).
@@ -33,17 +36,10 @@ dir_state() {  # $1 = directory; prints inside|outside|missing
   esac
 }
 
-mode_of() {  # $1 = file; prints the octal mode, or nothing when unreadable
-  local m
-  m=$(stat -c %a "$1" 2>/dev/null) || m=""
-  case "$m" in ''|*[!0-9]*) m=$(stat -f %Lp "$1" 2>/dev/null) || m="" ;; esac
-  printf '%s' "$m"
-}
-
 token_state() {  # prints ok|absent|badmode
   local file="$HOME/.claude/oauth-token" mode
   [ -f "$file" ] || { printf 'absent\n'; return 0; }
-  mode=$(mode_of "$file")
+  mode=$(harness_file_mode "$file" 2>/dev/null) || mode=""
   if [ "$mode" = 600 ]; then
     printf 'ok\n'
   else
