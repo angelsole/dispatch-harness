@@ -1256,6 +1256,16 @@ variable into the wrapper it arms, so the knob travels to 02:00 on its own.
 CODEX_HOME=~/.codex-fallback codex login --device-auth
 ```
 
+On a multi-user host, that example is sufficient only when the run executes as
+the same user. A run launched for another seat must be able to traverse every
+parent directory and read the configured fallback. Either provision a separate
+fallback under each seat's own home and set that seat's absolute
+`HARNESS_CODEX_HOME_FALLBACK`, or put the deliberately shared fallback outside
+the service user's mode-0700 home, assign it to the `dispatch` group, and grant
+that group read/traverse access. For service-launched runs the knob must name
+the latter shared, seat-readable absolute path; a path below
+`/Users/dispatchsvc` is not usable while that home remains private.
+
 Device authentication lets you complete login in your laptop's browser. If it
 is unavailable, use `codex login` with the callback forwarded over SSH:
 
