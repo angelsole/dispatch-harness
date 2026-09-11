@@ -286,7 +286,7 @@ retries. **Refresh details** keeps the draft and lets you review it again.
 Controls apply only to local runs carrying a saved request with the current
 operator identity. Mirrored, remote, older runs without that identity, and
 another operator's runs remain read-only. Use the planner on the execution
-machine for those cases. The UI does not change accounts, launch additional
+machine for those cases. The UI does not switch seats, launch additional
 writers in active worktrees, or introduce a worker chat channel.
 
 The local interface uses authenticated `GET /api/control/runs` and

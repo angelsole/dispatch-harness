@@ -48,12 +48,12 @@ The local launcher preserves unset provider config variables. This matters
 for Claude: native configuration is `~/.claude.json`, while explicitly setting
 `CLAUDE_CONFIG_DIR=~/.claude` selects `~/.claude/.claude.json`. Forcing that
 seemingly equivalent path can produce another onboarding/login flow and hide
-project MCP connections. A named station still uses its explicitly selected
-profile. Native stations have a distinct session name from older stations
-that forced the alternate profile; reconnecting cannot silently choose it.
+project MCP connections. A station never sets it: a station runs as the seat's
+own OS account, whose native configuration is the right one.
 Saved tasks suggest `dispatch login <provider> --for-run <ID>` for repair.
-That command restores the task's account context on its execution host,
-including native defaults and custom profile directories. Add `--on mini`
+That command runs in the task's seat on its execution host; a task owned by
+another seat names the ssh command instead, because its login belongs to that
+seat. Add `--on mini`
 for a remote task; the context is resolved on the Mini.
 
 `dispatch doctor` checks only the selected planner; `--pipeline --repo <repo>`
@@ -116,134 +116,146 @@ path; if omitted for `run`/`init`, the default is `~/Projects/<local-repo-name>`
 on the target. The repository must already exist there. Converted attachment
 specs must already be in the remote run's specs directory; only the brief is
 transferred by this command. Run `status`, `wait`, and `resume` on the same host.
-`--remote-harness /absolute/path` selects a custom remote installation.
+By default the remote command reads the shared runtime pointer written by
+`station.sh setup` at `~/.claude/harness-dir`; it never assumes the runtime is
+installed in the SSH user's home. `--remote-harness /absolute/path` selects a
+custom remote installation or bootstraps access before setup has written that
+pointer.
 
-## Shared stations and account selection
+## Shared stations and seat selection
 
-Stations remain useful for connecting to the Mini and running work under a
-teammate's saved subscriptions while that person is away:
+A station is a planner attached to a seat, and a seat is an OS user on the
+execution machine. Connecting to the Mini and running work under a teammate's
+subscriptions while that person is away means SSHing in as them — there is no
+way to do it from your own account, by design:
 
 ```bash
-dispatch stations --on mini
-dispatch station --on mini --owner teammate --dir /path/to/repos
-dispatch station --on mini --owner teammate --dir /path/to/repos --planner claude
-dispatch station --on mini --owner teammate --planner claude --hands-off
+dispatch stations --on mini        # which seats have logins configured
+dispatch station --on teammate@mini
 ```
 
-The last command opens a hands-off planner. Each hands-off station uses a
-separate tmux session from the corresponding ordinary station. Repeat the
-same command, including `--hands-off`, to reconnect. Direct SSH entry through
+`dispatch station --on mini` opens or reconnects your own planner on the Mini;
+the SSH user is the identity there. `--hands-off` opens a hands-off planner in
+a separate tmux session from the corresponding ordinary station, and repeating
+the same command — including the flag — reconnects it. Direct SSH entry through
 `station.sh start` or `station.sh setup` accepts the flag too; doctor and login
 do not. Choosing hands-off does not edit another user's default settings.
 
-Use `station` to open or reconnect the persistent remote planner. Use `run
---on mini --owner teammate` to send a prepared brief from a local planner.
-Each selection uses that profile's `codex`, `claude`, and `gh` directories; the
-GitHub profile also determines the PR identity. Ambient API tokens and the
-optional Codex fallback-account override are cleared for an explicit profile.
-The selected account is stored with the run and restored on resume, even if
-another station requests the resume. An explicitly conflicting `--owner` is
-rejected. No provider credentials are copied to the laptop or saved in the
-request. These profiles share an OS account and are not a security boundary.
+Use `dispatch run --on mini` to send a prepared brief from a local planner to
+your own seat on the Mini. The service account — the one that owns the shared
+runtime and runs the wall — may additionally pass `--owner <seat>` to
+`dispatch run`: the run records that seat and executes as it, which is how the
+Linear bridge and the Quartermaster dispatch for the crew. For everybody else
+`--owner` names an account they cannot act for, and is refused with the SSH
+command to use instead. The GitHub login in the seat's own `~/.config/gh`
+determines the PR identity; ambient API tokens never cross the account
+boundary. The selected seat is stored with the run and restored on resume.
+No provider credentials are copied to the laptop or saved in the request.
 
-`stations` checks configured logins, not entitlement or remaining quota. It
-never selects a peer automatically or logs anyone out. Do not use personal
-onboarding (`setup`) to reconnect to a peer: use `station --owner NAME`.
-An expired peer login needs the account holder to renew it. New personal
-accounts use the setup flow below. One operator installation serves all
-profiles; only a new execution machine needs its own installation.
+`stations` lists the seats named by the machine's `linear-dispatch.json`
+accounts mapping — or `QM_CREW` when no mapping is installed — and reports each
+one's login state by asking from inside that account. It checks configured
+logins, not entitlement or remaining quota. It never selects a peer
+automatically or logs anyone out, and renewing an expired login is the account
+holder's to do, over SSH.
 
 ## Station setup and login repair
 
 `station.sh` launches GPT-6 Astra in Codex by default. The existing worker,
 reviewer, spec critic and overnight Quartermaster keep their own providers;
 changing the interactive planner does not change those stages. The operator
-installs the current checkout once per execution host/macOS account with
+installs the current checkout once per execution host with
 `./install.sh --no-statusline`: it installs
 the shared planner protocols for both Claude Code and Codex, without changing
-either CLI's model configuration.
+either CLI's model configuration. The installed runtime is shared with the
+whole crew through the machine's dispatch group; the one-time group and
+sudoers setup for that lives in
+[Migration: seats become OS users](#migration-seats-become-os-users).
 
-**Team onboarding: one command.** When the team uses the shared Mini, its
-`accounts/<name>` profiles all use the same installation. Users do not re-run
-`install.sh`, and their laptops need neither the harness nor the model CLIs.
-With SSH access to `mini` already configured, they run:
+**Seat onboarding: one command.** A seat is created by the operator (an OS
+user account; see the migration notes). From then on the person owns their own
+logins, and their laptop needs neither the harness nor the model CLIs. With
+SSH access to `mini` already configured, they run:
 
 ```bash
-ssh -t mini '~/.claude/harness/station.sh setup --owner you'
+ssh -t you@mini '/Users/dispatchsvc/.claude/harness/station.sh setup'
 ```
 
-Replace `you` with their station name. `setup` checks the shared tools, creates
-their account directories if needed, skips configured logins, guides missing
-Codex/Claude/GitHub sign-ins, then opens or reconnects their planner. It uses
-their own accounts in each browser flow. If they cancel a login, completed
-logins are kept and no planner starts; re-running the command continues setup.
-Without `--owner`, it lists the existing stations and asks for the person's name
-in the terminal, even if the shell has an ambient `HARNESS_OWNER`. It never saves
-a default person in the shared machine's environment. The same command can be
-used on subsequent visits. Use `login <provider>` below to explicitly renew
-credentials that are cached but rejected when the CLI starts.
+`setup` acts for whoever is logged in. It checks the shared tools, stores a
+Claude token (step 1), walks the GitHub and Codex device logins (steps 2 and
+3), links the planner skills into `~/.claude` (step 4), and writes one
+`HARNESS_DIR` line into the shell profile plus a private runtime pointer for
+non-login SSH commands (step 5), then runs `doctor`. Every
+step is idempotent: an existing login is kept, a skipped or cancelled login
+stops setup with the completed ones intact, a repeated run replaces the single
+profile line instead of stacking another, and re-running continues where it
+left off. It never writes a person's name into the shared machine's
+environment. Use `login <provider>` below to explicitly renew credentials
+that are cached but rejected when the CLI starts.
 
-Users who already have the local wrapper can use
-`station.sh setup --host mini --owner you`. The commands below remain available
-for direct launches and troubleshooting. A separate macOS login account, or a
-person running the pipeline on their own laptop, needs its own initial install.
+Direct launches and troubleshooting use the same script as your own login:
 
 ```bash
-~/.claude/harness/station.sh --dir /path/to/repos
-~/.claude/harness/station.sh --host mini --owner you --dir /remote/path/to/repos
-~/.claude/harness/station.sh --host mini --owner you --planner claude
+"$HARNESS_DIR/station.sh" --dir /path/to/repos
+dispatch station --on you@mini --dir /remote/path/to/repos --planner claude
 ```
 
-`mini` is an SSH alias you configure normally. The wrapper supplies SSH
-keepalives and the usual user/Homebrew binary paths; it does not require a login
-shell or a GUI session to find the CLIs. `--dir` and `--accounts-dir` refer to
-paths on the machine running the planner. Omit `--dir` to use that machine's
-`DISPATCH_STATION_DIR`, or its home directory. `--remote-harness /absolute/path`
-selects a custom install on the remote host; a local `HARNESS_DIR` is never sent
-to that host.
+`mini` is an SSH alias you configure normally; the user in `you@mini` is the
+seat there, and `--host you@mini` reaches the same commands from a laptop. The
+wrapper supplies SSH keepalives and the usual user/Homebrew binary paths; it
+does not require a login shell or a GUI session to find the CLIs. `--dir`
+refers to a path on the machine running the planner. Omit it to use that
+machine's `DISPATCH_STATION_DIR`, or its home directory.
+`--remote-harness /absolute/path` selects a custom install on the remote host;
+a local `HARNESS_DIR` is never sent to that host.
 
-**Identity.** `--owner you` selects `~/accounts/you/claude`, `codex`, and `gh`
-(the same layout as the Quartermaster). `--accounts-dir` overrides the root,
-otherwise `QM_ACCOUNTS_DIR` or `~/accounts` applies. With no owner, the current
-`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `GH_CONFIG_DIR` apply. Ambient provider API
-keys and GitHub tokens are removed so the selected directories determine the
-accounts, including in an existing tmux server. Account login can create a new
-owner's directories; starting an unknown owner refuses rather than borrowing
-the default user's account.
+**Identity.** The station acts for the OS user that runs it. Credentials live
+in that user's own `~/.claude`, `~/.codex` and `~/.config/gh`; no config
+directory is re-exported, and ambient provider API keys and GitHub tokens are
+cleared before the planner starts, including in an existing tmux server. The
+old `--owner` selected a credentials directory under a shared account — that
+model is gone, so the flag is refused with the SSH command that reaches the
+named person's station (`ssh <name>@<host>`).
 
-**First login and renewal.** Run the command for the provider that needs repair:
+**First login and renewal.** Run the command for the provider that needs
+repair, as the seat:
 
 ```bash
-~/.claude/harness/station.sh login codex --host mini --owner you
-~/.claude/harness/station.sh login claude --host mini --owner you
-~/.claude/harness/station.sh login gh --host mini --owner you
+dispatch login codex --on you@mini
+dispatch login claude --on you@mini
+dispatch login gh --on you@mini
 ```
 
 Codex uses `codex login --device-auth`. Enable device login in your ChatGPT
 security settings or workspace permissions, then open the printed link in your
 own browser and enter its code. If device login is unavailable, `--browser`
 uses the normal callback flow: open a separate `ssh -N -L 1455:localhost:1455 mini`
-tunnel first, then run `station.sh login codex --host mini --owner you --browser`.
-Claude uses its subscription login; GitHub uses its web/device flow for
-github.com. Credentials remain with their selected account. See the
+tunnel first, then run `station.sh login codex --host you@mini --browser`.
+Claude over SSH is a token file first: run `claude setup-token` on any machine
+with a browser, paste it when `login claude` asks (it is not echoed), and it
+lands in `~/.claude/oauth-token` mode 600 — the station, `seat_exec` and every
+script that sources the harness library export it as `CLAUDE_CODE_OAUTH_TOKEN`.
+`login claude --browser` uses the subscription browser flow instead. GitHub
+uses its device flow for github.com, or `--browser` for the web flow.
+Credentials remain in the seat's own home. See the
 [official Codex authentication guide](https://learn.chatgpt.com/docs/auth).
 
-**Health.** `station.sh doctor --host mini --owner you` checks the binaries,
-harness/skill installation, working directory and the three account logins. It
-prints the repair command for a missing login and exits nonzero if a check
-fails; it does not log credential contents. Login status confirms configured
-credentials; model entitlement and token refresh are checked by Codex when it
-starts. `doctor --repo /remote/path/to/repo` also checks origin read access and
-runs that repo's configured `PREFLIGHT_CMD` with a 30-second cap. That command
-can start services if the repo pin says to; the doctor runs no install or test
-gate and does not push a branch.
+**Health.** `station.sh doctor` (as the seat, or `--host you@mini` from a
+laptop) checks the binaries, harness/skill installation, working directory and
+the three account logins. It prints the repair command for a missing login and
+exits nonzero if a check fails; it does not log credential contents. Login
+status confirms configured credentials; model entitlement and token refresh
+are checked by Codex when it starts. `doctor --repo /remote/path/to/repo` also
+checks origin read access and runs that repo's configured `PREFLIGHT_CMD` with
+a 30-second cap. That command can start services if the repo pin says to; the
+doctor runs no install or test gate and does not push a branch.
 
 **Reconnect.** Detach with your tmux prefix, then **d** (the default prefix is
 **Ctrl-b**). Run the same station command to
-reattach after closing SSH. Each owner, planner and model has its own tmux
-session. A different working directory or account configuration is refused on
-reattach, so it cannot connect you to an unexpected account. Existing legacy
-`dispatch` sessions remain available with `tmux attach -t dispatch`.
+reattach after closing SSH. Each seat, planner and model has its own tmux
+session. A different working directory or planner is refused on reattach, so
+it cannot connect you to an unexpected account. Existing legacy `dispatch`
+sessions remain available with `tmux attach -t dispatch`.
 
 Use `$dispatch`, `$briefed-dispatch` or `$dispatch-pixel` in Codex, and the
 corresponding slash commands in Claude Code. The visual skill retains the
@@ -290,14 +302,16 @@ While a schedule is armed, `runs/<TICKET>/scheduled` holds its fire epoch;
 `--cancel` removes the agent, the plist, the wrapper and that marker, and leaves
 the brief alone.
 
-**It runs as the shell that scheduled it.** The wrapper carries a snapshot of
-the scheduling shell's harness environment — every `HARNESS_*` variable
-(`HARNESS_OWNER`, notification settings, …), `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-`GH_CONFIG_DIR`, `GH_TOKEN`, the model/effort knobs and `PATH` — because launchd
-hands a job an almost empty environment. That snapshot can therefore contain a
-token, so the wrapper is written **mode 600** and lives in the run dir with the
-rest of the run's metadata. Anything you would `export` before `run-task.sh`,
-export before `schedule.sh` instead.
+**It fires as a seat.** The wrapper carries a snapshot of the scheduling
+shell's harness environment — every `HARNESS_*` variable, the model/effort
+knobs and `PATH` — plus `HARNESS_SEAT`, the OS user the run dispatches as
+(taken from `HARNESS_OWNER`, so the service user scheduling on someone's
+behalf pins the seat explicitly). At fire time it launches `run-task.sh`
+through `seat_exec`, so although the wrapper is written **mode 600** and lives
+in the run dir with the rest of the run's metadata, it holds no credential of
+any kind: the seat reads its own logins from its own home. launchd hands a job
+an almost empty environment, which is why the snapshot exists at all; anything
+you would `export` before `run-task.sh`, export before `schedule.sh` instead.
 
 **Sleep, honestly.** launchd does not wake the machine for a
 `StartCalendarInterval`; a fire time missed while the Mac was asleep is
@@ -324,8 +338,8 @@ pays for a worktree, a deps install and an implementer spawn, dies instantly on
 `implementer_failed` — indistinguishable from a real failure, and recovered by
 a human re-arming it. So `run-task.sh` checks first.
 
-Before the worktree, it asks the launching identity's *own* Claude logs
-(`CLAUDE_CONFIG_DIR`, through the same
+Before the worktree, it asks the launching seat's *own* Claude logs
+(through the same
 [local-file accountant the quartermaster uses](#the-quartermaster) —
 `capacity.sh`, `ccusage … --offline`, no endpoint contacted from anywhere) how
 much of the current five-hour block is left. If the block is exhausted, or
@@ -341,7 +355,7 @@ deferred: capacity, armed for 13:35
 — pushes it through the usual notification path, and exits 0. Nothing was
 built, nothing was installed, no model was called. Because `schedule.sh`
 snapshots the environment of the shell that arms it, and that shell is the run
-itself, the deferred dispatch fires with the identity, config dirs and knobs it
+itself, the deferred dispatch fires with the seat and knobs it
 was launched with; on disk it is indistinguishable from a human-armed one
 (`runs/<TICKET>/scheduled`, `schedule.sh --list`, and the quartermaster's
 `already armed` skip all just work).
@@ -534,12 +548,13 @@ and *how many*. `quartermaster.sh` is that decision, made at 19:00:
 **The crew convention is the consent.** A Linear issue labelled `overnight`
 **and assigned to somebody** is a ticket that person is happy to have run
 overnight, under their own identity. The label alone is not enough and the
-assignee alone is not enough — the pair is the handshake. Crew members are
-directories under `~/accounts/` (`QM_ACCOUNTS_DIR`), one per station, each with
-`claude/`, `codex/` and `gh/` inside it; an assignee's email maps to a station
-by its local part up to the first dot, so `dana.reyes@example.com` is
-`~/accounts/dana`. An assignee with no station on this machine is reported,
-never guessed at.
+assignee alone is not enough — the pair is the handshake. The crew is the set
+of seats in the `accounts` mapping of `linear-dispatch.json` (or `QM_CREW` when
+no mapping is installed): one seat per station, a seat being an OS user whose
+own `~/.claude`, `~/.codex` and `~/.config/gh` hold its logins. An assignee's
+email maps to a seat by its local part up to the first dot, so
+`dana.reyes@example.com` is the seat `dana`. An assignee whose seat is not a
+user on this machine is reported under *Unknown stations*, never guessed at.
 
 **A brief is still the contract — and the evening can now write one.** A
 tagged ticket is armable only when `runs/<TICKET>/brief.md` exists — the same
@@ -580,20 +595,21 @@ already running, or already delivered (a `result.json` with a `pr_url`) are
 skipped with the reason, which is what makes a second run at 19:05 arm nothing
 at all.
 
-**Capacity, honestly estimated.** Per station,
-`CLAUDE_CONFIG_DIR=~/accounts/<name>/claude npx -y ccusage@latest blocks --json
---offline` reads that station's *own log files* — no endpoint is contacted, by
-anyone, anywhere in this script. Headroom is measured in output tokens, the
-only unit available on both sides of the sum: the ceiling is the busiest
-completed five-hour block ccusage can still see (or `QM_TOKEN_LIMIT` when you
-know your real one), and what is left of it in the current block is the proxy
-for tonight's capacity. One run costs the median
-`metrics.implementer_usage.output_tokens` over the last `QM_HISTORY` runs, so
-the estimate is this machine's own history rather than a guess. Then
+**Capacity, honestly estimated.** A home directory is closed to everybody but
+its seat, so per seat the quartermaster runs `capacity.sh --seat-json` *as that
+seat* — `seat_exec <seat> -- capacity.sh --seat-json`, the sudoers fragment's
+one capacity door — which reads ccusage over the seat's *own log files* in
+`~/.claude`: no endpoint is contacted, by anyone, anywhere in this script.
+Headroom is measured in output tokens, the only unit available on both sides of
+the sum: the ceiling is the busiest completed five-hour block ccusage can still
+see (or `QM_TOKEN_LIMIT` when you know your real one), and what is left of it
+in the current block is the proxy for tonight's capacity. One run costs the
+median `metrics.implementer_usage.output_tokens` over the last `QM_HISTORY`
+runs, so the estimate is this machine's own history rather than a guess. Then
 `N = floor(remaining × QM_SAFETY / median cost)`, capped at `QM_MAX_PER_CREW`.
 It is an estimate, and the safety factor is there because it is one — when
-ccusage cannot account for a station at all, the report says so and falls back
-to `QM_FALLBACK_N` rather than inventing a number.
+ccusage cannot account for a seat at all, the report says so and falls back to
+`QM_FALLBACK_N` rather than inventing a number.
 
 **A second reading, by something that did not write it.** A self-written brief
 is the only specification the night has, and by 02:00 there is nobody to ask
@@ -630,12 +646,13 @@ quarantined and nothing is armed.
 
 **What `--arm` does.** Eligible tickets take the fire times in `QM_TIMES` in
 queue order (priority first, oldest first within a priority), and each is handed
-to `schedule.sh` with that station's environment exported — `CLAUDE_CONFIG_DIR`,
-`CODEX_HOME`, `GH_CONFIG_DIR`, `HARNESS_OWNER`, `IMPLEMENTER_EFFORT=high` — so
-the snapshot `schedule.sh` writes carries the right identity to 02:00. A
-`GH_TOKEN` exported in the invoking shell is *unset* for that call: `gh` prefers
-a token over its config dir, and one would quietly make every crew member's PR
-come out of the same account. Each armed ticket then gets a Linear comment
+to `schedule.sh` under that ticket's seat — `HARNESS_OWNER` names the seat, and
+the snapshot `schedule.sh` writes carries `HARNESS_SEAT` plus the `HARNESS_*`
+knobs (with `IMPLEMENTER_EFFORT` from `QM_EFFORT`) to 02:00, where the launch
+goes through `seat_exec` as that seat. A `GH_TOKEN` exported in the invoking
+shell is *unset* for that call: `gh` prefers a token over its config dir, and
+one would quietly make every crew member's PR come out of the same account.
+Each armed ticket then gets a Linear comment
 saying when it was armed; a failed comment is reported and never unarms a run.
 Slots already spent tonight count against `N`, so reruns neither double-arm nor
 hand out a fire time twice.
@@ -664,7 +681,7 @@ argument in the plist) is the one-line flip to letting it act. macOS only, like
 | `QM_FALLBACK_N` | Runs to allow when capacity is unknowable | `1` |
 | `QM_TIMES` | Fire times, handed out in queue order | `"23:30 02:00 04:30"` |
 | `QM_LABEL` | The consent label | `overnight` |
-| `QM_ACCOUNTS_DIR` | Where the crew's stations live | `~/accounts` |
+| `QM_CREW` | The crew's seats, space-separated, when no `linear-dispatch.json` accounts mapping is installed | unset |
 | `QM_HISTORY` | Runs sampled for the median cost | `20` |
 | `QM_DEFAULT_COST` | Median cost when there is no history yet | `40000` |
 | `QM_TOKEN_LIMIT` | Pin the block ceiling instead of inferring it | unset |
@@ -1038,7 +1055,7 @@ inherited. Capture does not attach to someone's personal browser session.
 
 For apps requiring login, run `demo-auth.sh /path/to/repo` once on the execution
 host; it uses the existing Python/Playwright capture helper. The default state
-is `auth/<repo-name>.json`. For separate station accounts or repositories with
+is `auth/<repo-name>.json`. For separate seats or repositories with
 the same basename, pin `DEMO_AUTH_FILE` to the intended account's saved state
 in `repo_config_local`. This file stays on that host and is never uploaded.
 Use demo accounts and fixture data appropriate for the PR audience. A missing
@@ -1078,7 +1095,7 @@ dispatch evidence ID --json                  # machine-readable evidence
 dispatch evidence ID --capture               # capture again, save locally
 dispatch evidence ID --publish               # upload existing files only
 dispatch evidence ID --capture --publish     # capture, then upload
-dispatch evidence ID --publish --on mini     # use the run's saved Mini account
+dispatch evidence ID --publish --on mini     # use the run's saved seat
 ```
 
 These commands run no implementer, reviewer, or gate. The code verdict, attempt,
@@ -1089,7 +1106,7 @@ state, or the ignored `.harness/demo.json` storyboard is enough to retry. Change
 product code needs a new reviewed run. Upload-only recovery also works after
 worktree cleanup, using the saved repository, media hashes, and live PR commit.
 
-Retries run on the original execution host under its saved account configuration.
+Retries run on the original execution host under its saved seat.
 An expired GitHub login leaves the files in place and prints
 `dispatch login gh --for-run ID`, followed by `dispatch resume ID`; remote commands
 include `--on`. A run started with `--no-publish` remains local. Upload needs an
@@ -1239,6 +1256,16 @@ variable into the wrapper it arms, so the knob travels to 02:00 on its own.
 CODEX_HOME=~/.codex-fallback codex login --device-auth
 ```
 
+On a multi-user host, that example is sufficient only when the run executes as
+the same user. A run launched for another seat must be able to traverse every
+parent directory and read the configured fallback. Either provision a separate
+fallback under each seat's own home and set that seat's absolute
+`HARNESS_CODEX_HOME_FALLBACK`, or put the deliberately shared fallback outside
+the service user's mode-0700 home, assign it to the `dispatch` group, and grant
+that group read/traverse access. For service-launched runs the knob must name
+the latter shared, seat-readable absolute path; a path below
+`/Users/dispatchsvc` is not usable while that home remains private.
+
 Device authentication lets you complete login in your laptop's browser. If it
 is unavailable, use `codex login` with the callback forwarded over SSH:
 
@@ -1253,3 +1280,135 @@ byte-identical to a single-account harness.
 One global knob, deliberately: with [crew stations](#the-quartermaster) every
 station's runs share the same fallback account, and rotation beyond two accounts
 is not something this does. Two accounts and one rule is the whole feature.
+
+## Migration: seats become OS users
+
+Stations used to be directories under one service account's `~/accounts/`, with
+each stage re-exporting `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `GH_CONFIG_DIR`
+to point a shared login at the right directory. Seats replace that: a seat *is*
+an OS user, its name matching `^[a-z_][a-z0-9_-]{0,31}$`, and its logins live in
+its own `~/.claude`, `~/.codex` and `~/.config/gh`. Nothing is re-exported
+anymore — identity is the account you run as, and crossing to it goes through
+`sudo` ([seat_exec](reference.md#dispatch-and-identity)). This section is the
+one-time move for a machine that already runs the directory model.
+
+**1. Create a user per seat.** On macOS:
+
+```bash
+sudo sysadminctl -addUser dana
+```
+
+(Linux: `sudo useradd -m dana`.) The username is the seat name everywhere:
+`linear-dispatch.json` values, `HARNESS_OWNER`, wall lanes, Quartermaster
+reports. Create one user per person who dispatches on this machine.
+
+**2. Create the group, and put the runtime in it.** The shared runtime — one
+`HARNESS_DIR` for the whole crew — is shared through a Unix group the harness
+reads as `HARNESS_GROUP` (default `dispatch`). The harness deliberately does not
+create groups or edit membership itself; once, as the operator:
+
+```bash
+sudo dseditgroup -o create dispatch                 # macOS; Linux: sudo groupadd dispatch
+sudo dseditgroup -o edit -a dispatchsvc -t user dispatch   # the service account that owns the runtime
+sudo dseditgroup -o edit -a dana -t user dispatch          # ...and every seat
+sudo chgrp -R dispatch "$HARNESS_DIR"
+for secret in "$HARNESS_DIR"/linear-* "$HARNESS_DIR"/*-api-key \
+              "$HARNESS_DIR"/wall-ingest-token "$HARNESS_DIR"/notify.conf; do
+  [ ! -e "$secret" ] || sudo chmod 600 "$secret"
+done
+sudo find "$HARNESS_DIR" -type d -exec chmod g+rx {} +
+sudo find "$HARNESS_DIR" -type f ! -perm 0600 -exec chmod g+r {} +
+for data in runs locks lessons; do
+  sudo install -d -o dispatchsvc -g dispatch -m 2770 "$HARNESS_DIR/$data"
+  sudo find "$HARNESS_DIR/$data" -type d -exec chmod g+rwx,g+s {} +
+  sudo find "$HARNESS_DIR/$data" -type f ! -perm 0600 -exec chmod g+rw {} +
+done
+```
+
+Only those runtime-data trees are group-writable. Keep `HARNESS_DIR` itself and
+its code/configuration directories group-readable and executable but not
+group-writable: the sudoers allow-list executes scripts from those directories,
+so a crew member must not be able to replace them. If a later release adds a
+new cross-seat writable data tree, add that tree explicitly rather than
+granting write access recursively from the runtime root.
+
+The mode-600 pass happens before any group-read grant, and the following
+`find` commands explicitly skip every mode-600 file. That keeps root secrets
+owner-only throughout the migration (and also preserves private scheduled
+wrappers inside `runs/`).
+
+The repo roots need the same treatment — worktrees are created as siblings of
+the repo, and the seats' runs write into them: `chgrp -R dispatch` each repo
+*and the directory holding it*, `chmod -R g+rX` the repos, and `g+wXs` on the
+directories seats create siblings in. Root-owned secrets (`linear-api-key`, the
+wall's ingest token) keep mode 600: sharing a runtime is not sharing
+credentials. Every path the pipeline writes must be group-safe — if one cannot
+be, that is a defect to report, not a permission to widen.
+
+**3. Move each account directory into its seat's home.** For each
+`~/accounts/<name>/` under the service account:
+
+```bash
+sudo mkdir -p ~dana/.config
+sudo mv ~/accounts/<name>/claude ~dana/.claude
+sudo mv ~/accounts/<name>/codex   ~dana/.codex
+sudo mv ~/accounts/<name>/gh      ~dana/.config/gh
+sudo chown -R dana:dispatch ~dana/.claude ~dana/.codex ~dana/.config/gh
+```
+
+The directories are *moved, not deleted*: `~/accounts/` keeps whatever remains,
+and the rollback below depends on that. A station that shared another person's
+identity (a symlink or a copied directory) cannot be moved — its seat logs in
+again, in its own home, as itself. The borrow check stays exactly as it was: a
+credential that resolves outside the seat's home is reported as borrowing, so a
+half-migrated station fails safely rather than silently running as somebody
+else.
+
+**4. Run `station.sh setup` once per seat.**
+
+```bash
+ssh -t dana@mini '/Users/dispatchsvc/.claude/harness/station.sh setup'
+```
+
+That is the whole per-seat onboarding: the five idempotent steps — Claude token
+file, gh device login, Codex device login, planner skills, the `HARNESS_DIR`
+profile line — plus `doctor`. Repeat for every seat; repeating for one seat
+changes nothing for the others.
+
+**5. Install the sudoers fragment.** The service account (the one running the
+wall, the Linear bridge and the Quartermaster) reaches seats through exactly
+three harness-owned commands. Copy `examples/sudoers-dispatch-crew.example`
+from the checkout, replacing its placeholders — `<service user>` for the
+runtime's owning account, every seat in the runas list, `<HARNESS_DIR>` for the
+resolved runtime path (sudo matches command paths literally, so no symlink
+components) — and install it through visudo so the syntax is checked before
+anything takes effect:
+
+```bash
+sudo visudo -f /etc/sudoers.d/dispatch-crew
+sudo visudo -c
+```
+
+The fragment is `NOPASSWD:SETENV` over `run-task.sh`, `capacity.sh` and
+`seat-probe.sh`, and nothing else — widening it to more commands or a shell
+hands the service account every seat's identity, which is precisely what seats
+exist to prevent.
+
+**6. Check the two rosters.** `linear-dispatch.json` keeps its exact shape; only
+the wording of its values changes meaning — each `accounts` value is now a seat
+name, which must be the OS username created in step 1. And the wall's roster
+must list every seat: pass them as `wall.sh --crew dana,reinier,...` (or
+`WALL_CREW`) and add a lane each in `wall/crew.json`, so a seat's runs show on
+the skyline under their own name.
+
+**7. Retire the hand-written launchers.** The per-person wrapper scripts on the
+Mini — the ones that exported `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GH_CONFIG_DIR`
+and called the harness — are dead weight now: each seat starts its station with
+`station.sh start`, and the service account dispatches as a seat through
+`--owner`. Delete them once the crew has run on seats for a night or two.
+
+**Rollback.** Until the crew confirms seats work, nothing irreversible has
+happened: the account directories were moved, not deleted. Move
+`~<seat>/.claude`, `~<seat>/.codex` and `~<seat>/.config/gh` back under
+`~/accounts/<name>/`, restore the old launchers, and remove the sudoers
+fragment — the directory model reads what it always read.

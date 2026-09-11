@@ -10,7 +10,10 @@
 # runs on the Linux CI box as well as on the Mac the feature ships for.
 # run-task.sh is faked the same way: schedule.sh resolves it beside itself, so
 # the fixture copies schedule.sh into a sandbox harness dir next to a stand-in
-# that records its argv and the environment it was handed.
+# that records its argv and the environment it was handed. The scheduled run
+# fires as a seat — an OS user — so `id` answers for the fixture's seats and
+# `sudo` replays env_reset: the stand-in's environment is exactly the pairs
+# seat_exec put on the command line, plus the seat's own HOME.
 #
 # Usage: bash tests/schedule.test.sh
 set -u
@@ -38,13 +41,15 @@ file_has() { if grep -qF -- "$2" "$1"; then ok "$3"; else bad "$3 (missing [$2] 
 FHOME="$ROOT/home"; AGENTS="$FHOME/Library/LaunchAgents"
 HARNESS="$ROOT/harness"; RUNS="$HARNESS/runs"
 SRCDIR="$ROOT/src"; FAKES="$ROOT/bin"
+SEATS="$ROOT/seats"; SEAT_HOMES="$ROOT/seat-homes"; SUDOLOG="$ROOT/sudo.log"
 CALLS="$ROOT/run-task-calls.log"
 LCLOG="$ROOT/launchctl.log"
 LC_STATE="$ROOT/launchctl-state"
 DATE_STATE="$ROOT/date-epoch"
 UNAME_STATE="$ROOT/fake-uname"
-mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES"
-: > "$CALLS"; : > "$LCLOG"
+mkdir -p "$FHOME" "$RUNS" "$SRCDIR" "$FAKES" "$SEAT_HOMES/angel"
+printf 'angel\n' > "$SEATS"
+: > "$CALLS"; : > "$LCLOG"; : > "$SUDOLOG"
 printf 'ok\n' > "$LC_STATE"
 : > "$DATE_STATE"
 printf 'Darwin\n' > "$UNAME_STATE"
@@ -54,6 +59,9 @@ printf 'Darwin\n' > "$UNAME_STATE"
 cp "$SRC/schedule.sh" "$SRCDIR/schedule.sh"
 # ...and with the shared helpers beside it, the way install.sh ships lib/.
 cp -R "$SRC/lib" "$SRCDIR/lib"
+# The wrapper sources <HARNESS_DIR>/lib/common.sh when it fires, so the run-time
+# half of the fixture needs the same helpers.
+cp -R "$SRC/lib" "$HARNESS/lib"
 chmod +x "$SRCDIR/schedule.sh"
 
 cat > "$FAKES/uname" <<EOF
@@ -84,6 +92,39 @@ else
   exec /bin/date "\$@"
 fi
 EOF
+# Seats are OS users: `id` answers only for the fixture's seats and delegates
+# everything else to the real binary; `sudo` replays env_reset — the child sees
+# exactly the VAR=value pairs from the command line plus the HOME sudo -H gives
+# the seat — and logs every crossing, because who ran the run is the contract.
+cat > "$FAKES/id" <<EOF
+#!/usr/bin/env bash
+if [ "\$#" -eq 2 ] && [ "\$1" = -u ] && grep -qx -- "\$2" "$SEATS"; then
+  echo 2000; exit 0
+fi
+exec /usr/bin/id "\$@"
+EOF
+# Fixture paths are baked in through %q; the body is a quoted heredoc so "$1"
+# keeps its quotes — an unquoted append splits a pair value like the canary's
+# "it is 08:10" and hands env the words as a command line.
+{ printf '#!/usr/bin/env bash\nSUDOLOG=%q\nSEAT_HOMES=%q\n' "$SUDOLOG" "$SEAT_HOMES"
+  cat <<'EOF'
+# seat_exec always sends at least the PATH pair, so pairs is never empty and
+# the plain expansion below is safe without set -u.
+seat=""; pairs=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    -u) seat=$2; shift 2 ;;
+    -n|-H) shift ;;
+    [A-Za-z_]*=*) pairs+=("$1"); shift ;;
+    *) break ;;
+  esac
+done
+[ -n "$seat" ] && [ $# -gt 0 ] || { echo "fake sudo: unsupported invocation: $*" >&2; exit 1; }
+printf 'seat=%s argv=%s\n' "$seat" "$*" >> "$SUDOLOG"
+exec env -i HOME="$SEAT_HOMES/$seat" USER="$seat" LOGNAME="$seat" \
+  TERM="${TERM:-dumb}" "${pairs[@]}" "$@"
+EOF
+} > "$FAKES/sudo"
 # The pipeline stand-in: every fired run appends one record, so "exactly once"
 # is a line count, and the environment it saw is asserted field by field.
 cat > "$SRCDIR/run-task.sh" <<EOF
@@ -92,6 +133,8 @@ cat > "$SRCDIR/run-task.sh" <<EOF
   printf 'argv:%s\n' "\$*"
   printf 'canary:%s\n'     "\${HARNESS_CANARY-<unset>}"
   printf 'owner:%s\n'      "\${HARNESS_OWNER-<unset>}"
+  printf 'seat:%s\n'       "\${HARNESS_SEAT-<unset>}"
+  printf 'home:%s\n'       "\${HOME-<unset>}"
   printf 'ghtoken:%s\n'    "\${GH_TOKEN-<unset>}"
   printf 'codexfb:%s\n'    "\${HARNESS_CODEX_HOME_FALLBACK-<unset>}"
   printf 'effort:%s\n'     "\${IMPLEMENTER_EFFORT-<unset>}"
@@ -105,7 +148,8 @@ cat > "$SRCDIR/run-task.sh" <<EOF
 } >> "$CALLS"
 echo "fake run-task.sh dispatched \$1"
 EOF
-chmod +x "$FAKES/uname" "$FAKES/launchctl" "$FAKES/date" "$SRCDIR/run-task.sh"
+chmod +x "$FAKES/uname" "$FAKES/launchctl" "$FAKES/date" "$FAKES/id" "$FAKES/sudo" \
+  "$SRCDIR/run-task.sh"
 
 git init -q "$ROOT/greenapp" >/dev/null 2>&1
 REPO="$(cd "$ROOT/greenapp" && pwd)"
@@ -174,6 +218,13 @@ has "$out" "in the past" "guard: past date says it is in the past"
 out=$(sched AHEAD "$REPO" fix/ahead "2027-02-31 09:00"); rc=$?
 check "guard: impossible date exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
 has "$out" "no such date" "guard: impossible date is rejected, not normalised"
+
+out=$(HARNESS_OWNER=dnaa sched AHEAD "$REPO" fix/ahead "$AHEAD_HHMM"); rc=$?
+check "guard: unknown scheduled seat exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
+has "$out" "no user named 'dnaa'" "guard: unknown scheduled seat is rejected before arming"
+out=$(HARNESS_OWNER='Bad Seat' sched AHEAD "$REPO" fix/ahead "$AHEAD_HHMM"); rc=$?
+check "guard: invalid scheduled seat exits non-zero" "$([ $rc -ne 0 ] && echo yes || echo no)" "yes"
+has "$out" "invalid seat name" "guard: scheduled seat uses the dispatch seat syntax"
 
 out=$(sched AHEAD "$REPO" fix/ahead); rc=$?
 check "guard: wrong argument count exits 2" "$rc" "2"
@@ -334,6 +385,13 @@ CANARY="it is 08:10 and Angel's shell said so"
 )
 W=$(wrapper_of FIRE)
 exists "fire: wrapper armed" "$W"
+# The wrapper names the seat it fires as, and holds no credential of any kind:
+# identity is the seat, whose own home holds its logins.
+file_has "$W" "export HARNESS_SEAT='angel'" "fire: the wrapper pins the seat it fires as"
+has_not "$(cat "$W")" "GH_TOKEN" "fire: no gh token is snapshot into the wrapper"
+has_not "$(cat "$W")" "export CLAUDE_CONFIG_DIR=" "fire: no Claude config dir is re-exported"
+has_not "$(cat "$W")" "export CODEX_HOME="       "fire: no Codex home is re-exported"
+has_not "$(cat "$W")" "export GH_CONFIG_DIR="    "fire: no gh config dir is re-exported"
 # launchd hands the job a bare environment, so the wrapper must carry its own:
 # env -i is the closest a test gets to that, and it also proves PATH travelled
 # (nothing below would resolve otherwise).
@@ -346,7 +404,10 @@ check "fire: with the ticket, repo and branch it was scheduled with" \
 check "fire: HARNESS_* travelled verbatim (quotes and all)" \
   "$(grep '^canary:' "$CALLS" | sed 's/^canary://')" "$CANARY"
 check "fire: the dispatching owner travelled"  "$(grep '^owner:' "$CALLS" | sed 's/^owner://')" "angel"
-check "fire: the gh token travelled"           "$(grep '^ghtoken:' "$CALLS" | sed 's/^ghtoken://')" "gho_fixture"
+check "fire: the seat variable travelled"      "$(grep '^seat:' "$CALLS" | sed 's/^seat://')" "angel"
+check "fire: the run's home is the seat's"     "$(grep '^home:' "$CALLS" | sed 's/^home://')" "$SEAT_HOMES/angel"
+check "fire: the gh token never reaches the run (env_reset)" \
+  "$(grep '^ghtoken:' "$CALLS" | sed 's/^ghtoken://')" "<unset>"
 check "fire: the effort knob travelled"        "$(grep '^effort:' "$CALLS" | sed 's/^effort://')" "max"
 check "fire: the implementer provider travelled" \
   "$(grep '^provider:' "$CALLS" | sed 's/^provider://')" "zai"
@@ -360,6 +421,9 @@ check "fire: the fallback Codex account knob travelled" \
 check "fire: HARNESS_DIR travelled"            "$(grep '^harnessdir:' "$CALLS" | sed 's/^harnessdir://')" "$HARNESS"
 check "fire: unrelated environment stayed home" \
   "$(grep '^unrelated:' "$CALLS" | sed 's/^unrelated://')" "<unset>"
+file_has "$SUDOLOG" "seat=angel argv=" "fire: the run crosses into the seat's account"
+file_has "$SUDOLOG" "run-task.sh FIRE $REPO fix/fire" \
+  "fire: the crossing carries ticket, repo and branch as argv"
 check "fire: disarmed before dispatching — no marker left to fire twice" \
   "$(grep '^marker:' "$CALLS" | sed 's/^marker://')" "no"
 check "fire: disarmed before dispatching — the agent plist was already gone" \
@@ -369,7 +433,7 @@ absent "fire: marker removed"         "$(marker_of FIRE)"
 absent "fire: agent plist removed"    "$(plist_of FIRE)"
 file_has "$LCLOG" "bootout gui/$UID_NUM/com.olyx.dispatch.fire" \
   "fire: the wrapper booted its own agent out of launchd"
-file_has "$RUNS/FIRE/scheduled.log" "firing FIRE"                  "fire: the run log records the firing"
+file_has "$RUNS/FIRE/scheduled.log" "firing FIRE as angel"         "fire: the run log records the firing, and the seat"
 file_has "$RUNS/FIRE/scheduled.log" "fake run-task.sh dispatched FIRE" "fire: run-task output lands in the run log"
 file_has "$RUNS/FIRE/scheduled.log" "run-task.sh exited 0"         "fire: the run log records the exit status"
 exists "fire: the brief survives its run" "$RUNS/FIRE/brief.md"
@@ -409,7 +473,8 @@ file_has "$OPSDOC" 'schedule.sh <TICKET> <repo-path> <branch-name>' "docs: docum
 file_has "$OPSDOC" 'schedule.sh --list'   "docs: documents --list"
 file_has "$OPSDOC" 'schedule.sh --cancel' "docs: documents --cancel"
 file_has "$OPSDOC" 'launchd'  "docs: names the mechanism"
-file_has "$OPSDOC" 'GH_TOKEN' "docs: warns that the wrapper can hold a token"
+file_has "$OPSDOC" 'HARNESS_SEAT' "docs: names the seat a scheduled run fires as"
+file_has "$OPSDOC" 'holds no credential' "docs: the wrapper is documented as credential-free"
 file_has "$OPSDOC" 'mode 600' "docs: documents the wrapper's permissions"
 # The sleep caveat is the one an operator gets wrong at 08:11, so it is asserted
 # twice: in full in the operator guide, and in the product-level paragraph the

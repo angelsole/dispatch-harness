@@ -47,8 +47,8 @@ code**, against your repositories. Be clear-eyed about what that means.
 Enabling [Dispatch from Linear](linear-dispatch.md) authorizes signed agent
 delegations and replies to start or resume code execution on the wall host.
 `WALL_LINEAR_DISPATCH_CONFIG` pins the workspace, OAuth app, team/project routes,
-repositories and execution accounts; optional `allowed_users` narrows the actors.
-Task text cannot select a shell command, host, arbitrary repo path or account.
+repositories and execution seats; optional `allowed_users` narrows the actors.
+Task text cannot select a shell command, host, arbitrary repo path or seat.
 The bridge validates identity after HMAC verification and commits private event
 data in a mode-600 SQLite database under a mode-700 directory. Run locks, saved
 host/operator identity and durable operation receipts also apply to Linear

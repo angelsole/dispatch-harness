@@ -22,9 +22,11 @@ import sys
 import threading
 import time
 
-from dispatch_runs import DispatchError, atomic_write, read_json, read_text, run_directory, status
+from dispatch_runs import (DispatchError, atomic_write, read_json, read_text, run_directory,
+                           seat_probe_state, status)
 
 UUID = re.compile(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}\Z")
+SEAT = re.compile(r"[a-z_][a-z0-9_-]{0,31}\Z")
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -67,7 +69,7 @@ def configuration(path):
         if type(route.get("publish", True)) is not bool:
             raise DispatchError("Linear route publish must be boolean")
         if not isinstance(route.get("owner", ""), str) or (route.get("owner") and not
-                re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", route["owner"])):
+                SEAT.fullmatch(route["owner"])):
             raise DispatchError("Invalid Linear execution account")
     users = config.get("allowed_users", [])
     if not isinstance(users, list) or not all(uid(user) for user in users):
@@ -75,10 +77,9 @@ def configuration(path):
     accounts = config.get("accounts")
     if accounts is not None:
         if (not isinstance(accounts, dict) or not accounts or
-                any(not uid(user) or not isinstance(owner, str) or not
-                    re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", owner)
+                any(not uid(user) or not isinstance(owner, str) or not SEAT.fullmatch(owner)
                     for user, owner in accounts.items())):
-            raise DispatchError("accounts must map Linear user UUIDs to saved station names")
+            raise DispatchError("accounts must map Linear user UUIDs to seat names")
         if any("owner" in route for route in routes):
             raise DispatchError("Use accounts for assignment routing or fixed route owners, not both")
     return config
@@ -273,15 +274,20 @@ class Worker:
             raise AccountSelection("The task's responsible person has no configured Mini station. "
                                    "Assign the issue to someone with a station, or map that person's Linear user "
                                    "to their station, then reply `dispatch`. No other person's login was selected.")
-        root = Path(os.environ.get("QM_ACCOUNTS_DIR", str(Path.home() / "accounts"))).expanduser().resolve()
-        profile = root / owner
-        if not profile.is_dir() or profile.is_symlink():
+        if subprocess.run(["id", "-u", owner], capture_output=True).returncode:
             raise AccountSelection("Station `" + owner + "` needs setup on Mini. Complete its logins, then reply `dispatch`.")
+        probe = seat_probe_state(self.runtime, owner)
+        if probe is None:
+            raise DispatchError("Station `" + owner + "` could not be inspected as a seat on Mini "
+                                "(seat_exec seat-probe.sh failed; check the sudoers fragment)")
         for provider in ("claude", "codex", "gh"):
-            # A profile alias must not silently borrow another person's auth.
-            if not (profile / provider).resolve().is_relative_to(profile):
-                raise AccountSelection("Station `" + owner + "` links " + provider + " to credentials outside its profile. "
-                                       "Give it its own login before dispatching this task.")
+            # A credential directory symlinked out of the seat's home must not
+            # silently borrow another person's auth.
+            if probe.get(provider) == "missing":
+                raise AccountSelection("Station `" + owner + "` needs setup on Mini. Complete its logins, then reply `dispatch`.")
+            if probe.get(provider) != "inside":
+                raise AccountSelection("Station `" + owner + "` links " + provider + " to credentials outside its home. "
+                                       "Give the seat its own login before dispatching this task.")
         return owner, source
 
     def account_allowed(self, route, account):
@@ -338,7 +344,10 @@ class Worker:
         owner, account_source = self.execution_account(route, issue, session)
         run_id = issue["identifier"] + "-linear-" + session["id"].replace("-", "")
         directory = run_directory(self.runtime, run_id)
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # The run dir belongs to the shared runtime: group-writable, so the seat
+        # that executes the run can write its own status and results.
+        os.umask(0o007)
+        directory.mkdir(mode=0o770, parents=True, exist_ok=True)
         if any(directory.iterdir()):
             raise DispatchError("The target run already exists; an operator must inspect it before dispatching")
         context = json.loads(session["context"])
@@ -566,7 +575,10 @@ def main():
     if args.command == "check":
         print("Linear dispatcher configuration is valid (" + str(len(config["routes"])) + " routes).")
         return
-    os.umask(0o077)
+    # Group-writable by default: the worker writes into the shared runs/ tree,
+    # which the crew reaches through the runtime group. The store keeps its own
+    # 0700/0600 modes regardless of this.
+    os.umask(0o007)
     runtime = args.runtime.resolve()
     if os.environ.get("WALL_RUNS") and Path(os.environ["WALL_RUNS"]).resolve() != runtime / "runs":
         raise DispatchError("Linear dispatch must run on the wall's execution host, using its local runs directory")

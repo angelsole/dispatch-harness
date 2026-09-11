@@ -7,7 +7,8 @@ The conversation can close while the task runs. Completed work and recovery
 state live on disk.
 
 Use your laptop by default. The Mini is an optional execution host and a place
-to keep shared stations under explicitly selected teammates' saved accounts.
+to keep shared stations: one per teammate, each a real OS user (a *seat*) whose
+own logins the harness dispatches under.
 Independent review provides another check on the change; it does not guarantee
 that a different model or vendor will catch every defect.
 
@@ -28,7 +29,7 @@ the implementer and reviewer keep their own model pins. Why it is built this way
 on an execution host, delegate a described issue to Mini. It starts Dispatch,
 asks questions in the issue's agent session, accepts your replies there, and
 returns the reviewed PR. The project selects the repository; the issue's
-assignee selects a saved Mini station, falling back to the parent issue's
+assignee selects their seat on the Mini, falling back to the parent issue's
 assignee and then the person who delegated it.
 
 Install once on each execution machine:
@@ -65,17 +66,19 @@ ticket or an explicit tracking choice answers that question up front. Product
 ambiguities and account-holder sign-in can still need your input. If capture or
 upload remains unavailable, the planner reports it explicitly.
 
-**Use the Mini when you want a shared station:**
+**Use the Mini when you want a shared station.** Each teammate's station is
+their own OS user on the Mini — their seat — so the conversation runs under
+their logins:
 
 ```bash
-dispatch station --on mini --owner teammate --planner codex
-dispatch station --on mini --owner teammate --planner claude
+dispatch station --on dana@mini --planner codex
+dispatch station --on dana@mini --planner claude
 ```
 
-Describe the task in that conversation. The account is selected explicitly and
-retained for its runs. Repeat the station command to reconnect; it preserves the
+Describe the task in that conversation. The seat is selected by the ssh user
+and retained for its runs. Repeat the station command to reconnect; it preserves the
 conversation. The Mini has one shared installation, updated once by its operator;
-station users do not reinstall. See [Station setup and login
+seats do not reinstall. See [Station setup and login
 repair](docs/operations.md#station-setup-and-login-repair) for first-time logins.
 
 **Continue in plain language.** Tell the planner “continue TASK-123”. It reads the
@@ -94,7 +97,7 @@ receive new harness behavior; `--symlink` is for harness development.
 session on the machine, and `status.sh --watch` is the same picture as a
 zero-config live dashboard in any terminal. **`dispatch ui` opens a local recovery
 console:** follow its private browser link to read questions, save answers, resume
-stopped work, and recover frontend evidence. Each task shows its saved account,
+stopped work, and recover frontend evidence. Each task shows its saved seat,
 execution machine, and checkpoint. See [Local recovery console](docs/wall.md#local-recovery-console).
 Three helpers cover the rest of a
 run's life: `attach.sh <RUN-ID>` forks a separate conversation with the worker's
@@ -229,7 +232,7 @@ This page is the front door; everything else lives under [`docs/`](docs/).
 | [Decision log](docs/adr/README.md) | The architecture decisions behind the pipeline, dated and one per file: why no model grades its own homework, why findings must survive refutation, why the verifier never gates, and what each of those costs |
 | [Trust me, said the reviewer](docs/verified-grounding.md) | Why refutations must cite repository code that the harness verifies byte-for-byte |
 | [Security](docs/security.md) | The threat model of an unattended, code-executing pipeline, and the deny list that bounds the worker |
-| [Mini credentials](docs/mini-credentials.md) | Persistent logins, account selection from Linear, renewal, and the limits of shared macOS profiles |
+| [Mini credentials](docs/mini-credentials.md) | Per-seat persistent logins, seat selection from Linear, renewal, and the shared-Mac boundary |
 | [Development](docs/development.md) | This repo's own gate, its suites (`tests/*.test.sh`), and the docs-as-tests pass that keeps these pages honest |
 | [Ghost Shift](docs/wall.md) | The big-screen wall: the city, the district, the ledger and the ops console |
 | [The wall's data contract](docs/wall-contract.md) | Which run-dir files the wall reads, and how much half-written-ness each one tolerates |
@@ -263,10 +266,10 @@ And one line per thing the pipeline does beyond implement → gate → review:
 | Path | What it is |
 | --- | --- |
 | `run-task.sh` `sync-pr.sh` | The pipeline (worktree → implement → gate → review → PR), and [the base re-merge](docs/operations.md#re-merging-the-base-into-a-pushed-pr) for an already-pushed branch |
-| `schedule.sh` `capacity.sh` `quartermaster.sh` | [Fire a prepared run at a set time](docs/operations.md#scheduling-a-run-for-later), the local-file subscription accounting the [preflight](docs/operations.md#capacity-preflight-a-run-that-defers-itself) defers on, and [the 19:00 check](docs/operations.md#the-quartermaster) that fills the night with briefed work |
+| `schedule.sh` `capacity.sh` `quartermaster.sh` `seat-probe.sh` | [Fire a prepared run at a set time](docs/operations.md#scheduling-a-run-for-later), the local-file subscription accounting the [preflight](docs/operations.md#capacity-preflight-a-run-that-defers-itself) defers on (also read per seat as `--seat-json`), [the 19:00 check](docs/operations.md#the-quartermaster) that fills the night with briefed work, and the probe that reports a seat's login state from inside it |
 | `repos.conf.sh` `setup-repo.sh` | Generic per-repo detection (sourcing your `repos.local.sh`), and the inspector that proposes or writes a repo's pinned entry |
 | `dispatch.sh` | The local-first command interface: planner, task submission, status, checkpoint recovery, and remote stations |
-| `lib/common.sh` | The plumbing every script shares, sourced from beside it: `HARNESS_DIR`, the macOS-safe timeout cap, the `--help` that reads a script's own header comment, the run's worktree and pinned knobs, and the Codex-availability preamble |
+| `lib/common.sh` | The plumbing every script shares, sourced from beside it: `HARNESS_DIR`, the macOS-safe timeout cap, the `--help` that reads a script's own header comment, the run's worktree and pinned knobs, the Codex-availability preamble, and `seat_exec` — the one door that runs a command as another [seat](docs/operations.md#migration-seats-become-os-users) |
 | `lib/profile.sh` `profiles/` | [The pipeline's six named extension points](docs/design-notes.md#the-extension-points-and-why-there-are-exactly-six) and the loader that fills them per repo, plus the one profile that ships: [`profiles/visual/`](profiles/visual/creative/README.md), the visual gate, the blind critic and the asset factories |
 | `statusline.sh` `status.sh` `attach.sh` `preview.sh` `cleanup.sh` `janitor.sh` `station.sh` | Live run lines for the Claude Code statusline (`--runs-only` to compose), the terminal monitor (`status.sh --watch` is the live dashboard), and the lifecycle helpers — including [the janitor](docs/operations.md#the-janitor), the pass that sweeps the worktrees `cleanup.sh` never got to |
 | `wall.sh` `wall/` `.creative/` `mirror.sh` | [Ghost Shift](docs/wall.md): the big-screen dashboard (node server, one static page, fixtures), the art-direction contract it is graded against, and `HARNESS_MIRROR`'s run-dir copier |

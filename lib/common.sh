@@ -295,3 +295,136 @@ harness_gate_lock_release() {  # $1 = key
   [ "${pid:-}" = "$$" ] || return 0
   rm -rf "$lock" 2>/dev/null || true
 }
+
+# --- Seats: OS users, not directories ------------------------------------------
+# A seat is a local user account. Its name is the OS username, and its
+# credentials live in its own home: ~/.claude, ~/.codex, ~/.config/gh. Nothing
+# re-exports a config directory to simulate a person any more.
+#
+# The Unix group the runtime is shared through. Creating it (dseditgroup on
+# macOS, groupadd on Linux) is an operator step, not a harness one.
+HARNESS_GROUP="${HARNESS_GROUP:-dispatch}"
+
+seat_exists() {  # $1 = seat name; exit 0 iff it is a user on this machine
+  id -u "$1" >/dev/null 2>&1
+}
+
+seat_home() {  # $1 = seat name; prints its home directory, nonzero when unknown
+  local home=""
+  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    home=$(dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null \
+      | sed -n 's/^NFSHomeDirectory:[[:space:]]*//p')
+  else
+    home=$(getent passwd "$1" 2>/dev/null | cut -d: -f6)
+  fi
+  [ -n "$home" ] || return 1
+  printf '%s\n' "$home"
+}
+
+harness_file_mode() {  # $1 = path; prints the octal mode (e.g. 600), or fails
+  local m
+  m=$(stat -c %a "$1" 2>/dev/null) || m=""
+  case "$m" in ''|*[!0-9]*) m=$(stat -f %Lp "$1" 2>/dev/null) || m="" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$m"
+}
+
+# Export the caller's Claude login token from ~/.claude/oauth-token when that
+# file is mode 600 and non-empty. A file with other permissions is refused with
+# a message naming it: it would hand the token to every group member.
+# With "strict", a bad file is also a failure for the caller to act on.
+harness_oauth_token() {  # [$1 = strict]; sets CLAUDE_CODE_OAUTH_TOKEN
+  local file="${HOME:-}/.claude/oauth-token" mode token
+  [ -f "$file" ] || return 0
+  mode=$(harness_file_mode "$file") || mode=""
+  if [ "$mode" != 600 ]; then
+    echo "[harness] $file must be mode 600, not ${mode:-unknown}; fix it (chmod 600) or remove it" >&2
+    [ "${1:-}" = strict ] && return 1
+    return 0
+  fi
+  token=$(sed -n 1p "$file") || return 0
+  [ -n "$token" ] || return 0
+  CLAUDE_CODE_OAUTH_TOKEN="$token"
+  export CLAUDE_CODE_OAUTH_TOKEN
+}
+
+# Run CMD as the seat NAME through sudo with exactly the listed VAR=value pairs
+# on the command line — sudo's env_reset is what drops everything else. Every
+# argument is its own argv element; a value with spaces or quotes never passes
+# through a shell string. When the caller already is NAME, exec directly with
+# the same explicit environment, so interactive and daemon paths share a
+# launcher. Never put a token in the pairs: process argv is ps(1)-visible; the
+# child reads its own token file (source-time call above, or via this function).
+seat_exec() {  # $1 = seat, [VAR=value ...] -- command [args ...]
+  local seat="$1"; shift
+  [ $# -gt 0 ] || { echo "seat_exec: needs a seat and a command" >&2; return 2; }
+  local pairs=() name wall_token=""
+  [ "${SEAT_EXEC_PRESERVE_WALL_TOKEN:-0}" != 1 ] \
+    || wall_token="${HARNESS_WALL_TOKEN:-}"
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+    name="${1%%=*}"
+    case "$1:$name" in
+      *=*:[A-Za-z_]* )
+        case "$name" in *[!A-Za-z0-9_]* ) echo "seat_exec: '$1' is not VAR=value" >&2; return 2 ;; esac
+        pairs+=("$1") ;;
+      *) echo "seat_exec: '$1' is not VAR=value" >&2; return 2 ;;
+    esac
+    shift
+  done
+  [ $# -gt 0 ] || { echo "seat_exec: missing -- before the command" >&2; return 2; }
+  shift
+  [ $# -gt 0 ] || { echo "seat_exec: missing command after --" >&2; return 2; }
+  seat_exists "$seat" || { echo "seat_exec: no user named '$seat' on this machine" >&2; return 1; }
+  # The shared runtime is group-writable; everything the run writes must be too.
+  # sudo keeps the caller's umask unless sudoers overrides it.
+  umask 002
+  if [ "$(id -un)" != "$seat" ]; then
+    if [ -n "$wall_token" ]; then
+      # Preserve the wall credential from the environment by name. Its value
+      # must never be an argv element visible to other local users.
+      exec sudo -n -u "$seat" -H --preserve-env=HARNESS_WALL_TOKEN \
+        ${pairs[@]+"${pairs[@]}"} "$@"
+    fi
+    exec sudo -n -u "$seat" -H ${pairs[@]+"${pairs[@]}"} "$@"
+  fi
+  # Direct path: build the same explicit environment in-process by unsetting
+  # everything exported, then applying the pairs. The pairs iterate quoted: a
+  # value with spaces is one argv element and must stay one.
+  local var
+  for var in $(compgen -e 2>/dev/null); do
+    case "$var" in PATH|HOME|TERM) ;; *) unset "$var" 2>/dev/null || true ;; esac
+  done
+  for var in ${pairs[@]+"${pairs[@]}"}; do
+    export "${var%%=*}=${var#*=}"
+  done
+  [ -z "$wall_token" ] || export HARNESS_WALL_TOKEN="$wall_token"
+  [ -n "${HARNESS_OWNER:-}" ] || export HARNESS_OWNER="$seat"
+  harness_oauth_token
+  exec "$@"
+}
+
+# Service-user-side launcher: hand a command to a seat, carrying the caller's
+# harness knobs as explicit pairs. notify.conf is owner-only at the HARNESS_DIR
+# root, so it is sourced here — where the service user can read it — and its
+# knobs (all HARNESS_*-prefixed) ride along with the sweep. PATH is a pair too:
+# sudo's env_reset would otherwise hand the child the secure default, which has
+# none of the user-local install locations.
+seat_run() {  # $1 = seat, rest = command + args
+  local seat="$1"; shift
+  # shellcheck disable=SC1090
+  . "$HARNESS_DIR/notify.conf" 2>/dev/null || true
+  local var pairs=("PATH=$PATH")
+  for var in $(compgen -v 2>/dev/null | grep -E '^HARNESS_[A-Za-z0-9_]+$'); do
+    export "${var?}" 2>/dev/null || true
+  done
+  for var in $(compgen -e 2>/dev/null | grep -E '^(HARNESS_|IMPLEMENTER_|REVIEWER_|ZAI_API_KEY_FILE)'); do
+    [ "$var" = HARNESS_WALL_TOKEN ] || pairs+=("$var=${!var}")
+  done
+  SEAT_EXEC_PRESERVE_WALL_TOKEN=1 \
+    seat_exec "$seat" ${pairs[@]+"${pairs[@]}"} -- "$@"
+}
+
+# A 0600 token file is a login: every script that sources this library runs
+# with the token exported, so seat-launched children authenticate themselves.
+# Non-strict — a wrong-mode file must not kill an unrelated sourcing script.
+harness_oauth_token

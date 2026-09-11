@@ -5,6 +5,7 @@ process tree, so two clients cannot start the same task concurrently.
 """
 import contextlib
 import fcntl
+import getpass
 import hashlib
 import json
 import os
@@ -27,30 +28,41 @@ def command_on_host(argv):
     return shlex.join(argv + (["--on", host] if host else []))
 
 
-def repair_command(provider, owner="", paths=None, run_id=None):
-    if run_id:
-        return command_on_host(["dispatch", "login", provider, "--for-run", run_id])
-    paths = paths or {}
+def repair_command(provider, owner="", run_id=None):
+    owner = owner or ""
+    if owner and owner != getpass.getuser():
+        # A seat's logins live inside its own account; only that account can
+        # hold the interactive terminal a login needs.
+        host = os.environ.get("DISPATCH_REMOTE_HOST") or socket.gethostname()
+        return shlex.join(["ssh", owner + "@" + host, "station.sh login " + provider])
     argv = ["dispatch", "login", provider]
-    if owner:
-        argv += ["--owner", owner]
-        root = str(Path(paths.get("CODEX_HOME", str(Path.home() / "accounts" / owner / "codex"))).parent.parent)
-        if root != str(Path.home() / "accounts"):
-            argv += ["--accounts-dir", root]
-    else:
-        cleared = []
-        overrides = []
-        for key in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR"):
-            if key not in paths:
-                continue
-            if paths[key] is None:
-                cleared += ["-u", key]
-            else:
-                # Even an explicit default path can select another CLI profile.
-                overrides.append(f"{key}={paths[key]}")
-        if cleared or overrides:
-            argv = ["env", "-u", "HARNESS_OWNER"] + cleared + overrides + argv
+    if run_id:
+        argv += ["--for-run", run_id]
     return command_on_host(argv)
+
+
+def seat_probe_state(runtime, seat):
+    """One `provider=state` line per credential dir, read as the seat; None = no answer.
+
+    A seat's home is 0700, so its login state cannot be inspected from another
+    account: the probe runs through seat_exec (the one harness command the
+    sudoers fragment admits besides run-task.sh and capacity.sh).
+    """
+    script = '. "$1/lib/common.sh"; seat_exec "$2" "PATH=$PATH" "HARNESS_DIR=$1" -- "$1/seat-probe.sh"'
+    try:
+        out = subprocess.run(["bash", "-c", script, "seat-probe", str(runtime), seat],
+                             env=dict(os.environ, HARNESS_DIR=str(runtime)),
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode:
+        return None
+    state = {}
+    for line in out.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in ("claude", "codex", "gh", "token", "claude_auth"):
+            state[key] = value
+    return state or None
 
 
 def read_text(path):
@@ -72,7 +84,9 @@ def atomic_write(path, value):
     temporary = path.with_name("." + path.name + "." + uuid.uuid4().hex)
     try:
         with temporary.open("x") as out:
-            os.chmod(temporary, 0o600)
+            # Run files live in the shared runtime: group-writable so the seat
+            # executing a run can read and replace its own bookkeeping.
+            os.chmod(temporary, 0o660)
             out.write(value)
             out.flush()
             os.fsync(out.fileno())
@@ -156,7 +170,7 @@ def status(directory, *, running=None):
         response["action"] = waiting.get("action", "")
         response["reason"] = waiting.get("reason", "")
         if waiting.get("provider") in ("codex", "claude", "gh"):
-            response["action"] = repair_command(waiting["provider"], request.get("account", ""), request.get("account_paths"),
+            response["action"] = repair_command(waiting["provider"], request.get("account", ""),
                                                 directory.name if request else None)
             response["action"] += " ; " + command_on_host(["dispatch", "resume", directory.name])
     elif state == "needs_input":
@@ -182,9 +196,28 @@ def launch(runtime, directory, request, env, lock, resume=False):
                DISPATCH_DETACHED="1", HARNESS_RESUME="1" if resume else "0",
                HARNESS_PUBLISH="1" if request.get("publish", True) else "0")
     write_json(directory / "launch.json", {"started": started, "brief_sha256": brief_digest(directory)})
+    argv = [str(runtime / "run-task.sh"), directory.name, request["repo"], request["branch"]]
+    owner = request.get("account") or ""
+    if owner and owner != getpass.getuser():
+        # The run's identity is a seat: cross the account boundary through
+        # seat_exec, which rebuilds the child's environment from explicit
+        # VAR=value pairs (every HARNESS_* knob in env rides the sweep). sudo
+        # closes inherited fds above stdio, so the CLI lock ends at that
+        # boundary — the run then relies on driver.pid liveness, the class
+        # is_running already documents for older run-task callers. run-task.sh
+        # writes driver.pid itself and HARNESS_DETACH=0 rides the pairs, so it
+        # stays this child's process and the reaper below still sees it exit.
+        script = ('set -eu\n'
+                  'umask 002\n'
+                  'HARNESS_DIR="$1"; seat="$2"; shift 2\n'
+                  '. "$HARNESS_DIR/lib/common.sh"\n'
+                  'seat_run "$seat" "$@"\n')
+        argv = ["bash", "-c", script, "dispatch-seat", str(runtime), owner] + argv
+    else:
+        argv = ["bash"] + argv
     with (directory / "launcher.log").open("ab") as log:
         process = subprocess.Popen(
-            ["bash", str(runtime / "run-task.sh"), directory.name, request["repo"], request["branch"]],
+            argv,
             cwd=request["repo"], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
             start_new_session=True, pass_fds=(lock.fileno(),),
         )

@@ -1,9 +1,13 @@
+#!/usr/bin/env bash
 # shellcheck shell=bash
 # Subscription capacity, read off the station's own disk.
 #
-# Sourced, never executed. Two callers, one accountant:
+# Sourced for the library below, and executed with --seat-json by the
+# Quartermaster, which reads a seat's capacity as the seat (seat_exec runs this
+# script inside the seat's own $HOME). Three callers, one accountant:
 #   quartermaster.sh  — at 19:00, how many runs fit in what is left tonight
 #   run-task.sh       — right now, is there anything left to spend at all
+#   capacity.sh --seat-json — the same read, as the seat, for the Quartermaster
 #
 # THE HARD RULE, and the reason this is one file instead of two copies: the only
 # thing consulted is the station's own Claude logs. ccusage is a local-file
@@ -113,3 +117,18 @@ capacity_for() {  # $1 = the station's claude config dir
   CAP_PCT=$((CAP_REMAINING * 100 / CAP_LIMIT))
   return 0
 }
+
+# --- Read-only entry point for the Quartermaster -------------------------------
+# `seat_exec <seat> PATH=... HARNESS_DIR=... -- capacity.sh --seat-json` lands
+# here, already inside the seat's own account: $HOME is the seat's, so the
+# capacity read below consults the seat's own ~/.claude logs and nobody else's.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  [ "${1:-}" = --seat-json ] || { echo "usage: capacity.sh --seat-json" >&2; exit 2; }
+  umask 002
+  capacity_for "$HOME/.claude" || { echo "capacity: unknown for $HOME" >&2; exit 1; }
+  jq -n --argjson remaining "$CAP_REMAINING" --argjson limit "$CAP_LIMIT" \
+        --argjson used "$CAP_USED" --argjson pct "$CAP_PCT" \
+        --arg reset "${CAP_RESET:-}" \
+    '{remaining: $remaining, limit: $limit, used: $used, pct: $pct,
+      reset: (if $reset == "" then null else ($reset | tonumber) end)}'
+fi
