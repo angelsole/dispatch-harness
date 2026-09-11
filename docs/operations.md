@@ -116,7 +116,11 @@ path; if omitted for `run`/`init`, the default is `~/Projects/<local-repo-name>`
 on the target. The repository must already exist there. Converted attachment
 specs must already be in the remote run's specs directory; only the brief is
 transferred by this command. Run `status`, `wait`, and `resume` on the same host.
-`--remote-harness /absolute/path` selects a custom remote installation.
+By default the remote command reads the shared runtime pointer written by
+`station.sh setup` at `~/.claude/harness-dir`; it never assumes the runtime is
+installed in the SSH user's home. `--remote-harness /absolute/path` selects a
+custom remote installation or bootstraps access before setup has written that
+pointer.
 
 ## Shared stations and seat selection
 

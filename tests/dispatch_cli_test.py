@@ -480,9 +480,10 @@ class DispatchTests(unittest.TestCase):
 
     def test_hands_off_survives_ssh_and_station_forwarding(self):
         remote_home = self.root / 'remote home'
-        remote_runtime = remote_home / '.claude/harness'
-        remote_runtime.parent.mkdir(parents=True)
+        remote_runtime = self.root / 'shared remote runtime'
+        (remote_home / '.claude').mkdir(parents=True)
         shutil.copytree(self.runtime, remote_runtime)
+        (remote_home / '.claude/harness-dir').write_text(str(remote_runtime) + '\n')
         script = self.bin / 'ssh'
         script.write_text('#!/usr/bin/env python3\nimport os, subprocess, sys\n'
                           'env=dict(os.environ); env.pop("HARNESS_DIR",None)\n'
@@ -682,9 +683,10 @@ class DispatchTests(unittest.TestCase):
 
     def test_remote_arguments_and_brief_are_data(self):
         remote_home = self.root / 'remote home'
-        remote_runtime = remote_home / '.claude/harness'
-        remote_runtime.parent.mkdir(parents=True)
+        remote_runtime = self.root / 'shared remote runtime'
+        (remote_home / '.claude').mkdir(parents=True)
         shutil.copytree(self.runtime, remote_runtime)
+        (remote_home / '.claude/harness-dir').write_text(str(remote_runtime) + '\n')
         script = self.bin / 'ssh'
         script.write_text('#!/usr/bin/env python3\nimport os, subprocess, sys\n'
                           'env=dict(os.environ); env.pop("HARNESS_DIR",None)\n'
@@ -713,6 +715,11 @@ class DispatchTests(unittest.TestCase):
         value = json.loads(self.call('wait', 'REMOTE-1', '--on', 'mini', '--timeout', '35', '--json').stdout)
         self.assertEqual(value['state'], 'ready', value)
         self.assertEqual((remote_runtime / 'runs/REMOTE-1/brief.md').read_text(), self.brief.read_text())
+        self.assertFalse((remote_home / '.claude/harness').exists())
+        (remote_home / '.claude/harness-dir').unlink()
+        value = json.loads(self.call('status', 'REMOTE-1', '--on', 'mini',
+                                     '--remote-harness', str(remote_runtime), '--json').stdout)
+        self.assertEqual(value['state'], 'ready', value)
         self.assertFalse((self.repo / 'NEVER-RUN').exists())
 
 

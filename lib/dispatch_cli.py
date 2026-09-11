@@ -486,12 +486,20 @@ def remote(args, argv):
         # the remote CLI, never by the laptop's shell.
         name = Path(repository(None, os.environ)).name
         forwarded += ["--repo", "~/Projects/" + name]
-    script = '"$HOME/.claude/harness/dispatch.sh"'
+    script = None
     if args.remote_harness:
         if not args.remote_harness.startswith("/"):
             raise DispatchError("--remote-harness needs an absolute remote path")
         script = shlex.quote(args.remote_harness + "/dispatch.sh")
-    command = 'export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"; exec bash ' + script + " " + shlex.join(forwarded)
+    if script is None:
+        command = ('IFS= read -r HARNESS_DIR < "$HOME/.claude/harness-dir" || '
+                   '{ echo "dispatch: shared harness is not configured; run station.sh setup by absolute path or pass --remote-harness" >&2; exit 1; }; '
+                   'case "$HARNESS_DIR" in /*) ;; *) echo "dispatch: invalid shared harness path" >&2; exit 1;; esac; '
+                   'export HARNESS_DIR; exec bash "$HARNESS_DIR/dispatch.sh" ' + shlex.join(forwarded))
+    else:
+        command = ('export HARNESS_DIR=' + shlex.quote(args.remote_harness) +
+                   '; exec bash ' + script + " " + shlex.join(forwarded))
+    command = 'export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"; ' + command
     interactive = args.command in ("chat", "station", "login") or args.command not in COMMANDS
     if not interactive:
         command = "export DISPATCH_REMOTE_HOST=" + shlex.quote(args.on) + "; " + command
