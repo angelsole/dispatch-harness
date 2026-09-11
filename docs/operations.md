@@ -1303,8 +1303,19 @@ sudo dseditgroup -o edit -a dispatchsvc -t user dispatch   # the service account
 sudo dseditgroup -o edit -a dana -t user dispatch          # ...and every seat
 sudo chgrp -R dispatch "$HARNESS_DIR"
 sudo chmod -R g+rX "$HARNESS_DIR"
-sudo find "$HARNESS_DIR" -type d -exec chmod g+wXs {} \;   # runs/, locks/, and friends
+for data in runs locks lessons; do
+  sudo install -d -o dispatchsvc -g dispatch -m 2770 "$HARNESS_DIR/$data"
+  sudo find "$HARNESS_DIR/$data" -type d -exec chmod g+rwx,g+s {} +
+  sudo find "$HARNESS_DIR/$data" -type f -exec chmod g+rw {} +
+done
 ```
+
+Only those runtime-data trees are group-writable. Keep `HARNESS_DIR` itself and
+its code/configuration directories group-readable and executable but not
+group-writable: the sudoers allow-list executes scripts from those directories,
+so a crew member must not be able to replace them. If a later release adds a
+new cross-seat writable data tree, add that tree explicitly rather than
+granting write access recursively from the runtime root.
 
 The repo roots need the same treatment — worktrees are created as siblings of
 the repo, and the seats' runs write into them: `chgrp -R dispatch` each repo
