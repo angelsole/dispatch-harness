@@ -605,6 +605,14 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(self.events('implement')[0]['owner'], 'teammate')
         self.assertNotEqual(self.call('resume', 'TASK-1', '--owner', 'someoneelse', check=False).returncode, 0)
 
+    def test_cross_seat_run_requires_working_claude_auth_not_just_its_directory(self):
+        self.seat('teammate')
+        (self.root / 'claude-expired').touch()
+        result = self.run_task('TASK-1', '--owner', 'teammate')
+        value = json.loads(result.stdout)
+        self.assertEqual(value['state'], 'waiting_for_auth')
+        self.assertEqual(self.events('implement'), [])
+
     def test_review_failure_resumes_after_implementation_and_gate(self):
         (self.root / "review-fails").touch(); self.run_task(); first = self.wait()
         self.assertEqual(first['state'], 'review_failed', first)

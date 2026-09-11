@@ -60,7 +60,7 @@ def seat_probe_state(runtime, seat):
     state = {}
     for line in out.stdout.splitlines():
         key, sep, value = line.partition("=")
-        if sep and key in ("claude", "codex", "gh", "token"):
+        if sep and key in ("claude", "codex", "gh", "token", "claude_auth"):
             state[key] = value
     return state or None
 

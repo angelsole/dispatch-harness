@@ -213,7 +213,8 @@ def pipeline_issue(runtime, request, env, resuming=False):
         if owner and owner != getpass.getuser():
             # The seat's home is closed to this process; ask from inside it.
             probe = seat_probe_state(runtime, owner)
-            healthy = bool(probe) and probe.get("claude") == "inside"
+            healthy = (bool(probe) and probe.get("claude") == "inside"
+                       and probe.get("claude_auth") == "ok")
         else:
             healthy = auth_ok("claude", env)
         if not healthy:

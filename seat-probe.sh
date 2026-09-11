@@ -10,6 +10,7 @@
 #   codex=inside|outside|missing     ~/.codex
 #   gh=inside|outside|missing        ~/.config/gh
 #   token=ok|absent|badmode          ~/.claude/oauth-token
+#   claude_auth=ok|missing           live Claude authentication check
 #
 # "outside" is a directory that resolves out of the seat's home — the symlink
 # shape that would silently borrow another person's auth. Exit status is always
@@ -47,8 +48,19 @@ token_state() {  # prints ok|absent|badmode
   fi
 }
 
+claude_auth_state() {  # prints ok|missing without exposing provider output
+  if command -v claude >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 \
+      && with_timeout 20 claude auth status --json 2>/dev/null \
+         | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+    printf 'ok\n'
+  else
+    printf 'missing\n'
+  fi
+}
+
 printf 'claude=%s\n' "$(dir_state "$HOME/.claude")"
 printf 'codex=%s\n'  "$(dir_state "$HOME/.codex")"
 printf 'gh=%s\n'     "$(dir_state "$HOME/.config/gh")"
 printf 'token=%s\n'  "$(token_state)"
+printf 'claude_auth=%s\n' "$(claude_auth_state)"
 exit 0
