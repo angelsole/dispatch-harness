@@ -28,14 +28,15 @@ planner before dispatch. It cannot inject new instructions into an implementer
 that is already running. Replies are used at question/recovery boundaries; use
 a new task for additional scope after completion. Completed or canceled issues
 are not launched. An existing outbound session can control its saved CLI run
-when the repository, account, host and operator match the enabled route.
+when the repository, seat, host and operator match the enabled route.
 
 ## Select the execution station in Linear
 
 Set the issue's **Assignee** to the person whose station should execute it,
 then delegate the issue to **Mini**. Delegation leaves the human assignee in
-place. Configure `accounts` as a map from stable Linear user UUIDs to saved
-station names, such as `angel`, `emre` or `reinier`.
+place. Configure `accounts` as a map from stable Linear user UUIDs to seat
+names — the OS usernames on the execution host, such as `angel`, `emre` or
+`reinier`.
 
 For a new run, Mini selects the issue's assignee, then the immediate parent
 issue's assignee if the issue is unassigned, then the session's original human
@@ -44,12 +45,12 @@ does not fall through to another person's account. Mini asks for a configured
 station in Linear before creating a run. Assign the task or repair the mapping,
 then reply `dispatch` in that session.
 
-Each run saves the chosen account and credential paths. Reassignment, another
-person replying, and service restarts do not switch an existing run's account.
-Removing an account from the mapping disables its Linear recovery controls.
-The initial account selection source is recorded in `linear-origin.json`.
+Each run saves the chosen seat. Reassignment, another
+person replying, and service restarts do not switch an existing run's seat.
+Removing a seat from the mapping disables its Linear recovery controls.
+The initial seat selection source is recorded in `linear-origin.json`.
 
-Here a station is a saved profile on the execution host, not a live planner
+Here a station is a seat — an OS user on the execution host, not a live planner
 conversation. Each task starts its own process. This receiver executes on its
 local host; routing to another physical machine is not implemented. Workspace
 members allowed to operate the integration can assign tasks to mapped stations;
@@ -94,9 +95,11 @@ provides the app user and workspace IDs.
 
 `team` accepts a Linear team key or UUID. Add `project_id` to a route to select
 a specific project; an exact project match takes precedence over the team's
-default. Ambiguous mappings refuse execution. `accounts` selects profiles under
-`QM_ACCOUNTS_DIR` or `~/accounts`. A profile symlink or a provider directory that
-resolves outside its profile is refused before launch. The chosen account and
+default. Ambiguous mappings refuse execution. `accounts` values are seat names:
+OS users on this host whose logins live in their own `~/.claude`, `~/.codex` and
+`~/.config/gh`. A seat that is not a user on this machine, or a credential
+directory that resolves outside its home, is refused before launch. The chosen
+seat and
 publication policy are pinned in `request.json`.
 Legacy configurations without `accounts` retain fixed route `owner` selection
 (or the operator's native profile if omitted). Do not combine route `owner`
@@ -116,7 +119,8 @@ WALL_LINEAR_DISPATCH_CONFIG="$HARNESS_DIR/linear-dispatch.json" ./wall.sh
 
 The check validates configuration syntax and paths; it does not log in, change
 Linear, start a model, or verify the public webhook URL. The execution host needs
-Python 3 with SQLite, Node 20+, and the usual Dispatch dependencies/accounts.
+Python 3 with SQLite, Node 20+, and the usual Dispatch dependencies plus each
+seat's logins.
 Install the updated harness on that host before enabling the configuration.
 Changing routes requires restarting the wall. Unset `WALL_LINEAR_DISPATCH_CONFIG`
 to return to the existing outbound-only behavior. `dispatch ui` never enables

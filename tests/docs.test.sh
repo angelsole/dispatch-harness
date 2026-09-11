@@ -526,6 +526,77 @@ else bad "links: only $checked anchors found — extraction broken?"; fi
 list_ok "$dead" "links: every internal anchor resolves to a heading" \
                 "links: anchors that resolve to nothing"
 
+# ---------------------------------------------------------------------------
+# The seats migration, and the retirement of the model it replaces
+# ---------------------------------------------------------------------------
+# Seats are OS users; the directory model they replace is explained exactly
+# once, in the migration section that moves an existing machine across. Two
+# claims: the section carries every step that move needs, and the retired
+# names appear nowhere else in the tree — a half-removed reference would send
+# an operator looking for a directory no harness code opens any more. The
+# grep patterns are assembled from concatenated pieces so this file does not
+# itself spell the names it polices.
+echo "== the seats migration =="
+MIG_START=$(grep -n '^## Migration: seats become OS users$' "$OPS" | cut -d: -f1)
+if [ -n "$MIG_START" ] && [ "$MIG_START" -gt 0 ]; then
+  ok 'migration: operations.md has the seats migration section'
+else
+  bad 'migration: operations.md has the seats migration section'
+  MIG_START=999999
+fi
+MIG_END=$(awk -v s="$MIG_START" 'NR > s && /^## /{print NR - 1; exit}' "$OPS")
+[ -n "$MIG_END" ] || MIG_END=$(wc -l < "$OPS" | tr -d ' ')
+[ "$MIG_END" -ge "$MIG_START" ] || MIG_END=0
+mig() { awk -v s="$MIG_START" -v e="$MIG_END" 'NR >= s && NR <= e' "$OPS"; }
+for needle in \
+  '^[a-z_][a-z0-9_-]{0,31}$' \
+  'sysadminctl -addUser' \
+  'dseditgroup' \
+  'groupadd' \
+  '~dana/.claude' \
+  '~dana/.codex' \
+  '~dana/.config/gh' \
+  'sudo chown -R' \
+  'cannot be moved' \
+  'borrow check stays' \
+  'station.sh setup' \
+  'visudo -f /etc/sudoers.d/dispatch-crew' \
+  'sudo visudo -c' \
+  'keeps its exact shape' \
+  'wall.sh --crew' \
+  'wall/crew.json' \
+  'Retire the hand-written launchers' \
+  'Rollback' \
+  'moved, not deleted'
+do
+  if mig | grep -qF -- "$needle"; then ok "migration: covers [$needle]"
+  else bad "migration: covers [$needle]"; fi
+done
+
+retired_var='QM_ACCOUNT''S_DIR'
+# The tilde is part of the retired literal being policed, not an expansion.
+# shellcheck disable=SC2088
+retired_dir='~/acco''unts'
+retired_flag='accounts-''dir'
+offenders=''
+while IFS= read -r hit; do
+  [ -n "$hit" ] || continue
+  file="${hit%%:*}"
+  rest="${hit#*:}"
+  lineno="${rest%%:*}"
+  if [ "$file" = './docs/operations.md' ] \
+     && [ "$lineno" -ge "$MIG_START" ] && [ "$lineno" -le "$MIG_END" ]; then
+    continue
+  fi
+  offenders="$offenders
+$hit"
+done <<EOF
+$(cd "$SRC" && grep -rn -e "$retired_var" -e "$retired_dir" -e "$retired_flag" \
+     --exclude-dir=.git --exclude-dir=.harness .)
+EOF
+list_ok "$offenders" 'migration: the old directory model is named only there' \
+                    'migration: retired names outside the migration section'
+
 echo
 printf 'docs smoke: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -25,10 +25,10 @@ environment variable.
 | `DISPATCH_BIN_DIR` | Where the installer writes the `dispatch` launcher. Existing unrelated commands are preserved. | `~/.local/bin` |
 
 `request.json` holds the immutable task identity, repository, branch, execution
-host, selected account configuration paths, and publication choice. It holds
-no tokens. An omitted account path means the CLI's native context: resume removes
-that environment override. An explicit path, even one equal to the default
-directory, stays explicit; older requests retain their saved context.
+host, the seat it dispatches as (`account`, empty meaning the current user), and
+publication choice. It holds
+no tokens. A run stays pinned to its seat: resuming with a different `--owner`
+is refused.
 `launch.json` records the latest launch and brief digest;
 `waiting.json` supplies an actionable missing-login state. `checkpoint.json`
 binds completed stages to the code, brief, configuration, and review evidence.
@@ -59,7 +59,7 @@ evidence flags are for operator control; the planner owns normal recovery.
 | `QM_FALLBACK_N` | Runs to allow when capacity is unknowable | `1` |
 | `QM_TIMES` | Fire times, handed out in queue order | `"23:30 02:00 04:30"` |
 | `QM_LABEL` | The consent label | `overnight` |
-| `QM_ACCOUNTS_DIR` | Where the crew's stations live | `~/accounts` |
+| `QM_CREW` | The crew's seats, space-separated, when no `linear-dispatch.json` accounts mapping is installed | unset |
 | `QM_HISTORY` | Runs sampled for the median cost | `20` |
 | `QM_DEFAULT_COST` | Median cost when there is no history yet | `40000` |
 | `QM_TOKEN_LIMIT` | Pin the block ceiling instead of inferring it | unset |
@@ -107,7 +107,8 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | Env var | What it does | Default |
 | --- | --- | --- |
 | `HARNESS_DIR` | Where the harness is installed. Every script honors it; install with `HARNESS_DIR=/path ./install.sh` | `~/.claude/harness` |
-| `HARNESS_OWNER` | Who dispatched the run. Pinned into the run dir on the first dispatch, so a resume from someone else's session never re-attributes it | your login name |
+| `HARNESS_OWNER` | The seat a run dispatches as: an OS user whose own `~/.claude`, `~/.codex` and `~/.config/gh` hold the logins. Pinned into the run dir on the first dispatch, so a resume from someone else's session never re-attributes it | your login name |
+| `HARNESS_GROUP` | The Unix group that shares one runtime between the service account and every seat. The harness reads it; it never creates groups or edits membership — see [Migration: seats become OS users](operations.md#migration-seats-become-os-users) | `dispatch` |
 | `HARNESS_REDISPATCH` | `1` dispatches a run that already reached `done: ready` | unset |
 | `HARNESS_SKIP_PUSH_PREFLIGHT` | `1` skips the setup-time push-auth check. Setup does a `git push --dry-run` against `origin` so a missing push credential (`GH_TOKEN`) fails the run in seconds as `setup_failed` instead of after implement → gate → review → verify; an anonymous read (the setup fetch) passes on a public repo, so only the write path proves the credential. Non-auth push errors never block setup — they are left to the real push at the end. Set this for a local-only dispatch whose remote genuinely cannot take a dry-run push. | unset |
 | `HARNESS_TICKET_SYNC` | `0` disables all three [ticket sync](operations.md#ticket-sync) layers: the PR comment and state move, the attachment card, and the agent session | `1` |
@@ -119,6 +120,24 @@ See [Turn ceiling](operations.md#turn-ceiling-a-run-that-resumes-itself).
 | `HARNESS_WALL_URL` | Base URL of a wall this machine's runs report to, no trailing slash (`http://mini:4711`). Turns on all three fan-in channels — stage handoffs, worker hook events, worker OTel metrics — see [Ingest](wall.md#ingest). Unset means no outbound traffic at all | unset |
 | `HARNESS_WALL_TOKEN` | Shared secret sent to that wall as `Authorization: Bearer`. Empty means the reports carry no credential and the wall refuses them; `run-task.sh` says so once at startup | unset |
 | `HARNESS_RUN_ID` | Not a knob: the ticket id the harness **exports to its workers** when `HARNESS_WALL_URL` is set. `lib/wall-hook.sh` stamps every hook event with it, and refuses to report without one | — |
+
+A seat is crossed through one door: `seat_exec` in `lib/common.sh` runs a
+command as `sudo -n -u <seat> -H` with an explicit `VAR=value` environment and
+nothing inherited — sudo's `env_reset` drops everything else, which is the
+point. The sudoers fragment that allows it (`examples/sudoers-dispatch-crew.example`
+in the checkout, placeholders shown here) covers exactly three commands and no
+more:
+
+```sudoers
+<service user> ALL=(<seat>, <seat>, ...) NOPASSWD:SETENV: <HARNESS_DIR>/run-task.sh, <HARNESS_DIR>/capacity.sh, <HARNESS_DIR>/seat-probe.sh
+```
+
+`run-task.sh` dispatches a task, `capacity.sh` reads a seat's remaining block,
+`seat-probe.sh` reports a seat's login state — that is the whole surface the
+service account needs. Install it with `sudo visudo -f /etc/sudoers.d/dispatch-crew`
+so the syntax is checked before anything takes effect; the one-time setup,
+including the group and the account-directory move, is
+[Migration: seats become OS users](operations.md#migration-seats-become-os-users).
 
 ### Notifications and monitoring
 
