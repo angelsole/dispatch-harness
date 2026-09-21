@@ -287,7 +287,7 @@ echo "== a failing gate on the cheap tier buys one pass on the Claude sub =="
 dispatch ESC-ONE commit fail \
   "IMPLEMENTER_PROVIDER=zai ANTHROPIC_BASE_URL=$ZAI_URL ANTHROPIC_AUTH_TOKEN=$ZAI_KEY"
 check "escalate: the implementer ran twice" "$(spawns_of implementer)" "2"
-has "$(env_of implementer 1)" "model=[glm-5.3]" "escalate: the first pass was the cheap vendor's"
+has "$(env_of implementer 1)" "model=[glm-5.3-flash]" "escalate: the first pass was the cheap vendor's"
 has "$(env_of implementer 1)" "base=[$ZAI_URL]" "escalate: pointed at its endpoint"
 has "$(env_of implementer 2)" "model=[claude-opus-5]" \
   "escalate: the second pass is the Claude subscription's default model"
@@ -319,7 +319,7 @@ echo "== the record: what escalated, from where, and on what evidence =="
 # ---------------------------------------------------------------------------
 check "record: result.json says the run escalated" "$(result .escalation.triggered)" "true"
 check "record: naming the vendor it came from"     "$(result .escalation.from_provider)" "zai"
-check "record: and the model"                      "$(result .escalation.from_model)" "glm-5.3"
+check "record: and the model"                      "$(result .escalation.from_model)" "glm-5.3-flash"
 check "record: the attempt it was triggered at"    "$(result .escalation.at_attempt)" "1"
 check "record: and the gate step that triggered it" "$(result .escalation.failed_step)" "run-tests"
 GLM_HEAD="$(result .escalation.glm_head)"
