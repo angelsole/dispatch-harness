@@ -163,7 +163,7 @@ to before — this is instrumentation, not a redesign.
 | Env var | Effect | Default |
 | --- | --- | --- |
 | `IMPLEMENTER_PROVIDER` | Which vendor the implementer bills to: `anthropic` (the Claude subscription) or `zai` ([GLM as the implementer](#glm-as-the-implementer)). Resolved **repo pin → ambient env → default**: a [repo pin](#the-repo-pin) outranks the value this shell exports. Recorded in `result.json` as `implementer_provider`. An unrecognised value falls back to `anthropic`, says so once, and re-pins. | `anthropic` |
-| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Resolved **repo pin → ambient env → provider default**, independently of the provider setting. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5`, or `glm-5.3` on `zai` |
+| `IMPLEMENTER_MODEL` | Model passed to the implementer's `--model`; recorded in `result.json`. Resolved **repo pin → ambient env → provider default**, independently of the provider setting. Always an explicit model ID — an alias like `opus` silently changes meaning when a new Opus ships. | `claude-opus-5`, or `glm-5.3-flash` on `zai` |
 | `IMPLEMENTER_EFFORT` | Effort passed to the implementer's `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). `high` has held quality on our runs; raise to `xhigh` per dispatch where a task proves harder than usual. | `high` |
 | `IMPLEMENTER_COMPACT_WINDOW` | Auto-compaction window, in tokens, for a `[1m]` implementer (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the worker's environment). 1M is what the model holds, not where it works best: past ~300k every turn re-reads a prefix that is mostly stale tool output. An `env` block in `~/.claude/settings.json` is applied over the process environment and wins over this knob — set the same number there, or nowhere. | `300000` |
 | `REVIEWER_MODEL` | Model for every `codex exec` call (review, fix rounds, base-sync conflicts); recorded in `result.json`. Pinned here so the pipeline never depends on `~/.codex/config.toml`. Ignored — and recorded blank — when the `codex` CLI is absent. | `gpt-5.6-sol` |
@@ -220,7 +220,8 @@ a `zai` implementer even the *Claude* review tier is a cross-vendor read, so the
 fallback described in [the review guarantee](design-notes.md#why-its-built-this-way)
 loses nothing.
 
-**Models.** `glm-5.3` is the default; `glm-5.3[1m]` is the 1M-context variant,
+**Models.** `glm-5.3-flash` is the default — the faster Coding-Plan tier; `glm-5.3` is
+the full-size model and `glm-5.3[1m]` its 1M-context variant,
 and pinning it also sets the CLI's auto-compaction window
 (`IMPLEMENTER_COMPACT_WINDOW`, 300k by default). `glm-4.7` is
 the small/fast model. `IMPLEMENTER_EFFORT` is passed through unchanged and maps

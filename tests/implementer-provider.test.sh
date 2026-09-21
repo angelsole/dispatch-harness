@@ -253,12 +253,12 @@ dispatch PROV-ZAI commit "IMPLEMENTER_PROVIDER=zai"
 check "knob: an explicit provider is pinned into the run dir" "$(pin implementer-provider)" "zai"
 check "knob: and recorded in result.json" "$(result .implementer_provider)" "zai"
 check "knob: with no model pinned, zai brings its own default" \
-  "$(pin implementer-model)" "glm-5.3"
-has "$(env_of implementer)" "model=[glm-5.3]" "knob: which is what the CLI is spawned with"
+  "$(pin implementer-model)" "glm-5.3-flash"
+has "$(env_of implementer)" "model=[glm-5.3-flash]" "knob: which is what the CLI is spawned with"
 
 dispatch PROV-ZAI commit "IMPLEMENTER_PROVIDER=anthropic"
 check "knob: a re-dispatch reuses the pinned provider" "$(pin implementer-provider)" "zai"
-check "knob: and the model that came with it" "$(pin implementer-model)" "glm-5.3"
+check "knob: and the model that came with it" "$(pin implementer-model)" "glm-5.3-flash"
 has "$(env_of implementer)" "base=[$ZAI_URL]" \
   "knob: the resuming shell's provider is ignored, env and all"
 
@@ -519,7 +519,7 @@ check "repo pin: a resume keeps the run-dir pin whatever the ambient says" \
 repo_pin zai
 dispatch PROV-REPO-ZAI commit ""
 check "repo pin: zai with no ambient default" "$(pin implementer-provider)" "zai"
-check "repo pin: the provider's own model default applies" "$(pin implementer-model)" "glm-5.3"
+check "repo pin: the provider's own model default applies" "$(pin implementer-model)" "glm-5.3-flash"
 has "$(env_of implementer)" "base=[$ZAI_URL]" "repo pin: the endpoint comes from the pin alone"
 has "$(env_of implementer)" "token=[$ZAI_KEY]" "repo pin: with the key file's credential"
 
